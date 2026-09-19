@@ -1,0 +1,29 @@
+name: Windows build and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build application and installer
+        shell: powershell
+        run: ./tools/Build.ps1
+      - name: Run tests
+        shell: powershell
+        run: ./tests/Run-All.ps1
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: WiFiMeter-Windows
+          path: |
+            dist/WiFiMeter-Setup.exe
+            dist/WiFiMeter-Portable.zip

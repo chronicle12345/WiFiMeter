@@ -1,0 +1,18 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{ps1,psm1}]
+charset = utf-8-bom
+
+[*.{xaml,xml,yml,svg}]
+indent_size = 2
+
+[*.{md,svg}]
+end_of_line = lf
