@@ -11,17 +11,26 @@ permissions:
 jobs:
   verify:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build application and installer
         shell: powershell
         run: ./tools/Build.ps1
+      # The interface and host suites need an interactive desktop, which a hosted
+      # agent does not provide. They are skipped here and run on a signed-in machine.
       - name: Run tests
         shell: powershell
-        run: ./tests/Run-All.ps1
+        run: ./tests/Run-All.ps1 -SkipDesktopTests
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-logs
+          path: artifacts/test-results/
+          if-no-files-found: ignore
       - name: Upload release files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: WiFiMeter-Windows
           path: |
