@@ -13,7 +13,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
 
 产物为 `dist/WiFiMeter-Setup.exe`、`dist/WiFiMeter-Portable.zip` 和解包后的 `dist/WiFiMeter/` 目录。开发时可传入 `-HostOnly`，跳过安装器与 ZIP 生成。
 
-测试先检查 PowerShell 语法和编码，再验证统计、配置、额度、应用明细、进程、WPF、原生宿主与安装。注册表测试使用独立测试项，需要当前用户注册表写入权限。安装测试使用临时目录，启动自己的托盘实例，不更改已有数据和启动项。额度测试不会断开真实网络。
+测试先检查 PowerShell 语法和编码，再验证统计、配置、额度、应用明细、进程、WPF、原生宿主与安装。注册表测试使用独立测试项，需要当前用户注册表写入权限。安装测试使用临时目录，启动自己的后台采集进程，不更改已有数据和启动项。额度测试不会断开真实网络。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\AppUsage.Tests.ps1 -Live

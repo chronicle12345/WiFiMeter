@@ -13,7 +13,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
 
 Build outputs are `dist/WiFiMeter-Setup.exe`, `dist/WiFiMeter-Portable.zip` and the unpacked `dist/WiFiMeter/` runtime. `-HostOnly` skips installer and ZIP generation during development.
 
-The test runner checks PowerShell syntax and encoding, then runs accounting, preferences, quota, application usage, process, WPF, native host and installer tests. Registry tests use isolated keys and require current-user registry write access. Installation tests use a temporary directory, start their own tray instance, and leave existing data and startup entries alone. Quota tests do not disconnect a real network.
+The test runner checks PowerShell syntax and encoding, then runs accounting, preferences, quota, application usage, process, WPF, native host and installer tests. Registry tests use isolated keys and require current-user registry write access. Installation tests use a temporary directory, start their own background collector, and leave existing data and startup entries alone. Quota tests do not disconnect a real network.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\AppUsage.Tests.ps1 -Live
