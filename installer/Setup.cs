@@ -397,38 +397,43 @@ namespace WiFiMeter.Setup
         // IPersistFile interfaces so that Unicode installation paths survive on
         // English Windows systems, where a WScript.Shell COM object would
         // serialize paths through the ANSI code page.
+        // Every method keeps its native HRESULT via [PreserveSig] and marshals
+        // strings explicitly as LPWStr. The COM default (PreserveSig = false)
+        // would consume the HRESULT for exception translation and expose an
+        // uninitialised [retval] as the managed int, which is not what the
+        // callers below rely on.
         [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IShellLinkW
         {
-            void GetPath(StringBuilder path, int size, IntPtr fileData, uint flags);
-            void GetIDList(out IntPtr pidl);
-            void SetIDList(IntPtr pidl);
-            void GetDescription(StringBuilder text, int size);
-            void SetDescription(string text);
-            void GetWorkingDirectory(StringBuilder dir, int size);
-            void SetWorkingDirectory(string dir);
-            void GetArguments(StringBuilder args, int size);
-            void SetArguments(string args);
-            void GetHotkey(out ushort hotkey);
-            void SetHotkey(ushort hotkey);
-            void GetShowCmd(out int showCmd);
-            void SetShowCmd(int showCmd);
-            void GetIconLocation(StringBuilder iconPath, int size, out int index);
-            void SetIconLocation(string iconPath, int index);
-            void SetRelativePath(string path, int reserved);
-            void Resolve(IntPtr window, int flags);
-            void SetPath(string path);
+            [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int size, IntPtr fileData, uint flags);
+            [PreserveSig] int GetIDList(out IntPtr pidl);
+            [PreserveSig] int SetIDList(IntPtr pidl);
+            [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int size);
+            [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+            [PreserveSig] int GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder dir, int size);
+            [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+            [PreserveSig] int GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder args, int size);
+            [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string args);
+            [PreserveSig] int GetHotkey(out ushort hotkey);
+            [PreserveSig] int SetHotkey(ushort hotkey);
+            [PreserveSig] int GetShowCmd(out int showCmd);
+            [PreserveSig] int SetShowCmd(int showCmd);
+            [PreserveSig] int GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder iconPath, int size, out int index);
+            [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string iconPath, int index);
+            [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, int reserved);
+            [PreserveSig] int Resolve(IntPtr window, int flags);
+            [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
         }
 
         [ComImport, Guid("0000010B-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IPersistFile
         {
-            int GetClassID(out Guid classId);
-            int IsDirty();
-            int Load(string file, int mode);
-            int Save(string file, bool remember);
-            int SaveCompleted(string file);
-            int GetCurFile(out string file);
+            [PreserveSig] int GetClassID(out Guid classId);
+            [PreserveSig] int IsDirty();
+            [PreserveSig] int Load([MarshalAs(UnmanagedType.LPWStr)] string file, int mode);
+            [PreserveSig] int Save([MarshalAs(UnmanagedType.LPWStr)] string file, bool remember);
+            [PreserveSig] int SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string file);
+            [PreserveSig] int GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string file);
         }
 
         private static readonly Guid LinkClassId = new Guid("00021401-0000-0000-C000-000000000046");
@@ -444,11 +449,11 @@ namespace WiFiMeter.Setup
             try
             {
                 link = ShortcutFactory();
-                IPersistFile persist = (IPersistFile)link;
-                int hr = persist.Load(path, 0);
+                int hr = ((IPersistFile)link).Load(path, 0);
                 if (hr < 0) Marshal.ThrowExceptionForHR(hr);
                 StringBuilder target = new StringBuilder(512);
-                ((IShellLinkW)link).GetPath(target, target.Capacity, IntPtr.Zero, 0x4 /* SLGP_RAWPATH */);
+                hr = ((IShellLinkW)link).GetPath(target, target.Capacity, IntPtr.Zero, 0x4 /* SLGP_RAWPATH */);
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
                 return target.ToString();
             }
             finally
@@ -464,12 +469,12 @@ namespace WiFiMeter.Setup
             {
                 link = ShortcutFactory();
                 IShellLinkW shellLink = (IShellLinkW)link;
-                shellLink.SetPath(target);
-                if (!String.IsNullOrEmpty(workingDirectory)) shellLink.SetWorkingDirectory(workingDirectory);
-                if (!String.IsNullOrEmpty(description)) shellLink.SetDescription(description);
-                if (!String.IsNullOrEmpty(icon)) shellLink.SetIconLocation(icon, 0);
-                IPersistFile persist = (IPersistFile)link;
-                int hr = persist.Save(path, true);
+                int hr = shellLink.SetPath(target);
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+                if (!String.IsNullOrEmpty(workingDirectory)) { hr = shellLink.SetWorkingDirectory(workingDirectory); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+                if (!String.IsNullOrEmpty(description)) { hr = shellLink.SetDescription(description); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+                if (!String.IsNullOrEmpty(icon)) { hr = shellLink.SetIconLocation(icon, 0); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+                hr = ((IPersistFile)link).Save(path, true);
                 if (hr < 0) Marshal.ThrowExceptionForHR(hr);
             }
             finally
