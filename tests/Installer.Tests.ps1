@@ -28,6 +28,92 @@ function Write-TestLog([string]$Message) {
     Write-Host $line
 }
 
+# WScript.Shell persists shortcut paths through the ANSI code page, so a Unicode
+# test root cannot be saved on an English Windows agent while it works on a
+# Chinese workstation. Drive the native Unicode IShellLinkW and IPersistFile
+# interfaces instead so the installer suite keeps covering CJK installation
+# paths on every runner.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class MeterShortcutTest
+{
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IShellLinkW
+    {
+        [PreserveSig] int GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int size, IntPtr fileData, uint flags);
+        [PreserveSig] int GetIDList(out IntPtr pidl);
+        [PreserveSig] int SetIDList(IntPtr pidl);
+        [PreserveSig] int GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int size);
+        [PreserveSig] int SetDescription([MarshalAs(UnmanagedType.LPWStr)] string text);
+        [PreserveSig] int GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder dir, int size);
+        [PreserveSig] int SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string dir);
+        [PreserveSig] int GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder args, int size);
+        [PreserveSig] int SetArguments([MarshalAs(UnmanagedType.LPWStr)] string args);
+        [PreserveSig] int GetHotkey(out ushort hotkey);
+        [PreserveSig] int SetHotkey(ushort hotkey);
+        [PreserveSig] int GetShowCmd(out int showCmd);
+        [PreserveSig] int SetShowCmd(int showCmd);
+        [PreserveSig] int GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder iconPath, int size, out int index);
+        [PreserveSig] int SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string iconPath, int index);
+        [PreserveSig] int SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, int reserved);
+        [PreserveSig] int Resolve(IntPtr window, int flags);
+        [PreserveSig] int SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+    }
+
+    [ComImport, Guid("0000010B-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    private interface IPersistFile
+    {
+        [PreserveSig] int GetClassID(out Guid classId);
+        [PreserveSig] int IsDirty();
+        [PreserveSig] int Load([MarshalAs(UnmanagedType.LPWStr)] string file, int mode);
+        [PreserveSig] int Save([MarshalAs(UnmanagedType.LPWStr)] string file, bool remember);
+        [PreserveSig] int SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string file);
+        [PreserveSig] int GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string file);
+    }
+
+    private static readonly Guid LinkClsid = new Guid("00021401-0000-0000-C000-000000000046");
+
+    private static T Create<T>()
+    {
+        return (T)Activator.CreateInstance(Type.GetTypeFromCLSID(LinkClsid));
+    }
+
+    public static string GetTarget(string linkPath)
+    {
+        IShellLinkW link = Create<IShellLinkW>();
+        try
+        {
+            int hr = ((IPersistFile)link).Load(linkPath, 0);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            StringBuilder path = new StringBuilder(512);
+            hr = link.GetPath(path, path.Capacity, IntPtr.Zero, 0x4 /* SLGP_RAWPATH */);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            return path.ToString();
+        }
+        finally { Marshal.FinalReleaseComObject(link); }
+    }
+
+    public static void Save(string linkPath, string target, string workingDirectory, string description, string icon)
+    {
+        IShellLinkW link = Create<IShellLinkW>();
+        try
+        {
+            int hr = link.SetPath(target);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            if (!String.IsNullOrEmpty(workingDirectory)) { hr = link.SetWorkingDirectory(workingDirectory); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+            if (!String.IsNullOrEmpty(description)) { hr = link.SetDescription(description); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+            if (!String.IsNullOrEmpty(icon)) { hr = link.SetIconLocation(icon, 0); if (hr < 0) Marshal.ThrowExceptionForHR(hr); }
+            hr = ((IPersistFile)link).Save(linkPath, true);
+            if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+        }
+        finally { Marshal.FinalReleaseComObject(link); }
+    }
+}
+'@
+
 function Assert-Test([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw ('FAIL: ' + $Message) }
     $script:assertionCount++
@@ -119,30 +205,12 @@ function Assert-DefaultDataUnchanged([string]$Phase) {
 
 function Assert-Shortcut([string]$Path) {
     Assert-Test ([IO.File]::Exists($Path)) ('Shortcut exists: ' + $Path)
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $null
-    try {
-        $shortcut = $shell.CreateShortcut($Path)
-        $target = [IO.Path]::GetFullPath($shortcut.TargetPath)
-        Assert-Test ($target.Equals($appPath, [StringComparison]::OrdinalIgnoreCase)) ('Shortcut targets installed WiFiMeter.exe: ' + $Path)
-    } finally {
-        if ($null -ne $shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
-        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
-    }
+    $target = [IO.Path]::GetFullPath([MeterShortcutTest]::GetTarget($Path))
+    Assert-Test ($target.Equals($appPath, [StringComparison]::OrdinalIgnoreCase)) ('Shortcut targets installed WiFiMeter.exe: ' + $Path)
 }
 
 function New-UnrelatedShortcut([string]$Path) {
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $null
-    try {
-        $shortcut = $shell.CreateShortcut($Path)
-        $shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'
-        $shortcut.Description = 'Installer test: unrelated shortcut must survive'
-        $shortcut.Save()
-    } finally {
-        if ($null -ne $shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
-        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
-    }
+    [MeterShortcutTest]::Save($Path, (Join-Path $env:SystemRoot 'System32\notepad.exe'), $null, 'Installer test: unrelated shortcut must survive', $null)
 }
 
 function Start-TestCollector {

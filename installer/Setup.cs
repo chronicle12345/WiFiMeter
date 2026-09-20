@@ -393,65 +393,108 @@ namespace WiFiMeter.Setup
                 || command.Equals(executable, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static object Property(object target, string name, object value, bool set)
+        // Shortcut links are persisted through the native IShellLinkW and
+        // IPersistFile interfaces so that Unicode installation paths survive on
+        // English Windows systems, where a WScript.Shell COM object would
+        // serialize paths through the ANSI code page.
+        [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellLinkW
         {
-            return target.GetType().InvokeMember(name, set ? BindingFlags.SetProperty : BindingFlags.GetProperty, null, target, set ? new object[] { value } : null);
+            void GetPath(StringBuilder path, int size, IntPtr fileData, uint flags);
+            void GetIDList(out IntPtr pidl);
+            void SetIDList(IntPtr pidl);
+            void GetDescription(StringBuilder text, int size);
+            void SetDescription(string text);
+            void GetWorkingDirectory(StringBuilder dir, int size);
+            void SetWorkingDirectory(string dir);
+            void GetArguments(StringBuilder args, int size);
+            void SetArguments(string args);
+            void GetHotkey(out ushort hotkey);
+            void SetHotkey(ushort hotkey);
+            void GetShowCmd(out int showCmd);
+            void SetShowCmd(int showCmd);
+            void GetIconLocation(StringBuilder iconPath, int size, out int index);
+            void SetIconLocation(string iconPath, int index);
+            void SetRelativePath(string path, int reserved);
+            void Resolve(IntPtr window, int flags);
+            void SetPath(string path);
+        }
+
+        [ComImport, Guid("0000010B-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IPersistFile
+        {
+            int GetClassID(out Guid classId);
+            int IsDirty();
+            int Load(string file, int mode);
+            int Save(string file, bool remember);
+            int SaveCompleted(string file);
+            int GetCurFile(out string file);
+        }
+
+        private static readonly Guid LinkClassId = new Guid("00021401-0000-0000-C000-000000000046");
+
+        private static object ShortcutFactory()
+        {
+            return Activator.CreateInstance(Type.GetTypeFromCLSID(LinkClassId));
+        }
+
+        private static string LoadShortcutTarget(string path)
+        {
+            object link = null;
+            try
+            {
+                link = ShortcutFactory();
+                IPersistFile persist = (IPersistFile)link;
+                int hr = persist.Load(path, 0);
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+                StringBuilder target = new StringBuilder(512);
+                ((IShellLinkW)link).GetPath(target, target.Capacity, IntPtr.Zero, 0x4 /* SLGP_RAWPATH */);
+                return target.ToString();
+            }
+            finally
+            {
+                if (link != null) Marshal.FinalReleaseComObject(link);
+            }
+        }
+
+        private static void PersistShortcut(string path, string target, string workingDirectory, string description, string icon)
+        {
+            object link = null;
+            try
+            {
+                link = ShortcutFactory();
+                IShellLinkW shellLink = (IShellLinkW)link;
+                shellLink.SetPath(target);
+                if (!String.IsNullOrEmpty(workingDirectory)) shellLink.SetWorkingDirectory(workingDirectory);
+                if (!String.IsNullOrEmpty(description)) shellLink.SetDescription(description);
+                if (!String.IsNullOrEmpty(icon)) shellLink.SetIconLocation(icon, 0);
+                IPersistFile persist = (IPersistFile)link;
+                int hr = persist.Save(path, true);
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+            }
+            finally
+            {
+                if (link != null) Marshal.FinalReleaseComObject(link);
+            }
         }
 
         private static void AssertShortcutAvailable(Settings settings, string path, string executable)
         {
             if (!File.Exists(path)) return;
-            object shell = null, link = null;
-            try
-            {
-                shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-                link = shell.GetType().InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { path });
-                if (!String.Equals(Property(link, "TargetPath", null, false) as string, executable, StringComparison.OrdinalIgnoreCase))
-                    throw new IOException(settings.Text("A different shortcut already uses this name. Move it or turn off this shortcut option: ", "已有其他快捷方式使用此名称，请先移动它，或关闭对应的快捷方式选项：") + path);
-            }
-            finally
-            {
-                if (link != null) Marshal.FinalReleaseComObject(link);
-                if (shell != null) Marshal.FinalReleaseComObject(shell);
-            }
+            if (!String.Equals(LoadShortcutTarget(path), executable, StringComparison.OrdinalIgnoreCase))
+                throw new IOException(settings.Text("A different shortcut already uses this name. Move it or turn off this shortcut option: ", "已有其他快捷方式使用此名称,请先移动它,或关闭对应的快捷方式选项:") + path);
         }
 
         private static void CreateShortcut(string path, string executable)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            object shell = null, link = null;
-            try
-            {
-                shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-                link = shell.GetType().InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { path });
-                Property(link, "TargetPath", executable, true);
-                Property(link, "WorkingDirectory", Path.GetDirectoryName(executable), true);
-                Property(link, "Description", "WiFiMeter - Wi-Fi usage monitor", true);
-                Property(link, "IconLocation", executable + ",0", true);
-                link.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
-            }
-            finally
-            {
-                if (link != null) Marshal.FinalReleaseComObject(link);
-                if (shell != null) Marshal.FinalReleaseComObject(shell);
-            }
+            PersistShortcut(path, executable, Path.GetDirectoryName(executable), "WiFiMeter - Wi-Fi usage monitor", executable);
         }
 
         private static void RemoveShortcut(string path, string executable)
         {
             if (!File.Exists(path)) return;
-            object shell = null, link = null;
-            try
-            {
-                shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));
-                link = shell.GetType().InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { path });
-                if (String.Equals(Property(link, "TargetPath", null, false) as string, executable, StringComparison.OrdinalIgnoreCase)) File.Delete(path);
-            }
-            finally
-            {
-                if (link != null) Marshal.FinalReleaseComObject(link);
-                if (shell != null) Marshal.FinalReleaseComObject(shell);
-            }
+            if (String.Equals(LoadShortcutTarget(path), executable, StringComparison.OrdinalIgnoreCase)) File.Delete(path);
         }
 
         internal static void RemoveEmptyDirectories(string root)
