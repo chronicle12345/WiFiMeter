@@ -147,18 +147,21 @@ function New-UnrelatedShortcut([string]$Path) {
 
 function Start-TestCollector {
     Import-Module (Join-Path $installDirectory 'src\Control.psm1') -Force
-    $launcher = Start-TestExecutable $appPath ('--tray --data-directory "' + $dataDirectory + '"')
-    $script:activeCollector = [pscustomobject]@{ Launcher = $launcher; Worker = $null }
+    # Installer lifecycle must not depend on a desktop. Tray and window behaviour is
+    # covered by Host.Tests.ps1, which runs on a signed-in machine.
+    $worker = Start-TestExecutable $appPath ('--background --data-directory "' + $dataDirectory + '"')
+    $script:activeCollector = [pscustomobject]@{ Worker = $worker }
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     do {
         Start-Sleep -Milliseconds 100
+        if ($worker.HasExited) { throw ('FAIL: Background collector exited during startup with code ' + $worker.ExitCode) }
         $status = Get-MeterStatus -DataDirectory $dataDirectory
     } while (-not $status.Running -and [DateTime]::UtcNow -lt $deadline)
-    Assert-Test ([bool]$status.Running) 'Tray startup starts the test collector'
-    $script:activeCollector.Worker = [Diagnostics.Process]::GetProcessById([int]$status.ProcessId)
+    Assert-Test ([bool]$status.Running) 'Background startup starts the test collector'
+    Assert-Test ([int]$status.ProcessId -eq $worker.Id) 'Background collector is hosted by the installed executable'
     # Open the process handle before upgrade/uninstall so its exit code remains available.
-    [void]$script:activeCollector.Worker.Handle
-    Write-TestLog ('Collector PID ' + $script:activeCollector.Worker.Id + ', data=' + $dataDirectory)
+    [void]$worker.Handle
+    Write-TestLog ('Collector PID ' + $worker.Id + ', data=' + $dataDirectory)
 }
 
 function Assert-TestCollectorStopped([string]$Operation) {
@@ -166,11 +169,8 @@ function Assert-TestCollectorStopped([string]$Operation) {
     Assert-Test ($null -ne $collector) ($Operation + ' was exercised with a running collector')
     Assert-Test ($collector.Worker.WaitForExit(20000)) ($Operation + ' waits for the original collector to exit')
     Assert-Test ($collector.Worker.ExitCode -eq 0) ($Operation + ' stops the collector with exit code 0')
-    Assert-Test ($collector.Launcher.WaitForExit(20000)) ($Operation + ' leaves no tray application running')
-    Assert-Test ($collector.Launcher.ExitCode -eq 0) ($Operation + ' tray application exits with code 0')
     Assert-Test (-not (Get-MeterStatus -DataDirectory $dataDirectory).Running) ($Operation + ' records a stopped collector')
     $collector.Worker.Dispose()
-    $collector.Launcher.Dispose()
     $script:activeCollector = $null
 }
 
@@ -283,7 +283,7 @@ try {
     Assert-Test ([IO.File]::Exists((Join-Path $dataDirectory 'state.json'))) 'Uninstallation preserves collected usage state'
     Assert-DefaultDataUnchanged 'Uninstallation'
     $passed = $true
-    Write-TestLog ('PASS: ' + $script:assertionCount + ' assertions; native installation, upgrade, graceful collector shutdown, and uninstallation.')
+    Write-TestLog ('PASS: ' + $script:assertionCount + ' assertions; native installation, upgrade, graceful background collector shutdown, and uninstallation.')
 } catch {
     Write-TestLog $_.Exception.Message
     throw
@@ -294,7 +294,6 @@ try {
             Write-TestLog 'Cleanup requested a graceful stop for the test collector.'
         } catch { Write-TestLog ('Cleanup could not stop test collector: ' + $_.Exception.Message) }
         if ($null -ne $script:activeCollector.Worker) { $script:activeCollector.Worker.Dispose() }
-        $script:activeCollector.Launcher.Dispose()
     }
     if ($passed -and -not $KeepArtifacts -and (Test-Path -LiteralPath $testRoot)) {
         Assert-SafeTestRoot
