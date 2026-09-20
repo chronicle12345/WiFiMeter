@@ -6,6 +6,7 @@
   <a href="https://github.com/chronicle12345/WiFiMeter/releases"><img src="https://img.shields.io/badge/version-1.0.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.0.0" /></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
   <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
 
 <p align="center">
@@ -76,3 +77,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
 Tests cover accounting, quota rules, retention, application queries, tray lifecycle and installation. Registry tests use isolated keys; they need permission to write to the current user's registry.
 
 [Development](docs/DEVELOPMENT.md) explains the modules and storage format. [User guide](docs/USAGE.md) covers installation and daily use.
+
+## License
+
+Licensed under the [MIT License](LICENSE).

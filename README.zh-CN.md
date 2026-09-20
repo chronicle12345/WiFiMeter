@@ -6,6 +6,7 @@
   <a href="https://github.com/chronicle12345/WiFiMeter/releases"><img src="https://img.shields.io/badge/version-1.0.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.0.0" /></a>
   <a href="#快速运行"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
   <a href="docs/DEVELOPMENT.zh-CN.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
 
 <p align="center">
@@ -76,3 +77,7 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
 测试覆盖流量累计、额度、记录清理、应用查询、托盘生命周期和安装。注册表测试使用独立测试项，运行环境需允许当前用户写入注册表。
 
 [开发说明](docs/DEVELOPMENT.zh-CN.md)介绍模块和存储格式，[使用指南](docs/USAGE.zh-CN.md)介绍安装与日常操作。
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。
