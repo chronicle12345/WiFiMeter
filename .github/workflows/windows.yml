@@ -2,6 +2,10 @@ name: Windows build and tests
 
 on:
   push:
+    # Tag pushes are handled by release.yml. Listing branches here keeps a tag push
+    # from running the same build and tests twice.
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -27,7 +31,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: test-logs
-          path: artifacts/test-results/
+          # The whole tree, not just artifacts/test-results: a failed installer run
+          # also leaves status.json, collector.log and the preserved fixture behind.
+          path: artifacts/
           if-no-files-found: ignore
       - name: Upload release files
         uses: actions/upload-artifact@v7

@@ -1,0 +1,58 @@
+name: Release
+
+# Publishing is a deliberate act: push an annotated tag such as v1.1.0.
+# Tag pushes do not run windows.yml, so the build and tests below are the only
+# gate between a tag and a published release.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Verify the tag matches the product version
+        shell: powershell
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $expected = @(
+            @{ Path = 'installer\Setup.cs'; Needle = 'DisplayVersion", "' + $version + '"' },
+            @{ Path = 'src\Host.cs'; Needle = 'AssemblyVersion("' + $version + '.0")' }
+          )
+          foreach ($item in $expected) {
+            if (-not (Select-String -LiteralPath $item.Path -SimpleMatch $item.Needle -Quiet)) {
+              throw ('${{ github.ref_name }} does not match ' + $item.Path + '. Expected to find: ' + $item.Needle)
+            }
+          }
+          Write-Output ('${{ github.ref_name }} matches the version recorded in the source.')
+
+      - name: Build application and installer
+        shell: powershell
+        run: ./tools/Build.ps1
+
+      - name: Run tests
+        shell: powershell
+        run: ./tests/Run-All.ps1 -SkipDesktopTests
+
+      - name: Create GitHub Release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $assets = @(
+            ("dist/WiFiMeter-$version-Setup.exe"),
+            ("dist/WiFiMeter-$version-Portable.zip")
+          )
+          Copy-Item 'dist/WiFiMeter-Setup.exe' $assets[0]
+          Copy-Item 'dist/WiFiMeter-Portable.zip' $assets[1]
+          gh release create "${{ github.ref_name }}" @assets --title "WiFiMeter $version" --generate-notes

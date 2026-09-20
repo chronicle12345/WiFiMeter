@@ -149,6 +149,7 @@ function Start-TestCollector {
     Import-Module (Join-Path $installDirectory 'src\Control.psm1') -Force
     # Installer lifecycle must not depend on a desktop. Tray and window behaviour is
     # covered by Host.Tests.ps1, which runs on a signed-in machine.
+    Write-TestLog 'Step: start the test collector'
     $worker = Start-TestExecutable $appPath ('--background --data-directory "' + $dataDirectory + '"')
     $script:activeCollector = [pscustomobject]@{ Worker = $worker }
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
@@ -157,6 +158,13 @@ function Start-TestCollector {
         if ($worker.HasExited) { throw ('FAIL: Background collector exited during startup with code ' + $worker.ExitCode) }
         $status = Get-MeterStatus -DataDirectory $dataDirectory
     } while (-not $status.Running -and [DateTime]::UtcNow -lt $deadline)
+    if (-not $status.Running) {
+        # A hosted agent must explain this failure from the uploaded log alone.
+        Write-TestLog ('Diagnostic: collector alive=' + (-not $worker.HasExited) + '; message=' + $status.Message + '; error=' + $status.Error)
+        $collectorLog = Join-Path $dataDirectory 'collector.log'
+        if ([IO.File]::Exists($collectorLog)) { Write-TestLog ('Diagnostic: collector.log tail: ' + ((Get-Content -LiteralPath $collectorLog -Tail 5) -join ' | ')) }
+        else { Write-TestLog 'Diagnostic: collector.log was never created' }
+    }
     Assert-Test ([bool]$status.Running) 'Background startup starts the test collector'
     Assert-Test ([int]$status.ProcessId -eq $worker.Id) 'Background collector is hosted by the installed executable'
     # Open the process handle before upgrade/uninstall so its exit code remains available.
@@ -196,8 +204,10 @@ try {
     $installArguments = '--test-root "' + $testRoot + '" --silent'
     $conflictShortcut = Join-Path $testRoot 'Shortcuts\Desktop\WiFiMeter.lnk'
     [void][IO.Directory]::CreateDirectory((Split-Path $conflictShortcut -Parent))
+    Write-TestLog 'Step: prepare a conflicting shortcut'
     New-UnrelatedShortcut $conflictShortcut
     $conflictHash = (Get-FileHash -LiteralPath $conflictShortcut -Algorithm SHA256).Hash
+    Write-TestLog 'Step: install over a conflicting shortcut'
     $conflictingInstall = Start-TestExecutable $setupPath $installArguments
     try {
         Assert-Test ($conflictingInstall.WaitForExit(30000)) 'Conflicting shortcut check completes promptly'
@@ -206,7 +216,9 @@ try {
     Assert-Test ((Get-FileHash -LiteralPath $conflictShortcut -Algorithm SHA256).Hash -eq $conflictHash) 'Rejected installation preserves the conflicting shortcut'
     Assert-Test (-not [IO.File]::Exists($appPath)) 'Shortcut conflict is detected before writing application files'
     Assert-Test (-not (Test-Path -LiteralPath $registryPath)) 'Rejected installation does not create uninstall registration'
+    Write-TestLog 'Step: remove the conflicting shortcut'
     Remove-Item -LiteralPath $conflictShortcut -Force
+    Write-TestLog 'Step: install into a clean test root'
     Invoke-TestExecutable $setupPath $installArguments 'Installation'
     Assert-GuiExecutable $appPath
     Assert-GuiExecutable $uninstallPath
@@ -247,6 +259,7 @@ try {
     $null = New-ItemProperty -LiteralPath $fixtureRun -Name WiFiMeter -Value ('"' + $appPath + '" --background') -PropertyType String
     $null = New-ItemProperty -LiteralPath $fixtureApproval -Name WiFiMeter -Value ([byte[]]@(3, 0, 0, 0)) -PropertyType Binary
     Start-TestCollector
+    Write-TestLog 'Step: upgrade with the collector running'
     Invoke-TestExecutable $setupPath $installArguments 'Upgrade'
     Assert-TestCollectorStopped 'Upgrade'
     Assert-Test ((Get-ItemPropertyValue -LiteralPath $fixtureRun -Name WiFiMeter) -ceq ('"' + $appPath + '" --tray')) 'Upgrade migrates an existing owned startup command to tray mode'
@@ -262,6 +275,7 @@ try {
     Remove-Item -LiteralPath $fixtureApproval -Force
 
     Start-TestCollector
+    Write-TestLog 'Step: uninstall with the collector running'
     Invoke-TestExecutable $uninstallPath ('--uninstall --test-root "' + $testRoot + '" --silent') 'Uninstallation'
     Assert-TestCollectorStopped 'Uninstallation'
     # The copied uninstaller helper may finish deleting the original after its parent exits.
@@ -286,6 +300,13 @@ try {
     Write-TestLog ('PASS: ' + $script:assertionCount + ' assertions; native installation, upgrade, graceful background collector shutdown, and uninstallation.')
 } catch {
     Write-TestLog $_.Exception.Message
+    # The uploaded log must locate the failing statement without a local re-run.
+    if ($null -ne $_.InvocationInfo -and -not [string]::IsNullOrWhiteSpace($_.InvocationInfo.PositionMessage)) {
+        Write-TestLog ('At: ' + (($_.InvocationInfo.PositionMessage -replace '\s*\r?\n\s*', ' | ').Trim()))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($_.ScriptStackTrace)) {
+        Write-TestLog ('Stack: ' + (($_.ScriptStackTrace -replace '\s*\r?\n\s*', ' | ').Trim()))
+    }
     throw
 } finally {
     if ($null -ne $script:activeCollector) {
