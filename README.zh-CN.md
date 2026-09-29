@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-WiFiMeter 的共享 Electron 桌面应用面向 Windows 和 Linux，后续由本机 C++ 后端提供网络采集与业务数据。目前使用示例数据，Linux 可构建 deb，Windows 可在本机生成独立的 WiFiMeter Demo 安装包；C++ 后端尚未实现。
+WiFiMeter 的共享 Electron 桌面应用面向 Windows 和 Linux，后续由本机 C++ 后端提供网络采集与业务数据。目前使用示例数据，Linux 可构建 deb，Windows 可在本机生成独立的 WiFiMeter Demo 安装包；C++ 后端已完成 Linux 平台层（采集、身份识别、断开控制）并有测试，业务逻辑、存储、通信和 Electron 接入尚未实现。
 
 ## 安装依赖与启动
 
@@ -23,10 +23,11 @@ npm start
 npm test
 npm run test:unit
 npm run test:ui
+npm run test:backend
 npm run dist:linux
 ```
 
-界面测试需要图形会话，使用临时用户数据目录。Linux 打包在 Ubuntu x64 上使用 electron-builder 和系统自带的 `dpkg-deb`。
+界面测试需要图形会话，使用临时用户数据目录。Linux 打包在 Ubuntu x64 上使用 electron-builder 和系统自带的 `dpkg-deb`。后端测试需要 CMake、支持 C++20 的编译器以及 SQLite 开发头文件（`libsqlite3-dev`），会读取 `/proc/net/dev` 与 `nmcli`，但不会改动机器的网络状态。
 
 安装生成的 deb：
 
@@ -51,7 +52,7 @@ npm run dist:windows
 
 ```text
 apps/desktop/       共享桌面应用、示例数据和测试
-backend/            C++ 后端的职责说明
+backend/            C++ 后端：Linux 平台层已实现并有测试
 contracts/          现有数据格式与未来协议边界
 packaging/linux/    Linux deb 打包脚本
 packaging/windows/  Windows 本机 NSIS 安装包构建

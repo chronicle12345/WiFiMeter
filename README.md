@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-WiFiMeter uses a shared Electron desktop application for Windows and Linux, with a planned local C++ backend for network collection and business data. The current application uses sample data. Linux deb packaging and native Windows NSIS packaging are configured. The C++ backend is not implemented yet.
+WiFiMeter uses a shared Electron desktop application for Windows and Linux, with a planned local C++ backend for network collection and business data. The current application uses sample data. Linux deb packaging and native Windows NSIS packaging are configured. The Linux platform layer of the C++ backend is implemented and tested; its business logic, storage, IPC, and the Electron integration are not.
 
 ## Getting started
 
@@ -23,10 +23,11 @@ The application includes overview, networks, history, settings, simulated update
 npm test
 npm run test:unit
 npm run test:ui
+npm run test:backend
 npm run dist:linux
 ```
 
-UI tests require a graphical session and use temporary user profiles. Linux packaging targets Ubuntu x64 and uses electron-builder plus the system's `dpkg-deb`.
+UI tests require a graphical session and use temporary user profiles. Linux packaging targets Ubuntu x64 and uses electron-builder plus the system's `dpkg-deb`. Backend tests need CMake, a C++20 compiler, and the SQLite development headers (`libsqlite3-dev`); they read `/proc/net/dev` and `nmcli` but never change the machine's network state.
 
 ```bash
 sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
@@ -48,7 +49,7 @@ Output: `dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe`. The unsigned **WiFiMe
 ## Layout
 
 - `apps/desktop/`: shared Electron application, sample data, and tests.
-- `backend/`: responsibilities for the planned C++ backend.
+- `backend/`: C++ backend; the Linux platform layer and its tests are implemented.
 - `contracts/`: current data format and future protocol boundaries.
 - `packaging/linux/`: deb packaging; `packaging/windows/`: native Windows NSIS packaging.
 - `legacy/windows/`: original WPF/PowerShell application, documentation, and tests.
