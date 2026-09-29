@@ -3,6 +3,23 @@
 这份清单只包含**必须由人在 Windows 上确认**的项目。能在开发机上自动验证的部分已经覆盖
 （见 `README.md` 的「自动化验证」一节），这里不重复。
 
+## 先跑自动部分（一条命令）
+
+```powershell
+npm ci --prefix apps/desktop
+npm run test:windows      # 交叉编译测试目标需要 Linux；Windows 上用下面的命令代替
+npm run build:backend     # 构建后端（开发目录）
+npm run dist:windows      # 生成安装包
+node packaging/windows/acceptance.mjs
+```
+
+`acceptance.mjs` 会把机器能验的部分一次跑完：打包产物是否齐全、真机只读自检
+（WLAN API 与 IP Helper 的真实行为）、端到端用例（真子进程 + 真协议 + 真 SQLite）、
+以及真实网卡上的一轮只读采样。它输出「通过 / 跳过 / 失败」三类，退出码非零表示有失败项；
+所有检查都是只读的，不会改动系统网络状态。
+
+下面 6 组是**只能由人在 Windows 上确认**的部分，自动脚本会明确跳过它们。
+
 ## 准备
 
 安装包（含全部最新修复）：
