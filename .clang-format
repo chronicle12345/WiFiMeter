@@ -1,0 +1,90 @@
+BasedOnStyle: Google
+Language: Cpp
+
+# =========================
+# Indentation
+# =========================
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# Do not align wrapped arguments to the opening parenthesis.
+# This avoids very deep indentation for long function names / chained calls.
+AlignAfterOpenBracket: false
+
+# Keep wrapped function arguments / parameters easy to scan.
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackArguments: false
+BinPackParameters: OnePerLine
+
+# =========================
+# Line length
+# =========================
+ColumnLimit: 300
+
+# =========================
+# Braces
+# =========================
+# Functions / classes / control statements use an Allman-like layout,
+# while lambdas keep the opening brace on the signature line.
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterControlStatement: Always
+  AfterEnum: true
+  AfterFunction: true
+  AfterNamespace: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterCaseLabel: true
+  BeforeCatch: true
+  BeforeElse: true
+  BeforeLambdaBody: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+  IndentCaseLabels: true
+  IndentCaseBlocks: false
+
+# Lambda bodies are indented relative to the outer scope instead of the
+# lambda signature, which prevents deeply nested indentation in callbacks.
+LambdaBodyIndentation: OuterScope
+
+# =========================
+# Short statements
+# =========================
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+
+# =========================
+# Pointers / references
+# =========================
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# =========================
+# Classes / namespaces / switch
+# =========================
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: true
+
+# =========================
+# Spacing
+# =========================
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# =========================
+# Includes
+# =========================
+SortIncludes: true
+
+# Keep constructor initializers readable when they wrap.
+PackConstructorInitializers: Never
+ConstructorInitializerIndentWidth: 4
