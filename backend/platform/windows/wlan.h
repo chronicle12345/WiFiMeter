@@ -59,7 +59,10 @@ bool isAssociatedState(bool connected, ConnectionMode mode, std::string_view ssi
 // 接口是否代表“关联在某个网络上”。
 // 仅扫描（discover）与临时网络（adhoc）也会报告连接模式，但不计入流量归属，
 // 因此必须显式排除，而不是只看状态位。
-bool isAssociated(const WlanInterface& interface);
+//
+// 形参不叫 interface：Windows 的 rpc.h 把 interface 定义成 struct 宏，
+// 用了那个名字的头文件会连带把这里改写成语法错误。
+bool isAssociated(const WlanInterface& link);
 
 // 驱动描述优先，为空时退回网卡名称。
 std::string adapterAliasFrom(std::string_view description, std::string_view interfaceId);

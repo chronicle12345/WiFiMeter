@@ -39,9 +39,9 @@ bool isAssociatedState(bool connected, ConnectionMode mode, std::string_view ssi
     return connected && mode == ConnectionMode::profile && !ssid.empty();
 }
 
-bool isAssociated(const WlanInterface& interface)
+bool isAssociated(const WlanInterface& link)
 {
-    return isAssociatedState(interface.connected, interface.mode, interface.ssid.value_or(std::string{}));
+    return isAssociatedState(link.connected, link.mode, link.ssid.value_or(std::string{}));
 }
 
 std::string adapterAliasFrom(std::string_view description, std::string_view interfaceId)
