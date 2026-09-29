@@ -1,17 +1,22 @@
 # C++ 本机后端
 
-此目录用于 Windows/Linux 共用的 C++ 后端。目前实现了 Linux 平台的网络采集、身份识别与断开控制，
-与平台无关的业务规则（用量累计、网络键、额度），以及基于 SQLite 的本地存储；
-`ipc/` 尚未开始，也还没有可执行程序接到 Electron，页面仍由示例数据驱动。
+此目录是 Windows/Linux 共用的 C++ 后端：两个平台的网络采集、身份识别与断开控制，
+与平台无关的业务规则（用量累计、网络键、额度），基于 SQLite 的本地存储，
+以及供 Electron 主进程使用的 JSON 协议与 `wifimeter-backend` 可执行程序。
 
 ## 当前结构
 
 ```text
 platform/network_platform.h   平台无关接口与数据类型
 platform/network_platform.cpp 频段分类等与平台无关的实现
-platform/linux/               Linux 实现
+platform/linux/               Linux 实现（proc/net/dev + nmcli）
+platform/windows/             Windows 实现的判断逻辑（不调用 Win32 API）
+platform/win32/               Windows 系统调用（WLAN API + IP Helper）
 core/                         业务规则：字节格式、本地日历、网络键、用量累计、额度
 storage/                      SQLite 结构与仓储：用量记录、网络与额度、偏好设置、覆盖空档
+ipc/                          协议、服务逻辑与按平台的输入输出循环
+third_party/sqlite/           SQLite 合并源码（Windows 构建使用）
+app/                          可执行程序入口（main.cpp / main_windows.cpp）
 tests/                        单元测试与真实系统只读冒烟测试
 ```
 
@@ -26,7 +31,19 @@ tests/                        单元测试与真实系统只读冒烟测试
 | `linux_network_platform.*` | 组合上述能力，实现 `platform/network_platform.h` |
 | `text_file.*` | 文本文件读取与行尾处理 |
 
-`platform/windows/` 尚未创建：按项目约定，只在真正实现时才新增平台目录与构建目标。
+`platform/windows/` 与 `platform/win32/` 的分工，是 Windows 侧可测试的关键：
+
+| 文件 | 职责 |
+| --- | --- |
+| `platform/windows/text_convert.*` | UTF-16 与 UTF-8 的严格转换（代理对、非法序列） |
+| `platform/windows/interface_counters.*` | 由 IP Helper 的行转换出累计计数 |
+| `platform/windows/wlan.*` | 由 WLAN 状态转换出身份、信号与“是否关联” |
+| `platform/windows/system_api.*` | 系统查询接口与采样编排依赖的数据结构 |
+| `platform/windows/windows_network_platform.*` | 采样与断开的编排（依赖注入，可在任何平台测试） |
+| `platform/win32/wlanapi_query.*` | 真正的系统调用：打开 WLAN 会话、枚举、查询、断开、读计数 |
+
+`platform/windows/` 里的文件不包含任何 Win32 头文件，因此它们的单元测试在 Linux 上原生运行；
+`platform/win32/` 里的代码只做字段搬运与错误码分类，逻辑都在被测试覆盖的那一侧。
 
 ## 业务规则（core/）
 
@@ -144,13 +161,15 @@ tests/                        单元测试与真实系统只读冒烟测试
 
 ## 构建与测试
 
-编译产物进入仓库根目录 `build/`，不提交生成文件。
+编译产物进入仓库根目录 `build/`（Windows 为 `build/windows/`），不提交生成文件。
 
 ```bash
-npm run test:backend
+npm run test:backend     # 本机（Linux）构建并跑 ctest
+npm run test:windows     # 交叉编译 Windows 目标并在 Wine 下运行全部测试
+npm run build:backend:windows
 ```
 
-等价于：
+`test:backend` 等价于：
 
 ```bash
 cmake -S backend -B build
@@ -158,17 +177,24 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-测试包含解析用例（真实 `nmcli` 与 `/proc/net/dev` 输出作为样本）、用临时目录构造的假 sysfs 与假
-`nmcli` 组合用例，以及针对真实系统的只读冒烟检查。真实断开只在身份守卫通过时才可能发生，
-因此自动测试只断言“拒绝断开”的分支，不会改动机器的网络状态。
+测试包含三层：
+
+- **平台无关**：业务规则、存储、协议、以及 Windows 的转换与采样编排（用假系统数据）；
+  这些用例在任何平台上都构建并运行，包括在 Linux 上验证 Windows 目标的编码、时区与位宽问题；
+- **Linux 平台**：用真实 `nmcli` 与 `/proc/net/dev` 输出作为样本，配以临时目录构造的假 sysfs 与假 `nmcli`；
+- **真实系统只读冒烟**：读取当前机器的网卡状态与计数，不断开任何连接。
+  真实断开只在身份守卫通过时才可能发生，因此自动测试只断言“拒绝断开”的分支。
+
+Windows 系统调用（WLAN API、IP Helper）无法在 Linux 上执行，只能交叉编译验证它们能通过编译，
+行为验证放在 Windows 实机（见 `packaging/windows/README.md` 的验收清单）。
 
 ## 尚未完成
 
-- `ipc/`：与 Electron 主进程之间的协议与进程管理，以及后端的可执行程序入口（含数据库路径的确定方式）。
-- Electron 接入：主进程拉起后端、preload 暴露接口、页面数据适配层从示例实现切到真实数据。
-- Windows 平台实现；Windows 上还需要一并解决 SQLite 的获取方式（Linux 用系统库 `libsqlite3-dev`）。
 - 应用级流量统计（界面“应用分布”）：需要按进程归属 socket 流量，成本高，暂缓。
 - 备份与恢复目前只有数据库级备份（`Store::backupTo`），界面需要的“完整备份 / 流量导出”文件格式待定。
-- 每轮采样会启动多个 `nmcli` 子进程（身份识别前后各一次，每张已关联网卡再由扫描结果取信号与频段）；
+- Linux 每轮采样会启动多个 `nmcli` 子进程（身份识别前后各一次，每张已关联网卡再由扫描结果取信号与频段）；
   后续可改为订阅 NetworkManager 的 D-Bus 信号以减少开销。
-- 真实断开需要 polkit 授权；尚未在已关联的网卡上验证过真实断开与复核。
+- Linux 真实断开需要 polkit 授权；尚未在已关联的网卡上验证过真实断开与复核。
+- Windows 的频段报告为未知：Win32 不通过 WLAN API 暴露当前信道，需要额外的
+  原生 Wi-Fi 调用（`wlan_intf_opcode_channel_number` 在部分驱动上才可用）才有数据。
+- Windows 侧尚未在真实无线网卡上验证过断开与自动重连的复核行为。

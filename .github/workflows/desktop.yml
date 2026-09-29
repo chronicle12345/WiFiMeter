@@ -1,0 +1,68 @@
+name: Desktop application tests
+
+# 共享桌面应用与 Windows 交叉编译的验证工作流。
+#
+# 与 windows.yml / release.yml 无关：那两个只负责 legacy/windows 里的旧版应用。
+# 这里在 Linux 上跑两件事：
+#
+#   * C++ 后端：本机构建 + ctest，再交叉编译 Windows 目标并在 Wine 下运行；
+#   * Electron 侧：单元测试（不需要图形会话）。
+#
+# 界面测试（npm run test:ui）需要图形会话与 Electron 的系统库，因此不在 CI 里跑，
+# 只在有桌面的机器上运行。Windows 实机上的安装与界面验收见
+# packaging/windows/README.md 的清单。
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Linux + Windows cross)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ libsqlite3-dev xz-utils
+
+      - name: Build and test the backend natively
+        run: npm run test:backend
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Zig 与便携版 Wine 由脚本下载到 .cross-build/ 并校验 SHA-256，无需预装工具链。
+      - name: Cross-compile for Windows and run the tests under Wine
+        run: npm run test:windows
+
+  desktop:
+    name: Desktop application unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --prefix apps/desktop
+
+      # 只跑不需要图形会话的用例：系统集成、后端客户端、数据与文件操作。
+      - name: Unit tests
+        run: npm run test:unit

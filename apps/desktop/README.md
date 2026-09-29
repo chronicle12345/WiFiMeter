@@ -32,9 +32,15 @@ npm run dist:linux
 
 历史、网络备注、额度与偏好都存在用户数据目录下的 `wifimeter.db`（SQLite）。备份文件标记为 `wifimeter-backend-backup`，恢复前会校验该标记，避免把流量导出文件当成完整备份。
 
-Windows 使用名称 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo` 和独立数据目录 `%APPDATA%\WiFiMeter Demo`，避免覆盖旧版数据。
+Windows 使用名称 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo` 和独立数据目录 `%APPDATA%\WiFiMeter Demo`，避免覆盖旧版数据；后端默认数据库位于 `%LOCALAPPDATA%\WiFiMeter\wifimeter.db`，主进程始终显式传入 `--db`，因此界面与后端用的是同一个文件。
 
-完整备份包含记录、备注、额度和偏好；恢复后采集暂停，避免当前计数差立刻覆盖刚恢复的历史。CSV/JSON 流量导出不能代替完整备份。自启动与托盘开关目前只保存偏好，系统级行为待接入；超额断开由后端核对网络身份后真实执行。
+完整备份包含记录、备注、额度和偏好；恢复后采集暂停，避免当前计数差立刻覆盖刚恢复的历史。CSV/JSON 流量导出不能代替完整备份。自启动与托盘开关会写入系统（Windows 用“启动”目录，Linux 用 `~/.config/autostart`），额度提醒转成系统通知，超额断开由后端核对网络身份后真实执行。
+
+## 后端进程
+
+`electron/backend.cjs` 按平台查找后端可执行文件：`WIFIMETER_BACKEND` 环境变量优先，其次是打包后的 `resources/wifimeter-backend(.exe)`，最后是开发目录 `build/app/`（Linux）或 `build/windows/app/`（Windows）。Windows 上不检查可执行位（该系统没有这个概念）。
+
+后端退出或启动失败时不会让界面永久失联：下一次请求会自动重新拉起。数据库路径始终由主进程显式传给后端，两个进程不会各用一份数据。
 
 ## 测试打包程序
 
@@ -42,6 +48,13 @@ Windows 使用名称 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo` 和独�
 
 ```bash
 WIFIMETER_EXECUTABLE="$PWD/dist/linux/linux-unpacked/wifimeter" npm run test:ui
+```
+
+在 Windows PowerShell 中：
+
+```powershell
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter Demo.exe').Path
+npm run test:ui
 ```
 
 截图和失败时的跟踪文件位于此目录的 `test-results/`。测试使用临时配置目录。
