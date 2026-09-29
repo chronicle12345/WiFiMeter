@@ -5,8 +5,14 @@
 // 这些能力与窗口生命周期耦合，因此集中在一个模块里，主进程只负责在启动、
 // 设置变更与退出时调用 applySettings / dispose。
 //
-// Linux 上没有 Electron 的 setLoginItemSettings（那是 macOS/Windows 的接口），
-// 开机启动按 XDG 约定写 ~/.config/autostart 下的 .desktop 文件。
+// 开机启动按平台分两条路：
+//
+//   * Windows：Electron 的 setLoginItemSettings 在系统的登录启动项里登记，
+//     由系统负责拉起，比自建快捷方式可靠；
+//   * Linux：没有 setLoginItemSettings（那是 macOS/Windows 的接口），
+//     按 XDG 约定写 ~/.config/autostart 下的 .desktop 文件。
+//
+// platform 可显式传入，便于在一种系统上验证另一种系统的分支。
 
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -15,12 +21,25 @@ function autostartFile(home) {
     return path.join(home, '.config', 'autostart', 'wifimeter.desktop');
 }
 
-function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, getWindow, iconPath, logger = () => {} }) {
+function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, getWindow, iconPath, logger = () => {}, platform = process.platform }) {
     let tray = null;
     let settings = { autoStart: false, minimizeToTray: false, notifications: true };
     let quitting = false;
 
-    async function applyAutostart(enabled) {
+    // Windows：登记或取消登录启动项。开发态（未打包）execPath 指向 electron 本体，
+    // 因此把应用目录作为参数带上，登录后仍能加载正确的应用。
+    function applyWindowsAutostart(enabled) {
+        if (typeof app.setLoginItemSettings !== 'function') return false;
+        const options = { openAtLogin: enabled, path: process.execPath };
+        if (app.isPackaged === false) options.args = [path.resolve(__dirname, '..')];
+        app.setLoginItemSettings(options);
+        // 读回系统里的实际状态：组策略或安全软件可能拒绝写入。
+        if (typeof app.getLoginItemSettings !== 'function') return enabled;
+        return Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin);
+    }
+
+    // Linux：写 XDG 自启动文件。
+    async function applyLinuxAutostart(enabled) {
         const file = autostartFile(app.getPath('home'));
         if (!enabled) {
             await fs.rm(file, { force: true });
@@ -38,6 +57,11 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 `);
         return true;
+    }
+
+    async function applyAutostart(enabled) {
+        if (platform === 'win32') return applyWindowsAutostart(enabled);
+        return applyLinuxAutostart(enabled);
     }
 
     function showWindow() {

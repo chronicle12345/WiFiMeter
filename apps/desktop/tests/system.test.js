@@ -93,6 +93,103 @@ test('开机启动写入并移除自启动文件', async () => {
     rmSync(home, { recursive: true, force: true });
 });
 
+test('Windows 开机启动登记到系统登录项并读回实际状态', async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-win-'));
+    const loginItem = { openAtLogin: false };
+    const calls = [];
+    const app = {
+        isPackaged: true,
+        getPath: () => home,
+        quit() {},
+        setLoginItemSettings(options) {
+            calls.push(options);
+            loginItem.openAtLogin = options.openAtLogin;
+        },
+        getLoginItemSettings: () => ({ openAtLogin: loginItem.openAtLogin })
+    };
+
+    const integration = createSystemIntegration({
+        app,
+        Tray: class {},
+        Menu: { buildFromTemplate: template => ({ template }) },
+        Notification: class {
+            static isSupported() {
+                return false;
+            }
+        },
+        nativeImage: { createFromPath: () => ({}) },
+        getWindow: () => null,
+        iconPath: '/tmp/icon.png',
+        platform: 'win32',
+        logger: () => {}
+    });
+
+    const on = await integration.applySettings({ autoStart: true });
+    assert.equal(on.autoStart, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].openAtLogin, true);
+    assert.equal(calls[0].path, process.execPath);
+    assert.equal(calls[0].args, undefined, '打包后不应额外传应用目录');
+
+    const off = await integration.applySettings({ autoStart: false });
+    assert.equal(off.autoStart, false);
+    assert.equal(calls[1].openAtLogin, false);
+
+    rmSync(home, { recursive: true, force: true });
+
+    // 系统拒绝写入（组策略/安全软件）时必须如实回报，而不是假装成功。
+    const rejected = createSystemIntegration({
+        app: { isPackaged: true, getPath: () => home, quit() {}, setLoginItemSettings() {}, getLoginItemSettings: () => ({ openAtLogin: false }) },
+        Tray: class {},
+        Menu: { buildFromTemplate: template => ({ template }) },
+        Notification: class {
+            static isSupported() {
+                return false;
+            }
+        },
+        nativeImage: { createFromPath: () => ({}) },
+        getWindow: () => null,
+        iconPath: '/tmp/icon.png',
+        platform: 'win32',
+        logger: () => {}
+    });
+    const result = await rejected.applySettings({ autoStart: true });
+    assert.equal(result.autoStart, false, '系统没生效时不能报告已开启');
+});
+
+test('开发态的 Windows 开机启动带上应用目录', async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-win-dev-'));
+    const calls = [];
+    const integration = createSystemIntegration({
+        app: {
+            isPackaged: false,
+            getPath: () => home,
+            quit() {},
+            setLoginItemSettings: options => calls.push(options),
+            getLoginItemSettings: () => ({ openAtLogin: true })
+        },
+        Tray: class {},
+        Menu: { buildFromTemplate: template => ({ template }) },
+        Notification: class {
+            static isSupported() {
+                return false;
+            }
+        },
+        nativeImage: { createFromPath: () => ({}) },
+        getWindow: () => null,
+        iconPath: '/tmp/icon.png',
+        platform: 'win32',
+        logger: () => {}
+    });
+
+    await integration.applySettings({ autoStart: true });
+    // 未打包时 execPath 是 electron 本体，登录后要能加载到应用目录。
+    assert.ok(Array.isArray(calls[0].args));
+    assert.match(calls[0].args[0], /apps[\\/]desktop$/);
+
+    rmSync(home, { recursive: true, force: true });
+});
+
 test('托盘按设置创建与销毁，不可用时不影响其他功能', async () => {
     const { home, state, integration } = createFakes();
 
