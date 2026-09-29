@@ -63,10 +63,6 @@ public:
         return {};
     }
 
-    win::QueryResult<std::optional<std::string>> currentProfileName(const std::string&) override
-    {
-        return win::QueryResult<std::optional<std::string>>::success(profileName);
-    }
 };
 
 struct WindowsDriver final : wifimeter::test::SamplingDriver<win::WindowsNetworkPlatform>

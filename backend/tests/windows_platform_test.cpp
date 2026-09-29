@@ -108,10 +108,6 @@ public:
         return disconnectResult;
     }
 
-    QueryResult<std::optional<std::string>> currentProfileName(const std::string&) override
-    {
-        return QueryResult<std::optional<std::string>>::success(std::nullopt);
-    }
 };
 
 // 记录等待次数、不真的睡眠：断开复核的轮询在测试里必须瞬时完成。
@@ -358,10 +354,6 @@ public:
         return {};
     }
 
-    QueryResult<std::optional<std::string>> currentProfileName(const std::string&) override
-    {
-        return QueryResult<std::optional<std::string>>::success(std::nullopt);
-    }
 };
 
 void reportsStatusFailureAfterCounters()

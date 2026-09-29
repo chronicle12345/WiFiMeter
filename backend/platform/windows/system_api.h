@@ -116,9 +116,6 @@ public:
     // 读取所有网卡的累计字节数（含非无线网卡）。
     virtual QueryResult<std::vector<InterfaceCounters>> interfaceCounters() = 0;
 
-    // 当前连接的配置名，断开时要用它指定目标配置；未关联时返回空值。
-    virtual QueryResult<std::optional<std::string>> currentProfileName(const std::string& interfaceId) = 0;
-
 protected:
     SystemApi() = default;
 };

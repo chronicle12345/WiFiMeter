@@ -43,7 +43,6 @@ public:
     QueryResult<std::vector<WlanStatus>> wlanStatuses() override;
     DisconnectCommand requestDisconnect(const std::string& interfaceId) override;
     QueryResult<std::vector<InterfaceCounters>> interfaceCounters() override;
-    QueryResult<std::optional<std::string>> currentProfileName(const std::string& interfaceId) override;
 
 private:
     // 打开 WLAN 会话；失败时返回错误码，detail 由调用方补充。

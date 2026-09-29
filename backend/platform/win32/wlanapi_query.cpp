@@ -210,36 +210,6 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
     return result;
 }
 
-QueryResult<std::optional<std::string>> Win32System::currentProfileName(const std::string& interfaceId)
-{
-    const std::uint32_t code = ensureHandle();
-    if (code != ERROR_SUCCESS)
-    {
-        dropHandle();
-        return QueryResult<std::optional<std::string>>::failed(FailureKind::unavailable, errorDetail("WlanOpenHandle", code));
-    }
-
-    PWLAN_INTERFACE_INFO_LIST list = nullptr;
-    const DWORD enumerated = WlanEnumInterfaces(handle_, nullptr, &list);
-    if (enumerated != ERROR_SUCCESS || list == nullptr)
-        return QueryResult<std::optional<std::string>>::failed(FailureKind::commandFailed, errorDetail("WlanEnumInterfaces", enumerated));
-
-    std::optional<std::string> profileName;
-    for (DWORD index = 0; index < list->dwNumberOfItems; ++index)
-    {
-        const WLAN_INTERFACE_INFO& info = list->InterfaceInfo[index];
-        if (aliasOf(info.InterfaceGuid) != interfaceId)
-            continue;
-        WLAN_CONNECTION_ATTRIBUTES attributes{};
-        if (connectionAttributes(info.InterfaceGuid, attributes))
-            profileName = utf8Of(attributes.strProfileName, WLAN_MAX_NAME_LENGTH);
-        break;
-    }
-
-    WlanFreeMemory(list);
-    return QueryResult<std::optional<std::string>>::success(std::move(profileName));
-}
-
 DisconnectCommand Win32System::requestDisconnect(const std::string& interfaceId)
 {
     DisconnectCommand command;
