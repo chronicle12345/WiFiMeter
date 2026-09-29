@@ -55,20 +55,15 @@ endforeach()
 
 wifimeter_add_test(json_test wifimeter-support)
 
+# 协议与服务层用例都用假的平台实现，不依赖任何系统接口，因此两种平台都能跑。
 set(WIFIMETER_IPC_TESTS
     ipc_messages_test
     ipc_service_test
 )
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    foreach(test_name IN LISTS WIFIMETER_IPC_TESTS)
-        wifimeter_add_test(${test_name} wifimeter-ipc wifimeter-platform-win32)
-    endforeach()
-else()
-    foreach(test_name IN LISTS WIFIMETER_IPC_TESTS)
-        wifimeter_add_test(${test_name} wifimeter-ipc wifimeter-platform-linux)
-    endforeach()
-endif()
+foreach(test_name IN LISTS WIFIMETER_IPC_TESTS)
+    wifimeter_add_test(${test_name} wifimeter-ipc)
+endforeach()
 
 # Linux 平台用例：依赖 /proc、sysfs 与 nmcli 的解析实现。
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -1,15 +1,17 @@
 #pragma once
 
-// 标准输入输出上的事件循环（POSIX 实现）。
+// 标准输入输出上的事件循环（Windows 实现）。
 //
-// 一行一个 JSON 请求，逐行回响应；采样按设置的间隔在同一循环里定时触发，
-// 因此整个后端是单线程的——没有锁，也没有两个线程抢数据库连接的问题。
+// 与 POSIX 版语义相同：一行一个 JSON 请求，逐行回响应，采样按设置的间隔在同一循环里
+// 定时触发，因此整个后端是单线程的。
 //
-// 文件描述符版本：用 poll 同时等待输入到达与下一次采样时间。
-// Windows 上句柄不能这样等待，见同目录的 server_windows.h。
+// 差别只在等待方式：Windows 的管道句柄用 WaitForSingleObject 等待可读，超时值取
+// “下一次采样还有多久”与最大等待时间中的较小者；没有 poll 可用。
 
 #include <chrono>
 #include <string>
+
+#include <windows.h>
 
 #include "../core/local_time.h"
 #include "service.h"
@@ -22,8 +24,8 @@ class StdioServer
 public:
     struct Options
     {
-        int inputFd = 0;
-        int outputFd = 1;
+        HANDLE input = INVALID_HANDLE_VALUE;    // 缺省用标准输入
+        HANDLE output = INVALID_HANDLE_VALUE;   // 缺省用标准输出
         // 单次等待输入的最长时间；采样间隔更短时会用采样间隔。
         std::chrono::milliseconds maxWait{1000};
     };

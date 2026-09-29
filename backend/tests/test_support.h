@@ -179,10 +179,33 @@ inline std::chrono::system_clock::time_point utcTime(int year, int month, int da
 }
 
 // 固定时区，让本地日期断言与运行机器的设置无关。
+//
+// Windows 的 CRT 只认 POSIX 形式的 TZ（如 "UTC"、"GMT-8"），不认 IANA 名称（"Asia/Shanghai"）：
+// 认不出的名字会被当成 UTC 加一个夏令时规则（实测会偏一小时），因此这里把 IANA 名称换掉。
+// 用例只用无夏令时的时区，固定偏移与真实规则一致。
 inline void useTimeZone(const char* name)
 {
 #if defined(_WIN32)
-    ::_putenv_s("TZ", name);
+    const std::string requested(name);
+    std::string zone = "UTC";
+    if (requested != "UTC")
+    {
+        // 已知用例期望的偏移；其他名称退回运行机器的时区（偏差一小时也要如实反映）。
+        int hours = 0;
+        if (requested == "Asia/Shanghai")
+        {
+            hours = 8;
+        }
+        else
+        {
+            long offsetSeconds = 0;
+            ::_get_timezone(&offsetSeconds);
+            hours = static_cast<int>(-offsetSeconds / 3600);
+        }
+        if (hours != 0)
+            zone = std::string("GMT") + (hours > 0 ? "-" : "+") + std::to_string(hours < 0 ? -hours : hours);
+    }
+    ::_putenv_s("TZ", zone.c_str());
     ::_tzset();
 #else
     ::setenv("TZ", name, 1);

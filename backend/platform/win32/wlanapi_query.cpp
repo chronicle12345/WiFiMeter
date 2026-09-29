@@ -1,0 +1,289 @@
+#include "wlanapi_query.h"
+
+#include <algorithm>
+#include <vector>
+
+#include <netioapi.h>
+#include <iphlpapi.h>
+
+#include "../windows/text_convert.h"
+
+namespace wifimeter::platform::windows
+{
+namespace
+{
+
+// WLAN API 与 IP Helper 都通过返回码报告错误，不用 GetLastError 之外的机制。
+std::string errorDetail(const char* call, std::uint32_t code)
+{
+    return std::string(call) + " 失败，错误码 " + std::to_string(code);
+}
+
+// 会话失效与 WLAN 服务未启动都属于“依赖不可用”：前者重新打开会话即可恢复，
+// 后者在服务启动前重试也不会成功，两种都按 unavailable 上报。
+bool isUnavailable(std::uint32_t code)
+{
+    return code == ERROR_INVALID_HANDLE || code == ERROR_SERVICE_NOT_ACTIVE;
+}
+
+// 把定长的 WCHAR 数组转成 u16string，按第一个 NUL 截断。
+std::u16string fromWideBuffer(const WCHAR* text, std::size_t capacity)
+{
+    std::size_t length = 0;
+    while (length < capacity && text[length] != L'\0')
+        ++length;
+    return std::u16string(reinterpret_cast<const char16_t*>(text), length);
+}
+
+std::string utf8Of(const WCHAR* text, std::size_t capacity)
+{
+    return toUtf8(fromWideBuffer(text, capacity));
+}
+
+}  // namespace
+
+Win32System::~Win32System()
+{
+    dropHandle();
+}
+
+void Win32System::dropHandle()
+{
+    if (handle_ != nullptr)
+    {
+        WlanCloseHandle(handle_, nullptr);
+        handle_ = nullptr;
+    }
+}
+
+std::uint32_t Win32System::ensureHandle()
+{
+    if (handle_ != nullptr)
+        return ERROR_SUCCESS;
+
+    DWORD negotiated = 0;
+    HANDLE opened = nullptr;
+    // 客户端版本 2：Windows Vista 及以上，才有 wlan_intf_opcode_current_connection 的完整属性。
+    const DWORD code = WlanOpenHandle(2, nullptr, &negotiated, &opened);
+    if (code != ERROR_SUCCESS)
+    {
+        handle_ = nullptr;
+        return code;
+    }
+    handle_ = opened;
+    negotiatedVersion_ = negotiated;
+    return ERROR_SUCCESS;
+}
+
+std::string Win32System::aliasOf(const GUID& interfaceGuid) const
+{
+    NET_LUID luid{};
+    if (ConvertInterfaceGuidToLuid(&interfaceGuid, &luid) != NO_ERROR)
+        return {};
+
+    wchar_t alias[IF_MAX_STRING_SIZE + 1] = {};
+    // ConvertInterfaceLuidToAlias 的长度单位是字符数。
+    if (ConvertInterfaceLuidToAlias(&luid, alias, IF_MAX_STRING_SIZE + 1) != NO_ERROR)
+        return {};
+    return utf8Of(alias, IF_MAX_STRING_SIZE + 1);
+}
+
+bool Win32System::connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const
+{
+    DWORD size = 0;
+    PVOID data = nullptr;
+    WLAN_OPCODE_VALUE_TYPE valueType{};
+    const DWORD code = WlanQueryInterface(handle_, &interfaceGuid, wlan_intf_opcode_current_connection, nullptr, &size, &data, &valueType);
+    if (code != ERROR_SUCCESS || data == nullptr || size < sizeof(WLAN_CONNECTION_ATTRIBUTES))
+    {
+        if (data != nullptr)
+            WlanFreeMemory(data);
+        return false;
+    }
+    attributes = *static_cast<const WLAN_CONNECTION_ATTRIBUTES*>(data);
+    WlanFreeMemory(data);
+    return true;
+}
+
+QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
+{
+    std::uint32_t code = ensureHandle();
+    if (code != ERROR_SUCCESS)
+    {
+        // WlanOpenHandle 失败通常意味着 WLAN 服务没在运行。
+        dropHandle();
+        return QueryResult<std::vector<WlanStatus>>::failed(FailureKind::unavailable, errorDetail("WlanOpenHandle", code));
+    }
+
+    PWLAN_INTERFACE_INFO_LIST list = nullptr;
+    code = WlanEnumInterfaces(handle_, nullptr, &list);
+    if (code != ERROR_SUCCESS || list == nullptr)
+    {
+        dropHandle();
+        return QueryResult<std::vector<WlanStatus>>::failed(isUnavailable(code) ? FailureKind::unavailable : FailureKind::commandFailed, errorDetail("WlanEnumInterfaces", code));
+    }
+
+    std::vector<WlanStatus> statuses;
+    statuses.reserve(list->dwNumberOfItems);
+    for (DWORD index = 0; index < list->dwNumberOfItems; ++index)
+    {
+        const WLAN_INTERFACE_INFO& info = list->InterfaceInfo[index];
+
+        WlanStatus status;
+        status.interfaceId = aliasOf(info.InterfaceGuid);
+        if (status.interfaceId.empty())
+        {
+            // 少数情况下（例如适配器刚被移除）拿不到别名，用描述兜底，
+            // 至少让上层能看到“有这张网卡”，而不是静默丢弃。
+            status.interfaceId = utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH);
+        }
+
+        WLAN_CONNECTION_ATTRIBUTES attributes{};
+        if (connectionAttributes(info.InterfaceGuid, attributes))
+        {
+            status.connected = attributes.isState == wlan_interface_state_connected;
+            status.mode = connectionModeFrom(static_cast<std::uint32_t>(attributes.wlanConnectionMode));
+            status.profileName = utf8Of(attributes.strProfileName, WLAN_MAX_NAME_LENGTH);
+
+            const DOT11_SSID& ssid = attributes.wlanAssociationAttributes.dot11Ssid;
+            if (ssid.uSSIDLength > 0 && ssid.uSSIDLength <= DOT11_SSID_MAX_LENGTH)
+            {
+                // SSID 是原始字节串，按 UTF-8 解释；非 UTF-8 的字节会变成替换字符，
+                // 但不会丢掉整条记录。
+                const std::u16string units(reinterpret_cast<const char16_t*>(ssid.ucSSID), ssid.uSSIDLength);
+                status.ssid = toUtf8(units);
+            }
+
+            if (status.connected)
+            {
+                status.signalPercent = attributes.wlanAssociationAttributes.wlanSignalQuality > 100 ? std::optional<int>{} : std::optional<int>{static_cast<int>(attributes.wlanAssociationAttributes.wlanSignalQuality)};
+            }
+        }
+        else
+        {
+            // 查不到连接属性（未连接、或查询被拒绝）时按未关联处理：
+            // 状态位可能显示 connected，但没有身份就不能归属流量。
+            status.connected = false;
+            status.mode = ConnectionMode::discover;
+        }
+
+        statuses.push_back(std::move(status));
+    }
+
+    WlanFreeMemory(list);
+    return QueryResult<std::vector<WlanStatus>>::success(std::move(statuses));
+}
+
+QueryResult<std::optional<std::string>> Win32System::currentProfileName(const std::string& interfaceId)
+{
+    const std::uint32_t code = ensureHandle();
+    if (code != ERROR_SUCCESS)
+    {
+        dropHandle();
+        return QueryResult<std::optional<std::string>>::failed(FailureKind::unavailable, errorDetail("WlanOpenHandle", code));
+    }
+
+    PWLAN_INTERFACE_INFO_LIST list = nullptr;
+    const DWORD enumerated = WlanEnumInterfaces(handle_, nullptr, &list);
+    if (enumerated != ERROR_SUCCESS || list == nullptr)
+        return QueryResult<std::optional<std::string>>::failed(FailureKind::commandFailed, errorDetail("WlanEnumInterfaces", enumerated));
+
+    std::optional<std::string> profileName;
+    for (DWORD index = 0; index < list->dwNumberOfItems; ++index)
+    {
+        const WLAN_INTERFACE_INFO& info = list->InterfaceInfo[index];
+        if (aliasOf(info.InterfaceGuid) != interfaceId)
+            continue;
+        WLAN_CONNECTION_ATTRIBUTES attributes{};
+        if (connectionAttributes(info.InterfaceGuid, attributes))
+            profileName = utf8Of(attributes.strProfileName, WLAN_MAX_NAME_LENGTH);
+        break;
+    }
+
+    WlanFreeMemory(list);
+    return QueryResult<std::optional<std::string>>::success(std::move(profileName));
+}
+
+DisconnectCommand Win32System::requestDisconnect(const std::string& interfaceId)
+{
+    DisconnectCommand command;
+
+    const std::uint32_t code = ensureHandle();
+    if (code != ERROR_SUCCESS)
+    {
+        dropHandle();
+        command.failureKind = FailureKind::unavailable;
+        command.detail = errorDetail("WlanOpenHandle", code);
+        return command;
+    }
+
+    PWLAN_INTERFACE_INFO_LIST list = nullptr;
+    const DWORD enumerated = WlanEnumInterfaces(handle_, nullptr, &list);
+    if (enumerated != ERROR_SUCCESS || list == nullptr)
+    {
+        command.failureKind = isUnavailable(enumerated) ? FailureKind::unavailable : FailureKind::commandFailed;
+        command.detail = errorDetail("WlanEnumInterfaces", enumerated);
+        return command;
+    }
+
+    bool found = false;
+    DWORD result = ERROR_NOT_FOUND;
+    for (DWORD index = 0; index < list->dwNumberOfItems; ++index)
+    {
+        const WLAN_INTERFACE_INFO& info = list->InterfaceInfo[index];
+        if (aliasOf(info.InterfaceGuid) != interfaceId)
+            continue;
+        found = true;
+        result = WlanDisconnect(handle_, &info.InterfaceGuid, nullptr);
+        break;
+    }
+    WlanFreeMemory(list);
+
+    if (!found)
+    {
+        // 目标网卡已经不在列表里：等价于“已经不关联”，由编排层复核后按结果分类。
+        command.failureKind = FailureKind::unavailable;
+        command.detail = "WLAN 适配器不在当前接口列表中。";
+        return command;
+    }
+
+    if (result == ERROR_SUCCESS)
+    {
+        command.accepted = true;
+        return command;
+    }
+
+    if (isUnavailable(result))
+        dropHandle();
+    command.failureKind = isUnavailable(result) ? FailureKind::unavailable : FailureKind::commandFailed;
+    command.detail = errorDetail("WlanDisconnect", result);
+    return command;
+}
+
+QueryResult<std::vector<InterfaceCounters>> Win32System::interfaceCounters()
+{
+    PMIB_IF_TABLE2 table = nullptr;
+    const NETIO_STATUS status = GetIfTable2(&table);
+    if (status != NO_ERROR || table == nullptr)
+        return QueryResult<std::vector<InterfaceCounters>>::failed(FailureKind::commandFailed, errorDetail("GetIfTable2", static_cast<std::uint32_t>(status)));
+
+    std::vector<RawInterfaceRow> rows;
+    rows.reserve(table->NumEntries);
+    for (ULONG index = 0; index < table->NumEntries; ++index)
+    {
+        const MIB_IF_ROW2& row = table->Table[index];
+        RawInterfaceRow converted;
+        converted.alias = fromWideBuffer(row.Alias, IF_MAX_STRING_SIZE + 1);
+        converted.description = fromWideBuffer(row.Description, IF_MAX_STRING_SIZE + 1);
+        converted.index = row.InterfaceIndex;
+        converted.type = static_cast<std::uint32_t>(row.Type);
+        converted.rxBytes = row.InOctets;
+        converted.txBytes = row.OutOctets;
+        rows.push_back(std::move(converted));
+    }
+
+    FreeMibTable(table);
+    return QueryResult<std::vector<InterfaceCounters>>::success(countersFromRows(rows));
+}
+
+}  // namespace wifimeter::platform::windows

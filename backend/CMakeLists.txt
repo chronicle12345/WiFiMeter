@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(wifimeter-backend LANGUAGES CXX)
+# C 语言用于仓库内置的 SQLite 合并源码（third_party/sqlite），其余代码都是 C++。
+project(wifimeter-backend LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
