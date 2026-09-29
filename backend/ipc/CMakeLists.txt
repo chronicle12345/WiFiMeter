@@ -17,7 +17,7 @@ add_library(wifimeter-ipc STATIC
 
 target_include_directories(wifimeter-ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wifimeter-ipc PUBLIC wifimeter-storage wifimeter-support wifimeter-core)
-target_compile_options(wifimeter-ipc PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-ipc PRIVATE wifimeter-warnings)
 
 # Windows 实现的头文件里要用 HANDLE 与 WaitForSingleObject，需要目标 Windows 版本定义。
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")

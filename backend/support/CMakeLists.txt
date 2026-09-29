@@ -4,4 +4,4 @@ add_library(wifimeter-support STATIC
 )
 
 target_include_directories(wifimeter-support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(wifimeter-support PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-support PRIVATE wifimeter-warnings)

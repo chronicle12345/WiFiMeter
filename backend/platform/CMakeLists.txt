@@ -12,4 +12,4 @@ add_library(wifimeter-platform STATIC
 # 假数据源依赖 JSON 解析，因此这里公开 support。
 target_link_libraries(wifimeter-platform PUBLIC wifimeter-support)
 target_include_directories(wifimeter-platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_options(wifimeter-platform PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-platform PRIVATE wifimeter-warnings)

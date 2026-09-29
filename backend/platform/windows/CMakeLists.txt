@@ -13,4 +13,4 @@ add_library(wifimeter-platform-windows STATIC
 # 共用接口 network_platform.h 位于上一级 platform/ 目录。
 target_include_directories(wifimeter-platform-windows PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(wifimeter-platform-windows PUBLIC wifimeter-platform)
-target_compile_options(wifimeter-platform-windows PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-platform-windows PRIVATE wifimeter-warnings)

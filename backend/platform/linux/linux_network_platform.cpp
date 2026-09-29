@@ -34,11 +34,6 @@ std::string ssidOf(const WifiLink* link)
     return *link->identity.ssid;
 }
 
-bool isAssociated(const WifiLink& link)
-{
-    return link.identity.associated();
-}
-
 }  // namespace
 
 LinuxNetworkPlatform::LinuxNetworkPlatform()

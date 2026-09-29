@@ -16,7 +16,7 @@ endif()
 add_executable(wifimeter-backend ${WIFIMETER_MAIN_SOURCE})
 
 target_link_libraries(wifimeter-backend PRIVATE wifimeter-ipc ${WIFIMETER_PLATFORM_LIBRARY})
-target_compile_options(wifimeter-backend PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-backend PRIVATE wifimeter-warnings)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # 静态链接运行库：安装包里不必再附带 libstdc++-6.dll / libgcc_s_seh-1.dll。

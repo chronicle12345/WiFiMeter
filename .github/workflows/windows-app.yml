@@ -1,0 +1,78 @@
+name: Windows native build and tests
+
+# 验证 Windows 本机构建路径：MSVC + 本机 CMake + Node，即用户在 Windows 机器上
+# `npm run dist:windows` 会走的那条路。
+#
+# 为什么单独一个工作流：desktop.yml 在 Linux 上跑的是交叉编译（Zig + Wine），验证的是
+# 目标平台的行为；这里验证的是**工具链与构建脚本**，两者覆盖的问题不同——
+# 例如 MSVC 的告警、Zig 未覆盖的编译分支、Windows 上的 npm 脚本与 electron-builder。
+#
+# 也顺带把 desktop.yml 里跳过的界面测试真正跑一遍（Windows 有图形会话）。
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (MSVC)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure and build the backend
+        run: |
+          cmake -S backend -B build/windows -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/windows --target wifimeter-backend --config Release
+
+      - name: Build the test targets
+        # 交叉编译脚本在 Linux 上会把测试目标也编出来；Windows 上由这个工作流负责，
+        # 否则 MSVC 下的测试代码永远不会被编译到。
+        run: cmake --build build/windows --config Release
+
+      - name: Run the tests
+        # 用 ctest 而不是逐个跑：测试目标是否被正确注册、名字是否对得上，这里一起验证。
+        # 后端可执行文件、假数据源与临时目录都在这一步真实运行。
+        run: ctest --test-dir build/windows --output-on-failure -C Release
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-backend-test-logs
+          path: build/windows/Testing/
+          if-no-files-found: ignore
+
+  desktop:
+    name: Desktop application (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --prefix apps/desktop
+
+      - name: Build the backend
+        run: npm run build:backend
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Windows 有图形会话，界面测试可以直接跑；它用夹具的网卡数据驱动真实后端，
+      # 不会改动机器的网络状态。
+      - name: Interface tests
+        run: npm run test:ui

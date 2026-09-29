@@ -109,7 +109,9 @@ std::string isoUtcOf(std::chrono::system_clock::time_point at)
 #else
     gmtime_r(&seconds, &time);
 #endif
-    char buffer[32] = {};
+    // 40 字节：正常年份是 20 个字符，但 tm_year 理论上没有上限，
+    // 留出富余可以让编译器不必怀疑被截断（-Wformat-truncation）。
+    char buffer[40] = {};
     std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02dZ", time.tm_year + 1900, time.tm_mon + 1, time.tm_mday, time.tm_hour, time.tm_min, time.tm_sec);
     return buffer;
 }

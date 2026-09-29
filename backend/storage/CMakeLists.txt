@@ -30,7 +30,7 @@ add_library(wifimeter-storage STATIC
 
 target_include_directories(wifimeter-storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(wifimeter-storage PUBLIC wifimeter-core)
-target_compile_options(wifimeter-storage PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(wifimeter-storage PRIVATE wifimeter-warnings)
 
 if(WIFIMETER_USE_BUNDLED_SQLITE)
     message(STATUS "存储层使用仓库内置的 SQLite 合并源码。")
