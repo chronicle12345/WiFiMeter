@@ -40,12 +40,12 @@ const icons = {
 const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.wifi}</svg>`;
 const productName = window.desktop.appName;
 $('.brand-name').textContent = productName;
-const store = createDataClient(localStorage);
+// 数据来自本机后端进程；snapshot 是同一个对象，客户端收到事件后就地更新。
+const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:showAlert});
 let data=store.snapshot;
-let storageFailed=store.storageFailed;
+let storageFailed=false;
 const ui={page:['overview','networks','history','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),networkId:'all',search:'',sort:'total',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
 let samplerTimer=null,lastTick=performance.now(),settingsDirty=false;
-function persist(){store.persist();storageFailed=store.storageFailed;}
 function fmt(bytes,precision=2){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes,p=2){return `${fmt(bytes,p)} ${data.settings.unit}`;}
 function speed(bytes){const divisor=data.settings.speedUnit==='Mbps'?125000:1000000;return (Number(B(bytes))/divisor).toFixed(2);}
@@ -102,18 +102,18 @@ function renderChrome(){
  $('#brandMark').innerHTML=icon('wifi');
  $('#nav').innerHTML=[['overview','overview','总览'],['networks','wifi','网络'],['history','history','历史'],['settings','settings','设置']].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join('');
  const running=data.live.collector==='running'&&data.live.state!=='offline',paused=data.live.collector==='paused';
- $('#collector').innerHTML=`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?'统计已暂停':running?'模拟器运行中':'采集器未就绪'}</span></div><div class="collector-sub">演示模式 · ${data.settings.interval} 秒采样<br>${paused?'历史记录仍可查看':'按网络独立累计'}</div>${button('pause',paused?'恢复统计':'暂停统计',paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`;
- $('#sidebarFooter').innerHTML=icon('shield')+`<span>演示记录保存在本机</span>`;
- $('#pageHead').innerHTML=`<div><div class="breadcrumbs">工作台 / ${{overview:'总览',networks:'网络',history:'历史',settings:'设置'}[ui.page]}</div><h1>${title}</h1><p class="page-description">${description}</p></div><div class="head-actions"><button class="icon-btn help-btn" aria-label="统计口径与帮助" data-action="help">${icon('help')}</button><button class="demo-pill" data-action="demo">${icon('info')}演示数据</button>${button('export','导出数据','export','primary')}</div>`;
+ $('#collector').innerHTML=`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?'统计已暂停':running?'正在采集':'采集器未就绪'}</span></div><div class="collector-sub">每 ${data.settings.interval} 秒采样 · SQLite 落盘<br>${paused?'历史记录仍可查看':'按网络独立累计'}</div>${button('pause',paused?'恢复统计':'暂停统计',paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`;
+ $('#sidebarFooter').innerHTML=icon('shield')+`<span>记录保存在本机数据库</span>`;
+ $('#pageHead').innerHTML=`<div><div class="breadcrumbs">工作台 / ${{overview:'总览',networks:'网络',history:'历史',settings:'设置'}[ui.page]}</div><h1>${title}</h1><p class="page-description">${description}</p></div><div class="head-actions"><button class="icon-btn help-btn" aria-label="统计口径与帮助" data-action="help">${icon('help')}</button><button class="demo-pill" data-action="demo">${icon('info')}采集状态</button>${button('export','导出数据','export','primary')}</div>`;
  const time=new Date(data.live.updatedAt).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
- $('#footer').innerHTML=`<div>${icon('shield')}桌面演示版 · 示例数据<span>·</span>${storageFailed?'应用存储不可用，请导出备份':`更新于 ${esc(time)}`}</div><div class="footer-secondary">${esc(productName)} / Desktop<span>·</span>上传与下载分别统计</div>`;
+ $('#footer').innerHTML=`<div>${icon('shield')}本机采集 · 数据存于本机数据库<span>·</span>${storageFailed?'无法连接采集后端，请检查状态':`更新于 ${esc(time)}`}</div><div class="footer-secondary">${esc(productName)} / Desktop<span>·</span>上传与下载分别统计</div>`;
 }
 function connectionPanel(){
  const c=getConnection(),n=c?getNetwork(c.networkId):null,state=data.live.state;
- if(state==='loading')return `<div class="connection"><div class="connection-icon">${icon('clock')}</div><div><div class="connection-title">等待本机采集器</div><div class="connection-details">正在加载演示数据。</div></div>${button('demo','查看状态','reset','','style="margin-left:auto"')}</div>`;
+ if(state==='loading')return `<div class="connection"><div class="connection-icon">${icon('clock')}</div><div><div class="connection-title">等待本机采集器</div><div class="connection-details">正在连接本机采集后端。</div></div>${button('demo','查看状态','reset','','style="margin-left:auto"')}</div>`;
  if(state==='permission')return `<div class="connection warn"><div class="connection-icon">${icon('shield')}</div><div><div class="connection-title">无法读取 Wi-Fi 名称</div><div class="connection-details">网络身份权限不足 · 未识别流量不会记到上一个 Wi-Fi</div></div>${button('permission-help','处理方式','arrow','','style="margin-left:auto"')}</div>`;
- if(state==='offline'||data.live.collector==='offline')return `<div class="connection error"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">采集器暂未响应</div><div class="connection-details">下方为最后保存的记录，不代表当前实时状态。</div></div>${button('demo','检查状态','reset','','style="margin-left:auto"')}</div>`;
- if(state==='disconnected'||!c)return `<div class="connection"><div class="connection-icon">${icon('offline')}</div><div><div class="connection-title">尚未连接 Wi-Fi</div><div class="connection-details">历史记录仍可查看；重新连接后，从新的基线开始统计。</div></div>${button('demo','查看连接','arrow','','style="margin-left:auto"')}</div>`;
+ if(state==='offline'||data.live.collector==='offline')return `<div class="connection error"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">采集器暂未响应</div><div class="connection-details">下方为已保存的记录，不代表当前实时状态。</div></div>${button('demo','检查状态','reset','','style="margin-left:auto"')}</div>`;
+ if(state==='disconnected'||!c)return `<div class="connection"><div class="connection-icon">${icon('offline')}</div><div><div class="connection-title">尚未连接 Wi-Fi</div><div class="connection-details">历史记录仍可查看；重新连接后从新的基线开始统计。</div></div>${button('demo','查看连接','arrow','','style="margin-left:auto"')}</div>`;
  const paused=data.live.collector==='paused',more=data.live.connections.length-1;
  return `<div class="connection"><div class="connection-icon">${icon('wifi')}</div><div><div class="connection-title">${esc(networkName(n))}<span class="pill"><i class="dot"></i>已连接</span>${more?`<button class="pill gray" data-action="connections">+${more} 张网卡</button>`:''}</div><div class="connection-details"><span>${esc(n.ssid)}</span><span class="divider-dot">/</span><span>${esc(c.band)}</span><span class="divider-dot">/</span><span>信号 ${c.signal}%</span>${paused?'<span class="pill warn">统计已暂停</span>':''}</div></div><div class="connection-right"><div class="rate"><div class="rate-label">${icon('down')}当前下载</div><div class="rate-value num"><b data-live-rx style="font-weight:inherit">${paused?'—':speed(c.rxPerSecond)}</b><span>${data.settings.speedUnit}</span></div></div><div class="rate"><div class="rate-label">${icon('up')}当前上传</div><div class="rate-value num"><b data-live-tx style="font-weight:inherit">${paused?'—':speed(c.txPerSecond)}</b><span>${data.settings.speedUnit}</span></div></div><button class="icon-btn" aria-label="查看当前网络详情" data-action="detail" data-id="${n.id}">${icon('arrow')}</button></div></div>`;
 }
@@ -135,12 +135,12 @@ function overview(){return `${toolbar()}${connectionPanel()}${metrics()}<div cla
 function networksPage(){return `${toolbar()}<section class="panel table-panel"><div class="filter-line"><label class="search-box">${icon('search')}<input id="networkSearch" type="search" placeholder="搜索网络备注或 SSID" value="${esc(ui.search)}" aria-label="搜索网络"></label><div class="flex gap12"><span class="small muted">共 ${data.networks.length} 个网络</span><label><span class="sr-only">网络排序</span><select id="networkSort" class="select compact">${option('total','按用量排序',ui.sort)}${option('name','按名称排序',ui.sort)}${option('connected','已连接优先',ui.sort)}</select></label></div></div><div id="networkTableRegion">${networkTable(true)}</div></section><div class="note-box" style="margin-top:18px">${icon('info')}<div>网络名称可添加备注，原始 SSID 不会被修改。同名 SSID 的身份合并由采集器决定；网卡信息在详情中查看。额度始终使用自己的日 / 月周期，不随页面筛选变化。</div></div>`;}
 function historyPage(){
  const days=groupedDays(),all=totalOf(selectedRows()),max=days.reduce((m,x)=>x.rx+x.tx>m.rx+m.tx?x:m,{date:'',rx:0n,tx:0n}),average=days.length?all.total/BigInt(days.length):0n,pages=Math.max(1,Math.ceil(days.length/10));ui.historyPage=Math.min(ui.historyPage,pages);const sliced=days.slice().reverse().slice((ui.historyPage-1)*10,ui.historyPage*10);
- return `${toolbar()}<div class="history-top"><div class="panel history-stat"><div class="metric-title">${periodName()}总用量</div><div class="metric-number">${days.length?fmt(all.total):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">有记录的日期：${days.length} 天</div></div><div class="panel history-stat"><div class="metric-title">日均用量</div><div class="metric-number">${days.length?fmt(average):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">仅按有记录的日期计算</div></div><div class="panel history-stat"><div class="metric-title">单日最高用量</div><div class="metric-number">${days.length?fmt(max.rx+max.tx):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">${max.date?niceDate(max.date):'暂无记录'}</div></div></div>${trendPanel()}<section class="panel table-panel" style="margin-top:18px"><div class="panel-head"><div><h2>每日明细</h2><div class="panel-sub">演示采样记录 · 日期按本地时间归档</div></div><button class="link-btn" data-action="export">导出所选记录 ${icon('export')}</button></div>${days.length?`<div class="table-scroll"><table><thead><tr><th>日期</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th><th>记录说明</th></tr></thead><tbody>${sliced.map(d=>`<tr><td>${d.date}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td><td class="right strong">${fmtWithUnit(d.rx+d.tx)}</td><td><span class="pill ${d.date===today()?'warn':'gray'}">${d.date===today()?'当日未结束':'已保存记录'}</span></td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>共 ${days.length} 天 · 每页 10 条</span><div class="flex gap8">${button('history-prev','上一页','','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next','下一页','','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty('所选时段没有记录','更换日期或网络试试；缺失记录不会被当作零流量。')}</section>`;
+ return `${toolbar()}<div class="history-top"><div class="panel history-stat"><div class="metric-title">${periodName()}总用量</div><div class="metric-number">${days.length?fmt(all.total):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">有记录的日期：${days.length} 天</div></div><div class="panel history-stat"><div class="metric-title">日均用量</div><div class="metric-number">${days.length?fmt(average):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">仅按有记录的日期计算</div></div><div class="panel history-stat"><div class="metric-title">单日最高用量</div><div class="metric-number">${days.length?fmt(max.rx+max.tx):'—'}<span>${data.settings.unit}</span></div><div class="metric-note">${max.date?niceDate(max.date):'暂无记录'}</div></div></div>${trendPanel()}<section class="panel table-panel" style="margin-top:18px"><div class="panel-head"><div><h2>每日明细</h2><div class="panel-sub">本机采集 · 日期按本地时间归档</div></div><button class="link-btn" data-action="export">导出所选记录 ${icon('export')}</button></div>${days.length?`<div class="table-scroll"><table><thead><tr><th>日期</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th><th>记录说明</th></tr></thead><tbody>${sliced.map(d=>`<tr><td>${d.date}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td><td class="right strong">${fmtWithUnit(d.rx+d.tx)}</td><td><span class="pill ${d.date===today()?'warn':'gray'}">${d.date===today()?'当日未结束':'已保存记录'}</span></td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>共 ${days.length} 天 · 每页 10 条</span><div class="flex gap8">${button('history-prev','上一页','','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next','下一页','','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty('所选时段没有记录','更换日期或网络试试；缺失记录不会被当作零流量。')}</section>`;
 }
 function settingsPage(){
  const s=data.settings;
  const row=(title,desc,control)=>`<div class="setting-row"><div><div class="setting-title">${title}</div><div class="setting-desc">${desc}</div></div>${control}</div>`;
- return `<div class="settings-layout"><form class="settings-main" id="settingsForm"><section class="panel settings-group"><div class="panel-head"><div><h2>启动与采集</h2><div class="panel-sub">演示版只保存偏好，不会修改系统设置</div></div></div>${row('登录时自动启动（演示）','仅保存偏好，本版不会配置自启动。',toggle('autoStart',s.autoStart,'登录时自动启动'))}${row('关闭窗口时最小化到托盘（演示）','仅保存偏好，本版关闭窗口即退出。',toggle('minimizeToTray',s.minimizeToTray,'关闭窗口时最小化到托盘'))}${row('采样间隔','控制示例数据刷新频率，不读取真实网卡。',`<select class="select compact" name="interval" aria-label="采样间隔">${[2,5,10].map(v=>option(v,`${v} 秒`,s.interval)).join('')}</select>`)}</section><section class="panel settings-group"><div class="panel-head"><h2>显示与提醒</h2></div>${row('流量显示单位','GB = 10⁹ 字节；GiB = 2³⁰ 字节。',`<select class="select compact" name="unit" aria-label="流量显示单位">${option('GB','GB · 十进制',s.unit)}${option('GiB','GiB · 二进制',s.unit)}</select>`)}${row('实时速度单位','MB/s 是字节速率；Mbps 是比特速率。',`<select class="select compact" name="speedUnit" aria-label="实时速度单位">${option('MB/s','MB/s',s.speedUnit)}${option('Mbps','Mbps',s.speedUnit)}</select>`)}${row('允许额度提醒','各网络分别设置提醒阈值；默认不自动断网。',toggle('notifications',s.notifications,'允许额度提醒'))}</section><section class="panel settings-group"><div class="panel-head"><h2>数据与存储</h2></div>${row('历史保留时长','缩短保留期前会再次确认；建议先导出备份。',`<select class="select compact" name="retention" aria-label="历史保留时长">${option(30,'最近 30 天',s.retention)}${option(90,'最近 90 天',s.retention)}${option(365,'最近 365 天',s.retention)}${option(0,'长期保留',s.retention)}</select>`)}${row('数据备份','完整备份包含网络备注、额度及记录，不含 Wi-Fi 密码。',`<div class="settings-actions">${button('backup','备份','export','small-btn','type="button"')}${button('restore','恢复','upload','small-btn','type="button"')}</div>`)}${row('清空历史记录','只清除用量记录，保留网络备注与偏好设置。',button('clear-records','清空记录','trash','small-btn','type="button"'))}</section><div class="save-bar"><span id="settingsSaveHint">更改后点击保存，防止误操作。</span><div class="flex gap8">${button('discard-settings','取消更改','','','type="button"')}<button type="submit" class="btn primary">${icon('check')}保存设置</button></div></div></form><aside class="panel settings-aside"><h3>安静运行，清楚记录</h3><div class="check-row">${icon('shield')}<span>网络记录与提醒规则保存在本机，不需要账号。</span></div><div class="check-row">${icon('wifi')}<span>按 Wi-Fi 归属流量，不将未知区间强行计入某个网络。</span></div><div class="check-row">${icon('database')}<span>历史总量与应用统计独立展示，避免相加造成重复。</span></div><div class="check-row">${icon('bell')}<span>超额默认只提醒。自动断网须在网络详情里明确开启。</span></div><div class="note-box" style="padding:12px;font-size:10px">当前是演示版。开机启动、托盘、系统通知和真实断网需接入后端。</div></aside></div>`;
+ return `<div class="settings-layout"><form class="settings-main" id="settingsForm"><section class="panel settings-group"><div class="panel-head"><div><h2>启动与采集</h2><div class="panel-sub">系统级开关会随系统设置生效</div></div></div>${row('登录时自动启动','由系统级设置决定是否随登录启动采集。',toggle('autoStart',s.autoStart,'登录时自动启动'))}${row('关闭窗口时最小化到托盘','开启后关闭窗口不退出采集。',toggle('minimizeToTray',s.minimizeToTray,'关闭窗口时最小化到托盘'))}${row('采样间隔','后端按此间隔读取网卡计数器。',`<select class="select compact" name="interval" aria-label="采样间隔">${[2,5,10].map(v=>option(v,`${v} 秒`,s.interval)).join('')}</select>`)}</section><section class="panel settings-group"><div class="panel-head"><h2>显示与提醒</h2></div>${row('流量显示单位','GB = 10⁹ 字节；GiB = 2³⁰ 字节。',`<select class="select compact" name="unit" aria-label="流量显示单位">${option('GB','GB · 十进制',s.unit)}${option('GiB','GiB · 二进制',s.unit)}</select>`)}${row('实时速度单位','MB/s 是字节速率；Mbps 是比特速率。',`<select class="select compact" name="speedUnit" aria-label="实时速度单位">${option('MB/s','MB/s',s.speedUnit)}${option('Mbps','Mbps',s.speedUnit)}</select>`)}${row('允许额度提醒','各网络分别设置提醒阈值；默认不自动断网。',toggle('notifications',s.notifications,'允许额度提醒'))}</section><section class="panel settings-group"><div class="panel-head"><h2>数据与存储</h2></div>${row('历史保留时长','缩短保留期前会再次确认；建议先导出备份。',`<select class="select compact" name="retention" aria-label="历史保留时长">${option(30,'最近 30 天',s.retention)}${option(90,'最近 90 天',s.retention)}${option(365,'最近 365 天',s.retention)}${option(0,'长期保留',s.retention)}</select>`)}${row('数据备份','完整备份包含网络备注、额度及记录，不含 Wi-Fi 密码。',`<div class="settings-actions">${button('backup','备份','export','small-btn','type="button"')}${button('restore','恢复','upload','small-btn','type="button"')}</div>`)}${row('清空历史记录','只清除用量记录，保留网络备注与偏好设置。',button('clear-records','清空记录','trash','small-btn','type="button"'))}</section><div class="save-bar"><span id="settingsSaveHint">更改后点击保存，防止误操作。</span><div class="flex gap8">${button('discard-settings','取消更改','','','type="button"')}<button type="submit" class="btn primary">${icon('check')}保存设置</button></div></div></form><aside class="panel settings-aside"><h3>安静运行，清楚记录</h3><div class="check-row">${icon('shield')}<span>网络记录与提醒规则保存在本机，不需要账号。</span></div><div class="check-row">${icon('wifi')}<span>按 Wi-Fi 归属流量，不将未知区间强行计入某个网络。</span></div><div class="check-row">${icon('database')}<span>历史总量与应用统计独立展示，避免相加造成重复。</span></div><div class="check-row">${icon('bell')}<span>超额默认只提醒。自动断网须在网络详情里明确开启。</span></div><div class="note-box" style="padding:12px;font-size:10px">历史、额度与偏好都保存在本机数据库。开机启动与托盘属于系统级设置。</div></aside></div>`;
 }
 function renderMain(){
  renderChrome();
@@ -173,16 +173,16 @@ function drawerApps(n){
  const {start,end}=getRange(),rows=data.appRecords.filter(r=>r.networkId===n.id&&r.date>=start&&r.date<=end),m=new Map();
  for(const r of rows){const a=m.get(r.appId)||{id:r.appId,name:r.name,rx:0n,tx:0n};a.rx+=B(r.rxBytes);a.tx+=B(r.txBytes);m.set(r.appId,a);}
  const list=[...m.values()].sort((a,b)=>a.rx+a.tx>b.rx+b.tx?-1:a.rx+a.tx<b.rx+b.tx?1:0),sum=list.reduce((s,a)=>s+a.rx+a.tx,0n);
- return `<div class="source-tag">${icon('info')}模拟应用记录 · 独立数据源</div><div class="note-box">${icon('info')}<div>应用用量不与网卡总量相加。统计来源和更新时间不同，两者可能不一致。空结果表示暂无记录，不代表应用没有联网。</div></div><div class="drawer-total"><div class="small muted">${periodName()} · 应用记录合计</div><div class="metric-number">${list.length?fmt(sum):'—'}<span>${data.settings.unit}</span></div></div>${list.length?list.map((a,i)=>`<div class="app-row"><div class="app-avatar">${esc(a.name.slice(0,1))}</div><div style="flex:1;min-width:0"><div class="app-name">${esc(a.name)}</div><div class="app-source">${esc(a.id)}</div><div class="progress"><span style="width:${sum?Number(a.rx+a.tx)*100/Number(sum):0}%;background:${i===0?'var(--accent)':'var(--chart-rx)'}"></span></div></div><div class="app-value num">${fmtWithUnit(a.rx+a.tx)}<div class="tiny muted" style="margin-top:5px">↓ ${fmt(a.rx)} / ↑ ${fmt(a.tx)}</div></div></div>`).join(''):empty('暂无应用记录','所选时间范围内没有应用示例记录。')}<div class="field-hint" style="margin-top:20px">本页为应用统计的界面示例，并未读取本机进程。</div>`;
+ if(!list.length)return `<div class="source-tag">${icon('info')}尚未采集</div>${empty('应用级流量尚未采集','按进程归属流量需要额外的系统能力，当前版本只统计网卡总量。')}<div class="note-box" style="margin-top:16px">${icon('info')}<div>网卡总量不受影响：下方网络详情与历史记录都来自真实采集。应用分布会在实现按进程统计后填充。</div></div>`;
 }
 function drawerSettings(n){
- return `<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"><div class="field-hint">仅用于显示；原始 SSID 为 ${esc(n.ssid)}。</div></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="100000" step="0.01"><span>GB</span></div><div class="field-hint">固定十进制 GB；留空或 0 表示不设额度。</div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month','每自然月',n.quotaPeriod)}${option('day','每天',n.quotaPeriod)}</select><div class="field-hint">按本地日期重置，不随页面筛选变化。</div></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div><div class="setting-desc">此网络的提醒还受全局提醒开关控制。</div></div>${toggle('notify',n.notify,'接近额度时提醒')}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><select class="input" id="warnPercent" name="warnPercent">${[50,75,80,90,95,100].map(v=>option(v,`已用额度的 ${v}%`,n.warnPercent)).join('')}${![50,75,80,90,95,100].includes(n.warnPercent)?option(n.warnPercent,`已用额度的 ${n.warnPercent}%`,n.warnPercent):''}</select></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div><div class="setting-desc">演示开关，只模拟断开状态，不影响真实网络。</div></div>${toggle('autoDisconnect',n.autoDisconnect,'达到额度后自动断开')}</div><div class="note-box warn" style="margin:18px 0">${icon('alert')}<div>此版本只演示规则，不会断开电脑的真实 Wi-Fi。正式版由后端核对网卡与网络身份后执行。</div></div><div class="form-error" id="networkFormError" role="alert"></div><button class="btn primary" type="submit" style="width:100%">${icon('check')}保存网络设置</button></form>`;
+ return `<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"><div class="field-hint">仅用于显示；原始 SSID 为 ${esc(n.ssid)}。</div></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="100000" step="0.01"><span>GB</span></div><div class="field-hint">固定十进制 GB；留空或 0 表示不设额度。</div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month','每自然月',n.quotaPeriod)}${option('day','每天',n.quotaPeriod)}</select><div class="field-hint">按本地日期重置，不随页面筛选变化。</div></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div><div class="setting-desc">此网络的提醒还受全局提醒开关控制。</div></div>${toggle('notify',n.notify,'接近额度时提醒')}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><select class="input" id="warnPercent" name="warnPercent">${[50,75,80,90,95,100].map(v=>option(v,`已用额度的 ${v}%`,n.warnPercent)).join('')}${![50,75,80,90,95,100].includes(n.warnPercent)?option(n.warnPercent,`已用额度的 ${n.warnPercent}%`,n.warnPercent):''}</select></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div><div class="setting-desc">达到额度后由后端核对网络身份并断开当前连接。</div></div>${toggle('autoDisconnect',n.autoDisconnect,'达到额度后自动断开')}</div><div class="note-box warn" style="margin:18px 0">${icon('alert')}<div>达到额度后，后端会先确认当前连接的正是这个网络，再执行断开并复核结果。</div></div><div class="form-error" id="networkFormError" role="alert"></div><button class="btn primary" type="submit" style="width:100%">${icon('check')}保存网络设置</button></form>`;
 }
 function renderDrawer(){
  if(!ui.drawer){$('#drawerRoot').innerHTML='';return;}
  const n=getNetwork(ui.drawer.id);if(!n){closeDrawer();return;}
  const tab=ui.drawer.tab;
- $('#drawerRoot').innerHTML=`<div class="backdrop" data-action="close-drawer"></div><section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle"><header class="drawer-head"><div class="between"><div class="flex gap8"><h2 id="drawerTitle">${esc(networkName(n))}</h2>${isConnected(n.id)?'<span class="pill"><i class="dot"></i>已连接</span>':''}</div><button class="icon-btn" data-action="close-drawer" id="closeDrawer" aria-label="关闭网络详情">${icon('close')}</button></div><div class="drawer-sub"><span>SSID · ${esc(n.ssid)}</span><button class="icon-btn small-icon" data-action="copy-ssid" data-id="${n.id}" aria-label="复制 SSID">${icon('copy')}</button></div></header><div class="drawer-tabs" role="tablist" aria-label="网络详情分类">${[['usage','用量明细'],['apps','应用分布'],['settings','网络设置']].map(([id,label])=>`<button class="drawer-tab ${tab===id?'active':''}" role="tab" aria-selected="${tab===id}" data-action="drawer-tab" data-tab="${id}">${label}</button>`).join('')}</div><div class="drawer-content" role="tabpanel">${tab==='usage'?drawerUsage(n):tab==='apps'?drawerApps(n):drawerSettings(n)}</div><footer class="drawer-footer">演示数据 · 未连接原生采集器 · 网络身份不受备注更改影响</footer></section>`;
+ $('#drawerRoot').innerHTML=`<div class="backdrop" data-action="close-drawer"></div><section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle"><header class="drawer-head"><div class="between"><div class="flex gap8"><h2 id="drawerTitle">${esc(networkName(n))}</h2>${isConnected(n.id)?'<span class="pill"><i class="dot"></i>已连接</span>':''}</div><button class="icon-btn" data-action="close-drawer" id="closeDrawer" aria-label="关闭网络详情">${icon('close')}</button></div><div class="drawer-sub"><span>SSID · ${esc(n.ssid)}</span><button class="icon-btn small-icon" data-action="copy-ssid" data-id="${n.id}" aria-label="复制 SSID">${icon('copy')}</button></div></header><div class="drawer-tabs" role="tablist" aria-label="网络详情分类">${[['usage','用量明细'],['apps','应用分布'],['settings','网络设置']].map(([id,label])=>`<button class="drawer-tab ${tab===id?'active':''}" role="tab" aria-selected="${tab===id}" data-action="drawer-tab" data-tab="${id}">${label}</button>`).join('')}</div><div class="drawer-content" role="tabpanel">${tab==='usage'?drawerUsage(n):tab==='apps'?drawerApps(n):drawerSettings(n)}</div><footer class="drawer-footer">数据来自本机采集 · 网络身份不受备注更改影响</footer></section>`;
  syncInert();
 }
 let modalReturnFocus=null;
@@ -202,14 +202,14 @@ function exportModal(networkId=null){
  showModal('导出流量记录',`<p class="modal-desc">导出当前筛选范围内的本机记录。包含原始字节数，便于后续核对。</p><form id="exportForm"><div class="field"><label for="exportNetwork">网络范围</label><select id="exportNetwork" class="input" name="networkId">${networkOptions(id)}</select></div><div class="field-row"><div class="field"><label for="exportStart">开始日期</label><input class="input" id="exportStart" name="start" type="date" value="${getRange().start}" required></div><div class="field"><label for="exportEnd">结束日期</label><input class="input" id="exportEnd" name="end" type="date" value="${getRange().end}" max="${today()}" required></div></div><div class="field"><label for="exportFormat">文件格式</label><select class="input" id="exportFormat" name="format">${option('csv','CSV · 可用表格软件打开','csv')}${option('json','JSON · 精确字节数','csv')}</select></div><div class="form-error" id="exportError" role="alert"></div><div class="modal-actions">${button('close-modal','取消','','','type="button"')}<button class="btn primary" type="submit">${icon('export')}导出记录</button></div></form>`);
 }
 function demoModal(){
- const modes=[['connected','正常连接','查看用量、网速和额度'],['disconnected','未连接 Wi-Fi','保留历史，停止模拟增量'],['permission','权限不足','无法确定网络身份'],['offline','采集器离线','明确标记数据已过期']];
- showModal('预览界面状态',`<p class="modal-desc">这里的数据由本地模拟器生成，不会读取或更改电脑网络。切换状态可查看异常页面设计。</p><div class="demo-options">${modes.map(([id,t,d])=>`<button data-action="demo-state" data-state="${id}" class="${data.live.state===id?'active':''}">${t}<small>${d}</small></button>`).join('')}</div><div class="note-box" style="margin-top:18px">${icon('info')}<div>备注、额度、单位设置和导出均可操作；数据保存在当前应用。系统级操作需后端。</div></div>`,button('reset-demo','重置演示数据','reset')+button('close-modal','完成','','primary'));
+ const labels={connected:['已连接','正在读取当前网络与速率'],disconnected:['未连接 Wi-Fi','有无线网卡但没有关联网络'],permission:['权限不足','无法确定网络身份，未见过的流量不会记到上一个网络'],offline:['采集器不可用','读不到网卡信息，下方记录可能已过期'],loading:['正在启动','正在连接本机采集后端']};
+ const [title,detail]=labels[data.live.state]??['未知状态',''];
+ const interfaces=data.live.connections.length?data.live.connections.map(c=>`<div class="check-row">${icon('wifi')}<span>${esc(c.adapterAlias)} · ${esc(networkName(getNetwork(c.networkId)))} · 信号 ${c.signal}%</span></div>`).join(''):`<div class="check-row">${icon('offline')}<span>当前没有已关联的无线网卡</span></div>`;
+ const gaps=(data.gaps??[]).length;
+ showModal('采集状态',`<p class="modal-desc">数据由本机后端进程读取网卡计数器后写入本机数据库，不经过网络。</p><div class="check-row">${icon('database')}<span>采集器：${data.live.collector==='running'?'运行中':data.live.collector==='paused'?'已暂停':'不可用'} · ${title}</span></div><div class="check-row">${icon('info')}<span>${esc(detail)}</span></div>${interfaces}${gaps?`<div class="check-row">${icon('alert')}<span>有 ${gaps} 段区间没有采集到数据，已单独记录，不会显示成 0。</span></div>`:''}<div class="note-box" style="margin-top:18px">${icon('info')}<div>备注、额度、导出与备份都写入本机数据库；开机启动、托盘与真实断网属于系统级设置。</div></div>`,button('close-modal','完成','','primary'));
 }
-function helpModal(){showModal('统计口径与使用说明',`<div class="modal-desc"><strong>总量 = 下载 + 上传</strong><br>首页和网络明细展示采集器记录的网卡流量；单位可切换 GB 或 GiB。<br><br><strong>历史与实时分开</strong><br>日期筛选仅影响历史用量。连接卡片显示当前选中网卡的实时状态，额度使用独立日 / 月周期。<br><br><strong>缺失记录不会伪装成零流量</strong><br>断网、暂停、计数器重置与身份不明期间的覆盖情况，由后端记录并说明。<br><br><strong>应用流量是另一套来源</strong><br>应用记录不与网卡总量相加；当前使用独立的 应用示例记录。<br><br><strong>演示版说明</strong><br>这个页面不会直接访问无线网卡，也不会真实断网、写开机启动或显示托盘。</div>`,button('close-modal','知道了','','primary'));}
-function permissionModal(){showModal('检查 Wi-Fi 身份读取权限',`<p class="modal-desc">此状态模拟 网络信息读取权限不足。权限不足时，后端应报告错误；前端不会把未知流量归给上次连接的 Wi-Fi。</p><div class="note-box">${icon('shield')}<div>正式接入后，将根据 本机后端返回的权限信息提供操作说明。当前无需修改系统权限。</div></div><p class="field-hint" style="margin-top:15px">演示版不会修改任何系统权限。真实采集恢复后，程序应先重建基线再开始记录。</p>`,button('close-modal','关闭')+button('demo','返回状态预览','','primary'));}
-function setDemoState(state){
- store.setState(state);lastTick=performance.now();closeModal();renderMain();toast('已切换演示状态，不影响真实网络。');
-}
+function helpModal(){showModal('统计口径与使用说明',`<div class="modal-desc"><strong>总量 = 下载 + 上传</strong><br>首页和网络明细展示采集器记录的网卡流量；单位可切换 GB 或 GiB。<br><br><strong>历史与实时分开</strong><br>日期筛选仅影响历史用量。连接卡片显示当前选中网卡的实时状态，额度使用独立日 / 月周期。<br><br><strong>缺失记录不会伪装成零流量</strong><br>断网、暂停、计数器重置与身份不明期间的覆盖情况，由后端记录并说明。<br><br><strong>应用流量尚未采集</strong><br>按进程归属流量需要额外的系统能力，当前版本没有实现，应用分布页会明确说明。<br><br><strong>数据来源</strong><br>页面读取本机后端进程的采集结果，数据存放在本机 SQLite 数据库，不上传任何内容。</div>`,button('close-modal','知道了','','primary'));}
+function permissionModal(){showModal('无法确定网络身份',`<p class="modal-desc">采集器读不到当前连接的网络名。无法归属的流量不会被记到上一次连接的网络。</p><div class="note-box">${icon('shield')}<div>常见原因是 NetworkManager 未运行或当前用户无权查询连接信息。恢复后采集会从新的基线继续，中间区间会记为覆盖空档。</div></div><p class="field-hint" style="margin-top:15px">可以用 <code>nmcli dev status</code> 确认 NetworkManager 是否正常。</p>`,button('close-modal','关闭')+button('demo','查看采集状态','','primary'));}
 async function dataDownload(filename,body){
  const result=await window.desktop.saveFile({filename,body});
  if(result.error)throw Error(result.error);
@@ -222,37 +222,48 @@ async function doExport(values){
  const rows=data.records.filter(r=>r.date>=start&&r.date<=end&&(networkId==='all'||r.networkId===networkId)).sort((a,b)=>a.date.localeCompare(b.date));if(!rows.length)throw Error('所选范围没有可导出的流量记录。');
  let saved;
  if(format==='json')saved=await dataDownload(`WiFiMeter_${start}_${end}.json`,JSON.stringify({version:1,type:'usage-export',source:data.source,start,end,records:rows.map(r=>({...r,ssid:getNetwork(r.networkId).ssid,alias:getNetwork(r.networkId).alias}))},null,2),'application/json;charset=utf-8');
- else {const header=['日期','网络备注','SSID','下载字节','上传字节','总计字节',`下载_${data.settings.unit}`,`上传_${data.settings.unit}`,`总计_${data.settings.unit}`,'数据来源'];const lines=[header,...rows.map(r=>{const n=getNetwork(r.networkId);return [r.date,networkName(n),n.ssid,r.rxBytes,r.txBytes,(B(r.rxBytes)+B(r.txBytes)).toString(),fmt(r.rxBytes,6).replaceAll(',',''),fmt(r.txBytes,6).replaceAll(',',''),fmt(B(r.rxBytes)+B(r.txBytes),6).replaceAll(',',''),'演示数据'];})];saved=await dataDownload(`WiFiMeter_${start}_${end}.csv`,'\uFEFF'+lines.map(row=>row.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');}
+ else {const header=['日期','网络备注','SSID','下载字节','上传字节','总计字节',`下载_${data.settings.unit}`,`上传_${data.settings.unit}`,`总计_${data.settings.unit}`,'数据来源'];const lines=[header,...rows.map(r=>{const n=getNetwork(r.networkId);return [r.date,networkName(n),n.ssid,r.rxBytes,r.txBytes,(B(r.rxBytes)+B(r.txBytes)).toString(),fmt(r.rxBytes,6).replaceAll(',',''),fmt(r.txBytes,6).replaceAll(',',''),fmt(B(r.rxBytes)+B(r.txBytes),6).replaceAll(',',''),'本机采集'];})];saved=await dataDownload(`WiFiMeter_${start}_${end}.csv`,'\uFEFF'+lines.map(row=>row.map(csvCell).join(',')).join('\r\n'),'text/csv;charset=utf-8');}
  if(!saved)return;
- closeModal();toast(`已导出 ${rows.length} 条演示记录。`);
+ closeModal();toast(`已导出 ${rows.length} 条记录。`);
 }
 async function backup(){
- persist();
- if(await dataDownload(`WiFiMeter_backup_${today()}.json`,JSON.stringify({...data,backupType:'wifimeter-ui-demo'},null,2)))toast('已导出完整演示数据备份。');
+ // 备份内容由后端从数据库导出，界面只负责把文件写到用户选择的位置。
+ const document=await store.backup();
+ if(await dataDownload(`WiFiMeter_backup_${today()}.json`,JSON.stringify(document,null,2)))toast('已导出完整数据备份。');
 }
 async function restore(){
  const result=await window.desktop.openBackup();
  if(result.canceled)return;
  if(result.error)throw Error(result.error);
- const restored=store.validateBackup(result.body);
- confirmModal('恢复这份演示备份？',`包含 ${restored.networks.length} 个网络和 ${restored.records.length} 条每日记录。将替换当前应用中的演示数据。`,'确认恢复',()=>{
-  data=store.restore(restored);ui.networkId='all';ui.search='';ui.historyPage=1;
-  restartSampler();closeDrawer();renderMain();toast('已恢复备份，模拟统计已暂停。');
+ let document;
+ try{document=JSON.parse(result.body);}catch{throw Error('这个文件不是有效的备份文件。');}
+ if(document?.backupType!=='wifimeter-backend-backup')throw Error('请选择“备份”功能生成的完整文件，而不是流量导出文件。');
+ confirmModal('恢复这份备份？',`包含 ${document.networks?.length??0} 个网络和 ${document.records?.length??0} 条每日记录。当前数据将被替换。`,'确认恢复',async()=>{
+  await store.restore(document);
+  ui.networkId='all';ui.search='';ui.historyPage=1;
+  restartSampler();closeDrawer();renderMain();toast('已恢复备份，采集已暂停。');
  });
 }
-function clearRecords(){confirmModal('清空全部用量记录？','此操作删除每日、小时和应用用量记录，并重置当前额度计数；保留网络备注与提醒设置。不能撤销。','清空记录',async()=>{store.clearRecords();renderMain();toast('演示记录已清空，模拟统计已暂停。');},true,true);}
+function clearRecords(){confirmModal('清空全部用量记录？','此操作删除每日与小时记录、覆盖说明，并重置当前额度计数；保留网络备注与提醒设置。不能撤销。','清空记录',async()=>{await store.clearRecords();restartSampler();renderMain();toast('记录已清空，采集已暂停。');},true,true);}
 async function saveSettings(form){
  const f=new FormData(form),next={unit:f.get('unit'),speedUnit:f.get('speedUnit'),interval:Number(f.get('interval')),retention:Number(f.get('retention')),autoStart:f.has('autoStart'),minimizeToTray:f.has('minimizeToTray'),notifications:f.has('notifications')};
- const cutoff=next.retention?shiftDay(today(),1-next.retention):null,removed=cutoff?data.records.filter(r=>r.date<cutoff).length:0;
- const apply=async()=>{store.updateSettings(next);restartSampler();renderMain();settingsDirty=false;toast('已保存偏好。系统启动和托盘选项仅为设置预览。');};
+ const previous=data.settings.retention,cutoff=next.retention?shiftDay(today(),1-next.retention):null,removed=cutoff?data.records.filter(r=>r.date<cutoff).length:0;
+ const apply=async()=>{
+  await store.updateSettings(next);
+  // 缩短保留期时立刻按新设置裁剪，而不是等到下一次采样。
+  if(next.retention&&next.retention<previous)await store.pruneUsage();
+  if(cutoff)await store.reload();
+  restartSampler();renderMain();settingsDirty=false;
+  toast('已保存偏好。开机启动与托盘开关会随系统级设置生效。');
+ };
  if(removed)confirmModal('应用新的保留时长？',`将删除 ${cutoff} 之前的 ${removed} 条每日记录及相应明细。建议先备份；这不会改变当前额度策略。`,'确认保存',apply,true);else await apply();
 }
 async function saveNetwork(form){
  const n=getNetwork(form.dataset.id),f=new FormData(form),patch={alias:String(f.get('alias')||'').trim(),capGb:Number(f.get('capGb')||0),quotaPeriod:f.get('quotaPeriod'),warnPercent:Number(f.get('warnPercent')),notify:f.has('notify'),autoDisconnect:f.has('autoDisconnect')};
  if(!Number.isFinite(patch.capGb)||patch.capGb<0||patch.capGb>100000)throw Error('请输入 0 到 100000 之间的额度。');
  if(!patch.capGb&&(patch.autoDisconnect||patch.notify))throw Error('请先设置大于 0 的额度，或关闭该网络的提醒与自动断网。');
- const apply=async()=>{store.updateNetwork(n.id,patch);networkDirty=false;renderMain();renderDrawer();toast('已保存网络设置；不会修改或断开真实 Wi-Fi。');};
- if(patch.autoDisconnect&&!n.autoDisconnect)confirmModal('启用自动断开规则？',`达到所设额度后，模拟器会切换为断开状态：“${networkName(n)}”。当前演示不会影响实际下载和会议。`,'确认启用',apply,true);else await apply();
+ const apply=async()=>{await store.updateNetwork(n.id,patch);networkDirty=false;renderMain();renderDrawer();toast('已保存网络设置。');};
+ if(patch.autoDisconnect&&!n.autoDisconnect)confirmModal('启用自动断开规则？',`达到所设额度后，应用会断开当前连接的网络：“${networkName(n)}”。断开只在确认连的正是这个网络时执行。`,'确认启用',apply,true);else await apply();
 }
 function refreshAfterTick(){
  renderChrome();
@@ -263,16 +274,19 @@ function refreshAfterTick(){
  // Do not recreate forms, dialogs, focused charts, or inputs during background refresh.
  if(!ui.modal&&!ui.drawer&&ui.page==='overview'&&(active===document.body||active===document.documentElement||active===$('#main')))$('#content').innerHTML=overview();
 }
-function simulateTick(){
- const now=performance.now(),elapsed=(now-lastTick)/1000;lastTick=now;
- for(const message of store.tick(elapsed))toast(message);
- storageFailed=store.storageFailed;refreshAfterTick();
+// 采集由后端进程按设置的间隔进行，并通过事件推送状态；界面只需要重绘。
+function refreshLive(){refreshAfterTick();}
+function showAlert(alert){
+ if(alert.kind==='quotaWarn')toast(`额度提醒：${alert.alias||alert.ssid} 已用 ${Number(alert.percent).toFixed(0)}%。`);
+ else if(alert.kind==='quotaDisconnect')toast(alert.outcome===0?`已达到额度上限，已断开 ${alert.alias||alert.ssid}。`:`已达到额度上限，但未能断开 ${alert.alias||alert.ssid}：${alert.detail||'请检查系统状态'}`,true);
 }
-function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(params.get('still')!=='1')samplerTimer=setInterval(simulateTick,data.settings.interval*1000);}
+function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(params.get('still')!=='1')samplerTimer=setInterval(refreshAfterTick,data.settings.interval*1000);}
 async function pauseCollector(){
  const paused=data.live.collector==='paused';
- store.pause(!paused);lastTick=performance.now();renderMain();
- toast(paused?'已恢复统计，从新的基线继续。':'已暂停统计。暂停期间不会补记到当前 Wi-Fi。');
+ await store.pause(!paused);
+ if(paused)await store.reload();
+ restartSampler();renderMain();
+ toast(paused?'已恢复统计，从新的基线继续。':'已暂停统计。暂停期间不会补记到任何网络。');
 }
 function customRangeModal(){const r=getRange();showModal('选择日期范围',`<p class="modal-desc">开始和结束日期均包含在统计范围内，最多查看连续 366 天。</p><form id="rangeForm"><div class="field-row"><div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div><div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div></div><div class="form-error" id="rangeError" role="alert"></div><div class="modal-actions">${button('close-modal','取消','','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div></form>`);}
 let networkDirty=false;
@@ -287,8 +301,7 @@ const actions={
  'close-modal':closeModal,
  confirm:async()=>{const fn=pendingConfirm;pendingConfirm=null;closeModal();if(fn)await fn();},
  export:()=>exportModal(), 'export-network':e=>exportModal(e.dataset.id),
- demo:demoModal,'demo-state':e=>setDemoState(e.dataset.state),
- 'reset-demo':()=>confirmModal('重置演示数据？','这会恢复示例网络和默认偏好，覆盖当前应用中的演示更改。','重置演示',()=>{data=store.reset();storageFailed=store.storageFailed;ui.networkId='all';ui.period='month';ui.search='';ui.historyPage=1;persist();restartSampler();closeDrawer();renderMain();toast('已重置演示数据。');}),
+ demo:demoModal,
  help:helpModal, 'permission-help':permissionModal,
  pause:pauseCollector,
  'history-prev':()=>{ui.historyPage=Math.max(1,ui.historyPage-1);renderMain();},
@@ -361,7 +374,14 @@ function showTooltip(point,x,y){
 document.addEventListener('pointermove',e=>{const point=e.target.closest('[data-chart-point]');if(point)showTooltip(point,e.clientX,e.clientY);else $('#tooltip').style.display='none';});
 document.addEventListener('focusin',e=>{const point=e.target.closest('[data-chart-point]');if(point){const r=point.getBoundingClientRect();showTooltip(point,r.left+r.width/2,r.top+40);}else $('#tooltip').style.display='none';});
 window.addEventListener('blur',()=>$('#tooltip').style.display='none');
-window.addEventListener('beforeunload',event=>{persist();if(settingsDirty||networkDirty){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(settingsDirty||networkDirty){event.preventDefault();event.returnValue='';}});
 window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(['overview','networks','history','settings'].includes(p))navigate(p);});
-renderMain();restartSampler();persist();
-if(storageFailed)setTimeout(()=>toast('本地存储不可用或上次记录无效。当前可继续演示，建议导出备份。',true),300);
+// 启动：先取一份快照再渲染；后端不可用时给出明确提示而不是显示空数据。
+renderMain();
+store.start().then(()=>{
+ storageFailed=false;restartSampler();renderMain();
+ if(data.live.state==='disconnected')setTimeout(()=>toast('当前没有已连接的 Wi-Fi，连接后会从新的基线开始统计。'),300);
+}).catch(error=>{
+ storageFailed=true;renderMain();
+ toast(`无法连接采集后端：${error.message}`,true);
+});

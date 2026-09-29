@@ -2,10 +2,13 @@ const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createFileActions } = require('./files.cjs');
+const { BackendClient, resolveExecutable } = require('./backend.cjs');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
 let window;
+let backend;
+let quitting = false;
 
 const isWindows = process.platform === 'win32';
 const productName = isWindows ? 'WiFiMeter Demo' : 'WiFiMeter';
@@ -47,6 +50,49 @@ app.whenReady().then(async () => {
             return handler(payload);
         });
     }
+
+    // 后端进程由主进程拉起并按需重启；数据库放在用户数据目录，与演示版的存储键区分开。
+    backend = new BackendClient({
+        executable: resolveExecutable({ repositoryRoot: path.join(__dirname, '../../..'), resourcesPath: process.resourcesPath }),
+        databasePath: path.join(app.getPath('userData'), 'wifimeter.db'),
+        logger: message => console.log(`[backend] ${message}`)
+    });
+    backend.on('event', message => {
+        if (window && !window.isDestroyed()) window.webContents.send('backend:event', message);
+    });
+    backend.on('exit', ({ unexpected }) => {
+        if (unexpected) console.error('[backend] 进程意外退出，下一次请求会重新拉起。');
+    });
+    backend.start();
+
+    const trusted = event => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
+        && event.senderFrame.url.split(/[?#]/)[0] === pageURL;
+
+    // 失败以结果信封返回而不是抛出：Electron 跨进程只保留错误消息，会丢掉错误码，
+    // 而界面需要靠错误码决定提示文案。
+    ipcMain.handle('backend:request', async (event, payload) => {
+        if (!trusted(event)) throw Error('不支持的页面请求。');
+        const method = typeof payload?.method === 'string' ? payload.method : '';
+        if (!method) return { ok: false, error: { code: 'badRequest', message: '缺少方法名。' } };
+        try {
+            return { ok: true, result: await backend.request(method, payload.params ?? {}) };
+        } catch (error) {
+            return { ok: false, error: { code: error.code ?? 'unavailable', message: error.message } };
+        }
+    });
+
     await window.loadFile(pagePath);
 });
 app.on('window-all-closed', () => app.quit());
+
+// 退出前先让后端收尾（提交数据库、结束未完成的空档），避免计数差丢在退出瞬间。
+app.on('before-quit', event => {
+    if (quitting || !backend) return;
+    event.preventDefault();
+    quitting = true;
+    backend.stop().catch(error => console.error(`[backend] 停止失败：${error.message}`))
+        .finally(() => {
+            backend = null;
+            app.quit();
+        });
+});

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateDemo } from '../renderer/data/mock.js';
-import { createDataClient } from '../renderer/data/client.js';
+import { DemoStore } from '../renderer/data/mock.js';
 import { validateSnapshot, totalOf, quotaFor } from '../renderer/data/model.js';
 
 function memory() {
@@ -25,18 +25,18 @@ test('fixtures validate even at month boundaries; hourly totals equal daily tota
 
 test('preferences and network edits survive restart and next day', () => {
     const storage = memory();
-    const store = createDataClient(storage, fixed);
+    const store = new DemoStore(storage, fixed);
     store.updateSettings({ ...store.snapshot.settings, unit: 'GiB' });
     store.updateNetwork('home', { ...store.snapshot.networks[0], alias: '测试网络', capGb: 50 });
     const records = structuredClone(store.snapshot.records);
-    const restarted = createDataClient(storage, () => new Date(2026, 8, 30, 12));
+    const restarted = new DemoStore(storage, () => new Date(2026, 8, 30, 12));
     assert.equal(restarted.snapshot.settings.unit, 'GiB');
     assert.equal(restarted.snapshot.networks[0].alias, '测试网络');
     assert.deepEqual(restarted.snapshot.records, records);
 });
 
 test('pause, offline states and long suspension never accrue traffic', () => {
-    const store = createDataClient(memory(), fixed);
+    const store = new DemoStore(memory(), fixed);
     const before = totalOf(store.snapshot.records).total;
     store.pause(true); store.tick(5);
     store.pause(false);
@@ -52,7 +52,7 @@ test('pause, offline states and long suspension never accrue traffic', () => {
 
 test('daily/monthly ledgers roll over and new day records agree with hourly totals', () => {
     let date = new Date(2026, 8, 30, 23, 59, 59);
-    const store = createDataClient(memory(), () => date);
+    const store = new DemoStore(memory(), () => date);
     date = new Date(2026, 9, 1, 0, 0, 4);
     store.tick(5);
     const day = store.snapshot.records.find(r => r.date === '2026-10-01');
@@ -63,7 +63,7 @@ test('daily/monthly ledgers roll over and new day records agree with hourly tota
 });
 
 test('backup restores exact bytes and pauses; invalid and partial exports are rejected', () => {
-    const store = createDataClient(memory(), fixed);
+    const store = new DemoStore(memory(), fixed);
     store.snapshot.records[0].rxBytes = '18446744073709551615';
     const backup = JSON.stringify({ ...store.snapshot, backupType: 'wifimeter-ui-demo' });
     store.clearRecords();
@@ -77,7 +77,7 @@ test('backup restores exact bytes and pauses; invalid and partial exports are re
 });
 
 test('retention pruning preserves quota ledger; clear keeps preferences and networks', () => {
-    const store = createDataClient(memory(), fixed);
+    const store = new DemoStore(memory(), fixed);
     const used = quotaFor(store.snapshot, store.snapshot.networks[0], fixed()).used;
     store.updateSettings({ ...store.snapshot.settings, retention: 30 });
     assert.ok(store.snapshot.records.every(r => r.date >= '2026-08-31'));
@@ -90,7 +90,7 @@ test('retention pruning preserves quota ledger; clear keeps preferences and netw
 });
 
 test('quota disconnect affects only simulated state and fires a demo message', () => {
-    const store = createDataClient(memory(), fixed);
+    const store = new DemoStore(memory(), fixed);
     store.updateNetwork('home', { ...store.snapshot.networks[0], capGb: 1, autoDisconnect: true });
     const messages = store.tick(5);
     assert.equal(store.snapshot.live.state, 'disconnected');
@@ -98,7 +98,7 @@ test('quota disconnect affects only simulated state and fires a demo message', (
 });
 
 test('unavailable local storage still permits demo use', () => {
-    const store = createDataClient({ getItem() { throw Error('denied'); }, setItem() { throw Error('full'); } }, fixed);
+    const store = new DemoStore({ getItem() { throw Error('denied'); }, setItem() { throw Error('full'); } }, fixed);
     store.tick(5);
     assert.equal(store.storageFailed, true);
     assert.equal(store.snapshot.networks.length, 4);

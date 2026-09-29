@@ -25,7 +25,7 @@ function createFileActions(dialog, getWindow, io = fs) {
         async openBackup() {
             try {
                 const result = await dialog.showOpenDialog(getWindow(), {
-                    title: '恢复 WiFiMeter 演示备份', properties: ['openFile'],
+                    title: '恢复 WiFiMeter 备份', properties: ['openFile'],
                     filters: [{ name: 'JSON 备份', extensions: ['json'] }]
                 });
                 if (result.canceled || !result.filePaths.length) return { canceled: true };
