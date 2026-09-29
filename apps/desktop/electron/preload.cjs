@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 // 页面只能通过这里访问桌面能力：文件对话框，以及与后端进程通信的请求 / 事件通道。
+//
+// 应用名在这里再写一遍是有原因的：preload 运行在 sandbox 里，只能 require 'electron'，
+// 不能引入 product.cjs。为了避免两处写法不一致，测试会加载本文件并比对
+// （tests/product.test.js 的「preload 暴露的产品名与产品身份一致」）。
 contextBridge.exposeInMainWorld('desktop', {
     appName: process.platform === 'win32' ? 'WiFiMeter Demo' : 'WiFiMeter',
     saveFile: payload => ipcRenderer.invoke('files:save', payload),

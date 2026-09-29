@@ -7,7 +7,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
+import { createRequire } from 'node:module';
+
 import { applyProductIdentity, productIdentityFor, productNameFor } from '../electron/product.cjs';
+
+const require = createRequire(import.meta.url);
 
 test('产品名按平台区分，Windows 用 Demo 身份与旧版隔离', () => {
     assert.equal(productNameFor('win32'), 'WiFiMeter Demo');
@@ -53,4 +57,44 @@ test('applyProductIdentity 只设置该平台需要的项', () => {
     assert.deepEqual(linuxCalls.names, ['WiFiMeter']);
     assert.deepEqual(linuxCalls.appIds, [], '非 Windows 不设置 App User Model ID');
     assert.deepEqual(linuxCalls.paths, [], '非 Windows 不改数据目录');
+});
+
+test('preload 暴露的产品名与产品身份一致', () => {
+    // preload 运行在 sandbox 里，不能引入 product.cjs，只能自己再写一遍产品名。
+    // 这个测试把两份定义对齐：不一致时页面标题与窗口标题会不一样。
+    const captured = {};
+    const electronStub = {
+        contextBridge: {
+            exposeInMainWorld: (name, api) => {
+                captured.name = name;
+                captured.api = api;
+            }
+        },
+        ipcRenderer: { invoke: () => {}, on: () => {}, removeListener: () => {} }
+    };
+    const moduleUnderTest = require.resolve('../electron/preload.cjs');
+    const originalLoad = require.cache[moduleUnderTest];
+    // 用一个最小的 require 拦截把 electron 换成桩：preload 在 sandbox 里只能拿到 electron，
+    // 因此这里只需要替换这一个模块。
+    const Module = require('node:module');
+    const originalResolve = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) {
+        if (request === 'electron') return 'electron';
+        return originalResolve.call(this, request, ...rest);
+    };
+    require.cache['electron'] = { id: 'electron', filename: 'electron', loaded: true, exports: electronStub };
+    try {
+        require('../electron/preload.cjs');
+    } finally {
+        Module._resolveFilename = originalResolve;
+        delete require.cache['electron'];
+        if (originalLoad) require.cache[moduleUnderTest] = originalLoad;
+        else delete require.cache[moduleUnderTest];
+    }
+
+    assert.equal(captured.name, 'desktop');
+    // preload 与 product.cjs 必须给出同一个名字（这里跑在哪个平台就比哪个平台的值）。
+    assert.equal(captured.api.appName, productNameFor(process.platform));
+    if (process.platform === 'win32')
+        assert.equal(captured.api.appName, 'WiFiMeter Demo');
 });
