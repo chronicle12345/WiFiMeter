@@ -47,9 +47,10 @@ dist/windows/win-unpacked/resources/wifimeter-backend.exe
 - 名称：**WiFiMeter Demo**；应用标识：`io.wifimeter.demo`。
 - 安装向导默认选择当前用户，默认目录为 `%LOCALAPPDATA%\Programs\WiFiMeter Demo`；可以选择安装目录。
 - 创建独立的桌面、开始菜单快捷方式与卸载入口。
-- 应用设置与采集记录保存在 `%APPDATA%\WiFiMeter Demo`，后端默认数据库在
-  `%LOCALAPPDATA%\WiFiMeter\wifimeter.db`（主进程始终显式传入 `--db`，两者用的是同一个文件）；
-  与旧版隔离，卸载默认保留数据。
+- 应用设置与采集记录保存在 `%APPDATA%\WiFiMeter Demo`，数据库是其中的 `wifimeter.db`；
+  与旧版隔离，卸载默认保留数据。主进程始终把该路径显式传给后端（`--db`），
+  因此两个进程用的是同一个文件；后端自己运行时才使用
+  `%LOCALAPPDATA%\WiFiMeter\wifimeter.db` 这个缺省值。
 - 采集真实网络：网卡状态与身份来自 WLAN API，累计流量来自 IP Helper；数据留在本机。
 - 开机启动写入系统登录启动项，托盘与额度提醒按设置生效。
 - 当前构建不签名、不自动发布。Windows 可能显示“未知发布者”或 SmartScreen 提示。

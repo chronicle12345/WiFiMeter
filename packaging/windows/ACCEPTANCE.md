@@ -62,6 +62,8 @@ dist\windows\WiFiMeter-Demo-0.1.0-x64-Setup.exe
 ## 5. 数据与导出
 
 - [ ] 修改网络备注与单位，退出再打开，设置保留。
+- [ ] 确认数据库就在应用数据目录里：`%APPDATA%\WiFiMeter Demo\wifimeter.db`
+      （不是 `%LOCALAPPDATA%\WiFiMeter\`，那是后端单独运行时的缺省位置）。
 - [ ] 导出 CSV 与 JSON：文件能打开、中文不乱码、字节数与界面一致。
 - [ ] 备份后清空记录再恢复，确认记录、备注与额度都回来了；取消保存时不应提示成功。
 
