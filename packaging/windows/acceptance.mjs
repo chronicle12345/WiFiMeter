@@ -14,8 +14,8 @@
 // 结果分三类：通过 / 失败 / 跳过（缺少尚未构建的文件时跳过，不算失败）。
 // 退出码非零表示有失败项。
 
-import { spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdtempSync, openSync, readSync, rmSync, statSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -135,7 +135,60 @@ if (existsSync(processTest)) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. 真实网卡上跑一轮只读采样
+// 4. 启动打包后的应用：确认它能自己拉起随包后端并创建数据库
+// ---------------------------------------------------------------------------
+// 这一项是补上来的：之前所有检查都直接运行后端二进制，而真机上第一次安装时
+// 后端只在“由 Electron 拉起”时启动失败（无法创建数据目录），界面因此完全没有数据。
+// 直接跑后端永远发现不了这类问题，所以这里真的把应用启动一次。
+async function launchesThePackagedApplication() {
+    if (process.platform !== 'win32') {
+        record('skip', '启动打包后的应用', '只在 Windows 上运行');
+        return;
+    }
+    if (!existsSync(appBinary)) {
+        record('skip', '启动打包后的应用', '未找到解包目录里的应用');
+        return;
+    }
+
+    const setupLog = path.join(os.tmpdir(), `wifimeter-app-${process.pid}.log`);
+
+    // 用隔离的数据目录启动：不碰用户真实记录（与界面测试用同一套环境变量）。
+    const profile = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-app-profile-'));
+    const child = spawn(appBinary, [], {
+        stdio: ['ignore', openSync(setupLog, 'w'), 'ignore'],
+        env: { ...process.env, WIFIMETER_USER_DATA: profile }
+    });
+
+    const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+    try {
+        // Electron 启动 + 后端拉起：这台机器上实测十秒内完成，留出余量。
+        await sleep(20000);
+
+        const profileDatabase = path.join(profile, 'wifimeter.db');
+        const created = existsSync(profileDatabase);
+        let backendRunning = false;
+        if (process.platform === 'win32') {
+            const listed = spawnSync('tasklist', ['/FI', 'IMAGENAME eq wifimeter-backend.exe', '/NH'], { encoding: 'utf8' });
+            backendRunning = `${listed.stdout ?? ''}`.toLowerCase().includes('wifimeter-backend.exe');
+        }
+
+        const log = existsSync(setupLog) ? readFileSync(setupLog, 'utf8') : '';
+        check('应用能拉起随包后端', backendRunning || created, backendRunning ? '后端进程存活' : '数据库已创建');
+        check('应用能创建数据目录与数据库', created, created ? path.basename(profileDatabase) : log.trim().split('\n').slice(-2).join(' / ') || '（无日志）');
+    } catch (error) {
+        record('fail', '启动打包后的应用', error.message);
+    } finally {
+        // 应用会派生多个子进程，因此按进程树结束（taskkill /T 不需要管理员权限）。
+        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+        rmSync(profile, { recursive: true, force: true });
+        rmSync(setupLog, { force: true });
+    }
+}
+
+await launchesThePackagedApplication();
+
+// ---------------------------------------------------------------------------
+// 5. 真实网卡上跑一轮只读采样
 // ---------------------------------------------------------------------------
 if (!existsSync(testBackend)) {
     record('skip', '真实网卡采样', '没有可用的后端可执行文件');
