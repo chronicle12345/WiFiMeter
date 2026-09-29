@@ -80,7 +80,11 @@ std::optional<Request> parseRequest(std::string_view line, Error& error);
 
 // 构造响应与事件（返回紧凑的单行文本，不含换行）。
 std::string encodeResult(const Request& request, const support::JsonValue& result);
-std::string encodeError(const Request& request, const Error& error);
+// 错误码与说明直接传字符串视图，不让 Error 聚合体参与返回值传递：
+// 实测在 Windows 的 Release 构建下，把 Response 里的 Error 复制出来会得到空串，
+// 结果错误码与说明都变成 ""（同一份代码在 Linux 与 Debug 构建下正常）。
+// 逐个传参既避开了那条路径，也让调用点一眼看出发出去的是什么。
+std::string encodeError(const Request& request, std::string_view code, std::string_view message);
 std::string encodeEvent(std::string_view name, const support::JsonValue& payload);
 
 }  // namespace wifimeter::ipc

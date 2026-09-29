@@ -61,7 +61,7 @@ std::string encodeResult(const Request& request, const support::JsonValue& resul
     return document.dump();
 }
 
-std::string encodeError(const Request& request, const Error& error)
+std::string encodeError(const Request& request, std::string_view code, std::string_view message)
 {
     support::JsonValue document = support::JsonValue::makeObject();
     if (request.hasId)
@@ -69,8 +69,8 @@ std::string encodeError(const Request& request, const Error& error)
     document.set("ok", support::JsonValue::makeBool(false));
 
     support::JsonValue detail = support::JsonValue::makeObject();
-    detail.set("code", support::JsonValue::makeString(error.code));
-    detail.set("message", support::JsonValue::makeString(error.message));
+    detail.set("code", support::JsonValue::makeString(std::string(code)));
+    detail.set("message", support::JsonValue::makeString(std::string(message)));
     document.set("error", std::move(detail));
     return document.dump();
 }

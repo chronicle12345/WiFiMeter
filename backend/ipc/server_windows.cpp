@@ -69,12 +69,12 @@ bool StdioServer::handleLine(const std::string& line, core::TimePoint now)
     {
         // 没有 id 的坏请求也要回一条错误，方便对面定位。
         Request placeholder;
-        writeLine(encodeError(placeholder, error));
+        writeLine(encodeError(placeholder, error.code, error.message));
         return true;
     }
 
     const BackendService::Response response = service_.handle(*request, now);
-    writeLine(response.ok() ? encodeResult(*request, response.result) : encodeError(*request, error));
+    writeLine(response.ok() ? encodeResult(*request, response.result) : encodeError(*request, response.error.code, response.error.message));
 
     // 处理请求时产生的事件（例如 collectNow 触发的采样）随后推送。
     for (const auto& event : service_.takePendingEvents())

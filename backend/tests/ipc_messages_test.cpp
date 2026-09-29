@@ -75,7 +75,7 @@ void encodesResponses()
     result.set("value", support::JsonValue::makeInt(1));
     WIFIMETER_CHECK_EQ(encodeResult(request, result), std::string(R"({"id":3,"ok":true,"result":{"value":1}})"));
 
-    WIFIMETER_CHECK_EQ(encodeError(request, Error{errorCode::kNotFound, "没有这个网络"}), std::string(R"({"id":3,"ok":false,"error":{"code":"notFound","message":"没有这个网络"}})"));
+    WIFIMETER_CHECK_EQ(encodeError(request, errorCode::kNotFound, "没有这个网络"), std::string(R"({"id":3,"ok":false,"error":{"code":"notFound","message":"没有这个网络"}})"));
 
     // 没有 id 的请求不回 id 字段。
     Request anonymous;
