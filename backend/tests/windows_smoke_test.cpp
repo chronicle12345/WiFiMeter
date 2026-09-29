@@ -112,6 +112,50 @@ void readsTheRealSystemWithoutSideEffects()
     }
 }
 
+// 断开守卫（真机版）：只有在“网卡确实关联着期望网络”时才允许断开。
+//
+// 这台机器可能正连着 Wi-Fi，因此这里刻意构造**不应该断开**的三种情况，
+// 并断言它们被拒绝——绝不在真实网卡上执行断开。真正执行断开的路径由假数据用例覆盖
+// （windows_platform_test 的 disconnectWaitsForStateToChange 等）。
+void refusesDisconnectsOnRealAdapters()
+{
+    win::Win32System system;
+    win::WindowsNetworkPlatform network(win::WindowsNetworkPlatform::Options{&system});
+
+    const platform::LinkReport links = network.wirelessLinks();
+    if (hasFailure(links.failures, platform::FailureKind::unavailable))
+    {
+        std::printf("（跳过）WLAN 服务不可用，无法验证断开守卫。\n");
+        return;
+    }
+
+    for (const platform::WifiLink& link : links.links)
+    {
+        // 1) 不存在的网卡：判定为“未关联”，不执行任何操作。
+        const platform::DisconnectReport missing = network.disconnectIfAssociated("wifimeter-not-a-device", "not-a-network");
+        WIFIMETER_CHECK(missing.outcome == platform::DisconnectOutcome::notAssociated);
+
+        if (!link.identity.associated())
+            continue;
+
+        const std::string actual = link.identity.ssid.value_or(std::string{});
+        WIFIMETER_CHECK(!actual.empty());
+
+        // 2) 期望的网络与当前关联的不一致：必须拒绝，且绝不能调用 WlanDisconnect。
+        const platform::DisconnectReport mismatched = network.disconnectIfAssociated(link.interfaceId, actual + "-not-this-network");
+        WIFIMETER_CHECK(mismatched.outcome == platform::DisconnectOutcome::ssidMismatch);
+
+        // 3) 期望空网络名同样不匹配（空值表示“未关联”，不该走到断开）。
+        const platform::DisconnectReport empty = network.disconnectIfAssociated(link.interfaceId, "");
+        WIFIMETER_CHECK(empty.outcome == platform::DisconnectOutcome::ssidMismatch);
+    }
+
+    // 守卫必须是无副作用的：上述调用之后网卡仍关联在原来的网络上。
+    const platform::SampleReport samples = network.sampleWifi();
+    for (const platform::WifiSample& sample : samples.samples)
+        WIFIMETER_CHECK(sample.identity.associated());
+}
+
 // 别名一致性：平台直接拿 WLAN 的适配器描述作为展示名，接口标识必须与计数一致。
 void interfaceIdentityIsStableAcrossCalls()
 {
@@ -141,6 +185,7 @@ void interfaceIdentityIsStableAcrossCalls()
 int main()
 {
     readsTheRealSystemWithoutSideEffects();
+    refusesDisconnectsOnRealAdapters();
     interfaceIdentityIsStableAcrossCalls();
     return WIFIMETER_REPORT();
 }

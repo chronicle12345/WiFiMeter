@@ -377,6 +377,127 @@ inline void updatesSettingsThroughTheProcess(ProcessRunner& runner, ProcessFixtu
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
 }
 
+// 完整备份 → 清空 → 恢复：备份是界面「完整备份」用的格式，
+// 两端都要能原样往返（含中文备注、额度、小时明细与覆盖空档）。
+inline void exportsAndRestoresABackup(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+
+    // 先造出一点可备份的数据：一轮基线 + 一轮增量，再改一个中文备注与额度。
+    WIFIMETER_CHECK(session.request(1, "collectNow").has_value());
+    fixture.setCounters(9500000, 1800000);
+    WIFIMETER_CHECK(session.request(2, "collectNow").has_value());
+
+    const auto snapshot = session.request(3, "snapshot");
+    WIFIMETER_CHECK(snapshot.has_value());
+    std::string networkKey;
+    if (snapshot && snapshot->find("result") != nullptr)
+    {
+        const JsonValue* networks = snapshot->find("result")->find("networks");
+        if (networks != nullptr && networks->size() == 1)
+            networkKey = networks->at(0).stringOr("id");
+    }
+    WIFIMETER_CHECK(!networkKey.empty());
+
+    // 参数是平铺的：{key, alias, capGb, warnPercent, ...}，没有 patch 包装。
+    const std::string update = "{\"key\":\"" + networkKey + "\",\"alias\":\"家里的 Wi-Fi\",\"capGb\":2.5,\"warnPercent\":80}";
+    const auto updated = session.request(4, "updateNetwork", update);
+    WIFIMETER_CHECK(updated.has_value());
+
+    // 取备份。
+    const auto backup = session.request(5, "backup");
+    WIFIMETER_CHECK(backup.has_value());
+    std::string backupJson;
+    if (backup && backup->find("result") != nullptr)
+    {
+        const JsonValue* document = backup->find("result")->find("backup");
+        WIFIMETER_CHECK(document != nullptr);
+        if (document != nullptr)
+        {
+            WIFIMETER_CHECK_EQ(document->stringOr("backupType"), std::string("wifimeter-backend-backup"));
+            const JsonValue* records = document->find("records");
+            WIFIMETER_CHECK(records != nullptr && records->size() == 1);
+            if (records != nullptr && records->size() == 1)
+            {
+                WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::string("4500000"));
+                WIFIMETER_CHECK_EQ(records->at(0).stringOr("txBytes"), std::string("900000"));
+            }
+            const JsonValue* networks = document->find("networks");
+            WIFIMETER_CHECK(networks != nullptr && networks->size() == 1);
+            if (networks != nullptr && networks->size() == 1)
+            {
+                // 中文备注必须原样出现在备份里（UTF-8 一路到文件）。
+                WIFIMETER_CHECK_EQ(networks->at(0).stringOr("alias"), std::string("家里的 Wi-Fi"));
+                WIFIMETER_CHECK_EQ(networks->at(0).doubleOr("capGb"), 2.5);
+            }
+            backupJson = document->dump();
+        }
+    }
+    WIFIMETER_CHECK(!backupJson.empty());
+
+    // 清空记录，确认真的空了。
+    WIFIMETER_CHECK(session.request(6, "clearUsage").has_value());
+    const auto cleared = session.request(7, "snapshot");
+    WIFIMETER_CHECK(cleared.has_value());
+    if (cleared && cleared->find("result") != nullptr)
+    {
+        const JsonValue* records = cleared->find("result")->find("records");
+        WIFIMETER_CHECK(records != nullptr && records->size() == 0);
+    }
+
+    // 恢复：记录与备注都要回来。
+    const auto restored = session.request(8, "restore", "{\"backup\":" + backupJson + "}");
+    WIFIMETER_CHECK(restored.has_value());
+    if (restored)
+        WIFIMETER_CHECK(restored->boolOr("ok"));
+
+    const auto after = session.request(9, "snapshot");
+    WIFIMETER_CHECK(after.has_value());
+    if (after && after->find("result") != nullptr)
+    {
+        const JsonValue* result = after->find("result");
+        const JsonValue* records = result->find("records");
+        WIFIMETER_CHECK(records != nullptr && records->size() == 1);
+        if (records != nullptr && records->size() == 1)
+        {
+            WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::string("4500000"));
+            WIFIMETER_CHECK_EQ(records->at(0).stringOr("txBytes"), std::string("900000"));
+        }
+        const JsonValue* networks = result->find("networks");
+        WIFIMETER_CHECK(networks != nullptr && networks->size() == 1);
+        if (networks != nullptr && networks->size() == 1)
+        {
+            WIFIMETER_CHECK_EQ(networks->at(0).stringOr("alias"), std::string("家里的 Wi-Fi"));
+            WIFIMETER_CHECK_EQ(networks->at(0).doubleOr("capGb"), 2.5);
+        }
+    }
+
+    WIFIMETER_CHECK(session.request(10, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
+// 备份文件的标记不对时必须拒绝，而不是把流量导出当成完整备份写进去。
+inline void refusesAForeignBackup(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+
+    const auto rejected = session.request(1, "restore", R"({"backup":{"backupType":"usage-export","records":[]}})");
+    WIFIMETER_CHECK(rejected.has_value());
+    if (rejected)
+    {
+        WIFIMETER_CHECK(!rejected->boolOr("ok"));
+        const JsonValue* error = rejected->find("error");
+        WIFIMETER_CHECK(error != nullptr);
+        if (error != nullptr)
+            WIFIMETER_CHECK_EQ(error->stringOr("code"), std::string("invalidParams"));
+    }
+
+    WIFIMETER_CHECK(session.request(2, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
 inline void exitsCleanlyWhenInputCloses(ProcessRunner& runner, ProcessFixture& fixture)
 {
     WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
@@ -411,6 +532,12 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture closing(executable);
     exitsCleanlyWhenInputCloses(runner, closing);
+
+    ProcessFixture backup(executable);
+    exportsAndRestoresABackup(runner, backup);
+
+    ProcessFixture foreign(executable);
+    refusesAForeignBackup(runner, foreign);
 
     return WIFIMETER_REPORT();
 }
