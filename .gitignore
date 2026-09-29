@@ -6,3 +6,6 @@
 
 .vs/
 *.user
+
+/build/
+/node_modules/

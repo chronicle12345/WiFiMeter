@@ -1,4 +1,4 @@
-name: Windows build and tests
+name: Legacy Windows build and tests
 
 on:
   push:
@@ -15,6 +15,9 @@ permissions:
 jobs:
   verify:
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: legacy/windows
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -33,12 +36,12 @@ jobs:
           name: test-logs
           # The whole tree, not just artifacts/test-results: a failed installer run
           # also leaves status.json, collector.log and the preserved fixture behind.
-          path: artifacts/
+          path: legacy/windows/artifacts/
           if-no-files-found: ignore
       - name: Upload release files
         uses: actions/upload-artifact@v7
         with:
-          name: WiFiMeter-Windows
+          name: WiFiMeter-Legacy-Windows
           path: |
-            dist/WiFiMeter-Setup.exe
-            dist/WiFiMeter-Portable.zip
+            legacy/windows/dist/WiFiMeter-Setup.exe
+            legacy/windows/dist/WiFiMeter-Portable.zip

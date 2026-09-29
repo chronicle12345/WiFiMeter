@@ -1,0 +1,40 @@
+{
+  "name": "wifimeter-linux",
+  "version": "0.1.0",
+  "description": "WiFiMeter cross-platform desktop demo with local sample data",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "author": "WiFiMeter contributors",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.js && playwright test",
+    "test:unit": "node --test tests/*.test.js",
+    "test:ui": "playwright test",
+    "dist:linux": "electron-builder --config ../../packaging/linux/electron-builder.cjs --linux dir --x64 --publish never && node ../../packaging/linux/build-deb.mjs",
+    "predist:linux": "node -e \"require('electron')\"",
+    "dist:windows": "node ../../packaging/windows/build.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.wifimeter.linux",
+    "productName": "WiFiMeter",
+    "directories": {
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "assets/icon.png",
+      "assets/icon.ico",
+      "LICENSE"
+    ]
+  },
+  "homepage": "https://github.com/shw940/WiFiMeter",
+  "desktopName": "wifimeter.desktop"
+}

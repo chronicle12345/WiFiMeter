@@ -1,4 +1,4 @@
-name: Release
+name: Legacy Windows release
 
 # Publishing is a deliberate act: push an annotated tag such as v1.1.0.
 # Tag pushes do not run windows.yml, so the build and tests below are the only
@@ -13,8 +13,11 @@ permissions:
 
 jobs:
   release:
-    name: Build and release
+    name: Build and release legacy Windows
     runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: legacy/windows
     timeout-minutes: 30
     steps:
       - name: Checkout

@@ -1,0 +1,12 @@
+{
+  "name": "wifimeter-repository",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix apps/desktop start",
+    "test": "npm --prefix apps/desktop test",
+    "test:unit": "npm --prefix apps/desktop run test:unit",
+    "test:ui": "npm --prefix apps/desktop run test:ui",
+    "dist:linux": "npm --prefix apps/desktop run dist:linux",
+    "dist:windows": "node packaging/windows/build.cjs"
+  }
+}

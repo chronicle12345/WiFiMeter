@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#2f66c9">
+<meta name="description" content="WiFiMeter 桌面 Wi-Fi 流量演示应用。离线可用，所有网络数据均为演示数据。">
+<title>WiFiMeter · 流量总览</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="主导航">
+    <div class="brand"><div class="brand-mark" id="brandMark"></div><div class="brand-copy"><div class="brand-name">WiFiMeter</div><div class="brand-sub">无线网络流量管理</div></div></div>
+    <div class="nav-label">工作台</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-bottom"><div class="collector-box" id="collector"></div><div class="sidebar-footer" id="sidebarFooter"></div></div>
+  </aside>
+  <main class="main" id="main" tabindex="-1">
+    <header class="page-head" id="pageHead"></header>
+    <div id="content"></div>
+    <footer class="app-footer" id="footer"></footer>
+  </main>
+</div>
+<div id="drawerRoot"></div>
+<div id="modalRoot"></div>
+<div class="toast-region" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+<div class="chart-tooltip" id="tooltip" aria-hidden="true"></div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

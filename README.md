@@ -1,83 +1,66 @@
-<p align="center">
-  <a href="docs/assets/logo.svg"><img src="docs/assets/banner.svg" alt="WiFiMeter: Wi-Fi usage by network" width="100%" /></a>
-</p>
+# WiFiMeter
 
-<p align="center">
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases"><img src="https://img.shields.io/badge/version-1.0.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.0.0" /></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
-  <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
-</p>
+English | [简体中文](README.zh-CN.md)
 
-<p align="center">
-  <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/PowerShell-5.1-2563EB?style=for-the-badge&amp;labelColor=182033" alt="Windows PowerShell 5.1" /></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
-  <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/UI-WPF-0D9488?style=for-the-badge&amp;labelColor=182033" alt="WPF interface" /></a>
-</p>
+WiFiMeter uses a shared Electron desktop application for Windows and Linux, with a planned local C++ backend for network collection and business data. The current application uses sample data. Linux deb packaging and native Windows NSIS packaging are configured. The C++ backend is not implemented yet.
 
-<p align="center">
-  <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
-  <a href="docs/USAGE.md">User guide</a> &nbsp;·&nbsp;
-  <a href="docs/DEVELOPMENT.md">Development</a> &nbsp;·&nbsp;
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases">Releases</a>
-</p>
+## Getting started
 
-<p align="center"><strong>English</strong> &nbsp;|&nbsp; <a href="README.zh-CN.md">简体中文</a></p>
+Use Node.js 22.12 or newer, npm, and a graphical desktop. Dependency installation and the first Electron download require an internet connection. The demo runs offline.
 
-WiFiMeter is a Windows desktop app for tracking traffic by Wi-Fi network. It includes date-range reports, application usage, per-network limits and CSV export.
+From the repository root:
 
-![WiFiMeter dashboard](docs/screenshot.png)
+```bash
+npm ci --prefix apps/desktop
+npm start
+```
 
-## Quick start
+The application includes overview, networks, history, settings, simulated updates, quota editing, exports, and backup/restore. Startup, tray, and disconnect settings are previews; closing the window exits the application.
 
-Build on Windows 10 or 11 with Windows PowerShell 5.1 and .NET Framework 4.7.2 or later. With Git installed, run these commands in PowerShell:
+## Tests and Linux packaging
+
+```bash
+npm test
+npm run test:unit
+npm run test:ui
+npm run dist:linux
+```
+
+UI tests require a graphical session and use temporary user profiles. Linux packaging targets Ubuntu x64 and uses electron-builder plus the system's `dpkg-deb`.
+
+```bash
+sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
+```
+
+Launch WiFiMeter from the application menu or run `wifimeter`. Uninstall with `sudo apt remove wifimeter-linux`.
+
+## Windows demo installer
+
+On Windows 10/11 x64 with Node.js 22.12 or newer, run from the repository root:
 
 ```powershell
-git clone https://github.com/chronicle12345/WiFiMeter.git
-cd WiFiMeter
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\Build.ps1
-Start-Process .\dist\WiFiMeter\WiFiMeter.exe
+npm ci --prefix apps/desktop
+npm run dist:windows
 ```
 
-The build uses the C# compiler included with .NET Framework and does not download dependencies. For a preview with demo data:
+Output: `dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe`. The unsigned **WiFiMeter Demo** installer uses a separate name, installation directory, and data directory so it can coexist with the legacy application. Docker is not used. See the [Windows build and acceptance instructions](packaging/windows/README.md).
 
-```powershell
-Start-Process .\dist\WiFiMeter\WiFiMeter.exe -ArgumentList '--preview'
-```
+## Layout
 
-## Features
+- `apps/desktop/`: shared Electron application, sample data, and tests.
+- `backend/`: responsibilities for the planned C++ backend.
+- `contracts/`: current data format and future protocol boundaries.
+- `packaging/linux/`: deb packaging; `packaging/windows/`: native Windows NSIS packaging.
+- `legacy/windows/`: original WPF/PowerShell application, documentation, and tests.
+- `docs/`: architecture documentation.
+- `build/` and `dist/`: ignored build and distribution outputs.
 
-- View every recorded Wi-Fi network for today, this month, all retained history, or dates selected in a calendar dialog.
-- Give networks display names and set daily, monthly or cumulative traffic limits, with warnings and optional disconnection.
-- Open a network to inspect Windows application usage, including a daily breakdown.
-- Set history retention, minimize to the system tray, and manage login startup in the app or Task Manager.
-- Switch between English and Simplified Chinese and export the selected range to CSV.
+See the [architecture](docs/ARCHITECTURE.md) and [desktop documentation](apps/desktop/README.md). Dependencies and the lockfile belong to `apps/desktop/`; the root package only forwards commands and is not an npm workspace.
 
-Application figures come from Windows and may arrive later than adapter totals. See the [user guide](docs/USAGE.md#application-usage) for the history limits and accounting differences.
+## Legacy Windows application
 
-## Project layout
-
-```text
-src/          Metering modules, WPF interface and native executable host
-installer/    Per-user installer and uninstaller
-tests/        Unit, interface and integration tests
-tools/        Build scripts and icon generation
-docs/         User and developer documentation
-dist/         Generated executables and ZIP, ignored by Git
-```
-
-## Tests
-
-Build first, then run:
-
-```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
-```
-
-Tests cover accounting, quota rules, retention, application queries, tray lifecycle and installation. Registry tests use isolated keys; they need permission to write to the current user's registry.
-
-[Development](docs/DEVELOPMENT.md) explains the modules and storage format. [User guide](docs/USAGE.md) covers installation and daily use.
+The original application is preserved under [legacy/windows](legacy/windows/README.md). Run its original build and test commands from that directory. Existing GitHub Actions still build and release this legacy application; `v*.*.*` tags continue to trigger legacy releases.
 
 ## License
 
-Licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)

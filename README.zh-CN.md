@@ -1,83 +1,73 @@
-<p align="center">
-  <a href="docs/assets/logo.svg"><img src="docs/assets/banner.svg" alt="WiFiMeter: Wi-Fi usage by network" width="100%" /></a>
-</p>
+# WiFiMeter
 
-<p align="center">
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases"><img src="https://img.shields.io/badge/version-1.0.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.0.0" /></a>
-  <a href="#快速运行"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
-  <a href="docs/DEVELOPMENT.zh-CN.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
-</p>
+[English](README.md) | 简体中文
 
-<p align="center">
-  <a href="docs/DEVELOPMENT.zh-CN.md"><img src="https://img.shields.io/badge/PowerShell-5.1-2563EB?style=for-the-badge&amp;labelColor=182033" alt="Windows PowerShell 5.1" /></a>
-  <a href="README.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
-  <a href="docs/DEVELOPMENT.zh-CN.md"><img src="https://img.shields.io/badge/UI-WPF-0D9488?style=for-the-badge&amp;labelColor=182033" alt="WPF interface" /></a>
-</p>
+WiFiMeter 的共享 Electron 桌面应用面向 Windows 和 Linux，后续由本机 C++ 后端提供网络采集与业务数据。目前使用示例数据，Linux 可构建 deb，Windows 可在本机生成独立的 WiFiMeter Demo 安装包；C++ 后端尚未实现。
 
-<p align="center">
-  <a href="#快速运行">快速运行</a> &nbsp;·&nbsp;
-  <a href="docs/USAGE.zh-CN.md">使用指南</a> &nbsp;·&nbsp;
-  <a href="docs/DEVELOPMENT.zh-CN.md">开发说明</a> &nbsp;·&nbsp;
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases">版本下载</a>
-</p>
+## 安装依赖与启动
 
-<p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
+需要 Node.js 22.12 或更新版本、npm 和图形桌面。首次安装依赖及下载 Electron 需要联网，应用运行时可离线使用。
 
-WiFiMeter 是按 Wi-Fi 名称统计流量的 Windows 桌面应用，支持日期范围查询、应用流量明细、网络额度和 CSV 导出。
+从仓库根目录执行：
 
-![WiFiMeter 界面](docs/screenshot.zh-CN.png)
-
-## 快速运行
-
-构建需要 Windows 10/11、Windows PowerShell 5.1 和 .NET Framework 4.7.2 或更新版本。安装 Git 后，在 PowerShell 中执行：
-
-```powershell
-git clone https://github.com/chronicle12345/WiFiMeter.git
-cd WiFiMeter
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\Build.ps1
-Start-Process .\dist\WiFiMeter\WiFiMeter.exe
+```bash
+npm ci --prefix apps/desktop
+npm start
 ```
 
-构建使用 .NET Framework 自带的 C# 编译器，无需下载依赖。使用演示数据预览界面：
+页面包含总览、网络、历史和设置，支持模拟刷新、日期筛选、网络备注、额度、导出与完整备份恢复。点击“演示数据”可切换状态或恢复示例。自启动、托盘和断网只作演示，关闭窗口即退出。
 
-```powershell
-Start-Process .\dist\WiFiMeter\WiFiMeter.exe -ArgumentList '--preview'
+## 测试与打包
+
+```bash
+npm test
+npm run test:unit
+npm run test:ui
+npm run dist:linux
 ```
 
-## 功能
+界面测试需要图形会话，使用临时用户数据目录。Linux 打包在 Ubuntu x64 上使用 electron-builder 和系统自带的 `dpkg-deb`。
 
-- 查看全部 Wi-Fi，支持今天、本月、保留的全部记录，以及日历弹窗中选择的日期范围。
-- 设置网络备注、每日或每月额度、累计额度、提醒阈值，以及达到额度后自动断开。
-- 点击网络查看 Windows 提供的应用流量，并按天查看明细。
-- 设置记录保存时间，最小化到系统托盘，在软件或任务管理器中管理自启动。
-- 切换中英文界面，将当前日期范围导出为 CSV。
+安装生成的 deb：
 
-应用统计由 Windows 提供，更新可能晚于网卡总流量。历史范围和统计差异见[使用指南](docs/USAGE.zh-CN.md#应用流量)。
+```bash
+sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
+```
 
-## 项目结构
+安装后在应用菜单打开 WiFiMeter，或运行 `wifimeter`。卸载：`sudo apt remove wifimeter-linux`。
+
+## Windows 示例安装包
+
+在 Windows 10/11 x64 上，安装 Node.js 22.12 或更新版本后，从仓库根目录执行：
+
+```powershell
+npm ci --prefix apps/desktop
+npm run dist:windows
+```
+
+输出为 `dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe`。程序使用独立名称、安装目录和用户数据目录，可与旧版并存。此示例包未签名，不使用 Docker。详见 [Windows 打包与验收](packaging/windows/README.md)。
+
+## 目录
 
 ```text
-src/          统计模块、WPF 界面与原生 EXE 宿主
-installer/    当前用户安装器与卸载器
-tests/        功能、界面与集成测试
-tools/        构建脚本与图标生成
-docs/         使用与开发文档
-dist/         构建生成的 EXE 和 ZIP，不提交 Git
+apps/desktop/       共享桌面应用、示例数据和测试
+backend/            C++ 后端的职责说明
+contracts/          现有数据格式与未来协议边界
+packaging/linux/    Linux deb 打包脚本
+packaging/windows/  Windows 本机 NSIS 安装包构建
+legacy/windows/     原 WPF/PowerShell 应用、文档和测试
+docs/               新架构说明
+build/              后续编译中间产物（忽略提交）
+dist/linux/         Linux 发布产物（忽略提交）
+dist/windows/       Windows 发布产物（忽略提交）
 ```
 
-## 测试
+详见[架构说明](docs/ARCHITECTURE.md)和[桌面应用说明](apps/desktop/README.md)。依赖锁文件属于 `apps/desktop/`，根目录仅转发命令，不使用 npm workspace。
 
-构建完成后运行：
+## 旧 Windows 版本
 
-```powershell
-powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\tests\Run-All.ps1
-```
-
-测试覆盖流量累计、额度、记录清理、应用查询、托盘生命周期和安装。注册表测试使用独立测试项，运行环境需允许当前用户写入注册表。
-
-[开发说明](docs/DEVELOPMENT.zh-CN.md)介绍模块和存储格式，[使用指南](docs/USAGE.zh-CN.md)介绍安装与日常操作。
+原有代码已完整保留在 [legacy/windows](legacy/windows/README.zh-CN.md)。在该目录下运行原构建和测试命令。现有 GitHub Actions 继续验证、发布旧 Windows 版本；`v*.*.*` 标签仍触发旧版发布，不代表新版 Electron 应用的版本。
 
 ## 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+[MIT](LICENSE)
