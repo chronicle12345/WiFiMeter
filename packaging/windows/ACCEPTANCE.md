@@ -35,7 +35,12 @@ node packaging/windows/acceptance.mjs
 - [x] 界面显示真实数据：网络名 `CMCC-mKm3-5G`、已连接、信号 93%，
       下载 305 MB 后显示 0.34 GB（下载 0.33 GB，占 97.9%），网络列表计数为 1；
 - [x] 中文界面与中文网络名不乱码；窗口标题为「WiFiMeter Demo — 流量总览」；
-- [x] 卸载后重新安装正常。
+- [x] 卸载后重新安装正常（应用目录、快捷方式、开始菜单与卸载注册项都清理干净，数据目录保留）；
+- [x] 开机启动：打开后应用把启动项写进 `HKCU\...\Run`，关闭后移除
+      （启动项名是 App User Model ID `io.wifimeter.demo`，不是产品名）；
+- [x] 托盘最小化：打开「关闭窗口时最小化到托盘」后，向窗口发送关闭（WM_CLOSE）
+      进程仍驻留，说明是隐藏而不是退出；
+- [x] 流量导出与完整备份在真机上都能正确返回数据。
 
 下面仍是需要你确认的部分（交互与系统级行为）。
 
@@ -108,7 +113,18 @@ dist\windows\WiFiMeter-Demo-0.1.0-x64-Setup.exe
 - [ ] 与旧版 WiFiMeter 同时安装并启动，确认安装目录、快捷方式互不覆盖。
 - [ ] 从「应用和功能」卸载示例版，确认旧版仍可用，示例版的数据目录保留。
 
-## 7. 可选：在 Windows 上跑界面测试
+## 7. 可选：一条命令跑系统级检查
+
+```powershell
+# 需要主机上装有 Node；它会启动安装版应用做真实检查，结束后不会留下开机启动项
+& 'C:\Program Files\nodejs\node.exe' packaging\windows\system-check.mjs
+```
+
+覆盖托盘驻留、导出与备份；开机启动这一项脚本不做断言（原因写在脚本注释里：
+用 `WIFIMETER_USER_DATA` 指向临时目录时，主进程读到的设置始终是默认值，
+因此它只能在应用自己的数据目录下验证，结果见上面的记录）。
+
+## 8. 可选：在 Windows 上跑界面测试
 
 界面测试本身是跨平台的，只是在没有图形会话的 Linux（WSL/CI）上需要虚拟显示，
 Windows 桌面会话里直接跑即可：
@@ -122,7 +138,7 @@ Remove-Item Env:WIFIMETER_EXECUTABLE
 
 它用假的网卡数据（夹具 nmcli）驱动真实后端，不会改动机器的网络状态。
 
-## 8. 可选：更严格的自检
+## 9. 可选：更严格的自检
 
 把 `build\windows\tests\windows_smoke_test.exe` 与
 `build\windows\app\wifimeter-backend.exe` 放到同一个目录，然后在 PowerShell 里：
