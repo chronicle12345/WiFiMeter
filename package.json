@@ -8,6 +8,7 @@
     "test:ui": "npm --prefix apps/desktop run test:ui",
     "test:backend": "cmake -S backend -B build && cmake --build build && ctest --test-dir build --output-on-failure",
     "dist:linux": "npm --prefix apps/desktop run dist:linux",
-    "dist:windows": "node packaging/windows/build.cjs"
+    "dist:windows": "node packaging/windows/build.cjs",
+    "build:backend": "npm --prefix apps/desktop run build:backend"
   }
 }

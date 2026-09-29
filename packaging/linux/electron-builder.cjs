@@ -3,6 +3,8 @@ const { build } = require('../../apps/desktop/package.json');
 module.exports = {
     ...build,
     directories: { ...build.directories, output: '../../dist/linux' },
+    // 采集后端随包分发；主进程通过 resources/wifimeter-backend 找到它。
+    extraResources: [{ from: '../../build/app/wifimeter-backend', to: 'wifimeter-backend' }],
     electronDist: 'node_modules/electron/dist',
     linux: {
         target: ['dir'], executableName: 'wifimeter', category: 'Network',

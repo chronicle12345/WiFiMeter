@@ -20,8 +20,8 @@ try {
     await mkdir(path.join(stage, 'usr/share/applications'), { recursive: true });
     await writeFile(path.join(stage, 'usr/share/applications/wifimeter.desktop'), `[Desktop Entry]
 Name=WiFiMeter
-Comment=Wi-Fi traffic demo
-Comment[zh_CN]=Wi-Fi 流量管理演示版
+Comment=Wi-Fi traffic meter
+Comment[zh_CN]=Wi-Fi 流量管理
 Exec=/opt/WiFiMeter/wifimeter
 Terminal=false
 Type=Application
@@ -40,9 +40,10 @@ Priority: optional
 Architecture: amd64
 Maintainer: WiFiMeter contributors <noreply@wifimeter.local>
 Homepage: ${metadata.homepage}
-Depends: libgtk-3-0, libnss3, libxss1, libxtst6, libgbm1, libasound2, libatspi2.0-0, libuuid1, libsecret-1-0, xdg-utils
-Description: WiFiMeter Linux desktop demo
- Wi-Fi traffic dashboard with local sample data, history and exports.
+Depends: libgtk-3-0, libnss3, libxss1, libxtst6, libgbm1, libasound2, libatspi2.0-0, libuuid1, libsecret-1-0, libsqlite3-0, xdg-utils
+Description: WiFiMeter Wi-Fi traffic meter for Linux
+ Per-network Wi-Fi traffic collection, history, quotas and exports.
+ Traffic is collected locally and stored in a local SQLite database.
 `);
     execFileSync('dpkg-deb', ['--root-owner-group', '-Zxz', '--build', stage, output], { stdio: 'inherit' });
     console.log(`Created ${output}`);
