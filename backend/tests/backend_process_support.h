@@ -10,6 +10,7 @@
 // （backend_process_test.cpp / backend_process_win_test.cpp）。
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -213,6 +214,13 @@ inline void collectsAndStoresUsage(ProcessRunner& runner, ProcessFixture& fixtur
     session.drainEvents();
 
     // 第二次采集应当推送用量事件，数值正好是两次计数之差。
+    //
+    // 这里收集**所有**增量事件再断言，而不是只看第一条：采集会同时产生 live 与 usage
+    // 事件，出现顺序与时序有关，只认第一条会在两端表现不一致（Windows 上就出现过
+    // 一条 0 增量的 usage 事件在前，导致断言读到 0）。
+    WIFIMETER_CHECK(!session.events.empty());
+    std::uint64_t totalRx = 0;
+    std::uint64_t totalTx = 0;
     bool sawUsage = false;
     for (const JsonValue& event : session.events)
     {
@@ -221,11 +229,12 @@ inline void collectsAndStoresUsage(ProcessRunner& runner, ProcessFixture& fixtur
         const JsonValue* networks = event.find("networks");
         if (networks == nullptr || networks->size() != 1)
             continue;
-        WIFIMETER_CHECK_EQ(networks->at(0).stringOr("rxBytes"), std::string("3100000"));
-        WIFIMETER_CHECK_EQ(networks->at(0).stringOr("txBytes"), std::string("500000"));
         sawUsage = true;
+        totalRx += std::strtoull(networks->at(0).stringOr("rxBytes", "0").c_str(), nullptr, 10);
+        totalTx += std::strtoull(networks->at(0).stringOr("txBytes", "0").c_str(), nullptr, 10);
     }
-    WIFIMETER_CHECK(sawUsage);
+    WIFIMETER_CHECK_EQ(totalRx, std::uint64_t(3100000));
+    WIFIMETER_CHECK_EQ(totalTx, std::uint64_t(500000));    WIFIMETER_CHECK(sawUsage);
 
     // 快照里能读到记录、网络与账本。
     const auto snapshot = session.request(3, "snapshot");
@@ -372,6 +381,64 @@ inline void updatesSettingsThroughTheProcess(ProcessRunner& runner, ProcessFixtu
     WIFIMETER_CHECK(snapshot.has_value());
     if (snapshot)
         WIFIMETER_CHECK_EQ(snapshot->find("result")->find("settings")->stringOr("unit"), std::string("GiB"));
+
+    WIFIMETER_CHECK(session.request(3, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
+// 后端必须**自己**按间隔采样，而不是只在被要求时（collectNow）才采。
+//
+// 这条用例是补上来的：真机上安装后界面一直显示“尚未连接 Wi-Fi”，原因是 Windows 的
+// 事件循环把“stdin 有数据”判断错了——管道句柄对可读永远是 signaled，等待永远立刻返回，
+// 于是循环走不到“到点采样”的分支，从不自动采样；界面就停在启动时的初始快照。
+// 之前的端到端用例每一步都显式调用 collectNow，因此完全覆盖不到这条路径。
+inline void samplesOnItsOwnSchedule(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner, std::chrono::seconds(30));
+
+    // 只握手，不做任何触发采样的事。
+    WIFIMETER_CHECK(session.request(1, "hello").has_value());
+
+    // 采样间隔是 5 秒；等一轮多一点，期间必须自己推送 live 事件。
+    // session.events 由 drainEvents 填充，因此这里直接查它。
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(14);
+    bool sawLive = false;
+    while (!sawLive && std::chrono::steady_clock::now() < deadline)
+    {
+        session.drainEvents(std::chrono::milliseconds(1500));
+        for (const JsonValue& event : session.events)
+        {
+            if (event.stringOr("event") == "live")
+            {
+                sawLive = true;
+                break;
+            }
+        }
+    }
+    WIFIMETER_CHECK(sawLive);
+
+    // 而且这次自动采样确实采到了数据：状态是已知取值，注入的假网卡必须出现。
+    const auto snapshot = session.request(2, "snapshot");
+    WIFIMETER_CHECK(snapshot.has_value());
+    if (snapshot && snapshot->find("result") != nullptr)
+    {
+        const JsonValue* live = snapshot->find("result")->find("live");
+        WIFIMETER_CHECK(live != nullptr);
+        if (live != nullptr)
+        {
+            WIFIMETER_CHECK_EQ(live->stringOr("state"), std::string("connected"));
+            const JsonValue* connections = live->find("connections");
+            WIFIMETER_CHECK(connections != nullptr && connections->size() == 1);
+            if (connections != nullptr && connections->size() == 1)
+            {
+                // 连接条目按网卡给出身份：网卡名与网络键必须来自注入的假网卡。
+                WIFIMETER_CHECK_EQ(connections->at(0).stringOr("interfaceId"), std::string("wlan0"));
+                WIFIMETER_CHECK(!connections->at(0).stringOr("networkId").empty());
+                WIFIMETER_CHECK_EQ(connections->at(0).stringOr("band"), std::string("5 GHz"));
+            }
+        }
+    }
 
     WIFIMETER_CHECK(session.request(3, "shutdown").has_value());
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
@@ -616,6 +683,9 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture exportFixture(executable);
     exportsUsageRecords(runner, exportFixture);
+
+    ProcessFixture schedule(executable);
+    samplesOnItsOwnSchedule(runner, schedule);
 
     return WIFIMETER_REPORT();
 }
