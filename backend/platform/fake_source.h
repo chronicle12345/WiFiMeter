@@ -45,9 +45,6 @@ std::optional<std::vector<FakeAdapter>> parseAdapters(std::string_view text);
 // 把测试数据转换成平台无关的链路状态。
 std::vector<WifiLink> linksFromAdapters(const std::vector<FakeAdapter>& adapters);
 
-// 按 id 查找。
-std::optional<FakeAdapter> findAdapter(const std::vector<FakeAdapter>& adapters, std::string_view name);
-
 // 测试数据源是否启用。
 bool adapterOverrideActive();
 

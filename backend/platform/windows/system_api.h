@@ -53,18 +53,6 @@ struct QueryResult
     {
         failures.push_back(Failure{kind, std::move(interfaceId), std::move(detail)});
     }
-
-    // 整个依赖不可用（WLAN 服务没运行、会话拿不到），区别于“某张网卡查不动”。
-    // 前者应该让上层进入 offline，后者只影响该网卡。
-    bool wholeStackUnavailable() const
-    {
-        for (const Failure& failure : failures)
-        {
-            if (failure.interfaceId.empty() && failure.kind == FailureKind::unavailable)
-                return true;
-        }
-        return false;
-    }
 };
 
 // 网卡的当前状态与身份，来自一次 WLAN 查询。

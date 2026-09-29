@@ -86,16 +86,6 @@ std::vector<WifiLink> linksFromAdapters(const std::vector<FakeAdapter>& adapters
     return links;
 }
 
-std::optional<FakeAdapter> findAdapter(const std::vector<FakeAdapter>& adapters, std::string_view name)
-{
-    for (const FakeAdapter& adapter : adapters)
-    {
-        if (adapter.name == name)
-            return adapter;
-    }
-    return std::nullopt;
-}
-
 bool adapterOverrideActive()
 {
     return !adapterPath().empty();
