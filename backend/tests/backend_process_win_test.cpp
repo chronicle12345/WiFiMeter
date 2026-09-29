@@ -11,8 +11,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstdint>
 #include <cwchar>
+#include <cwctype>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,43 +42,30 @@ std::wstring wideFromUtf8(const std::string& text)
     return result;
 }
 
-// 当前进程环境 + 覆盖项，按 "KEY=VALUE\0...\0" 拼成环境块。
-std::vector<wchar_t> buildEnvironment(const std::vector<std::pair<std::string, std::string>>& overrides)
+// 子进程环境：直接继承父进程。
+//
+// 为什么不自己拼环境块：测试数据已经改走命令行参数，子进程不需要任何注入的环境变量；
+// 而把当前环境复制成环境块再交给 CreateProcess，在通过 WSL 互操作启动的进程里实测
+// 一律返回 ERROR_INVALID_PARAMETER（87）——即使原样拷贝 GetEnvironmentStringsW 的结果
+// 也一样。继承父进程既简单又可靠，覆盖项为空时本来就是等价行为。
+LPVOID environmentBlockFor(const std::vector<std::pair<std::string, std::string>>& overrides, std::vector<wchar_t>& storage)
 {
+    if (overrides.empty())
+        return nullptr;  // 继承父进程环境
+
+    // 需要注入时仍然支持：按变量名排序（Windows 要求），以 '=' 开头的隐藏项跳过。
     std::vector<std::pair<std::wstring, std::wstring>> entries;
-    if (LPWCH current = ::GetEnvironmentStringsW(); current != nullptr)
-    {
-        for (LPWCH item = current; *item != L'\0'; item += ::wcslen(item) + 1)
-        {
-            const std::wstring text(item);
-            const std::size_t separator = text.find(L'=');
-            if (separator == std::wstring::npos || separator == 0)
-                continue;
-            entries.emplace_back(text.substr(0, separator), text.substr(separator + 1));
-        }
-        ::FreeEnvironmentStringsW(current);
-    }
-
     for (const auto& entry : overrides)
-    {
-        const std::wstring key = wideFromUtf8(entry.first);
-        const std::wstring value = wideFromUtf8(entry.second);
-        const auto existing = std::find_if(entries.begin(), entries.end(), [&key](const auto& item) { return item.first == key; });
-        if (existing == entries.end())
-            entries.emplace_back(key, value);
-        else
-            existing->second = value;
-    }
-
-    std::vector<wchar_t> block;
+        entries.emplace_back(wideFromUtf8(entry.first), wideFromUtf8(entry.second));
+    std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
     for (const auto& entry : entries)
     {
         const std::wstring text = entry.first + L"=" + entry.second;
-        block.insert(block.end(), text.begin(), text.end());
-        block.push_back(L'\0');
+        storage.insert(storage.end(), text.begin(), text.end());
+        storage.push_back(L'\0');
     }
-    block.push_back(L'\0');
-    return block;
+    storage.push_back(L'\0');
+    return storage.data();
 }
 
 std::wstring quoteArgument(const std::wstring& argument)
@@ -129,7 +118,9 @@ public:
         // 后端的日志走标准错误；测试只按行过滤，因此与标准输出共用同一个管道。
         startup.hStdError = childOutput;
 
-        std::vector<wchar_t> environmentBlock = buildEnvironment(environment);
+        std::vector<wchar_t> environmentStorage;
+        LPVOID environmentPointer = environmentBlockFor(environment, environmentStorage);
+
         std::wstring commandLine = quoteArgument(wideFromUtf8(executable));
         for (const std::string& argument : arguments)
         {
@@ -138,7 +129,11 @@ public:
         }
 
         PROCESS_INFORMATION info{};
-        const BOOL created = ::CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, 0, environmentBlock.data(), nullptr, &startup, &info);
+        // 必须显式传 lpApplicationName：lpApplicationName 为 null 时 CreateProcess
+        // 会按空白切分命令行来猜程序名，路径含空格就会被截断（Windows 的 Temp 路径
+        // 常常如此，实测直接返回 ERROR_INVALID_PARAMETER）。
+        const std::wstring applicationName = wideFromUtf8(executable);
+        const BOOL created = ::CreateProcessW(applicationName.c_str(), commandLine.data(), nullptr, nullptr, TRUE, 0, environmentPointer, nullptr, &startup, &info);
         ::CloseHandle(childInput);
         ::CloseHandle(childOutput);
         if (!created)
@@ -266,8 +261,33 @@ private:
 
 }  // namespace
 
+// 后端可执行文件位置：默认用构建时写入的路径，允许用环境变量覆盖。
+//
+// 为什么需要覆盖：交叉编译出来的测试里写的是构建机（Linux）的路径，
+// 把它拷到 Windows 上直接跑时那个路径在 Windows 上不存在（错误码 2）。
+// 在 Windows 上手工验证时用 WIFIMETER_BACKEND_BINARY 指向同目录的
+// wifimeter-backend.exe 即可跑同一份用例。
+std::string trimQuotesAndSpaces(std::string text)
+{
+    // 从各种 shell 里设置环境变量时很容易带上首尾空格或引号（cmd 的
+    // `set VAR=value && app` 就会把空格算进变量），Windows 会因此找不到文件，
+    // 于是这里宽容一点，避免为了一个空格排查半天。
+    const std::size_t begin = text.find_first_not_of(" \t\"");
+    if (begin == std::string::npos)
+        return {};
+    const std::size_t end = text.find_last_not_of(" \t\"");
+    return text.substr(begin, end - begin + 1);
+}
+
+std::string backendBinary()
+{
+    if (const char* overridePath = std::getenv("WIFIMETER_BACKEND_BINARY"); overridePath != nullptr && *overridePath != '\0')
+        return trimQuotesAndSpaces(overridePath);
+    return WIFIMETER_BACKEND_BINARY;
+}
+
 int main()
 {
     WindowsProcessRunner runner;
-    return wifimeter::test::runAllProcessTests(runner, WIFIMETER_BACKEND_BINARY);
+    return wifimeter::test::runAllProcessTests(runner, backendBinary());
 }

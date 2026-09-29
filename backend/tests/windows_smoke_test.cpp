@@ -59,9 +59,31 @@ void readsTheRealSystemWithoutSideEffects()
         {
             WIFIMETER_CHECK(!link.interfaceId.empty());
             WIFIMETER_CHECK(!link.adapterAlias.empty());
+            // 展示名优先用驱动描述（媒体/型号），与 Linux 侧的厂商 + 产品名对应。
+            WIFIMETER_CHECK(!link.adapterAlias.empty());
             if (link.signalPercent)
                 WIFIMETER_CHECK(*link.signalPercent <= 100);
             WIFIMETER_CHECK(win::findInterfaceCounters(*counters.value, link.interfaceId).has_value());
+
+            if (link.identity.associated())
+            {
+                // 已关联的网卡必须能一路报到“网络身份”这一层：
+                // 没有 SSID 的样本无法归属流量，界面也显示不出网络名。
+                WIFIMETER_CHECK(!link.identity.ssid->empty());
+                WIFIMETER_CHECK_EQ(link.identity.profileName.empty(), false);
+            }
+
+            // 频段要么是 2.4 GHz，要么留空——5/6 GHz 的信道号与 2.4 GHz 重叠，
+            // 仅凭信道号无法判断，因此平台宁可不报。这条断言防止将来“猜”出错误频段。
+            if (link.frequencyMhz)
+            {
+                WIFIMETER_CHECK(*link.frequencyMhz >= 2400 && *link.frequencyMhz <= 2500);
+                WIFIMETER_CHECK(link.band == platform::Band::ghz2_4);
+            }
+            else
+            {
+                WIFIMETER_CHECK(link.band == platform::Band::unknown);
+            }
         }
     }
 
@@ -75,6 +97,18 @@ void readsTheRealSystemWithoutSideEffects()
     {
         WIFIMETER_CHECK(!sample.interfaceId.empty());
         WIFIMETER_CHECK(sample.identity.associated());
+        // 样本里的计数必须能在这台机器的计数表里找到同一张网卡，
+        // 否则累计出来的用量会一直为 0。
+        WIFIMETER_CHECK(win::findInterfaceCounters(*counters.value, sample.interfaceId).has_value());
+    }
+
+    // 真实网卡的累计计数应当是一个合理的非零值：这台机器正在联网。
+    for (const platform::WifiLink& link : links.links)
+    {
+        const auto counted = win::findInterfaceCounters(*counters.value, link.interfaceId);
+        if (!counted)
+            continue;
+        WIFIMETER_CHECK(counted->txBytes > 0);
     }
 }
 
