@@ -28,6 +28,7 @@
 #include "../core/local_time.h"
 #include "../ipc/server_windows.h"
 #include "../ipc/service.h"
+#include "../platform/counter_source.h"
 #include "../platform/win32/wlanapi_query.h"
 #include "../platform/windows/windows_network_platform.h"
 #include "../storage/store.h"
@@ -45,6 +46,8 @@ void printUsage()
         "  --db 路径     数据库文件位置；缺省为 %%WIFIMETER_DB%% 或\n"
         "                %%LOCALAPPDATA%%\\WiFiMeter\\wifimeter.db\n"
         "  --paused      启动后不自动采集，等待 setPaused 恢复\n"
+        "  --fake-adapter 路径  改用 JSON 文件里的网卡数据，不查询系统（自动测试用）\n"
+        "  --fake-counters 路径 改用 JSON 文件里的累计计数，不读系统计数（自动测试用）\n"
         "  --version     输出版本信息\n");
 }
 
@@ -134,6 +137,8 @@ bool ensureParentDirectory(const std::string& path)
 int main()
 {
     configureStdio();
+    // 测试用数据源：默认从环境变量读，也可以用参数覆盖（见下面的 --fake-*）。
+    wifimeter::platform::fake::configureFromEnvironment();
 
     int argumentCount = 0;
     LPWSTR* argumentList = ::CommandLineToArgvW(::GetCommandLineW(), &argumentCount);
@@ -171,6 +176,18 @@ int main()
         if (argument == "--db" && index + 1 < argumentCount)
         {
             databasePath = utf8FromWide(argumentList[++index]);
+            continue;
+        }
+        // 测试数据源：与 WIFIMETER_FAKE_* 环境变量等价。命令行形式更可靠——
+        // 实测把自定义环境块交给 CreateProcess 时子进程读不到这些变量。
+        if (argument == "--fake-adapter" && index + 1 < argumentCount)
+        {
+            wifimeter::platform::fake::setAdapterPath(utf8FromWide(argumentList[++index]));
+            continue;
+        }
+        if (argument == "--fake-counters" && index + 1 < argumentCount)
+        {
+            wifimeter::platform::fake::setCountersPath(utf8FromWide(argumentList[++index]));
             continue;
         }
         std::fprintf(stderr, "未知参数：%s\n", argument.c_str());

@@ -1,5 +1,9 @@
 #include "windows_network_platform.h"
 
+#include "../counter_source.h"
+#include "../fake_source.h"
+#include "../sampling.h"
+
 #include <algorithm>
 #include <optional>
 #include <thread>
@@ -7,25 +11,6 @@
 
 namespace wifimeter::platform::windows
 {
-namespace
-{
-
-// 已关联时返回网络名，未关联或身份缺失时返回空字符串。
-std::string ssidOf(const WlanStatus* status)
-{
-    if (status == nullptr || !status->ssid)
-        return {};
-    return *status->ssid;
-}
-
-bool sameIdentity(const WlanStatus& before, const WlanStatus& after)
-{
-    // 配置名与 SSID 任一变化都算换了网络：同一份配置也可能匹配到不同 SSID。
-    return before.profileName == after.profileName && before.ssid == after.ssid;
-}
-
-}  // namespace
-
 WindowsNetworkPlatform::WindowsNetworkPlatform(Options options)
     : options_(std::move(options))
 {
@@ -73,65 +58,96 @@ LinkReport WindowsNetworkPlatform::wirelessLinks()
 
 SampleReport WindowsNetworkPlatform::sampleWifi()
 {
-    SampleReport report;
-    const QueryResult<std::vector<WlanStatus>> before = readStatuses();
-    if (!before.ok())
+    // 采样时序由 platform/sampling.cpp 统一实现，与 Linux 侧是同一份代码。
+    return sampleFrom(*this);
+}
+
+bool WindowsNetworkPlatform::fakeAdapterActive() const
+{
+    return fake::adapterOverrideActive();
+}
+
+bool WindowsNetworkPlatform::fakeCountersActive() const
+{
+    return fake::countersOverrideActive();
+}
+
+LinkReadResult WindowsNetworkPlatform::readLinks()
+{
+    LinkReadResult result;
+
+    // 测试数据源优先：端到端测试用同一份 JSON 驱动两端，不必碰真实无线网卡。
+    if (fakeAdapterActive())
     {
-        report.failures.push_back(*before.failure);
-        return report;
+        const auto adapters = fake::readOverriddenAdapters();
+        if (!adapters)
+        {
+            result.failures.push_back({FailureKind::unavailable, {}, "无法读取测试用网卡数据。"});
+            return result;
+        }
+        result.links = fake::linksFromAdapters(*adapters);
+        return result;
     }
 
-    const std::vector<WlanStatus> associated = associatedOnly(*before.value);
-    if (associated.empty())
+    const QueryResult<std::vector<WlanStatus>> statuses = readStatuses();
+    if (!statuses.ok())
     {
-        // 没有已关联网卡：不读计数，也不报告失败（与 Linux 实现一致）。
-        report.links = linksFrom(*before.value).links;
-        return report;
+        result.failures.push_back(*statuses.failure);
+        return result;
+    }
+    result.links = linksFrom(*statuses.value).links;
+    return result;
+}
+
+CounterReadResult WindowsNetworkPlatform::readCounters()
+{
+    CounterReadResult result;
+
+    if (fakeCountersActive())
+    {
+        const auto counters = fake::readOverriddenCounters();
+        if (!counters)
+        {
+            result.failures.push_back({FailureKind::unavailable, {}, "无法读取测试用计数数据。"});
+            return result;
+        }
+        result.counters = *counters;
+        return result;
     }
 
-    // 读取计数前后必须关联到同一个网络，否则这次样本无法可靠归属。
     const QueryResult<std::vector<InterfaceCounters>> counters = options_.system->interfaceCounters();
-    const QueryResult<std::vector<WlanStatus>> after = readStatuses();
-    if (!after.ok())
-    {
-        report.failures.push_back(*after.failure);
-        return report;
-    }
     if (!counters.ok())
     {
-        report.failures.push_back(*counters.failure);
+        result.failures.push_back(*counters.failure);
+        return result;
     }
-
-    for (const WlanStatus& status : associated)
+    result.counters.reserve(counters.value->size());
+    for (const InterfaceCounters& entry : *counters.value)
     {
-        const WlanStatus* current = findStatus(*after.value, status.interfaceId);
-        if (current == nullptr || !sameIdentity(status, *current))
-        {
-            report.failures.push_back({FailureKind::inconsistent, status.interfaceId, "采样期间网络发生变化，已丢弃该样本。"});
-            continue;
-        }
-
-        if (!counters.ok())
-            continue;
-
-        const auto counted = findInterfaceCounters(*counters.value, status.interfaceId);
-        if (!counted)
-        {
-            report.failures.push_back({FailureKind::countersMissing, status.interfaceId, "IP Helper 的计数中没有这张网卡。"});
-            continue;
-        }
-
-        WifiSample sample;
-        sample.interfaceId = status.interfaceId;
-        sample.identity = identityOf(status);
-        sample.rxBytes = counted->rxBytes;
-        sample.txBytes = counted->txBytes;
-        report.samples.push_back(std::move(sample));
+        CounterReading reading;
+        reading.interfaceId = entry.interfaceId;
+        reading.rxBytes = entry.rxBytes;
+        reading.txBytes = entry.txBytes;
+        result.counters.push_back(std::move(reading));
     }
+    return result;
+}
 
-    // 把确认过的网卡状态一并带回去，上层展示实时状态时不必再查一次系统。
-    report.links = linksFrom(*after.value).links;
-    return report;
+DisconnectOutcome WindowsNetworkPlatform::requestDisconnect(const std::string& interfaceId, std::string& detail)
+{
+    const DisconnectCommand command = options_.system->requestDisconnect(interfaceId);
+    detail = command.detail;
+    if (command.accepted)
+        return DisconnectOutcome::disconnected;
+    return command.failureKind == FailureKind::unavailable ? DisconnectOutcome::unavailable : DisconnectOutcome::commandFailed;
+}
+
+DisconnectReport WindowsNetworkPlatform::disconnectIfAssociated(const std::string& interfaceId, const std::string& expectedSsid)
+{
+    return disconnectFrom(*this, interfaceId, expectedSsid, [this](const std::string& target, const std::string& expected) {
+        // 复核：WlanDisconnect 只表示请求被接受，要等状态真的离开期望网络。
+        return waitUntilDisconnected(target, expected);
+    });
 }
 
 bool WindowsNetworkPlatform::waitUntilDisconnected(const std::string& interfaceId, const std::string& expectedSsid)
@@ -144,63 +160,19 @@ bool WindowsNetworkPlatform::waitUntilDisconnected(const std::string& interfaceI
 
     for (std::int64_t attempt = 0; attempt < attempts; ++attempt)
     {
-        const QueryResult<std::vector<WlanStatus>> statuses = readStatuses();
-        if (!statuses.ok())
+        const LinkReadResult statuses = readLinks();
+        if (!statuses.failures.empty() && statuses.links.empty())
         {
             // 读不到状态就不能声称断开成功；由调用方按“仍在关联”处理。
             return false;
         }
-        if (ssidOf(findStatus(*statuses.value, interfaceId)) != expectedSsid)
+        if (ssidOfLink(statuses.links, interfaceId) != expectedSsid)
             return true;
 
         if (attempt + 1 < attempts)
             options_.wait(interval);
     }
     return false;
-}
-
-DisconnectReport WindowsNetworkPlatform::disconnectIfAssociated(const std::string& interfaceId, const std::string& expectedSsid)
-{
-    DisconnectReport report;
-
-    const QueryResult<std::vector<WlanStatus>> before = readStatuses();
-    if (!before.ok())
-    {
-        report.outcome = before.failure->kind == FailureKind::unavailable ? DisconnectOutcome::unavailable : DisconnectOutcome::commandFailed;
-        report.detail = before.failure->detail;
-        return report;
-    }
-
-    const std::string current = ssidOf(findStatus(*before.value, interfaceId));
-    if (current.empty())
-    {
-        report.outcome = DisconnectOutcome::notAssociated;
-        return report;
-    }
-    if (current != expectedSsid)
-    {
-        report.outcome = DisconnectOutcome::ssidMismatch;
-        return report;
-    }
-
-    const DisconnectCommand command = options_.system->requestDisconnect(interfaceId);
-    if (!command.accepted)
-    {
-        report.outcome = command.failureKind == FailureKind::unavailable ? DisconnectOutcome::unavailable : DisconnectOutcome::commandFailed;
-        report.detail = command.detail;
-        return report;
-    }
-
-    // WlanDisconnect 只表示请求被接受，必须复核状态真的离开了期望网络：
-    // 命令成功但随即被自动重连时不能报告成功。
-    if (!waitUntilDisconnected(interfaceId, expectedSsid))
-    {
-        report.outcome = DisconnectOutcome::stillAssociated;
-        return report;
-    }
-
-    report.outcome = DisconnectOutcome::disconnected;
-    return report;
 }
 
 }  // namespace wifimeter::platform::windows

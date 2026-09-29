@@ -357,9 +357,11 @@ void readsTheRealSystemWithoutSideEffects()
         WIFIMETER_CHECK(findInterfaceCounters(readInterfaceCounters(), sample.interfaceId).has_value());
     }
 
-    // 真实系统上的守卫检查：不存在的网卡当前 SSID 为空，只能得到“无需断开”，绝不执行断开。
+    // 真实系统上的守卫检查：绝不执行断开。这台机器可能没有 nmcli（依赖缺失）或没有无线网卡，
+    // 因此只断言“没有真的去断开”这一条，具体分类由前面的假数据用例覆盖。
     const DisconnectReport report = platform.disconnectIfAssociated("wifimeter-not-a-device", "not-a-network");
-    WIFIMETER_CHECK(report.outcome == DisconnectOutcome::notAssociated);
+    WIFIMETER_CHECK(report.outcome == DisconnectOutcome::notAssociated || report.outcome == DisconnectOutcome::unavailable || report.outcome == DisconnectOutcome::commandFailed);
+    WIFIMETER_CHECK(report.outcome != DisconnectOutcome::disconnected);
 }
 
 }  // namespace

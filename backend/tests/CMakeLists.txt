@@ -92,9 +92,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     wifimeter_add_test(integration_usage_test wifimeter-platform-linux wifimeter-core)
 endif()
 
-# 端到端：真的拉起后端进程按协议对话。交叉编译时后端是 Windows 程序，本机无法运行。
-if(NOT WIFIMETER_CROSS_COMPILING)
-    add_executable(backend_process_test backend_process_test.cpp)
+# 端到端：真的拉起后端进程按协议对话。测试数据（假网卡、假计数）在两端是同一份，
+# 断言也共用 backend_process_support.h，因此 Windows 侧能跑与 Linux 完全相同的用例。
+# 交叉编译时后端是 Windows 程序、本机无法运行，因此不在这里构建；
+# 交叉编译脚本会把 Windows 版一起编译出来，交给 Wine 执行。
+if(NOT WIFIMETER_CROSS_COMPILING OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(WIFIMETER_PROCESS_TEST_SOURCE backend_process_win_test.cpp)
+    else()
+        set(WIFIMETER_PROCESS_TEST_SOURCE backend_process_test.cpp)
+    endif()
+
+    add_executable(backend_process_test ${WIFIMETER_PROCESS_TEST_SOURCE})
     target_link_libraries(backend_process_test PRIVATE wifimeter-support)
     target_include_directories(backend_process_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_options(backend_process_test PRIVATE ${WIFIMETER_COMMON_TEST_OPTIONS})

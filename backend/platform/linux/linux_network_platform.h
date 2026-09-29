@@ -10,13 +10,14 @@
 #include <vector>
 
 #include "../network_platform.h"
+#include "../sampling.h"
 #include "nmcli.h"
 #include "sysfs_net.h"
 
 namespace wifimeter::platform::linux
 {
 
-class LinuxNetworkPlatform final : public NetworkPlatform
+class LinuxNetworkPlatform final : public NetworkPlatform, public LinkSource
 {
 public:
     struct Options
@@ -34,14 +35,20 @@ public:
     SampleReport sampleWifi() override;
     DisconnectReport disconnectIfAssociated(const std::string& interfaceId, const std::string& expectedSsid) override;
 
+    // LinkSource：采样编排只依赖这三个方法，因此两端共用同一份时序实现。
+    LinkReadResult readLinks() override;
+    CounterReadResult readCounters() override;
+    DisconnectOutcome requestDisconnect(const std::string& interfaceId, std::string& detail) override;
+
     const Options& options() const
     {
         return options_;
     }
 
 private:
-    // 一次身份识别，附带本轮遇到的失败。
-    LinkReport readLinks();
+    // 一次身份识别，附带本轮遇到的失败。名字避开 readLinks：
+    // 后者是 LinkSource 的接口方法，返回的是平台无关的读取结果。
+    LinkReport readStatuses();
 
     Options options_;
     Nmcli nmcli_;

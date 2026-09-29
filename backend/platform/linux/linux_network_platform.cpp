@@ -4,6 +4,8 @@
 #include <optional>
 #include <utility>
 
+#include "../fake_source.h"
+#include "../sampling.h"
 #include "proc_net_dev.h"
 #include "wifi_control.h"
 
@@ -48,7 +50,7 @@ LinuxNetworkPlatform::LinuxNetworkPlatform(Options options)
       nmcli_(options_.nmcliExecutable, options_.commandTimeout)
 {}
 
-LinkReport LinuxNetworkPlatform::readLinks()
+LinkReport LinuxNetworkPlatform::readStatuses()
 {
     LinkReport report;
     const Nmcli::DevicesResult devices = nmcli_.devices();
@@ -109,85 +111,82 @@ LinkReport LinuxNetworkPlatform::readLinks()
 
 LinkReport LinuxNetworkPlatform::wirelessLinks()
 {
-    return readLinks();
+    return readStatuses();
 }
 
 SampleReport LinuxNetworkPlatform::sampleWifi()
 {
-    SampleReport report;
-    const LinkReport before = readLinks();
-    report.failures = before.failures;
-
-    const bool anyAssociated = std::any_of(before.links.begin(), before.links.end(), isAssociated);
-    const std::vector<InterfaceCounters> counters = anyAssociated ? readInterfaceCounters(options_.procNetDevPath) : std::vector<InterfaceCounters>{};
-
-    LinkReport after;
-    if (anyAssociated)
-    {
-        after = readLinks();
-        report.failures.insert(report.failures.end(), after.failures.begin(), after.failures.end());
-    }
-
-    for (const WifiLink& link : before.links)
-    {
-        if (!link.identity.associated())
-            continue;
-
-        // 读取计数前后必须关联到同一个网络，否则这次样本无法可靠归属。
-        const WifiLink* current = findLink(after.links, link.interfaceId);
-        if (current == nullptr || current->identity.ssid != link.identity.ssid)
-        {
-            report.failures.push_back({FailureKind::inconsistent, link.interfaceId, "采样期间网络发生变化，已丢弃该样本。"});
-            continue;
-        }
-
-        const auto counted = findInterfaceCounters(counters, link.interfaceId);
-        if (!counted)
-        {
-            report.failures.push_back({FailureKind::countersMissing, link.interfaceId, "内核计数中没有这张网卡。"});
-            continue;
-        }
-
-        WifiSample sample;
-        sample.interfaceId = link.interfaceId;
-        sample.identity = link.identity;
-        sample.rxBytes = counted->rxBytes;
-        sample.txBytes = counted->txBytes;
-        report.samples.push_back(std::move(sample));
-    }
-
-    // 把确认过的网卡状态一并带回去，上层展示实时状态时不必再查一次系统。
-    for (const WifiLink& link : after.links)
-    {
-        if (findLink(report.links, link.interfaceId) != nullptr)
-            continue;
-        report.links.push_back(link);
-    }
-    return report;
+    // 采样时序由 platform/sampling.cpp 统一实现，平台只提供数据：
+    // 两端共用同一份“前后各确认一次身份”的逻辑，避免各自漂移。
+    return sampleFrom(*this);
 }
 
 DisconnectReport LinuxNetworkPlatform::disconnectIfAssociated(const std::string& interfaceId, const std::string& expectedSsid)
 {
-    const LinkReport before = wirelessLinks();
-    const std::string current = ssidOf(findLink(before.links, interfaceId));
+    return disconnectFrom(*this, interfaceId, expectedSsid, [this](const std::string& target, const std::string& expected) {
+        // 复核：重新读一次状态，仍关联在期望网络上就说明断开没生效（例如随即被自动重连）。
+        const LinkReport refreshed = readStatuses();
+        return ssidOf(findLink(refreshed.links, target)) != expected;
+    });
+}
 
-    const DisconnectOutcome decision = decideDisconnect(current, expectedSsid);
-    if (decision != DisconnectOutcome::disconnected)
+LinkReadResult LinuxNetworkPlatform::readLinks()
+{
+    LinkReadResult result;
+
+    // 测试数据源优先，而且必须完全取代系统调用：这台机器上没有 nmcli 时，
+    // 继续调用只会产生一条全局失败，测试数据再正确也读不到。
+    if (fake::adapterOverrideActive())
     {
-        DisconnectReport report;
-        report.outcome = decision;
-        return report;
+        const auto adapters = fake::readOverriddenAdapters();
+        if (!adapters)
+        {
+            result.failures.push_back({FailureKind::unavailable, {}, "无法读取测试用网卡数据。"});
+            return result;
+        }
+        result.links = fake::linksFromAdapters(*adapters);
+        return result;
     }
 
-    DisconnectReport report = requestDisconnect(interfaceId, nmcli_);
-    if (report.outcome != DisconnectOutcome::disconnected)
-        return report;
+    const LinkReport report = readStatuses();
+    result.links = report.links;
+    result.failures = report.failures;
+    return result;
+}
 
-    // 复核断开是否真的生效：命令成功但随即被自动重连时不能报告成功。
-    const LinkReport refreshed = wirelessLinks();
-    if (ssidOf(findLink(refreshed.links, interfaceId)) == expectedSsid)
-        report.outcome = DisconnectOutcome::stillAssociated;
-    return report;
+CounterReadResult LinuxNetworkPlatform::readCounters()
+{
+    CounterReadResult result;
+    // 测试数据源优先：设置了 WIFIMETER_FAKE_COUNTERS 时不再读 /proc/net/dev，
+    // 这样端到端测试不必依赖真实网卡，也不会因为缺少计数而误判。
+    if (fake::countersOverrideActive())
+    {
+        const auto counters = fake::readOverriddenCounters();
+        if (!counters)
+        {
+            result.failures.push_back({FailureKind::unavailable, {}, "无法读取测试用计数数据。"});
+            return result;
+        }
+        result.counters = *counters;
+        return result;
+    }
+
+    for (const InterfaceCounters& entry : readInterfaceCounters(options_.procNetDevPath))
+    {
+        CounterReading reading;
+        reading.interfaceId = entry.interfaceId;
+        reading.rxBytes = entry.rxBytes;
+        reading.txBytes = entry.txBytes;
+        result.counters.push_back(std::move(reading));
+    }
+    return result;
+}
+
+DisconnectOutcome LinuxNetworkPlatform::requestDisconnect(const std::string& interfaceId, std::string& detail)
+{
+    const DisconnectReport report = linux::requestDisconnect(interfaceId, nmcli_);
+    detail = report.detail;
+    return report.outcome;
 }
 
 }  // namespace wifimeter::platform::linux
