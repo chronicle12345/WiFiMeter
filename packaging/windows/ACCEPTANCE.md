@@ -70,7 +70,21 @@ dist\windows\WiFiMeter-Demo-0.1.0-x64-Setup.exe
 - [ ] 与旧版 WiFiMeter 同时安装并启动，确认安装目录、快捷方式互不覆盖。
 - [ ] 从「应用和功能」卸载示例版，确认旧版仍可用，示例版的数据目录保留。
 
-## 7. 可选：更严格的自检
+## 7. 可选：在 Windows 上跑界面测试
+
+界面测试本身是跨平台的，只是在没有图形会话的 Linux（WSL/CI）上需要虚拟显示，
+Windows 桌面会话里直接跑即可：
+
+```powershell
+npm run test:ui                                                    # 开发态
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter Demo.exe').Path
+npm run test:ui                                                    # 打包产物
+Remove-Item Env:WIFIMETER_EXECUTABLE
+```
+
+它用假的网卡数据（夹具 nmcli）驱动真实后端，不会改动机器的网络状态。
+
+## 8. 可选：更严格的自检
 
 把 `build\windows\tests\windows_smoke_test.exe` 与
 `build\windows\app\wifimeter-backend.exe` 放到同一个目录，然后在 PowerShell 里：
