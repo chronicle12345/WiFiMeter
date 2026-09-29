@@ -70,6 +70,20 @@ npm run test           # 桌面应用单元测试，含打包产物检查（有 
 时子进程读不到变量，因此用命令行参数）。`apps/desktop/tests/windows-packaging.test.js`
 另外确认解包目录里确实带着后端，且它是真正的 Windows 可执行文件。
 
+同一份端到端用例也可以在 Windows 实机上直接跑（覆盖 CreateProcess、管道与真实文件系统）：
+
+```powershell
+# 把 build/windows/tests/backend_process_test.exe 与
+# build/windows/app/wifimeter-backend.exe 放到同一个目录，然后：
+$env:WIFIMETER_BACKEND_BINARY = (Resolve-Path '.\wifimeter-backend.exe').Path
+.\backend_process_test.exe
+Remove-Item Env:WIFIMETER_BACKEND_BINARY
+```
+
+环境变量用于覆盖构建时写入的路径（交叉编译出来的是构建机的 Linux 路径）。同理，
+`windows_smoke_test.exe` 可以直接在 Windows 上运行，它会只读地核对 WLAN API 与
+IP Helper 的真实行为（别名一致性、计数可查、频段只报 2.4 GHz 或留空、断开守卫）。
+
 Wine 下的系统调用与真实 Windows 不同（WLAN API 常返回空适配器列表），因此下面几项必须实机验证。
 
 ## 实机验收
