@@ -129,6 +129,44 @@ void dropsSsidWhileScanning()
     WIFIMETER_CHECK(!wlanInterfaceFrom(raw).ssid.has_value());
 }
 
+void mapsTwoPointFourGhzChannels()
+{
+    // 2.4 GHz 的信道号唯一，可以换算成频率与频段。
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(1).value_or(0), 2412);
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(6).value_or(0), 2437);
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(13).value_or(0), 2472);
+    // 日本专用的 14 信道。
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(14).value_or(0), 2484);
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(0).has_value(), false);
+    WIFIMETER_CHECK_EQ(frequencyFromChannel(-1).has_value(), false);
+
+    // 5 GHz 与 6 GHz 的信道号与 2.4 GHz 重叠（同样从 1 开始），
+    // 仅凭信道号无法判断频段，因此宁可留空也不给出可能错误的频率。
+    WIFIMETER_CHECK(!frequencyFromChannel(36).has_value());
+    WIFIMETER_CHECK(!frequencyFromChannel(149).has_value());
+    WIFIMETER_CHECK(!frequencyFromChannel(233).has_value());
+}
+
+void reportsFrequencyOnlyWhenKnown()
+{
+    // 2.4 GHz 信道：频率写入，上层据此归类出频段。
+    RawWlanInterface raw = connected("WLAN", "Home", "Home");
+    raw.channel = 6;
+    const WlanInterface link = wlanInterfaceFrom(raw);
+    WIFIMETER_CHECK(link.frequencyMhz.has_value());
+    WIFIMETER_CHECK_EQ(link.frequencyMhz.value_or(0), 2437);
+
+    // 5 GHz 信道：频率未知（信道号不唯一），但其余身份信息照常。
+    raw.channel = 149;
+    const WlanInterface unknown = wlanInterfaceFrom(raw);
+    WIFIMETER_CHECK(!unknown.frequencyMhz.has_value());
+    WIFIMETER_CHECK_EQ(unknown.ssid.value_or(""), std::string("Home"));
+
+    // 驱动不支持信道查询时是 0，同样留空。
+    raw.channel = 0;
+    WIFIMETER_CHECK(!wlanInterfaceFrom(raw).frequencyMhz.has_value());
+}
+
 void keepsChineseIdentity()
 {
     // 无线网卡 / 中文网卡 / 家庭网络 / 我的WIFI
@@ -209,6 +247,8 @@ int main()
     connectsInAutomaticMode();
     dropsSsidWhenNotAssociated();
     dropsSsidWhileScanning();
+    mapsTwoPointFourGhzChannels();
+    reportsFrequencyOnlyWhenKnown();
     keepsChineseIdentity();
     keepsEmojiSsid();
     rejectsOutOfRangeSignal();

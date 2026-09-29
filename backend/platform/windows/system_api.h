@@ -59,6 +59,7 @@ struct WlanStatus
     std::string profileName;
     std::optional<std::string> ssid;
     std::optional<int> signalPercent;
+    std::optional<int> frequencyMhz;  // 2.4 GHz 信道可从信道号推出；其余频段留空
 };
 
 // 由状态导出身份。profileUuid 留空：Windows 的配置名不满足快照 network.id 的字符集，

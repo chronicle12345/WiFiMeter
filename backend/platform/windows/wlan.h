@@ -54,6 +54,13 @@ ConnectionMode connectionModeFrom(std::uint32_t value);
 // 只有扫描态不是；invalid 视为未知，按保守处理（不算已连接）。
 bool isConnectedMode(ConnectionMode mode);
 
+// 信道号 → 频率（MHz）。无法确定时返回空值。
+//
+// 为什么不直接问系统：WLAN API 只给信道号（wlan_intf_opcode_channel_number），
+// 而且并非所有驱动都支持。频率再交给 platform/network_platform.h 的 classifyBand
+// 归类，与 Linux 侧用同一套频段边界。
+std::optional<int> frequencyFromChannel(int channel);
+
 struct WlanInterface
 {
     std::string interfaceId;      // 网卡名称（适配器别名），与计数使用同一个键
@@ -64,6 +71,7 @@ struct WlanInterface
     std::string profileName;              // 关联的配置名
     std::optional<std::string> ssid;      // 已关联时的网络名
     std::optional<int> signalPercent;     // 0..100
+    std::optional<int> frequencyMhz;      // 当前信道对应的频率；驱动不支持时为空
 };
 
 // 从原始字段判断是否关联：状态位为已连接、连接模式确实是已连接、并且读到了 SSID。
@@ -90,6 +98,8 @@ struct RawWlanInterface
     bool hasSsid = false;
     std::uint32_t signalQuality = 0;
     bool hasSignal = false;
+    // 当前信道；驱动不支持该查询时为 0（不当成错误）。
+    std::uint32_t channel = 0;
 };
 
 // 把系统取到的接口转换成平台结构。

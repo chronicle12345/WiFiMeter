@@ -88,6 +88,27 @@ std::string Win32System::aliasOf(const GUID& interfaceGuid) const
     return utf8Of(alias, IF_MAX_STRING_SIZE + 1);
 }
 
+std::optional<int> Win32System::channelFrequency(const GUID& interfaceGuid) const
+{
+    // 当前信道。并非所有驱动都支持这个查询，因此失败或返回 0 都只当作“未知”，
+    // 不生成失败记录：它只是展示信息，不影响计数与归属。
+    DWORD size = 0;
+    PVOID data = nullptr;
+    WLAN_OPCODE_VALUE_TYPE valueType{};
+    if (WlanQueryInterface(handle_, &interfaceGuid, wlan_intf_opcode_channel_number, nullptr, &size, &data, &valueType) != ERROR_SUCCESS)
+    {
+        if (data != nullptr)
+            WlanFreeMemory(data);
+        return std::nullopt;
+    }
+    std::optional<int> frequency;
+    if (data != nullptr && size >= sizeof(ULONG))
+        frequency = frequencyFromChannel(static_cast<int>(*static_cast<const ULONG*>(data)));
+    if (data != nullptr)
+        WlanFreeMemory(data);
+    return frequency;
+}
+
 bool Win32System::connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const
 {
     DWORD size = 0;
@@ -160,6 +181,7 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
             if (status.connected)
             {
                 status.signalPercent = attributes.wlanAssociationAttributes.wlanSignalQuality > 100 ? std::optional<int>{} : std::optional<int>{static_cast<int>(attributes.wlanAssociationAttributes.wlanSignalQuality)};
+                status.frequencyMhz = channelFrequency(info.InterfaceGuid);
             }
         }
         else

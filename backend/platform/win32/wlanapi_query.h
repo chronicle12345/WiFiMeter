@@ -20,6 +20,7 @@
 #endif
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include <winsock2.h>
@@ -56,6 +57,9 @@ private:
 
     // 读取单张网卡的当前连接属性；未连接或读取失败时返回空值。
     bool connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const;
+
+    // 当前信道对应的频率；驱动不支持该查询时返回空值。
+    std::optional<int> channelFrequency(const GUID& interfaceGuid) const;
 
     HANDLE handle_ = nullptr;
     std::uint32_t negotiatedVersion_ = 0;

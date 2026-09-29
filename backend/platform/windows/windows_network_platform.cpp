@@ -49,7 +49,11 @@ LinkReport WindowsNetworkPlatform::linksFrom(const std::vector<WlanStatus>& stat
         link.adapterAlias = status.adapterAlias.empty() ? status.interfaceId : status.adapterAlias;
         link.identity = identityOf(status);
         link.signalPercent = status.signalPercent;
-        // 频段留空：Win32 不通过 WLAN API 报告当前信道，不从信号强度反推。
+        link.frequencyMhz = status.frequencyMhz;
+        if (link.frequencyMhz)
+            link.band = classifyBand(*link.frequencyMhz);
+        // 频段只在能确定频率时才有值：5/6 GHz 的信道号与 2.4 GHz 重叠，
+        // 仅凭信道号推断会给出错误的频段，因此那两种情况留空显示“未知”。
         report.links.push_back(std::move(link));
     }
     return report;

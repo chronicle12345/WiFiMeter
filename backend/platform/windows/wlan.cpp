@@ -44,6 +44,25 @@ bool isConnectedMode(ConnectionMode mode)
     return mode == ConnectionMode::profile || mode == ConnectionMode::temporaryProfile || mode == ConnectionMode::automatic;
 }
 
+std::optional<int> frequencyFromChannel(int channel)
+{
+    // 2.4 GHz：信道 1..13 从 2412 MHz 起每信道 5 MHz；日本追加信道 14 = 2484 MHz。
+    // 这段映射唯一，可以放心换算。
+    if (channel >= 1 && channel <= 13)
+        return 2407 + channel * 5;
+    if (channel == 14)
+        return 2484;
+
+    // 其余信道号不唯一：5 GHz 与 6 GHz 都从信道 1 重新编号，同一个数字（例如 36）
+    // 在两个频段里都存在。仅凭信道号无法判断属于哪个频段，因此宁可不报，也不猜一个
+    // 可能错误的频率——频段显示错误比显示“未知”更糟。
+    //
+    // 想要覆盖这两个频段需要另一条数据来源：WlanGetNetworkBssList 的
+    // ulChCenterFrequency 会直接给出当前网络的中心频率（实测 5745000 kHz = 5745 MHz，
+    // 即 5 GHz 的 149 信道），代价是每次查询多一次调用，留待需要时再补。
+    return std::nullopt;
+}
+
 bool isAssociatedState(bool connected, ConnectionMode mode, std::string_view ssid)
 {
     return connected && isConnectedMode(mode) && !ssid.empty();
@@ -77,6 +96,8 @@ WlanInterface wlanInterfaceFrom(const RawWlanInterface& raw)
         interface.ssid = ssid;
 
     interface.signalPercent = signalFrom(raw.signalQuality, raw.hasSignal);
+    if (raw.channel > 0)
+        interface.frequencyMhz = frequencyFromChannel(static_cast<int>(raw.channel));
     return interface;
 }
 

@@ -242,6 +242,31 @@ void discardsSampleWhenProfileChanged()
     WIFIMETER_CHECK(hasFailure(report.failures, FailureKind::inconsistent, "WLAN"));
 }
 
+void reportsBandWhenTheChannelIsKnown()
+{
+    // 2.4 GHz 信道能推出频率，平台据此给出频段标签；与 Linux 侧用同一套边界。
+    FakeSystem system;
+    WlanStatus status = connectedStatus("WLAN", "Home", "Home");
+    status.frequencyMhz = 2437;
+    system.statusRounds = {{status}};
+    system.countersValue = {counters("WLAN", 1, 2)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+
+    const SampleReport report = platform->sampleWifi();
+    WIFIMETER_CHECK_EQ(report.links.size(), std::size_t(1));
+    WIFIMETER_CHECK(report.links[0].band == Band::ghz2_4);
+    WIFIMETER_CHECK_EQ(std::string(bandLabel(report.links[0].band)), std::string("2.4 GHz"));
+    WIFIMETER_CHECK_EQ(report.links[0].frequencyMhz.value_or(0), 2437);
+
+    // 频率未知时频段保持未知，而不是从信号强度之类的数据猜测。
+    system.statusCalls = 0;
+    system.statusRounds = {{connectedStatus("WLAN", "Home", "Home")}};
+    const SampleReport unknown = platform->sampleWifi();
+    WIFIMETER_CHECK(unknown.links[0].band == Band::unknown);
+    WIFIMETER_CHECK(!unknown.links[0].frequencyMhz.has_value());
+}
+
 void samplesInAutomaticMode()
 {
     // 真机上最常见的形态：Windows 自动连接到首选网络（mode = auto）。
@@ -453,6 +478,7 @@ int main()
     skipsWhenNothingAssociated();
     discardsSampleWhenNetworkChanged();
     discardsSampleWhenProfileChanged();
+    reportsBandWhenTheChannelIsKnown();
     samplesInAutomaticMode();
     reportsMissingCounters();
     reportsCounterQueryFailure();
