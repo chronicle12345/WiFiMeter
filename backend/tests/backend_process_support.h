@@ -232,6 +232,18 @@ inline void collectsAndStoresUsage(ProcessRunner& runner, ProcessFixture& fixtur
         sawUsage = true;
         totalRx += std::strtoull(networks->at(0).stringOr("rxBytes", "0").c_str(), nullptr, 10);
         totalTx += std::strtoull(networks->at(0).stringOr("txBytes", "0").c_str(), nullptr, 10);
+
+        // 增量里必须带上网络记录：首次见到某个网络时（新装的应用、换了新 Wi-Fi），
+        // 界面的快照里还没有它，只推增量的话用量归属不到名字上，会出现
+        // “未识别网络”且用量一直是 0，要重启应用才恢复。
+        const JsonValue* network = networks->at(0).find("network");
+        WIFIMETER_CHECK(network != nullptr);
+        if (network != nullptr)
+        {
+            WIFIMETER_CHECK_EQ(network->stringOr("ssid"), std::string("Habitat_5G"));
+            WIFIMETER_CHECK_EQ(network->stringOr("id"), std::string("ssid_bd012343c1e1410d"));
+            WIFIMETER_CHECK(network->find("quotaLedger") != nullptr);
+        }
     }
     WIFIMETER_CHECK_EQ(totalRx, std::uint64_t(3100000));
     WIFIMETER_CHECK_EQ(totalTx, std::uint64_t(500000));    WIFIMETER_CHECK(sawUsage);

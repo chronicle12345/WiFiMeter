@@ -18,6 +18,25 @@ bool isSeparator(char value)
     return value == '\\' || value == '/';
 }
 
+// 该前缀是不是“根本身”（盘符 "C:" 或 UNC 的 \\server\share）：这些不是要新建的目录。
+bool isBareRoot(std::string_view prefix)
+{
+    if (prefix.size() == 2 && prefix[1] == ':' && ((prefix[0] >= 'A' && prefix[0] <= 'Z') || (prefix[0] >= 'a' && prefix[0] <= 'z')))
+        return true;
+    // UNC：\server\share
+    if (prefix.size() >= 2 && isSeparator(prefix[0]) && isSeparator(prefix[1]))
+    {
+        int separators = 0;
+        for (char value : prefix)
+        {
+            if (isSeparator(value))
+                ++separators;
+        }
+        return separators <= 3 && prefix.back() != '\\';
+    }
+    return false;
+}
+
 }  // namespace
 
 std::string parentDirectoryOf(std::string_view path)
@@ -66,14 +85,18 @@ std::vector<std::string> directoryPrefixesToCreate(std::string_view path)
         return {};
 
     std::vector<std::string> prefixes;
+    const auto add = [&prefixes](std::string candidate) {
+        if (!candidate.empty() && !isBareRoot(candidate))
+            prefixes.push_back(std::move(candidate));
+    };
     for (std::size_t index = begin; index < directory.size(); ++index)
     {
         if (!isSeparator(directory[index]))
             continue;
-        prefixes.push_back(directory.substr(0, index));
+        add(directory.substr(0, index));
     }
     if (begin < directory.size())
-        prefixes.push_back(directory);
+        add(directory);
     return prefixes;
 }
 

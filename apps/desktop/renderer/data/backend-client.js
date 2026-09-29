@@ -51,6 +51,12 @@ export function createDataClient(handlers = {}) {
             }
             row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes ?? '0')).toString();
             row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes ?? '0')).toString();
+            // 后端在新网络的第一个增量里带上网络记录：首次见到某个网络时（新装的应用、
+            // 换了新 Wi-Fi）快照里还没有它，只并增量的话用量会算不出来，界面显示成
+            // “未识别网络”且一直 0，必须重启应用才恢复。
+            if (item.network && !snapshot.networks.some(candidate => candidate.id === item.network.id))
+                snapshot.networks.push(item.network);
+
             const network = snapshot.networks.find(candidate => candidate.id === item.networkId);
             if (network?.quotaLedger) {
                 const added = BigInt(item.rxBytes ?? '0') + BigInt(item.txBytes ?? '0');

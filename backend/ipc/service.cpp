@@ -936,6 +936,7 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
 
     if (!accumulated.deltas.empty())
     {
+        Status lookup;
         JsonValue usage = JsonValue::makeObject();
         usage.set("day", JsonValue::makeString(core::dayKeyOf(core::localStampOf(now))));
         JsonValue networks = JsonValue::makeArray();
@@ -945,6 +946,16 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
             item.set("networkId", JsonValue::makeString(entry.first));
             item.set("rxBytes", bytes(entry.second.first));
             item.set("txBytes", bytes(entry.second.second));
+            // 顺带带上网络记录：首次见到某个网络时（新装的应用、换了新 Wi-Fi），
+            // 界面的快照里还没有这个网络，只推增量的话它无法把用量归属到名字上，
+            // 于是显示“未识别网络”并且用量一直是 0，要重启应用才恢复。
+            const auto record = deps_.store.networks().find(entry.first, lookup);
+            if (lookup && record.has_value())
+            {
+                const auto ledger = deps_.store.networks().ledger(entry.first, lookup);
+                const ByteCount used = lookup && ledger.has_value() ? ledger->usedBytes : 0;
+                item.set("network", networkToJson(*record, used, core::periodKeyFor(record->quotaPeriod, now)));
+            }
             networks.push(std::move(item));
         }
         usage.set("networks", std::move(networks));
