@@ -1,5 +1,11 @@
 #include "text_convert.h"
 
+#include <string>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 #include <cstddef>
 
 namespace wifimeter::platform::windows
@@ -174,6 +180,25 @@ std::u16string fromUtf8(std::string_view text)
         out.push_back(static_cast<char16_t>(0xDC00 + (rest & 0x3FF)));
     }
     return out;
+}
+
+std::wstring toUtf16(std::string_view text)
+{
+#if defined(_WIN32)
+    if (text.empty())
+        return {};
+    const int length = ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (length <= 0)
+        return {};
+    std::wstring out(static_cast<std::size_t>(length), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length);
+    return out;
+#else
+    // 非 Windows 上 wchar_t 是 32 位：按 UTF-16 的语义展开成等价的码点序列即可，
+    // 这里只需要保证测试能覆盖“含中文的路径”这一情形。
+    const std::u16string utf16 = fromUtf8(text);
+    return std::wstring(utf16.begin(), utf16.end());
+#endif
 }
 
 }  // namespace wifimeter::platform::windows

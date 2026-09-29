@@ -4,6 +4,7 @@
 # 因此可以在 Linux 上原生构建并运行单元测试，只有交叉编译整个后端时才面向 Windows。
 add_library(wifimeter-platform-windows STATIC
     text_convert.cpp
+    path_support.cpp
     interface_counters.cpp
     wlan.cpp
     system_api.cpp

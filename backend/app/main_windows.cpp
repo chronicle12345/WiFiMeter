@@ -29,6 +29,7 @@
 #include "../ipc/server_windows.h"
 #include "../ipc/service.h"
 #include "../platform/counter_source.h"
+#include "../platform/windows/path_support.h"
 #include "../platform/win32/wlanapi_query.h"
 #include "../platform/windows/windows_network_platform.h"
 #include "../storage/store.h"
@@ -89,44 +90,6 @@ std::string defaultDatabasePath()
     if (base.empty())
         base = ".";
     return base + "\\WiFiMeter\\wifimeter.db";
-}
-
-// UTF-8 → UTF-16。数据库路径可能含中文用户名，系统调用必须用宽字符版本。
-std::wstring wideFromUtf8(const std::string& text)
-{
-    if (text.empty())
-        return {};
-    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (size <= 0)
-        return {};
-    std::wstring result(static_cast<std::size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
-    return result;
-}
-
-// 逐级创建父目录；已存在不算失败。
-//
-// 用宽字符版本的 CreateDirectory：用户目录常含中文（例如 C:\Users\张三），
-// ANSI 版本会按当前代码页解释路径，非当前代码页的字符会变成问号而创建失败。
-bool ensureParentDirectory(const std::string& path)
-{
-    const std::size_t separator = path.find_last_of("\\/");
-    if (separator == std::string::npos || separator == 0)
-        return true;
-
-    const std::string directory = path.substr(0, separator);
-    // CreateDirectory 不创建中间层，因此从盘符之后逐段创建；分隔符可能是 / 或 \。
-    for (std::size_t index = 1; index <= directory.size(); ++index)
-    {
-        if (index != directory.size() && directory[index] != '\\' && directory[index] != '/')
-            continue;
-        const std::wstring partial = wideFromUtf8(directory.substr(0, index));
-        if (partial.empty())
-            return false;
-        if (!CreateDirectoryW(partial.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
-            return false;
-    }
-    return true;
 }
 
 }  // namespace
@@ -202,7 +165,7 @@ int main()
 
     if (databasePath.empty())
         databasePath = defaultDatabasePath();
-    if (!ensureParentDirectory(databasePath))
+    if (!wifimeter::platform::windows::ensureParentDirectory(databasePath))
     {
         std::fprintf(stderr, "无法创建数据目录：%s\n", databasePath.c_str());
         return 1;

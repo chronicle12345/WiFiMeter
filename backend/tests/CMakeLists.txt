@@ -23,6 +23,7 @@ endfunction()
 # Windows 平台用例：不调用系统接口，任何主机都能运行。
 set(WIFIMETER_WINDOWS_TESTS
     windows_text_convert_test
+    windows_path_test
     windows_interface_counters_test
     windows_wlan_test
     windows_platform_test

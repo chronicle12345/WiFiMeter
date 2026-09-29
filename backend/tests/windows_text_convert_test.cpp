@@ -139,6 +139,32 @@ void roundTripsMixedText()
 
 }  // namespace
 
+// toUtf16：Windows 的宽字符 API 需要它；含中文的用户名与路径必须能正确转换。
+void convertsUtf8ToWide()
+{
+    // "C:\Users\Shi\meter.db" 共 21 个字符。
+    const std::wstring ascii = toUtf16("C:\\Users\\Shi\\meter.db");
+    WIFIMETER_CHECK_EQ(ascii.size(), std::size_t(21));
+
+    // 中文路径：库里要求每个字符都保留，不能按代码页降级。
+    // "C:\用户\数据\meter.db"：3 个分隔符 + 4 个汉字 + 9 个 ASCII = 16 个字符，
+    // 但 UTF-16 下每个汉字是 1 个码元，所以总数是 16。
+    const std::wstring chinese = toUtf16("C:\\用户\\数据\\meter.db");
+    WIFIMETER_CHECK_EQ(chinese.size(), std::size_t(17));
+
+    WIFIMETER_CHECK(toUtf16("").empty());
+
+    // emoji 在 UTF-16 里是代理对：4 字节 UTF-8 → 2 个码元。
+    const std::string emojiBytes = std::string("a") + "\xF0\x9F\x93\xA1" + "b";
+    const std::wstring emoji = toUtf16(emojiBytes);
+    WIFIMETER_CHECK_EQ(emoji.size(), std::size_t(4));
+
+    // 非法序列写成 U+FFFD，而不是丢弃整串。
+    const std::string brokenBytes = std::string("a") + "\xFF" + "b";
+    const std::wstring broken = toUtf16(brokenBytes);
+    WIFIMETER_CHECK_EQ(broken.size(), std::size_t(3));
+}
+
 int main()
 {
     encodesAscii();
@@ -154,5 +180,6 @@ int main()
     keepsBytesAfterInvalidSequence();
     appendUtf8ReportsConsumedBytes();
     roundTripsMixedText();
+    convertsUtf8ToWide();
     return WIFIMETER_REPORT();
 }

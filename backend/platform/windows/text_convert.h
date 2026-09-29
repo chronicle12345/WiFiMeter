@@ -29,4 +29,8 @@ std::u16string fromUtf8(std::string_view text);
 // 非法序列写入 U+FFFD 并返回 1。
 std::size_t appendUtf8(std::string& out, std::string_view text);
 
+// UTF-8 → UTF-16，给需要宽字符的 Windows API 用（CreateDirectoryW、SHGetKnownFolderPath 等
+// 拿到的都是 UTF-8 路径）。在 Linux 上也实现，便于测试文件名含中文等情形。
+std::wstring toUtf16(std::string_view text);
+
 }  // namespace wifimeter::platform::windows
