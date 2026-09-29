@@ -26,10 +26,12 @@ set(WIFIMETER_WINDOWS_TESTS
     windows_interface_counters_test
     windows_wlan_test
     windows_platform_test
+    # 接缝测试：真实 WindowsNetworkPlatform + 假的 SystemApi，序列与 Linux 侧共用。
+    windows_integration_usage_test
 )
 
 foreach(test_name IN LISTS WIFIMETER_WINDOWS_TESTS)
-    wifimeter_add_test(${test_name} wifimeter-platform-windows)
+    wifimeter_add_test(${test_name} wifimeter-platform-windows wifimeter-core)
 endforeach()
 
 set(WIFIMETER_CORE_TESTS
