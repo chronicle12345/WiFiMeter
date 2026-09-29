@@ -2,11 +2,11 @@
 
 [English](README.md) | 简体中文
 
-WiFiMeter 的共享 Electron 桌面应用面向 Windows 和 Linux，后续由本机 C++ 后端提供网络采集与业务数据。目前使用示例数据，Linux 可构建 deb，Windows 可在本机生成独立的 WiFiMeter Demo 安装包；C++ 后端已完成 Linux 平台层（采集、身份识别、断开控制）并有测试，业务逻辑、存储、通信和 Electron 接入尚未实现。
+WiFiMeter 是一个面向 Linux 与 Windows 的 Wi-Fi 流量统计工具。共享的 Electron 桌面应用与本机 C++ 后端通信：后端读取网卡计数器、把流量归属到具体网络，并把历史、额度与偏好写入本机 SQLite 数据库，数据不离开这台机器。Linux 平台层、JSON 协议与桌面接入已完成；Windows 平台层、系统级功能（开机启动、托盘、系统通知）与分应用统计尚未实现。
 
 ## 安装依赖与启动
 
-需要 Node.js 22.12 或更新版本、npm 和图形桌面。首次安装依赖及下载 Electron 需要联网，应用运行时可离线使用。
+需要 Node.js 22.12 或更新版本、npm 和图形桌面；构建后端还需要 CMake、支持 C++20 的编译器与 SQLite 开发头文件。首次安装依赖及下载 Electron 需要联网，应用运行时可离线使用。
 
 从仓库根目录执行：
 
@@ -15,7 +15,7 @@ npm ci --prefix apps/desktop
 npm start
 ```
 
-页面包含总览、网络、历史和设置，支持模拟刷新、日期筛选、网络备注、额度、导出与完整备份恢复。点击“演示数据”可切换状态或恢复示例。自启动、托盘和断网只作演示，关闭窗口即退出。
+页面包含总览、网络、历史和设置，支持实时刷新、日期筛选、网络备注、额度、导出与完整备份恢复，数据全部来自真实采集。点击“采集状态”可查看采集器与网卡状态。自启动与托盘开关目前只保存偏好，尚未作用于系统。
 
 ## 测试与打包
 
@@ -27,7 +27,7 @@ npm run test:backend
 npm run dist:linux
 ```
 
-界面测试需要图形会话，使用临时用户数据目录。Linux 打包在 Ubuntu x64 上使用 electron-builder 和系统自带的 `dpkg-deb`。后端测试需要 CMake、支持 C++20 的编译器以及 SQLite 开发头文件（`libsqlite3-dev`），会读取 `/proc/net/dev` 与 `nmcli`，但不会改动机器的网络状态。
+界面测试需要图形会话，使用临时用户数据目录，并用假的网卡数据驱动真实后端，不会改动机器的网络状态。`npm run dist:linux` 先构建后端，再把应用与 `wifimeter-backend` 一起打进 deb，包依赖 `libsqlite3-0`。设置 `WIFIMETER_EXECUTABLE=dist/linux/linux-unpacked/wifimeter` 可让界面测试跑在打包产物上。
 
 安装生成的 deb：
 
@@ -51,8 +51,8 @@ npm run dist:windows
 ## 目录
 
 ```text
-apps/desktop/       共享桌面应用、示例数据和测试
-backend/            C++ 后端：Linux 平台层已实现并有测试
+apps/desktop/       共享桌面应用、桌面接入与测试
+backend/            C++ 后端：平台层、业务规则、SQLite 存储、协议与 wifimeter-backend
 contracts/          现有数据格式与未来协议边界
 packaging/linux/    Linux deb 打包脚本
 packaging/windows/  Windows 本机 NSIS 安装包构建

@@ -2,11 +2,11 @@
 
 English | [简体中文](README.zh-CN.md)
 
-WiFiMeter uses a shared Electron desktop application for Windows and Linux, with a planned local C++ backend for network collection and business data. The current application uses sample data. Linux deb packaging and native Windows NSIS packaging are configured. The Linux platform layer of the C++ backend is implemented and tested; its business logic, storage, IPC, and the Electron integration are not.
+WiFiMeter is a Wi-Fi traffic meter for Linux and Windows. A shared Electron desktop application talks to a local C++ backend that reads interface counters, attributes them to networks, and stores history, quotas and preferences in a local SQLite database. Nothing leaves the machine. The Linux backend, its JSON protocol and the desktop integration are implemented; the Windows platform layer, system-level features (autostart, tray, notifications) and per-application accounting are not.
 
 ## Getting started
 
-Use Node.js 22.12 or newer, npm, and a graphical desktop. Dependency installation and the first Electron download require an internet connection. The demo runs offline.
+Use Node.js 22.12 or newer, npm, a graphical desktop, and — to build the backend — CMake, a C++20 compiler and the SQLite development headers. Dependency installation and the first Electron download require an internet connection; the application itself runs offline.
 
 From the repository root:
 
@@ -15,7 +15,7 @@ npm ci --prefix apps/desktop
 npm start
 ```
 
-The application includes overview, networks, history, settings, simulated updates, quota editing, exports, and backup/restore. Startup, tray, and disconnect settings are previews; closing the window exits the application.
+The application includes overview, networks, history, settings, live updates, quota editing, exports, and backup/restore, all backed by real collection. Autostart and tray settings are stored but not yet applied to the system.
 
 ## Tests and Linux packaging
 
@@ -27,7 +27,7 @@ npm run test:backend
 npm run dist:linux
 ```
 
-UI tests require a graphical session and use temporary user profiles. Linux packaging targets Ubuntu x64 and uses electron-builder plus the system's `dpkg-deb`. Backend tests need CMake, a C++20 compiler, and the SQLite development headers (`libsqlite3-dev`); they read `/proc/net/dev` and `nmcli` but never change the machine's network state.
+UI tests require a graphical session, use temporary user profiles, and drive the real backend with a fake adapter, so they never change the machine's network state. `npm run dist:linux` builds the backend and then packages both the application and the `wifimeter-backend` executable into the deb; the package depends on `libsqlite3-0`. Set `WIFIMETER_EXECUTABLE=dist/linux/linux-unpacked/wifimeter` to run the UI tests against the packaged build.
 
 ```bash
 sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
@@ -48,8 +48,8 @@ Output: `dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe`. The unsigned **WiFiMe
 
 ## Layout
 
-- `apps/desktop/`: shared Electron application, sample data, and tests.
-- `backend/`: C++ backend; the Linux platform layer and its tests are implemented.
+- `apps/desktop/`: shared Electron application, desktop integration, and tests.
+- `backend/`: C++ backend: platform layer, business rules, SQLite storage, IPC and the `wifimeter-backend` executable.
 - `contracts/`: current data format and future protocol boundaries.
 - `packaging/linux/`: deb packaging; `packaging/windows/`: native Windows NSIS packaging.
 - `legacy/windows/`: original WPF/PowerShell application, documentation, and tests.
