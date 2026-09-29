@@ -25,6 +25,7 @@ set(WIFIMETER_WINDOWS_TESTS
     windows_text_convert_test
     windows_interface_counters_test
     windows_wlan_test
+    windows_platform_test
 )
 
 foreach(test_name IN LISTS WIFIMETER_WINDOWS_TESTS)
