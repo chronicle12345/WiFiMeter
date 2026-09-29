@@ -398,6 +398,83 @@ inline void updatesSettingsThroughTheProcess(ProcessRunner& runner, ProcessFixtu
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
 }
 
+// 切换网络：换到另一个 SSID 之后，用量必须归到新网络，旧网络不再增长。
+//
+// 这一条对应验收清单里“连接另一个 Wi-Fi”的手工项。网络键由 SSID 派生，因此这里
+// 用假适配器换 SSID 就能走完整条链路：身份变化 → 新网络入库 → 用量归属。
+inline void attributesUsageToTheNewNetworkAfterSwitching(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+
+    // 第一个网络：建立基线再产生 1 MB。
+    WIFIMETER_CHECK(session.request(1, "collectNow").has_value());
+    fixture.setCounters(6000000, 1000000);
+    WIFIMETER_CHECK(session.request(2, "collectNow").has_value());
+    session.drainEvents();
+
+    const auto first = session.request(3, "snapshot");
+    WIFIMETER_CHECK(first.has_value());
+    std::string firstKey;
+    if (first && first->find("result") != nullptr)
+    {
+        const JsonValue* networks = first->find("result")->find("networks");
+        if (networks != nullptr && networks->size() == 1)
+            firstKey = networks->at(0).stringOr("id");
+    }
+    WIFIMETER_CHECK(!firstKey.empty());
+
+    // 切换到第二个网络：身份变了，旧网卡的计数差值应当被丢弃而不是记到新网络上。
+    fixture.setNetwork("Cafe_Guest", "6c1f0f2e-1111-2222-3333-444455556666");
+    fixture.setCounters(20000000, 3000000);
+    WIFIMETER_CHECK(session.request(4, "collectNow").has_value());
+    session.drainEvents();
+
+    // 第二次采集：在同一个身份上再产生 500 KB，才能形成新网络的用量。
+    fixture.setCounters(25000000, 3500000);
+    WIFIMETER_CHECK(session.request(5, "collectNow").has_value());
+    session.drainEvents();
+
+    const auto second = session.request(6, "snapshot");
+    WIFIMETER_CHECK(second.has_value());
+    if (second && second->find("result") != nullptr)
+    {
+        const JsonValue* result = second->find("result");
+        const JsonValue* networks = result->find("networks");
+        WIFIMETER_CHECK(networks != nullptr && networks->size() == 2);
+
+        // 当前连接应当是新的那个网络。
+        const JsonValue* connections = result->find("live")->find("connections");
+        WIFIMETER_CHECK(connections != nullptr && connections->size() == 1);
+
+        const JsonValue* records = result->find("records");
+        WIFIMETER_CHECK(records != nullptr);
+        if (records != nullptr)
+        {
+            for (std::size_t index = 0; index < records->size(); ++index)
+            {
+                const JsonValue& row = records->at(index);
+                const std::string key = row.stringOr("networkId");
+                if (key == firstKey)
+                {
+                    // 旧网络：只有第一次的 1 MB，切换时那个大差值不该记进来。
+                    WIFIMETER_CHECK_EQ(row.stringOr("rxBytes"), std::string("1000000"));
+                    WIFIMETER_CHECK_EQ(row.stringOr("txBytes"), std::string("100000"));
+                }
+                else
+                {
+                    // 新网络：切换后的第一次采样只建立基线，第二次才形成增量。
+                    WIFIMETER_CHECK_EQ(row.stringOr("rxBytes"), std::string("5000000"));
+                    WIFIMETER_CHECK_EQ(row.stringOr("txBytes"), std::string("500000"));
+                }
+            }
+        }
+    }
+
+    WIFIMETER_CHECK(session.request(7, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
 // 后端必须**自己**按间隔采样，而不是只在被要求时（collectNow）才采。
 //
 // 这条用例是补上来的：真机上安装后界面一直显示“尚未连接 Wi-Fi”，原因是 Windows 的
@@ -698,6 +775,9 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture schedule(executable);
     samplesOnItsOwnSchedule(runner, schedule);
+
+    ProcessFixture switching(executable);
+    attributesUsageToTheNewNetworkAfterSwitching(runner, switching);
 
     return WIFIMETER_REPORT();
 }
