@@ -4,6 +4,7 @@ const { pathToFileURL } = require('node:url');
 const { createFileActions } = require('./files.cjs');
 const { BackendClient, resolveExecutable } = require('./backend.cjs');
 const { createSystemIntegration } = require('./system.cjs');
+const { applyProductIdentity } = require('./product.cjs');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
@@ -12,13 +13,9 @@ let backend;
 let system;
 let quitting = false;
 
-const isWindows = process.platform === 'win32';
-const productName = isWindows ? 'WiFiMeter Demo' : 'WiFiMeter';
-app.setName(productName);
-if (isWindows) {
-    app.setAppUserModelId('io.wifimeter.demo');
-    app.setPath('userData', path.join(app.getPath('appData'), 'WiFiMeter Demo'));
-}
+// 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
+// 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
+const productName = applyProductIdentity(app, process.platform, app.getPath('appData')).productName;
 // Tests use an isolated profile and never modify the user's demo records.
 if (process.env.WIFIMETER_USER_DATA) app.setPath('userData', process.env.WIFIMETER_USER_DATA);
 
