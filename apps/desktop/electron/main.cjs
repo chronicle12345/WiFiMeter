@@ -57,7 +57,7 @@ app.whenReady().then(async () => {
 
     // 后端进程由主进程拉起并按需重启；数据库放在用户数据目录，与演示版的存储键区分开。
     backend = new BackendClient({
-        executable: resolveExecutable({ repositoryRoot: path.join(__dirname, '../../..'), resourcesPath: process.resourcesPath }),
+        executable: resolveExecutable({ repositoryRoot: path.join(__dirname, '../../..'), resourcesPath: process.resourcesPath, platform: process.platform }),
         databasePath: path.join(app.getPath('userData'), 'wifimeter.db'),
         logger: message => console.log(`[backend] ${message}`)
     });

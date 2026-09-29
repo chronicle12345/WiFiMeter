@@ -12,21 +12,35 @@ const fs = require('node:fs');
 
 const DEFAULT_TIMEOUT = 15000;
 
+// 后端可执行文件的文件名：Windows 上带 .exe，其他平台没有后缀。
+function executableName(platform) {
+    return platform === 'win32' ? 'wifimeter-backend.exe' : 'wifimeter-backend';
+}
+
 // 后端可执行文件的位置：开发时在仓库的 build/ 下，打包后在 resources/ 下。
-function resolveExecutable({ repositoryRoot, resourcesPath }) {
+//
+// 一个都没找到时退回可执行文件名本身（不带目录）：交给系统在 PATH 里查找，
+// 比给一个确定不存在的路径更有用，日志里也不会误导读成“文件在那儿”。
+// platform 可显式传入，便于在一种系统上验证另一种系统的查找规则。
+function resolveExecutable({ repositoryRoot, resourcesPath, platform = process.platform }) {
     if (process.env.WIFIMETER_BACKEND) return process.env.WIFIMETER_BACKEND;
+    const name = executableName(platform);
     const candidates = [];
-    if (resourcesPath) candidates.push(path.join(resourcesPath, 'wifimeter-backend'));
-    if (repositoryRoot) candidates.push(path.join(repositoryRoot, 'build', 'app', 'wifimeter-backend'));
+    if (resourcesPath) candidates.push(path.join(resourcesPath, name));
+    // Windows 的后端由交叉编译产出到 build/windows/app/，Linux 产出到 build/app/。
+    const buildDirectory = platform === 'win32' ? path.join('build', 'windows', 'app') : path.join('build', 'app');
+    if (repositoryRoot) candidates.push(path.join(repositoryRoot, buildDirectory, name));
     for (const candidate of candidates) {
         try {
-            fs.accessSync(candidate, fs.constants.X_OK);
+            // Windows 没有可执行位，只能判断存在；其他平台还要求可执行。
+            if (platform === 'win32') fs.accessSync(candidate, fs.constants.F_OK);
+            else fs.accessSync(candidate, fs.constants.X_OK);
             return candidate;
         } catch {
             // 继续尝试下一个候选位置
         }
     }
-    return candidates[0] ?? 'wifimeter-backend';
+    return name;
 }
 
 class BackendClient extends EventEmitter {

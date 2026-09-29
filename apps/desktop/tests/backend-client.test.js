@@ -71,10 +71,58 @@ test('解析可执行文件位置：环境变量优先', () => {
     const previous = process.env.WIFIMETER_BACKEND;
     process.env.WIFIMETER_BACKEND = '/tmp/自定义后端';
     try {
-        assert.equal(resolveExecutable({ repositoryRoot: '/repo', resourcesPath: '/res' }), '/tmp/自定义后端');
+        assert.strictEqual(resolveExecutable({ repositoryRoot: '/repo', resourcesPath: '/res' }), '/tmp/自定义后端');
     } finally {
         if (previous === undefined) delete process.env.WIFIMETER_BACKEND;
         else process.env.WIFIMETER_BACKEND = previous;
+    }
+});
+
+test('解析可执行文件位置：Windows 用 .exe 与 build/windows/app', () => {
+    const previous = process.env.WIFIMETER_BACKEND;
+    delete process.env.WIFIMETER_BACKEND;
+    try {
+        const directory = temporaryDirectory('resolve-win');
+        // 打包后的位置：resources/wifimeter-backend.exe
+        const resources = path.join(directory, 'resources');
+        fs.mkdirSync(resources);
+        const packaged = path.join(resources, 'wifimeter-backend.exe');
+        fs.writeFileSync(packaged, '');
+        assert.strictEqual(resolveExecutable({ repositoryRoot: directory, resourcesPath: resources, platform: 'win32' }), packaged);
+
+        // 开发时的位置：build/windows/app/wifimeter-backend.exe
+        fs.rmSync(packaged);
+        const buildDirectory = path.join(directory, 'build', 'windows', 'app');
+        fs.mkdirSync(buildDirectory, { recursive: true });
+        const development = path.join(buildDirectory, 'wifimeter-backend.exe');
+        fs.writeFileSync(development, '');
+        assert.strictEqual(resolveExecutable({ repositoryRoot: directory, resourcesPath: resources, platform: 'win32' }), development);
+
+        // 一处都没有时退回裸文件名，交给 PATH 查找，而不是指向一个确定不存在的路径。
+        fs.rmSync(development);
+        assert.strictEqual(resolveExecutable({ repositoryRoot: directory, resourcesPath: resources, platform: 'win32' }), 'wifimeter-backend.exe');
+        fs.rmSync(directory, { recursive: true, force: true });
+    } finally {
+        if (previous !== undefined) process.env.WIFIMETER_BACKEND = previous;
+    }
+});
+
+test('解析可执行文件位置：Linux 要求可执行位', () => {
+    const previous = process.env.WIFIMETER_BACKEND;
+    delete process.env.WIFIMETER_BACKEND;
+    try {
+        const directory = temporaryDirectory('resolve-linux');
+        const buildDirectory = path.join(directory, 'build', 'app');
+        fs.mkdirSync(buildDirectory, { recursive: true });
+        const executable = path.join(buildDirectory, 'wifimeter-backend');
+        fs.writeFileSync(executable, '', { mode: 0o644 });
+        // 没有可执行位时不能选中它：直接 spawn 会失败，错误信息也更难懂。
+        assert.notStrictEqual(resolveExecutable({ repositoryRoot: directory, platform: 'linux' }), executable);
+        fs.chmodSync(executable, 0o755);
+        assert.strictEqual(resolveExecutable({ repositoryRoot: directory, platform: 'linux' }), executable);
+        fs.rmSync(directory, { recursive: true, force: true });
+    } finally {
+        if (previous !== undefined) process.env.WIFIMETER_BACKEND = previous;
     }
 });
 
