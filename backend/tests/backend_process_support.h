@@ -477,6 +477,81 @@ inline void exportsAndRestoresABackup(ProcessRunner& runner, ProcessFixture& fix
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
 }
 
+// 流量导出：界面「导出数据」用的路径，要能在给定区间与网络范围内给出记录，
+// 并且带上 SSID 与备注（表格里要显示可读的网络名）。
+inline void exportsUsageRecords(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+
+    // 一轮基线 + 一轮增量。
+    WIFIMETER_CHECK(session.request(1, "collectNow").has_value());
+    fixture.setCounters(7000000, 1200000);
+    WIFIMETER_CHECK(session.request(2, "collectNow").has_value());
+    session.drainEvents();
+
+    // 先取网络键与今天，便于按区间查询。
+    std::string networkKey;
+    std::string today;
+    const auto snapshot = session.request(3, "snapshot");
+    if (snapshot && snapshot->find("result") != nullptr)
+    {
+        const JsonValue* result = snapshot->find("result");
+        const JsonValue* networks = result->find("networks");
+        if (networks != nullptr && networks->size() == 1)
+            networkKey = networks->at(0).stringOr("id");
+        const JsonValue* range = result->find("range");
+        if (range != nullptr)
+            today = range->stringOr("to");
+    }
+    WIFIMETER_CHECK(!networkKey.empty());
+    WIFIMETER_CHECK(!today.empty());
+
+    // 给网络起个中文备注，导出里应当带上它。
+    WIFIMETER_CHECK(session.request(4, "updateNetwork", "{\"key\":\"" + networkKey + "\",\"alias\":\"书房 Wi-Fi\"}").has_value());
+
+    // 默认区间（近一年）导出。
+    const auto exported = session.request(5, "exportUsage", "{}");
+    WIFIMETER_CHECK(exported.has_value());
+    if (exported && exported->find("result") != nullptr)
+    {
+        const JsonValue* result = exported->find("result");
+        const JsonValue* records = result->find("records");
+        WIFIMETER_CHECK(records != nullptr && records->size() == 1);
+        if (records != nullptr && records->size() == 1)
+        {
+            const JsonValue& entry = records->at(0);
+            WIFIMETER_CHECK_EQ(entry.stringOr("networkId"), networkKey);
+            WIFIMETER_CHECK_EQ(entry.stringOr("ssid"), std::string("Habitat_5G"));
+            WIFIMETER_CHECK_EQ(entry.stringOr("alias"), std::string("书房 Wi-Fi"));
+            WIFIMETER_CHECK_EQ(entry.stringOr("rxBytes"), std::string("2000000"));
+            WIFIMETER_CHECK_EQ(entry.stringOr("txBytes"), std::string("300000"));
+            WIFIMETER_CHECK_EQ(entry.stringOr("date"), today);
+        }
+    }
+
+    // 按网络范围过滤：换一个不存在的键应当没有记录。
+    const auto filtered = session.request(6, "exportUsage", R"({"networkKey":"ssid_does_not_exist"})");
+    WIFIMETER_CHECK(filtered.has_value());
+    if (filtered && filtered->find("result") != nullptr)
+    {
+        const JsonValue* records = filtered->find("result")->find("records");
+        WIFIMETER_CHECK(records != nullptr && records->size() == 0);
+    }
+
+    // 区间之外（过去的一天）也应当为空，而不是把数据算进来。
+    const auto outside = session.request(7, "exportUsage", R"({"from":"2020-01-01","to":"2020-01-02"})");
+    WIFIMETER_CHECK(outside.has_value());
+    if (outside && outside->find("result") != nullptr)
+    {
+        const JsonValue* records = outside->find("result")->find("records");
+        WIFIMETER_CHECK(records != nullptr && records->size() == 0);
+    }
+
+    WIFIMETER_CHECK(session.request(8, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
 // 备份文件的标记不对时必须拒绝，而不是把流量导出当成完整备份写进去。
 inline void refusesAForeignBackup(ProcessRunner& runner, ProcessFixture& fixture)
 {
@@ -538,6 +613,9 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture foreign(executable);
     refusesAForeignBackup(runner, foreign);
+
+    ProcessFixture exportFixture(executable);
+    exportsUsageRecords(runner, exportFixture);
 
     return WIFIMETER_REPORT();
 }
