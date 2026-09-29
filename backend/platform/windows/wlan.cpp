@@ -26,17 +26,27 @@ ConnectionMode connectionModeFrom(std::uint32_t value)
         case 0:
             return ConnectionMode::profile;
         case 1:
-            return ConnectionMode::adhoc;
+            return ConnectionMode::temporaryProfile;
         case 2:
-            return ConnectionMode::discover;
+            return ConnectionMode::discoverySecure;
+        case 3:
+            return ConnectionMode::discoveryUnsecure;
+        case 4:
+            return ConnectionMode::automatic;
         default:
-            return ConnectionMode::unknown;
+            return ConnectionMode::invalid;
     }
+}
+
+bool isConnectedMode(ConnectionMode mode)
+{
+    // 只有两个 discovery 取值代表“还没连上”。invalid 是未知，保守地不算已连接。
+    return mode == ConnectionMode::profile || mode == ConnectionMode::temporaryProfile || mode == ConnectionMode::automatic;
 }
 
 bool isAssociatedState(bool connected, ConnectionMode mode, std::string_view ssid)
 {
-    return connected && mode == ConnectionMode::profile && !ssid.empty();
+    return connected && isConnectedMode(mode) && !ssid.empty();
 }
 
 bool isAssociated(const WlanInterface& link)
@@ -61,7 +71,8 @@ WlanInterface wlanInterfaceFrom(const RawWlanInterface& raw)
     interface.mode = connectionModeFrom(raw.connectionMode);
     interface.profileName = toUtf8(raw.profileName);
 
-    const std::string ssid = raw.hasSsid ? toUtf8(raw.ssid) : std::string{};
+    // SSID 已经是原始字节串（DOT11_SSID.ucSSID）：直接使用，不再按 UTF-16 解释。
+    const std::string ssid = raw.hasSsid ? raw.ssid : std::string{};
     if (isAssociatedState(interface.connected, interface.mode, ssid))
         interface.ssid = ssid;
 

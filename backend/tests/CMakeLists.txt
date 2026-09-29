@@ -34,6 +34,13 @@ foreach(test_name IN LISTS WIFIMETER_WINDOWS_TESTS)
     wifimeter_add_test(${test_name} wifimeter-platform-windows wifimeter-core)
 endforeach()
 
+# 真机冒烟：只读地调用 WLAN API 与 IP Helper，验证别名一致性与断开守卫。
+# 只能在 Windows 上构建；交叉编译时它不能由 Wine 代表（Wine 的 WLAN 实现与真实系统不同），
+# 因此不进 ctest，需要时在 Windows 机器上单独运行 build/windows/tests/windows_smoke_test.exe。
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    wifimeter_add_test(windows_smoke_test wifimeter-platform-win32)
+endif()
+
 set(WIFIMETER_CORE_TESTS
     byte_count_test
     local_time_test

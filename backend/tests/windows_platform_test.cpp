@@ -41,7 +41,7 @@ WlanStatus disconnectedStatus(const std::string& interfaceId)
     status.interfaceId = interfaceId;
     status.adapterAlias = "Intel(R) Wi-Fi 6 AX201 160MHz";
     status.connected = false;
-    status.mode = ConnectionMode::discover;
+    status.mode = ConnectionMode::discoverySecure;
     return status;
 }
 
@@ -242,6 +242,37 @@ void discardsSampleWhenProfileChanged()
     WIFIMETER_CHECK(hasFailure(report.failures, FailureKind::inconsistent, "WLAN"));
 }
 
+void samplesInAutomaticMode()
+{
+    // 真机上最常见的形态：Windows 自动连接到首选网络（mode = auto）。
+    // 早先只认 profile，结果这张网卡被当成未关联，采样永远为空。
+    FakeSystem system;
+    WlanStatus automatic = connectedStatus("WLAN", "CMCC-mKm3-5G", "CMCC-mKm3-5G");
+    automatic.mode = ConnectionMode::automatic;
+    system.statusRounds = {{automatic}};
+    system.countersValue = {counters("WLAN", 5000, 6000)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+
+    const SampleReport report = platform->sampleWifi();
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(1));
+    WIFIMETER_CHECK_EQ(report.samples[0].identity.ssid.value_or(""), std::string("CMCC-mKm3-5G"));
+    WIFIMETER_CHECK_EQ(report.samples[0].rxBytes, std::uint64_t(5000));
+    WIFIMETER_CHECK(report.complete());
+    // 这种网卡也要出现在实时状态里。
+    WIFIMETER_CHECK_EQ(report.links.size(), std::size_t(1));
+    WIFIMETER_CHECK(report.links[0].identity.associated());
+
+    // 断开守卫同样要认得它：SSID 匹配时才允许断开。
+    system.disconnectResult.accepted = true;
+    // 上面的采样已经读了两次状态，这里把轮次重置到已知位置：
+    // 判定一次 → 复核仍在关联一次 → 复核确认已断开。
+    system.statusCalls = 0;
+    system.statusRounds = {{automatic}, {automatic}, {disconnectedStatus("WLAN")}};
+    const DisconnectReport disconnected = platform->disconnectIfAssociated("WLAN", "CMCC-mKm3-5G");
+    WIFIMETER_CHECK(disconnected.outcome == DisconnectOutcome::disconnected);
+}
+
 void reportsMissingCounters()
 {
     FakeSystem system;
@@ -422,6 +453,7 @@ int main()
     skipsWhenNothingAssociated();
     discardsSampleWhenNetworkChanged();
     discardsSampleWhenProfileChanged();
+    samplesInAutomaticMode();
     reportsMissingCounters();
     reportsCounterQueryFailure();
     reportsStatusFailureAfterCounters();

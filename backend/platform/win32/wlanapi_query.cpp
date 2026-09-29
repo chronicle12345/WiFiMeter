@@ -137,6 +137,9 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
             // 至少让上层能看到“有这张网卡”，而不是静默丢弃。
             status.interfaceId = utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH);
         }
+        // 展示名称用驱动描述（例如 "MediaTek Wi-Fi 6E MT7922 ..."），与 Linux 侧的
+        // 厂商 + 产品名对应；接口标识保持别名，因为两侧的计数都用别名做键。
+        status.adapterAlias = adapterAliasFrom(utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH), status.interfaceId);
 
         WLAN_CONNECTION_ATTRIBUTES attributes{};
         if (connectionAttributes(info.InterfaceGuid, attributes))
@@ -148,10 +151,10 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
             const DOT11_SSID& ssid = attributes.wlanAssociationAttributes.dot11Ssid;
             if (ssid.uSSIDLength > 0 && ssid.uSSIDLength <= DOT11_SSID_MAX_LENGTH)
             {
-                // SSID 是原始字节串，按 UTF-8 解释；非 UTF-8 的字节会变成替换字符，
-                // 但不会丢掉整条记录。
-                const std::u16string units(reinterpret_cast<const char16_t*>(ssid.ucSSID), ssid.uSSIDLength);
-                status.ssid = toUtf8(units);
+                // SSID 是原始字节串：直接按 UTF-8 解释，绝不经过宽字符。
+                // 曾经把它当成 UTF-16 码元（reinterpret_cast 到 char16_t）来读，
+                // 实测在真机上会把 "CMCC-mKm3-5G" 变成一串乱码，网络身份随之损坏。
+                status.ssid = toUtf8Bytes(std::string_view(reinterpret_cast<const char*>(ssid.ucSSID), ssid.uSSIDLength));
             }
 
             if (status.connected)
@@ -164,7 +167,7 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
             // 查不到连接属性（未连接、或查询被拒绝）时按未关联处理：
             // 状态位可能显示 connected，但没有身份就不能归属流量。
             status.connected = false;
-            status.mode = ConnectionMode::discover;
+            status.mode = ConnectionMode::discoverySecure;
         }
 
         statuses.push_back(std::move(status));

@@ -30,16 +30,29 @@
 namespace wifimeter::platform::windows
 {
 
-// WLAN_CONNECTION_MODE 的取值，数值与 wlanapi.h 一致。
+// WLAN_CONNECTION_MODE 的取值，顺序与 Windows SDK 的 wlanapi.h 完全一致。
+//
+// 两个容易搞错、又直接影响“能不能采到流量”的取值：
+//
+//   * discovery_secure / discovery_unsecure 是网卡正在扫描，尚未连接；
+//   * auto 是“自动连接到首选网络”，也就是正常的已连接状态——实测家用笔记本上
+//     大多是它。曾经按 0..3 猜测这套枚举，把 4 当成未知，结果在真机上永远采不到
+//     样本（网卡明明连着，却被判定为未关联）。
 enum class ConnectionMode : std::uint32_t
 {
-    profile = 0,   // 按配置连接（普通基础设施网络）
-    adhoc = 1,     // 临时网络（计算机到计算机）
-    discover = 2,  // 仅扫描，未连接
-    unknown = 3,
+    profile = 0,            // 按保存的配置连接
+    temporaryProfile = 1,   // 临时配置（一次性连接）
+    discoverySecure = 2,    // 仅扫描（安全网络）
+    discoveryUnsecure = 3,  // 仅扫描（开放网络）
+    automatic = 4,          // 自动连接到首选网络：已连接
+    invalid = 5,
 };
 
 ConnectionMode connectionModeFrom(std::uint32_t value);
+
+// 该连接模式是否代表“连接在某个网络上”。
+// 只有扫描态不是；invalid 视为未知，按保守处理（不算已连接）。
+bool isConnectedMode(ConnectionMode mode);
 
 struct WlanInterface
 {
@@ -47,21 +60,16 @@ struct WlanInterface
     std::string adapterAlias;     // 展示名称，取不到更好的名称时等于 interfaceId
     std::string description;      // 驱动报告的网卡描述
     bool connected = false;       // wlan_interface_state_connected 位
-    ConnectionMode mode = ConnectionMode::discover;
+    ConnectionMode mode = ConnectionMode::discoverySecure;
     std::string profileName;              // 关联的配置名
     std::optional<std::string> ssid;      // 已关联时的网络名
     std::optional<int> signalPercent;     // 0..100
 };
 
-// 从原始字段判断是否关联：已连接、按配置连接、并且确实读到了 SSID。
+// 从原始字段判断是否关联：状态位为已连接、连接模式确实是已连接、并且读到了 SSID。
 bool isAssociatedState(bool connected, ConnectionMode mode, std::string_view ssid);
 
 // 接口是否代表“关联在某个网络上”。
-// 仅扫描（discover）与临时网络（adhoc）也会报告连接模式，但不计入流量归属，
-// 因此必须显式排除，而不是只看状态位。
-//
-// 形参不叫 interface：Windows 的 rpc.h 把 interface 定义成 struct 宏，
-// 用了那个名字的头文件会连带把这里改写成语法错误。
 bool isAssociated(const WlanInterface& link);
 
 // 驱动描述优先，为空时退回网卡名称。
@@ -73,9 +81,12 @@ struct RawWlanInterface
     std::u16string alias;
     std::u16string description;
     bool connected = false;
-    std::uint32_t connectionMode = static_cast<std::uint32_t>(ConnectionMode::discover);
+    std::uint32_t connectionMode = static_cast<std::uint32_t>(ConnectionMode::discoverySecure);
     std::u16string profileName;
-    std::u16string ssid;  // 原始 SSID 字节，按 UTF-16 码元承载
+    // SSID 在系统里是原始字节串（DOT11_SSID.ucSSID），因此这里也是字节串。
+    // 用 u16string 承载它会把相邻两个字节当成一个码元，实测会把 "CMCC-mKm3-5G"
+    // 变成一串乱码，因此单独用 string。
+    std::string ssid;
     bool hasSsid = false;
     std::uint32_t signalQuality = 0;
     bool hasSignal = false;

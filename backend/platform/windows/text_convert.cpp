@@ -143,6 +143,17 @@ std::string toUtf8(std::u16string_view text)
     return out;
 }
 
+std::string toUtf8Bytes(std::string_view bytes)
+{
+    // 逐段解码再重新编码：合法序列原样保留（值相同），非法序列被替换成 U+FFFD。
+    std::string out;
+    out.reserve(bytes.size());
+    std::size_t index = 0;
+    while (index < bytes.size())
+        index += appendUtf8(out, bytes.substr(index));
+    return out;
+}
+
 std::u16string fromUtf8(std::string_view text)
 {
     std::u16string out;

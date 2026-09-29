@@ -55,7 +55,7 @@ struct WlanStatus
     std::string interfaceId;
     std::string adapterAlias;  // 展示名称，取不到更好的名称时等于 interfaceId
     bool connected = false;
-    ConnectionMode mode = ConnectionMode::discover;
+    ConnectionMode mode = ConnectionMode::discoverySecure;
     std::string profileName;
     std::optional<std::string> ssid;
     std::optional<int> signalPercent;

@@ -18,6 +18,11 @@ namespace wifimeter::platform::windows
 
 std::string toUtf8(std::u16string_view text);
 
+// 原始字节串 → 合法 UTF-8：非法序列按“最长非法子串”替换成 U+FFFD。
+// 用于 SSID 这类系统直接给出的字节串（DOT11_SSID.ucSSID）：合法的 UTF-8 原样保留，
+// 坏字节被替换而不是丢掉整条记录。
+std::string toUtf8Bytes(std::string_view bytes);
+
 std::u16string fromUtf8(std::string_view text);
 
 // 供测试与逐步解析使用：把一个 UTF-8 码点写入输出，返回消耗的字节数；
