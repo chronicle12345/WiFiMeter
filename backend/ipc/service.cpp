@@ -190,12 +190,15 @@ JsonValue BackendService::buildLive() const
 BackendService::Response BackendService::buildHello() const
 {
     Response response;
+    Status status;
     JsonValue result = JsonValue::makeObject();
     result.set("protocol", JsonValue::makeInt(kProtocolVersion));
     result.set("application", JsonValue::makeString("wifimeter-backend"));
     result.set("schemaVersion", JsonValue::makeInt(deps_.store.database().schemaVersion()));
     result.set("intervalSeconds", JsonValue::makeInt(intervalSeconds()));
     result.set("paused", JsonValue::makeBool(paused_));
+    // 带上设置：主进程据此同步开机启动、托盘与通知等系统级状态，无需再取整份快照。
+    result.set("settings", settingsToJson(deps_.store.settings().load(status)));
     response.result = std::move(result);
     return response;
 }

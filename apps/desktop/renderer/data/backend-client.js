@@ -116,7 +116,8 @@ export function createDataClient(handlers = {}) {
         async updateSettings(settings) {
             const result = await request('updateSettings', { settings });
             snapshot.settings = { ...snapshot.settings, ...result.settings };
-            return snapshot.settings;
+            // system 是主进程回填的“实际生效结果”：开机启动可能因权限失败。
+            return { settings: snapshot.settings, system: result.system };
         },
 
         async updateNetwork(id, patch) {

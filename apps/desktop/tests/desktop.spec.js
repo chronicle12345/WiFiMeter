@@ -11,10 +11,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHarness, backendBinary } from './support/backend-harness.mjs';
 
-let app, page, profile, errors, harness;
+let app, page, profile, errors, harness, fakeHome;
 
-async function launch() {
-    const env = { ...process.env, WIFIMETER_USER_DATA: profile, ...harness.env };
+async function launch(extraEnv = {}) {
+    const env = { ...process.env, WIFIMETER_USER_DATA: profile, ...harness.env, ...extraEnv };
     delete env.ELECTRON_RUN_AS_NODE;
     app = await electron.launch({ executablePath: process.env.WIFIMETER_EXECUTABLE || undefined, args: process.env.WIFIMETER_EXECUTABLE ? [] : ['.'], env });
     page = await app.firstWindow();
@@ -64,6 +64,10 @@ test.afterEach(async () => {
     if (app) await app.close();
     harness?.cleanup();
     await rm(profile, { recursive: true, force: true });
+    if (fakeHome) {
+        await rm(fakeHome, { recursive: true, force: true });
+        fakeHome = null;
+    }
     expect(errors).toEqual([]);
 });
 
@@ -173,6 +177,29 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     await expectToast('已恢复备份');
     expect(query('SELECT COUNT(*) FROM daily_usage')).toBe('1');
     expect(query('SELECT alias FROM networks')).toBe('家里的 Wi-Fi');
+});
+
+test('开机启动开关会写入系统的自启动目录', async () => {
+    // 用一个临时的 HOME 启动应用，避免测试碰到开发机真实的 ~/.config/autostart。
+    await app.close();
+    fakeHome = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-home-'));
+    await launch({ HOME: fakeHome });
+
+    await navigate('设置');
+    await page.locator('input[name="autoStart"]').check();
+    await page.getByRole('button', { name: '保存设置' }).click();
+    await expectToast('已保存偏好');
+
+    const file = path.join(fakeHome, '.config/autostart/wifimeter.desktop');
+    await expect.poll(() => existsSync(file), { timeout: 10000 }).toBe(true);
+    const text = await readFile(file, 'utf8');
+    expect(text).toContain('[Desktop Entry]');
+    expect(text).toContain('Exec=');
+
+    // 关掉后文件应当被删除。
+    await page.locator('input[name="autoStart"]').uncheck();
+    await page.getByRole('button', { name: '保存设置' }).click();
+    await expect.poll(() => existsSync(file), { timeout: 10000 }).toBe(false);
 });
 
 test('偏好设置会落库并影响后端行为', async () => {
