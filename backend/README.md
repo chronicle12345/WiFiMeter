@@ -177,16 +177,21 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-测试包含三层：
+测试分四层，其中前三层在 Linux 与 Windows 上都构建并运行：
 
-- **平台无关**：业务规则、存储、协议、以及 Windows 的转换与采样编排（用假系统数据）；
-  这些用例在任何平台上都构建并运行，包括在 Linux 上验证 Windows 目标的编码、时区与位宽问题；
-- **Linux 平台**：用真实 `nmcli` 与 `/proc/net/dev` 输出作为样本，配以临时目录构造的假 sysfs 与假 `nmcli`；
-- **真实系统只读冒烟**：读取当前机器的网卡状态与计数，不断开任何连接。
-  真实断开只在身份守卫通过时才可能发生，因此自动测试只断言“拒绝断开”的分支。
+| 层 | 内容 | 两端是否都跑 |
+| --- | --- | --- |
+| 平台无关 | 业务规则、存储、协议；采样编排（`sampling.cpp`）用假数据源验证 | 是 |
+| 平台转换 | 字节计数、WLAN 状态与身份转换、编码与时区 | 是（Windows 侧不调用系统接口） |
+| 端到端 | 真子进程 + 真协议 + 真 SQLite，网卡数据来自 JSON 文件 | 是（`backend_process_support.h` 一份断言） |
+| 真机只读冒烟 | WLAN API 与 IP Helper 的真实行为、别名一致性、断开守卫 | 仅 Windows 实机 |
 
-Windows 系统调用（WLAN API、IP Helper）无法在 Linux 上执行，只能交叉编译验证它们能通过编译，
-行为验证放在 Windows 实机（见 `packaging/windows/README.md` 的验收清单）。
+端到端测试是“两端同一份样例”的主要保障：假网卡与假计数由
+`--fake-adapter` / `--fake-counters`（等价于 `WIFIMETER_FAKE_*` 环境变量）注入，
+Linux 用 POSIX 管道、Windows 用 `CreateProcess` 拉子进程，断言完全相同。
+
+Windows 的系统调用本身无法在 Linux 上执行，只能交叉编译 + Wine 验证；Wine 没有真实无线网卡，
+因此真机行为由 `windows_smoke_test.exe` 在 Windows 上覆盖（`packaging/windows/README.md` 的验收清单）。
 
 ## 尚未完成
 

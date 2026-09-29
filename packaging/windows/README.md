@@ -64,8 +64,11 @@ npm run test           # 桌面应用单元测试，含打包产物检查（有 
 ```
 
 `test:windows` 覆盖编码（UTF-16/代理对/非法字节）、时区、64 位计数、SQLite、协议往返，
-以及采样与断开的全部判断逻辑。`apps/desktop/tests/windows-packaging.test.js` 另外确认解包目录里
-带着后端，并让那个后端在 Wine 下完成握手、采集与快照。
+以及采样与断开的全部判断逻辑。其中端到端用例（`backend_process_support.h`）在两端跑**同一份**
+序列与断言：真的拉起后端子进程、按协议对话、落库到 SQLite，网卡与计数数据由
+`--fake-adapter` / `--fake-counters` 注入（Windows 下把自定义环境块交给 `CreateProcess`
+时子进程读不到变量，因此用命令行参数）。`apps/desktop/tests/windows-packaging.test.js`
+另外确认解包目录里确实带着后端，且它是真正的 Windows 可执行文件。
 
 Wine 下的系统调用与真实 Windows 不同（WLAN API 常返回空适配器列表），因此下面几项必须实机验证。
 
