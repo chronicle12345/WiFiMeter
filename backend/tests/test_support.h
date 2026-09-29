@@ -2,8 +2,15 @@
 
 // 极简测试支撑。仓库当前没有 gtest/catch2 等可用依赖，构建又必须离线可复现，
 // 因此只提供断言与统计所需的最小宏。
+//
+// Windows 上同样要能编译并运行这些用例：进程号用 <process.h> 的 _getpid，
+// UTC 日历用 _mkgmtime，时区固定改用 _putenv_s。
 
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -20,6 +27,15 @@ namespace wifimeter::test
 inline int checks = 0;
 inline int failures = 0;
 
+inline int processId()
+{
+#if defined(_WIN32)
+    return ::_getpid();
+#else
+    return ::getpid();
+#endif
+}
+
 template <typename T>
 std::string describe(const T& value)
 {
@@ -28,10 +44,68 @@ std::string describe(const T& value)
     return stream.str();
 }
 
+// 宽字符串无法直接进 ostream：按 UTF-8 打印，失败时才能看清是哪个网卡名或 SSID。
+std::string describe(const std::u16string& value);
+
+inline std::string describe(char16_t value)
+{
+    return describe(std::u16string(1, value));
+}
+
 inline void fail(const char* file, int line, const std::string& detail)
 {
     ++failures;
     std::fprintf(stderr, "失败 %s:%d %s\n", file, line, detail.c_str());
+}
+
+// 断言失败时把宽字符串按 UTF-8 打印出来：网卡名与 SSID 常常含中文，
+// 打印成码元数字会看不出问题。非法代理项写成 \uXXXX，保留原始信息。
+inline std::string encodeUtf8(std::u16string_view text)
+{
+    std::string out;
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        char32_t codePoint = text[index];
+        if (codePoint >= 0xD800 && codePoint <= 0xDBFF && index + 1 < text.size() && text[index + 1] >= 0xDC00 && text[index + 1] <= 0xDFFF)
+        {
+            codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (text[index + 1] - 0xDC00);
+            ++index;
+        }
+        else if (codePoint >= 0xD800 && codePoint <= 0xDFFF)
+        {
+            char escape[16] = {};
+            std::snprintf(escape, sizeof(escape), "\\u%04X", static_cast<unsigned>(codePoint));
+            out += escape;
+            continue;
+        }
+
+        if (codePoint <= 0x7F)
+            out.push_back(static_cast<char>(codePoint));
+        else if (codePoint <= 0x7FF)
+        {
+            out.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        }
+        else if (codePoint <= 0xFFFF)
+        {
+            out.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        }
+        else
+        {
+            out.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        }
+    }
+    return out;
+}
+
+inline std::string describe(const std::u16string& value)
+{
+    return encodeUtf8(value);
 }
 
 // 测试用的临时目录，析构时清理；每个实例带进程号与序号，避免并行用例互相干扰。
@@ -41,7 +115,7 @@ public:
     explicit TempDirectory(const std::string& tag)
     {
         static int counter = 0;
-        path_ = std::filesystem::temp_directory_path() / ("wifimeter-test-" + tag + "-" + std::to_string(::getpid()) + "-" + std::to_string(++counter));
+        path_ = std::filesystem::temp_directory_path() / ("wifimeter-test-" + tag + "-" + std::to_string(processId()) + "-" + std::to_string(++counter));
         std::error_code error;
         std::filesystem::remove_all(path_, error);
         std::filesystem::create_directories(path_, error);
@@ -86,7 +160,8 @@ inline std::string readFile(const std::string& path)
     return buffer.str();
 }
 
-// 用 UTC 日历构造时间点。GCC 11 的 libstdc++ 没有 C++20 的日期类型，因此用 timegm。
+// 用 UTC 日历构造时间点。GCC 11 的 libstdc++ 没有 C++20 的日期类型，因此用 timegm；
+// MSVC 与 MinGW 的对应函数是 _mkgmtime。
 inline std::chrono::system_clock::time_point utcTime(int year, int month, int day, int hour = 0, int minute = 0, int second = 0)
 {
     std::tm time{};
@@ -96,14 +171,23 @@ inline std::chrono::system_clock::time_point utcTime(int year, int month, int da
     time.tm_hour = hour;
     time.tm_min = minute;
     time.tm_sec = second;
+#if defined(_WIN32)
+    return std::chrono::system_clock::from_time_t(::_mkgmtime(&time));
+#else
     return std::chrono::system_clock::from_time_t(timegm(&time));
+#endif
 }
 
 // 固定时区，让本地日期断言与运行机器的设置无关。
 inline void useTimeZone(const char* name)
 {
+#if defined(_WIN32)
+    ::_putenv_s("TZ", name);
+    ::_tzset();
+#else
     ::setenv("TZ", name, 1);
     ::tzset();
+#endif
 }
 
 }  // namespace wifimeter::test

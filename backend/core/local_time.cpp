@@ -138,7 +138,11 @@ bool parseIsoUtc(std::string_view text, std::chrono::system_clock::time_point& a
     time.tm_hour = hour;
     time.tm_min = minute;
     time.tm_sec = second;
+#if defined(_WIN32)
+    const std::time_t seconds = ::_mkgmtime(&time);
+#else
     const std::time_t seconds = timegm(&time);
+#endif
     const auto parsed = std::chrono::system_clock::from_time_t(seconds);
 
     // timegm 会把 2 月 30 日这类不存在的日期顺延，回读比对才能拒绝它们。
