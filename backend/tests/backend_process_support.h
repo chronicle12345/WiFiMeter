@@ -398,6 +398,47 @@ inline void updatesSettingsThroughTheProcess(ProcessRunner& runner, ProcessFixtu
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
 }
 
+// 切换网络后必须**只靠轮询**就能看到新网络：真实使用中用户不会点“立即采集”。
+//
+// 这条是补上来的：用量事件只在有增量时产生，而换网后的第一次采样只建立基线、
+// 不产生增量，因此那一刻界面上看不到新网络（要点一次采集或等一轮才有）。
+inline void registersANewNetworkFromPolling(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+
+    WIFIMETER_CHECK(session.request(1, "collectNow").has_value());
+    session.drainEvents();
+
+    // 换网，然后什么都不做，等后端自己按间隔采样。
+    fixture.setNetwork("Cafe_Guest", "6c1f0f2e-1111-2222-3333-444455556666");
+    fixture.setCounters(9000000, 1500000);
+
+    bool sawNewNetwork = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(16);
+    while (!sawNewNetwork && std::chrono::steady_clock::now() < deadline)
+    {
+        session.drainEvents(std::chrono::milliseconds(1500));
+        const auto snapshot = session.request(2, "snapshot");
+        if (snapshot && snapshot->find("result") != nullptr)
+        {
+            const JsonValue* networks = snapshot->find("result")->find("networks");
+            if (networks != nullptr)
+            {
+                for (std::size_t index = 0; index < networks->size(); ++index)
+                {
+                    if (networks->at(index).stringOr("ssid") == "Cafe_Guest")
+                        sawNewNetwork = true;
+                }
+            }
+        }
+    }
+    WIFIMETER_CHECK(sawNewNetwork);
+
+    WIFIMETER_CHECK(session.request(3, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
 // 切换网络：换到另一个 SSID 之后，用量必须归到新网络，旧网络不再增长。
 //
 // 这一条对应验收清单里“连接另一个 Wi-Fi”的手工项。网络键由 SSID 派生，因此这里
@@ -778,6 +819,9 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture switching(executable);
     attributesUsageToTheNewNetworkAfterSwitching(runner, switching);
+
+    ProcessFixture polling(executable);
+    registersANewNetworkFromPolling(runner, polling);
 
     return WIFIMETER_REPORT();
 }
