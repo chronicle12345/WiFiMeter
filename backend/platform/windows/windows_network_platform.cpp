@@ -23,7 +23,7 @@ QueryResult<std::vector<WlanStatus>> WindowsNetworkPlatform::readStatuses()
     return options_.system->wlanStatuses();
 }
 
-LinkReport WindowsNetworkPlatform::linksFrom(const std::vector<WlanStatus>& statuses)
+LinkReport WindowsNetworkPlatform::linkReportFrom(const std::vector<WlanStatus>& statuses)
 {
     LinkReport report;
     report.links.reserve(statuses.size());
@@ -47,13 +47,11 @@ LinkReport WindowsNetworkPlatform::linksFrom(const std::vector<WlanStatus>& stat
 LinkReport WindowsNetworkPlatform::wirelessLinks()
 {
     const QueryResult<std::vector<WlanStatus>> statuses = readStatuses();
-    if (!statuses.ok())
-    {
-        LinkReport report;
-        report.failures.push_back(*statuses.failure);
-        return report;
-    }
-    return linksFrom(*statuses.value);
+    LinkReport report;
+    report.failures = statuses.failures;
+    if (statuses.ok())
+        report.links = linkReportFrom(*statuses.value).links;
+    return report;
 }
 
 SampleReport WindowsNetworkPlatform::sampleWifi()
@@ -90,12 +88,9 @@ LinkReadResult WindowsNetworkPlatform::readLinks()
     }
 
     const QueryResult<std::vector<WlanStatus>> statuses = readStatuses();
-    if (!statuses.ok())
-    {
-        result.failures.push_back(*statuses.failure);
-        return result;
-    }
-    result.links = linksFrom(*statuses.value).links;
+    result.failures = statuses.failures;
+    if (statuses.ok())
+        result.links = linkReportFrom(*statuses.value).links;
     return result;
 }
 
@@ -116,11 +111,9 @@ CounterReadResult WindowsNetworkPlatform::readCounters()
     }
 
     const QueryResult<std::vector<InterfaceCounters>> counters = options_.system->interfaceCounters();
+    result.failures = counters.failures;
     if (!counters.ok())
-    {
-        result.failures.push_back(*counters.failure);
         return result;
-    }
     result.counters.reserve(counters.value->size());
     for (const InterfaceCounters& entry : *counters.value)
     {
@@ -160,13 +153,15 @@ bool WindowsNetworkPlatform::waitUntilDisconnected(const std::string& interfaceI
 
     for (std::int64_t attempt = 0; attempt < attempts; ++attempt)
     {
-        const LinkReadResult statuses = readLinks();
-        if (!statuses.failures.empty() && statuses.links.empty())
+        const QueryResult<std::vector<WlanStatus>> statuses = readStatuses();
+        if (!statuses.ok())
         {
             // 读不到状态就不能声称断开成功；由调用方按“仍在关联”处理。
+            // 这里只在整体查询失败时提前返回：单张网卡的失败不影响目标网卡的判断。
             return false;
         }
-        if (ssidOfLink(statuses.links, interfaceId) != expectedSsid)
+        const std::vector<WifiLink> links = linkReportFrom(*statuses.value).links;
+        if (ssidOfLink(links, interfaceId) != expectedSsid)
             return true;
 
         if (attempt + 1 < attempts)

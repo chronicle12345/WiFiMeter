@@ -53,8 +53,8 @@ private:
     // 一次状态读取，附带本轮遇到的失败。
     QueryResult<std::vector<WlanStatus>> readStatuses();
 
-    // 把状态列表转成平台链接列表；失败单独返回，便于与状态分开处理。
-    LinkReport linksFrom(const std::vector<WlanStatus>& statuses);
+    // 把状态列表转成平台链接列表（失败在调用方与状态一起处理）。
+    LinkReport linkReportFrom(const std::vector<WlanStatus>& statuses);
 
     // 在超时时间内轮询，直到指定网卡不再关联到 expectedSsid。
     bool waitUntilDisconnected(const std::string& interfaceId, const std::string& expectedSsid);

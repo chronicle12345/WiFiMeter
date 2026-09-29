@@ -27,7 +27,8 @@ template <typename T>
 struct QueryResult
 {
     std::optional<T> value;
-    std::optional<Failure> failure;  // 有值表示本次查询失败
+    // 逐条失败：单张网卡的失败不能覆盖另一张的，也不能让整体结果变成“不可用”。
+    std::vector<Failure> failures;
 
     bool ok() const
     {
@@ -44,8 +45,25 @@ struct QueryResult
     static QueryResult failed(FailureKind kind, std::string detail = {}, std::string interfaceId = {})
     {
         QueryResult result;
-        result.failure = Failure{kind, std::move(interfaceId), std::move(detail)};
+        result.failures.push_back(Failure{kind, std::move(interfaceId), std::move(detail)});
         return result;
+    }
+
+    void addFailure(FailureKind kind, std::string detail = {}, std::string interfaceId = {})
+    {
+        failures.push_back(Failure{kind, std::move(interfaceId), std::move(detail)});
+    }
+
+    // 整个依赖不可用（WLAN 服务没运行、会话拿不到），区别于“某张网卡查不动”。
+    // 前者应该让上层进入 offline，后者只影响该网卡。
+    bool wholeStackUnavailable() const
+    {
+        for (const Failure& failure : failures)
+        {
+            if (failure.interfaceId.empty() && failure.kind == FailureKind::unavailable)
+                return true;
+        }
+        return false;
     }
 };
 

@@ -71,6 +71,8 @@ public:
     std::vector<std::vector<WlanStatus>> statusRounds;
     std::vector<InterfaceCounters> countersValue;
     std::optional<Failure> statusesFailure;
+    // 逐网卡失败：与状态一起返回，用于覆盖“某张网卡查不动、其他照常”的情况。
+    std::vector<Failure> perAdapterFailures;
     std::optional<Failure> countersFailure;
     DisconnectCommand disconnectResult;
 
@@ -84,9 +86,12 @@ public:
         if (statusesFailure)
             return QueryResult<std::vector<WlanStatus>>::failed(statusesFailure->kind, statusesFailure->detail, statusesFailure->interfaceId);
         const std::size_t index = statusRounds.empty() ? 0 : std::min<std::size_t>(static_cast<std::size_t>(statusCalls - 1), statusRounds.size() - 1);
-        if (statusRounds.empty())
-            return QueryResult<std::vector<WlanStatus>>::success({});
-        return QueryResult<std::vector<WlanStatus>>::success(statusRounds[index]);
+        QueryResult<std::vector<WlanStatus>> result = statusRounds.empty()
+            ? QueryResult<std::vector<WlanStatus>>::success({})
+            : QueryResult<std::vector<WlanStatus>>::success(statusRounds[index]);
+        for (const Failure& failure : perAdapterFailures)
+            result.failures.push_back(failure);
+        return result;
     }
 
     QueryResult<std::vector<InterfaceCounters>> interfaceCounters() override
@@ -375,6 +380,43 @@ void reportsStatusFailureAfterCounters()
     WIFIMETER_CHECK_EQ(system.counterCalls, 1);
 }
 
+void reportsFailuresAlongsideUsableStatuses()
+{
+    // 一张网卡查不动、另一张正常：失败要上报，正常那张仍要参与采样。
+    FakeSystem system;
+    system.statusRounds = {{connectedStatus("WLAN", "Home 5G", "Home Profile"), connectedStatus("WLAN 2", "Office", "Office Profile")}};
+    system.perAdapterFailures = {Failure{FailureKind::inconsistent, "WLAN 2", "网卡报告已连接，但无法读取连接属性。"}};
+    system.countersValue = {counters("WLAN", 100, 200), counters("WLAN 2", 300, 400)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+
+    const LinkReport links = platform->wirelessLinks();
+    WIFIMETER_CHECK(hasFailure(links.failures, FailureKind::inconsistent, "WLAN 2"));
+    // 逐网卡失败不能让整体变成不可用：两张网卡的状态都还在。
+    WIFIMETER_CHECK_EQ(links.links.size(), std::size_t(2));
+
+    const SampleReport report = platform->sampleWifi();
+    WIFIMETER_CHECK(hasFailure(report.failures, FailureKind::inconsistent, "WLAN 2"));
+    // 正常的网卡照常产出样本：单张网卡的问题不影响其他网卡。
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(2));
+    WIFIMETER_CHECK_EQ(report.samples[0].rxBytes, std::uint64_t(100));
+}
+
+void keepsLiveStateWhenOnlyOneAdapterFails()
+{
+    // 逐网卡失败不能算成“整条 WLAN 栈不可用”，否则界面会从“已连接”跳到“采集器暂未响应”。
+    FakeSystem system;
+    system.statusRounds = {{connectedStatus("WLAN", "Home 5G", "Home Profile")}};
+    system.perAdapterFailures = {Failure{FailureKind::inconsistent, "WLAN 2", "无法取得网卡的接口别名，已退回驱动描述。"}};
+    system.countersValue = {counters("WLAN", 1, 2)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+
+    const SampleReport report = platform->sampleWifi();
+    WIFIMETER_CHECK(!hasGlobalFailure(report.failures, FailureKind::unavailable));
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(1));
+}
+
 void refusesDisconnectWhenNotAssociated()
 {
     FakeSystem system;
@@ -483,6 +525,8 @@ int main()
     reportsMissingCounters();
     reportsCounterQueryFailure();
     reportsStatusFailureAfterCounters();
+    reportsFailuresAlongsideUsableStatuses();
+    keepsLiveStateWhenOnlyOneAdapterFails();
     refusesDisconnectWhenNotAssociated();
     refusesDisconnectOnSsidMismatch();
     disconnectWaitsForStateToChange();

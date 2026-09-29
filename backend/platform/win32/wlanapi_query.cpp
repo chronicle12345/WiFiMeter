@@ -144,7 +144,8 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
         return QueryResult<std::vector<WlanStatus>>::failed(isUnavailable(code) ? FailureKind::unavailable : FailureKind::commandFailed, errorDetail("WlanEnumInterfaces", code));
     }
 
-    std::vector<WlanStatus> statuses;
+    QueryResult<std::vector<WlanStatus>> result;
+    std::vector<WlanStatus>& statuses = result.value.emplace();
     statuses.reserve(list->dwNumberOfItems);
     for (DWORD index = 0; index < list->dwNumberOfItems; ++index)
     {
@@ -152,15 +153,18 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
 
         WlanStatus status;
         status.interfaceId = aliasOf(info.InterfaceGuid);
+        const std::string description = utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH);
         if (status.interfaceId.empty())
         {
-            // 少数情况下（例如适配器刚被移除）拿不到别名，用描述兜底，
-            // 至少让上层能看到“有这张网卡”，而不是静默丢弃。
-            status.interfaceId = utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH);
+            // 拿不到别名（适配器刚被移除等）时用描述兜底，至少让上层看到“有这张网卡”。
+            // 但这意味着身份与 IP Helper 的别名对不上，采样会缺计数，因此要上报失败，
+            // 不能安静地降级成一个看起来正常的网卡。
+            status.interfaceId = description;
+            result.addFailure(FailureKind::inconsistent, "无法取得网卡的接口别名，已退回驱动描述。", status.interfaceId);
         }
         // 展示名称用驱动描述（例如 "MediaTek Wi-Fi 6E MT7922 ..."），与 Linux 侧的
         // 厂商 + 产品名对应；接口标识保持别名，因为两侧的计数都用别名做键。
-        status.adapterAlias = adapterAliasFrom(utf8Of(info.strInterfaceDescription, WLAN_MAX_NAME_LENGTH), status.interfaceId);
+        status.adapterAlias = adapterAliasFrom(description, status.interfaceId);
 
         WLAN_CONNECTION_ATTRIBUTES attributes{};
         if (connectionAttributes(info.InterfaceGuid, attributes))
@@ -184,19 +188,26 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
                 status.frequencyMhz = channelFrequency(info.InterfaceGuid);
             }
         }
-        else
+        else if (info.isState != wlan_interface_state_connected)
         {
-            // 查不到连接属性（未连接、或查询被拒绝）时按未关联处理：
-            // 状态位可能显示 connected，但没有身份就不能归属流量。
+            // 网卡本来就没连上：查不到连接属性是正常现象，不产生失败记录。
             status.connected = false;
             status.mode = ConnectionMode::discoverySecure;
+        }
+        else
+        {
+            // 枚举说已连接，但连接属性查不到：这是异常，不能安静地当成“未关联”，
+            // 否则界面会显示成没连 Wi-Fi，用户看不出是查询失败。
+            status.connected = false;
+            status.mode = ConnectionMode::discoverySecure;
+            result.addFailure(FailureKind::inconsistent, "网卡报告已连接，但无法读取连接属性。", status.interfaceId);
         }
 
         statuses.push_back(std::move(status));
     }
 
     WlanFreeMemory(list);
-    return QueryResult<std::vector<WlanStatus>>::success(std::move(statuses));
+    return result;
 }
 
 QueryResult<std::optional<std::string>> Win32System::currentProfileName(const std::string& interfaceId)
