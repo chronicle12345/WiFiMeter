@@ -1,16 +1,20 @@
 // wifimeter-backend：本机采集与存储进程（Windows）。
 //
-// 与 Linux 版共用同一份业务逻辑、协议与存储层，这里只处理两处系统差异：
+// 与 Linux 版共用同一份业务逻辑、协议与存储层，这里只处理三处系统差异：
 //
-//   * 数据库默认位置：Electron 的 userData 目录在 Windows 上是
-//     %LOCALAPPDATA%\WiFiMeter Demo，后端默认与之相邻，便于界面与后端都找得到；
+//   * 数据库默认位置：%LOCALAPPDATA%\WiFiMeter\wifimeter.db（主进程始终显式传入
+//     --db，因此实际位置以主进程为准，这里是直接运行后端排查时的缺省值）；
 //   * 标准输出的编码与换行：Node 按 UTF-8 解码子进程输出，而 Windows 控制台的
 //     默认代码页与文本模式会把换行改写成 CRLF、把非 ASCII 字符降级成本地代码页。
-//     因此启动时把标准句柄切到二进制模式，并请求 UTF-8 代码页。
+//     因此启动时把标准句柄切到二进制模式，并请求 UTF-8 代码页；
+//   * 路径与输入输出都走宽字符或二进制 API：用户名含中文时目录仍能创建。
 //
-// 命令行参数与 Linux 版一致（--db / --paused / --version），另外保留
-// --profile-name 之类的排查开关没有意义：Windows 的身份来自 WLAN API，不需要外部命令路径。
+// 命令行参数与 Linux 版一致（--db / --paused / --version）。不需要 --nmcli 之类的开关：
+// Windows 的身份与计数都来自系统 API，没有外部命令路径可配。
 
+// winsock2.h 必须在 windows.h 之前：platform/win32 的头文件需要它的地址族类型。
+#include <winsock2.h>
+#include <ws2ipdef.h>
 #include <windows.h>
 
 #include <fcntl.h>
@@ -84,7 +88,23 @@ std::string defaultDatabasePath()
     return base + "\\WiFiMeter\\wifimeter.db";
 }
 
+// UTF-8 → UTF-16。数据库路径可能含中文用户名，系统调用必须用宽字符版本。
+std::wstring wideFromUtf8(const std::string& text)
+{
+    if (text.empty())
+        return {};
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0)
+        return {};
+    std::wstring result(static_cast<std::size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size);
+    return result;
+}
+
 // 逐级创建父目录；已存在不算失败。
+//
+// 用宽字符版本的 CreateDirectory：用户目录常含中文（例如 C:\Users\张三），
+// ANSI 版本会按当前代码页解释路径，非当前代码页的字符会变成问号而创建失败。
 bool ensureParentDirectory(const std::string& path)
 {
     const std::size_t separator = path.find_last_of("\\/");
@@ -92,58 +112,76 @@ bool ensureParentDirectory(const std::string& path)
         return true;
 
     const std::string directory = path.substr(0, separator);
-    // CreateDirectoryA 不创建中间层，因此从盘符之后逐段创建。
+    // CreateDirectory 不创建中间层，因此从盘符之后逐段创建；分隔符可能是 / 或 \。
     for (std::size_t index = 1; index <= directory.size(); ++index)
     {
         if (index != directory.size() && directory[index] != '\\' && directory[index] != '/')
             continue;
-        const std::string partial = directory.substr(0, index);
-        if (!CreateDirectoryA(partial.c_str(), nullptr))
-        {
-            const DWORD error = GetLastError();
-            if (error != ERROR_ALREADY_EXISTS)
-                return false;
-        }
+        const std::wstring partial = wideFromUtf8(directory.substr(0, index));
+        if (partial.empty())
+            return false;
+        if (!CreateDirectoryW(partial.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+            return false;
     }
     return true;
 }
 
 }  // namespace
 
-int main(int argc, char** argv)
+// 参数取自 GetCommandLineW 而不是 main 的 argv：Windows 的 argv 按当前代码页
+// （简体中文是 GBK）解释命令行，而调用方写出的路径是 UTF-8，非 ASCII 的用户名
+// 会出现乱码并导致目录创建失败。这里先拿到 UTF-16 再转成 UTF-8，与协议一致。
+int main()
 {
     configureStdio();
 
+    int argumentCount = 0;
+    LPWSTR* argumentList = ::CommandLineToArgvW(::GetCommandLineW(), &argumentCount);
+    if (argumentList == nullptr)
+    {
+        std::fprintf(stderr, "无法读取命令行。\n");
+        return 1;
+    }
+
     std::string databasePath;
     bool paused = false;
+    bool done = false;  // --help / --version：打印后正常退出
+    int exitCode = 0;
 
-    for (int index = 1; index < argc; ++index)
+    for (int index = 1; index < argumentCount && !done && exitCode == 0; ++index)
     {
-        const std::string argument = argv[index];
+        const std::string argument = utf8FromWide(argumentList[index]);
         if (argument == "--help" || argument == "-h")
         {
             printUsage();
-            return 0;
+            done = true;
+            continue;
         }
         if (argument == "--version")
         {
             std::printf("wifimeter-backend 0.1.0（协议版本 %d）\n", ipc::kProtocolVersion);
-            return 0;
+            done = true;
+            continue;
         }
         if (argument == "--paused")
         {
             paused = true;
             continue;
         }
-        if (argument == "--db" && index + 1 < argc)
+        if (argument == "--db" && index + 1 < argumentCount)
         {
-            databasePath = argv[++index];
+            databasePath = utf8FromWide(argumentList[++index]);
             continue;
         }
         std::fprintf(stderr, "未知参数：%s\n", argument.c_str());
         printUsage();
-        return 2;
+        exitCode = 2;
     }
+    ::LocalFree(argumentList);
+    if (exitCode != 0)
+        return exitCode;
+    if (done)
+        return 0;
 
     if (databasePath.empty())
         databasePath = defaultDatabasePath();
