@@ -8,6 +8,7 @@ from pathlib import Path
 import queue
 import socket
 import subprocess
+import sys
 import threading
 import time
 
@@ -76,6 +77,7 @@ def snapshot(helper, reports):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("helper", type=Path)
     parser.add_argument("--require-native", action="store_true")
