@@ -101,10 +101,12 @@ tests/                        单元测试与真实系统只读冒烟测试
 字节数在库里存 64 位有符号整数，而接口层用无符号 64 位：单条记录的用量不可能接近 2^63（约 9.2 EB），
 超出即视为数据异常并被拒绝写入，而不是截断或回绕。
 
-### 表结构（v1）
+### 表结构（v2）
 
 - `daily_usage(network_key, day, rx_bytes, tx_bytes)`：按本地日期归档的用量。
 - `hourly_usage(network_key, day, hour, rx_bytes, tx_bytes)`：小时明细，界面“今日”图表用它。
+- `app_usage(network_key, day, app_id, name, rx_bytes, tx_bytes)`：应用的独立每日用量，按稳定应用标识聚合，
+  不参与网卡总量与额度账本。字节使用整数约束，增量累加溢出时拒绝写入。升级 v1 数据库时新增此表，保留原有记录。
 - `networks(key, ssid, alias, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at)`：
   采集只刷新 `ssid` 与 `last_seen_at`，用户设置的备注与额度不会被采集覆盖。
 - `quota_ledgers(network_key, period_key, used_bytes)`：当前周期的额度账本。
@@ -113,6 +115,8 @@ tests/                        单元测试与真实系统只读冒烟测试
   界面承诺“缺失记录不会伪装成零流量”，因此暂停、离线、计数器重置、身份变化、网卡断开都会在这里留痕。
 
 结构版本记在 `PRAGMA user_version`；打开时自动迁移，遇到比程序更新的版本会拒绝打开而不是猜着读。
+`snapshot.appRecords` 按请求的网络和日期范围查询；完整 JSON 备份包含应用记录，恢复时在同一事务内校验与写入，
+无效应用记录使整个恢复回滚。没有应用字段的旧版备份仍可恢复。清空、按网络删除与保留期裁剪也会处理应用记录。
 
 ## 接口设计
 
@@ -195,8 +199,8 @@ Windows 的系统调用本身无法在 Linux 上执行，只能交叉编译 + Wi
 
 ## 尚未完成
 
-- 应用级流量统计（界面“应用分布”）：需要按进程归属 socket 流量，成本高，暂缓。
-- 备份与恢复目前只有数据库级备份（`Store::backupTo`），界面需要的“完整备份 / 流量导出”文件格式待定。
+- 应用级流量采集（界面“应用分布”）：排行榜、独立历史存储和备份恢复已实现，原生按进程归属 socket 流量仍待接入。
+- 完整 JSON 备份目前包含每日网卡与应用用量、网络、额度账本和偏好；小时明细与覆盖空档尚未包含。
 - Linux 每轮采样会启动多个 `nmcli` 子进程（身份识别前后各一次，每张已关联网卡再由扫描结果取信号与频段）；
   后续可改为订阅 NetworkManager 的 D-Bus 信号以减少开销。
 - Linux 真实断开需要 polkit 授权；尚未在已关联的网卡上验证过真实断开与复核。

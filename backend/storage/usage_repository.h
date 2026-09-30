@@ -37,6 +37,16 @@ struct HourlyUsageRow
     core::ByteCount txBytes = 0;
 };
 
+struct AppUsageRow
+{
+    std::string networkKey;
+    std::string day;
+    std::string appId;  // 稳定的应用标识，不使用 PID
+    std::string name;
+    core::ByteCount rxBytes = 0;
+    core::ByteCount txBytes = 0;
+};
+
 enum class CoverageReason
 {
     paused,           // 用户暂停统计
@@ -83,6 +93,11 @@ public:
     Status setDaily(const std::string& networkKey, const std::string& day, core::ByteCount rx, core::ByteCount tx);
     Status setHourly(const std::string& networkKey, const std::string& day, int hour, core::ByteCount rx, core::ByteCount tx);
 
+    // 应用流量独立存储，不参与网卡总量或额度账本的累加。
+    Status addApp(const AppUsageRow& row);
+    Status setApp(const AppUsageRow& row);
+    std::vector<AppUsageRow> appRange(const std::string& networkKey, const std::string& fromDay, const std::string& toDay, Status& status) const;
+
     Status addGap(const CoverageGap& gap);
     std::vector<CoverageGap> gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status) const;
     // 采集恢复时闭合所有未结束的空档（ended_at 为空）。
@@ -95,6 +110,7 @@ public:
     Status removeNetwork(const std::string& networkKey);
 
 private:
+    Status writeApp(const AppUsageRow& row, bool accumulate);
     Database& database_;
 };
 

@@ -166,6 +166,46 @@ test('应用零用量、名称转义与历史无记录状态正常展示', async
     await expect(page.locator('.drawer')).not.toContainText('尚未采集');
 });
 
+test('应用历史来自 SQLite，重启、完整备份恢复与清空都保留正确数据', async () => {
+    const database = new DatabaseSync(harness.databasePath);
+    const date = new Date().toLocaleDateString('en-CA');
+    try {
+        const { key } = database.prepare('SELECT key FROM networks LIMIT 1').get();
+        database.prepare('INSERT INTO app_usage(network_key, day, app_id, name, rx_bytes, tx_bytes) VALUES(?, ?, ?, ?, ?, ?)')
+            .run(key, date, '/opt/browser', '浏览器', 80000000, 20000000);
+    } finally {
+        database.close();
+    }
+    await page.reload();
+    await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
+    await navigate('网络');
+    await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
+    await page.getByRole('tab', { name: '应用分布' }).click();
+    await expect(page.locator('.app-row')).toContainText('浏览器');
+    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await app.close();
+    await launch();
+    await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
+    await navigate('设置');
+    const backupFile = path.join(profile, 'applications-backup.json');
+    await saveDialog(backupFile);
+    await page.getByRole('button', { name: '备份', exact: true }).click();
+    await expectToast('已导出完整数据备份');
+    const backup = JSON.parse(await readFile(backupFile, 'utf8'));
+    expect(backup.appRecords).toHaveLength(1);
+    expect(backup.appRecords[0].rxBytes).toBe('80000000');
+    await page.getByRole('button', { name: '清空记录', exact: true }).click();
+    await page.locator('#confirmText').fill('清空');
+    await page.locator('.modal').getByRole('button', { name: '清空记录' }).click();
+    await expectToast('记录已清空');
+    await expect.poll(() => query('SELECT COUNT(*) FROM app_usage')).toBe('0');
+    await openDialog(backupFile);
+    await page.getByRole('button', { name: '恢复', exact: true }).click();
+    await expect(page.locator('.modal')).toBeVisible();
+    await page.locator('.modal').getByRole('button', { name: '确认恢复' }).click();
+    await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
+});
+
 test('采集状态显示真实网卡，暂停与恢复都由后端执行', async () => {
     await page.getByRole('button', { name: '采集状态' }).click();
     await expect(page.locator('.modal')).toContainText('采集器：运行中');

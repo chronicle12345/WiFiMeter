@@ -575,7 +575,7 @@ inline void samplesOnItsOwnSchedule(ProcessRunner& runner, ProcessFixture& fixtu
 }
 
 // 完整备份 → 清空 → 恢复：备份是界面「完整备份」用的格式，
-// 两端都要能原样往返（含中文备注、额度、小时明细与覆盖空档）。
+// 两端都要能原样往返（含中文备注、额度与独立应用用量）。
 inline void exportsAndRestoresABackup(ProcessRunner& runner, ProcessFixture& fixture)
 {
     WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
@@ -628,7 +628,19 @@ inline void exportsAndRestoresABackup(ProcessRunner& runner, ProcessFixture& fix
                 WIFIMETER_CHECK_EQ(networks->at(0).stringOr("alias"), std::string("家里的 Wi-Fi"));
                 WIFIMETER_CHECK_EQ(networks->at(0).doubleOr("capGb"), 2.5);
             }
-            backupJson = document->dump();
+            // 在完整备份中加入独立应用夹具，验证两端真实进程的恢复、查询和再次备份。
+            JsonValue withApps = *document;
+            JsonValue apps = JsonValue::makeArray();
+            JsonValue app = JsonValue::makeObject();
+            app.set("networkId", JsonValue::makeString(networkKey));
+            app.set("date", JsonValue::makeString(records->at(0).stringOr("date")));
+            app.set("appId", JsonValue::makeString("browser"));
+            app.set("name", JsonValue::makeString("浏览器"));
+            app.set("rxBytes", JsonValue::makeString("9007199254740993"));
+            app.set("txBytes", JsonValue::makeString("42"));
+            apps.push(std::move(app));
+            withApps.set("appRecords", std::move(apps));
+            backupJson = withApps.dump();
         }
     }
     WIFIMETER_CHECK(!backupJson.empty());
@@ -670,7 +682,26 @@ inline void exportsAndRestoresABackup(ProcessRunner& runner, ProcessFixture& fix
         }
     }
 
-    WIFIMETER_CHECK(session.request(10, "shutdown").has_value());
+    const auto appBackup = session.request(10, "backup");
+    WIFIMETER_CHECK(appBackup && appBackup->boolOr("ok"));
+    if (appBackup && appBackup->find("result"))
+    {
+        const auto* apps = appBackup->find("result")->find("backup")->find("appRecords");
+        WIFIMETER_CHECK(apps && apps->size() == 1);
+        if (apps && apps->size())
+        {
+            WIFIMETER_CHECK_EQ(apps->at(0).stringOr("name"), std::string("浏览器"));
+            WIFIMETER_CHECK_EQ(apps->at(0).stringOr("rxBytes"), std::string("9007199254740993"));
+        }
+    }
+    WIFIMETER_CHECK(session.request(11, "clearUsage").has_value());
+    const auto appsCleared = session.request(12, "snapshot");
+    if (appsCleared && appsCleared->find("result"))
+    {
+        const auto* apps = appsCleared->find("result")->find("appRecords");
+        WIFIMETER_CHECK(apps && apps->size() == 0);
+    }
+    WIFIMETER_CHECK(session.request(13, "shutdown").has_value());
     WIFIMETER_CHECK_EQ(runner.wait(), 0);
 }
 

@@ -1,6 +1,7 @@
 #include "service.h"
 
 #include <algorithm>
+#include <tuple>
 #include <utility>
 
 #include "../core/local_time.h"
@@ -39,6 +40,23 @@ ByteCount parseBytes(const JsonValue& object, std::string_view key)
     if (value->isNumber())
         return static_cast<ByteCount>(value->asDouble());
     return 0;
+}
+
+JsonValue appRowsToJson(const std::vector<storage::AppUsageRow>& rows)
+{
+    JsonValue records = JsonValue::makeArray();
+    for (const auto& row : rows)
+    {
+        JsonValue record = JsonValue::makeObject();
+        record.set("networkId", JsonValue::makeString(row.networkKey));
+        record.set("date", JsonValue::makeString(row.day));
+        record.set("appId", JsonValue::makeString(row.appId));
+        record.set("name", JsonValue::makeString(row.name));
+        record.set("rxBytes", bytes(row.rxBytes));
+        record.set("txBytes", bytes(row.txBytes));
+        records.push(std::move(record));
+    }
+    return records;
 }
 
 std::string periodName(core::QuotaPeriod period)
@@ -312,8 +330,13 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     result.set("gaps", std::move(gapArray));
 
     result.set("live", buildLive());
-    // 应用级统计尚未实现，保持空数组以便界面结构稳定。
-    result.set("appRecords", JsonValue::makeArray());
+    const auto apps = deps_.store.usage().appRange(networkKey, fromDay, toDay, status);
+    if (!status)
+    {
+        response.error = Error{errorCode::kStorageFailure, status.message};
+        return response;
+    }
+    result.set("appRecords", appRowsToJson(apps));
 
     response.result = std::move(result);
     return response;
@@ -499,6 +522,14 @@ BackendService::Response BackendService::backup() const
     }
     document.set("records", std::move(records));
 
+    const auto apps = deps_.store.usage().appRange("", "0000-01-01", "9999-12-31", status);
+    if (!status)
+    {
+        response.error = Error{errorCode::kStorageFailure, status.message};
+        return response;
+    }
+    document.set("appRecords", appRowsToJson(apps));
+
     JsonValue ledgers = JsonValue::makeArray();
     for (const storage::QuotaLedgerRecord& ledger : deps_.store.networks().allLedgers(status))
     {
@@ -590,6 +621,44 @@ BackendService::Response BackendService::restore(const JsonValue& params)
                 return response;
             }
             ++recordCount;
+        }
+    }
+
+    // 旧版完整备份没有 appRecords，仍可恢复；新字段存在时必须完整校验。
+    if (const JsonValue* apps = document->find("appRecords"); apps != nullptr)
+    {
+        if (!apps->isArray() || apps->size() > 50000)
+        {
+            response.error = Error{errorCode::kInvalidParams, "备份中的应用记录格式或数量无效。"};
+            return response;
+        }
+        std::set<std::tuple<std::string, std::string, std::string>> seen;
+        for (std::size_t index = 0; index < apps->size(); ++index)
+        {
+            const auto& entry = apps->at(index);
+            storage::AppUsageRow row{entry.stringOr("networkId"), entry.stringOr("date"), entry.stringOr("appId"), entry.stringOr("name"), 0, 0};
+            const auto* rx = entry.find("rxBytes");
+            const auto* tx = entry.find("txBytes");
+            core::TimePoint at;
+            const auto network = deps_.store.networks().find(row.networkKey, status);
+            if (!status)
+            {
+                response.error = Error{errorCode::kStorageFailure, status.message};
+                return response;
+            }
+            if (!network || !core::parseDayKey(row.day, at) || row.appId.empty() || row.appId.size() > 1024 || row.name.empty() || row.name.size() > 256 ||
+                rx == nullptr || tx == nullptr || !rx->isString() || !tx->isString() ||
+                !core::parseDecimal(rx->asString(), row.rxBytes) || !core::parseDecimal(tx->asString(), row.txBytes) ||
+                !storage::toStoredBytes(row.rxBytes) || !storage::toStoredBytes(row.txBytes) || !seen.emplace(row.networkKey, row.day, row.appId).second)
+            {
+                response.error = Error{errorCode::kInvalidParams, "备份中包含无效或重复的应用记录。"};
+                return response;
+            }
+            if (const Status written = deps_.store.usage().setApp(row); !written)
+            {
+                response.error = Error{errorCode::kStorageFailure, written.message};
+                return response;
+            }
         }
     }
 

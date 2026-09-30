@@ -629,6 +629,73 @@ void prunesUsage()
     WIFIMETER_CHECK_EQ(response.result.intOr("removedHourly"), std::int64_t{1});
 }
 
+void applicationHistorySurvivesSnapshotsAndBackups()
+{
+    Harness harness;
+    const auto now = utcTime(2026, 9, 30, 10, 0, 0);
+    bool created = false;
+    WIFIMETER_CHECK(harness.store->networks().observe({kUuid, "Home"}, "2026-09-30T10:00:00Z", created).ok);
+    WIFIMETER_CHECK(harness.store->usage().addApp({kUuid, "2026-09-30", "browser", "浏览器", 9007199254740993ULL, 42}).ok);
+    WIFIMETER_CHECK(harness.store->usage().addApp({kUuid, "2026-09-29", "browser", "浏览器", 100, 1}).ok);
+    JsonValue params = JsonValue::makeObject();
+    params.set("from", JsonValue::makeString("2026-09-30"));
+    params.set("to", JsonValue::makeString("2026-09-30"));
+    params.set("networkKey", JsonValue::makeString(kUuid));
+    auto snapshot = harness.call(method::kSnapshot, params, now);
+    WIFIMETER_CHECK(snapshot.ok());
+    const auto* apps = snapshot.result.find("appRecords");
+    WIFIMETER_CHECK(apps && apps->size() == 1);
+    if (apps && apps->size())
+    {
+        WIFIMETER_CHECK_EQ(apps->at(0).stringOr("rxBytes"), std::string("9007199254740993"));
+        WIFIMETER_CHECK_EQ(apps->at(0).stringOr("name"), std::string("浏览器"));
+    }
+    WIFIMETER_CHECK(snapshot.result.find("records")->size() == 0);
+    const auto backup = harness.call(method::kBackup, now);
+    WIFIMETER_CHECK(backup.ok());
+    const auto* document = backup.result.find("backup");
+    WIFIMETER_CHECK(document && document->find("appRecords")->size() == 2);
+    WIFIMETER_CHECK(harness.call(method::kClearUsage, now).ok());
+    Status status;
+    WIFIMETER_CHECK(harness.store->usage().appRange("", "2026-01-01", "2026-12-31", status).empty());
+    JsonValue restore = JsonValue::makeObject();
+    restore.set("backup", *document);
+    WIFIMETER_CHECK(harness.call(method::kRestore, restore, now).ok());
+    snapshot = harness.call(method::kSnapshot, params, now);
+    WIFIMETER_CHECK(snapshot.result.find("appRecords")->size() == 1);
+
+    // 无效应用记录使整个恢复回滚，原有网络与记录不能丢失。
+    JsonValue broken = *document;
+    JsonValue badApps = JsonValue::makeArray();
+    JsonValue invalid = document->find("appRecords")->at(0);
+    invalid.set("rxBytes", JsonValue::makeString("invalid"));
+    badApps.push(invalid);
+    broken.set("appRecords", badApps);
+    restore.set("backup", broken);
+    auto rejected = harness.call(method::kRestore, restore, now);
+    WIFIMETER_CHECK(!rejected.ok());
+    WIFIMETER_CHECK_EQ(rejected.error.code, std::string(errorCode::kInvalidParams));
+    snapshot = harness.call(method::kSnapshot, params, now);
+    WIFIMETER_CHECK(snapshot.result.find("appRecords")->size() == 1);
+    invalid = document->find("appRecords")->at(0);
+    invalid.set("networkId", JsonValue::makeString("missing"));
+    badApps = JsonValue::makeArray();
+    badApps.push(invalid);
+    broken.set("appRecords", badApps);
+    restore.set("backup", broken);
+    WIFIMETER_CHECK(!harness.call(method::kRestore, restore, now).ok());
+
+    // 旧版备份没有应用字段，仍能恢复。
+    JsonValue old = JsonValue::makeObject();
+    old.set("backupType", JsonValue::makeString("wifimeter-backend-backup"));
+    old.set("networks", *document->find("networks"));
+    old.set("records", *document->find("records"));
+    restore.set("backup", old);
+    WIFIMETER_CHECK(harness.call(method::kRestore, restore, now).ok());
+    snapshot = harness.call(method::kSnapshot, params, now);
+    WIFIMETER_CHECK(snapshot.result.find("appRecords")->size() == 0);
+}
+
 }  // namespace
 
 int main()
@@ -648,5 +715,6 @@ int main()
     rejectsForeignBackups();
     mapsDisconnectOutcomes();
     prunesUsage();
+    applicationHistorySurvivesSnapshotsAndBackups();
     return WIFIMETER_REPORT();
 }

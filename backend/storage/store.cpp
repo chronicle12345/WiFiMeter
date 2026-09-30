@@ -129,7 +129,10 @@ Status Store::pruneByRetention(core::TimePoint now, std::size_t& removedDaily, s
     // 保留期含当天：cutoff = 今天 - (retentionDays - 1)，按本地日期做减法，
     // 由 mktime 处理月份、年份与夏令时。
     const std::string cutoff = core::dayKeyOf(core::shiftLocalDays(core::localStampOf(now), -(settings.retentionDays - 1)));
-    return usage_.pruneBefore(cutoff, removedDaily, removedHourly);
+    Transaction transaction(database());
+    if (const Status pruned = usage_.pruneBefore(cutoff, removedDaily, removedHourly); !pruned)
+        return pruned;
+    return transaction.commit();
 }
 
 Status Store::clearUsage()

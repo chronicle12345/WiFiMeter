@@ -215,7 +215,62 @@ Status UsageRepository::pruneBefore(const std::string& day, std::size_t& removed
         return ran;
     removedHourly = static_cast<std::size_t>(sqlite3_changes(database_.handle()));
 
-    return Status::success();
+    auto apps = database_.prepare("DELETE FROM app_usage WHERE day < ?1;", status);
+    if (!apps)
+        return status;
+    if (!apps->bind(1, day))
+        return Status::failure(apps->error());
+    return apps->run();
+}
+
+Status UsageRepository::writeApp(const AppUsageRow& row, bool accumulate)
+{
+    core::TimePoint at;
+    if (row.networkKey.empty() || row.appId.empty() || row.appId.size() > 1024 || row.name.empty() || row.name.size() > 256 || !core::parseDayKey(row.day, at))
+        return Status::failure("应用记录的网络、日期或应用身份无效。");
+    const auto rx = toStoredBytes(row.rxBytes);
+    const auto tx = toStoredBytes(row.txBytes);
+    if (!rx || !tx)
+        return Status::failure("应用用量超出可存储范围。");
+    Status status;
+    const std::string update = accumulate ? "rx_bytes = rx_bytes + excluded.rx_bytes, tx_bytes = tx_bytes + excluded.tx_bytes;" : "rx_bytes = excluded.rx_bytes, tx_bytes = excluded.tx_bytes;";
+    auto statement = database_.prepare(
+        "INSERT INTO app_usage(network_key, day, app_id, name, rx_bytes, tx_bytes) VALUES(?1, ?2, ?3, ?4, ?5, ?6) "
+        "ON CONFLICT(network_key, day, app_id) DO UPDATE SET name = excluded.name, " + update, status);
+    if (!statement)
+        return status;
+    if (!statement->bind(1, row.networkKey) || !statement->bind(2, row.day) || !statement->bind(3, row.appId) || !statement->bind(4, row.name) || !statement->bind(5, *rx) || !statement->bind(6, *tx))
+        return Status::failure(statement->error());
+    return statement->run();
+}
+
+Status UsageRepository::addApp(const AppUsageRow& row)
+{
+    return writeApp(row, true);
+}
+
+Status UsageRepository::setApp(const AppUsageRow& row)
+{
+    return writeApp(row, false);
+}
+
+std::vector<AppUsageRow> UsageRepository::appRange(const std::string& networkKey, const std::string& fromDay, const std::string& toDay, Status& status) const
+{
+    std::vector<AppUsageRow> rows;
+    auto statement = database_.prepare(
+        "SELECT network_key, day, app_id, name, rx_bytes, tx_bytes FROM app_usage "
+        "WHERE day >= ?1 AND day <= ?2 AND (?3 = '' OR network_key = ?3) ORDER BY day, network_key, app_id;", status);
+    if (!statement)
+        return rows;
+    if (!statement->bind(1, fromDay) || !statement->bind(2, toDay) || !statement->bind(3, networkKey))
+    {
+        status = Status::failure(statement->error());
+        return rows;
+    }
+    while (statement->step())
+        rows.push_back({statement->columnText(0), statement->columnText(1), statement->columnText(2), statement->columnText(3), fromStoredBytes(statement->columnInt64(4)), fromStoredBytes(statement->columnInt64(5))});
+    status = statement->failed() ? Status::failure(statement->error()) : Status::success();
+    return status ? rows : std::vector<AppUsageRow>{};
 }
 
 Status UsageRepository::addGap(const CoverageGap& gap)
@@ -293,6 +348,7 @@ Status UsageRepository::clearUsage()
     return database_.exec(
         "DELETE FROM daily_usage;"
         "DELETE FROM hourly_usage;"
+        "DELETE FROM app_usage;"
         "DELETE FROM coverage_gaps;"
         "UPDATE quota_ledgers SET used_bytes = 0;");
 }
@@ -301,7 +357,7 @@ Status UsageRepository::removeNetwork(const std::string& networkKey)
 {
     Status status;
     // 一条 SQL 字符串里放多条语句时 prepare 只会编译第一条，因此逐条准备。
-    for (const char* sql : {"DELETE FROM daily_usage WHERE network_key = ?1;", "DELETE FROM hourly_usage WHERE network_key = ?1;", "DELETE FROM coverage_gaps WHERE network_key = ?1;"})
+    for (const char* sql : {"DELETE FROM daily_usage WHERE network_key = ?1;", "DELETE FROM hourly_usage WHERE network_key = ?1;", "DELETE FROM app_usage WHERE network_key = ?1;", "DELETE FROM coverage_gaps WHERE network_key = ?1;"})
     {
         auto statement = database_.prepare(sql, status);
         if (!statement)

@@ -137,6 +137,7 @@ export function createDataClient(handlers = {}) {
             await request('clearUsage');
             snapshot.records = [];
             snapshot.hourly = [];
+            snapshot.appRecords = [];
             snapshot.gaps = [];
             for (const network of snapshot.networks) {
                 if (network.quotaLedger) network.quotaLedger.usedBytes = '0';

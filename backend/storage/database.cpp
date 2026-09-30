@@ -78,6 +78,19 @@ CREATE INDEX IF NOT EXISTS hourly_usage_by_day ON hourly_usage(day);
 CREATE INDEX IF NOT EXISTS coverage_gaps_by_start ON coverage_gaps(started_at);
 )SQL";
 
+const char* kSchemaV2 = R"SQL(
+CREATE TABLE app_usage (
+    network_key TEXT NOT NULL REFERENCES networks(key) ON DELETE CASCADE,
+    day         TEXT NOT NULL,
+    app_id      TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    rx_bytes    INTEGER NOT NULL CHECK (typeof(rx_bytes) = 'integer' AND rx_bytes >= 0),
+    tx_bytes    INTEGER NOT NULL CHECK (typeof(tx_bytes) = 'integer' AND tx_bytes >= 0),
+    PRIMARY KEY (network_key, day, app_id)
+) WITHOUT ROWID;
+CREATE INDEX app_usage_by_day ON app_usage(day);
+)SQL";
+
 }  // namespace
 
 Status Status::failure(std::string message)
@@ -429,6 +442,16 @@ Status Database::migrate()
             return stamped;
         const Status committed = transaction.commit();
         if (!committed)
+            return committed;
+    }
+    if (version < 2)
+    {
+        Transaction transaction(*this);
+        if (const Status created = exec(kSchemaV2); !created)
+            return created;
+        if (const Status stamped = setSchemaVersion(2); !stamped)
+            return stamped;
+        if (const Status committed = transaction.commit(); !committed)
             return committed;
     }
     return Status::success();

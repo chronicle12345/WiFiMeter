@@ -57,6 +57,7 @@ endforeach()
 set(WIFIMETER_STORAGE_TESTS
     storage_database_test
     storage_test
+    app_usage_test
 )
 
 foreach(test_name IN LISTS WIFIMETER_STORAGE_TESTS)

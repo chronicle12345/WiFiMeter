@@ -1,24 +1,28 @@
 # 数据格式与协议边界
 
-这里记录前后端将共享的约定。当前只有前端演示数据，没有已实现的 C++ 通信协议、请求方法或事件接口。
+这里记录前后端共享的数据约定。实际 JSON Lines 通信协议及方法见 `backend/ipc/messages.h`，桌面客户端见 `apps/desktop/renderer/data/backend-client.js`。
 
 ## 现有快照
 
-当前校验实现位于 `apps/desktop/renderer/data/model.js` 的 `validateSnapshot`，沿用 HTML 演示中的 `version: 1`。
+数据校验实现位于 `apps/desktop/renderer/data/model.js` 的 `validateSnapshot`；后端快照沿用 `version: 1`，来源为 `backend`。
 
 | 字段 | 内容 |
 | --- | --- |
-| `version`、`source` | 数据版本与来源，当前来源为 `demo` |
+| `version`、`source` | 数据版本与来源，实际采集来源为 `backend` |
 | `networks` | 网络标识、SSID、备注、额度与提醒设置 |
 | `records` | 按本地日期、网络归档的上传和下载字节数 |
 | `hourly` | 小时明细 |
-| `appRecords` | 独立的应用示例用量，不与网卡总量相加 |
+| `appRecords` | 从 SQLite 查询的独立应用每日用量，不与网卡总量相加 |
 | `settings` | 显示单位、刷新间隔、保留时长和偏好 |
-| `live` | 模拟连接、采集状态、速率和更新时间 |
+| `live` | 本机连接、采集状态、速率和更新时间 |
 
-字节计数采用十进制字符串，JavaScript 累计使用 `BigInt`。日期键采用本地日期 `YYYY-MM-DD`。完整备份附加 `backupType: "wifimeter-ui-demo"`；流量导出使用 `type: "usage-export"`，不是完整备份。
+字节计数采用十进制字符串，JavaScript 累计使用 `BigInt`。日期键采用本地日期 `YYYY-MM-DD`。
+流量导出使用 `type: "usage-export"`，不是完整备份；`wifimeter-ui-demo` 仅用于旧的演示测试夹具。
 
-这些是已有数据和文件格式，不表示后端已接受这些字段。后端接入时再明确传输方式、请求编号、方法、错误和事件，以及版本兼容规则；届时添加实际需要的 schemas 和消息示例。
+应用记录格式为 `{networkId, date, appId, name, rxBytes, txBytes}`。`appId` 是稳定应用标识，不能用 PID 作为历史标识。
+`snapshot` 使用 `networkKey`、`from`、`to` 查询相应应用记录。完整后端备份标记为 `backupType: "wifimeter-backend-backup"`，
+包含 `appRecords`；恢复接受缺少该字段的旧版备份，但拒绝无效日期、未知网络、无效字节与重复的应用每日记录。
+原生应用采集仍待实现，当前不会把网卡总量按比例分摊给应用。
 
 ## 待定的接入约定
 

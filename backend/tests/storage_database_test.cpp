@@ -54,6 +54,36 @@ void rejectsNewerSchemaVersions()
     WIFIMETER_CHECK(status.message.find("高于") != std::string::npos);
 }
 
+void migratesExistingUsageFromVersionOne()
+{
+    TempDirectory directory("db-migrate-apps");
+    Status status;
+    {
+        auto database = Database::open(directory.file("meter.db"), status);
+        WIFIMETER_CHECK(database.has_value());
+        if (!database)
+            return;
+        WIFIMETER_CHECK(database->exec("DROP TABLE app_usage; INSERT INTO daily_usage VALUES('home', '2026-09-30', 123, 456);").ok);
+        WIFIMETER_CHECK(database->setSchemaVersion(1).ok);
+    }
+    auto database = Database::open(directory.file("meter.db"), status);
+    WIFIMETER_CHECK(database.has_value());
+    if (!database)
+        return;
+    WIFIMETER_CHECK_EQ(database->schemaVersion(), kSchemaVersion);
+    auto usage = database->prepare("SELECT rx_bytes, tx_bytes FROM daily_usage;", status);
+    WIFIMETER_CHECK(usage && usage->step());
+    if (usage)
+    {
+        WIFIMETER_CHECK_EQ(usage->columnInt64(0), std::int64_t{123});
+        WIFIMETER_CHECK_EQ(usage->columnInt64(1), std::int64_t{456});
+    }
+    auto apps = database->prepare("SELECT COUNT(*) FROM app_usage;", status);
+    WIFIMETER_CHECK(apps && apps->step());
+    if (apps)
+        WIFIMETER_CHECK_EQ(apps->columnInt64(0), std::int64_t{0});
+}
+
 void reportsSqlErrors()
 {
     TempDirectory directory("db-error");
@@ -203,6 +233,7 @@ void writesAConsistentBackup()
 int main()
 {
     createsSchemaOnFirstOpen();
+    migratesExistingUsageFromVersionOne();
     rejectsNewerSchemaVersions();
     reportsSqlErrors();
     runsStatementsWithBinding();
