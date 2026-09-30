@@ -28,7 +28,11 @@ namespace WiFiMeter.Networking
         private const int ErrorInsufficientBuffer = 122;
         private const int ErrorNoData = 232;
         private const int RowSizeV4 = 24;
-        private const int RowSizeV6 = 44;
+        // MIB_TCP6ROW_OWNER_PID is 56 bytes: local address (16), local scope id,
+        // local port, remote address (16), remote scope id, remote port, and then
+        // state at +48 with the owning PID at +52.
+        private const int RowSizeV6 = 56;
+        private const int StateOffsetV6 = 48;
 
         [DllImport("iphlpapi.dll", SetLastError = true)]
         private static extern uint GetExtendedTcpTable(IntPtr tcpTable, ref int tcpTableLength, bool order, int ipVersion, int tableClass, int reserved);
@@ -36,12 +40,12 @@ namespace WiFiMeter.Networking
         public static TcpConnectionRow[] GetEstablishedConnections()
         {
             List<TcpConnectionRow> rows = new List<TcpConnectionRow>();
-            AppendFamily(rows, AfInet, RowSizeV4);
-            AppendFamily(rows, AfInet6, RowSizeV6);
+            AppendFamily(rows, AfInet, RowSizeV4, 0);
+            AppendFamily(rows, AfInet6, RowSizeV6, StateOffsetV6);
             return rows.ToArray();
         }
 
-        private static void AppendFamily(List<TcpConnectionRow> rows, int family, int rowSize)
+        private static void AppendFamily(List<TcpConnectionRow> rows, int family, int rowSize, int stateOffset)
         {
             int size = 0;
             uint error = GetExtendedTcpTable(IntPtr.Zero, ref size, true, family, TcpTableOwnerPidAll, 0);
@@ -61,7 +65,7 @@ namespace WiFiMeter.Networking
                 {
                     int offset = 4 + index * rowSize;
                     if (offset + rowSize > data.Length) break;
-                    int state = BitConverter.ToInt32(data, offset);
+                    int state = BitConverter.ToInt32(data, offset + stateOffset);
                     if (state != MibTcpStateEstablished) continue;
                     TcpConnectionRow row = new TcpConnectionRow();
                     row.State = state;
@@ -75,9 +79,9 @@ namespace WiFiMeter.Networking
                     else
                     {
                         row.LocalAddress = FormatAddress(CopyBytes(data, offset, 16));
-                        row.LocalPort = ReadNetworkPort(data, offset + 16);
-                        row.RemoteAddress = FormatAddress(CopyBytes(data, offset + 20, 16));
-                        row.RemotePort = ReadNetworkPort(data, offset + 36);
+                        row.LocalPort = ReadNetworkPort(data, offset + 20);
+                        row.RemoteAddress = FormatAddress(CopyBytes(data, offset + 24, 16));
+                        row.RemotePort = ReadNetworkPort(data, offset + 44);
                     }
                     row.OwningPid = BitConverter.ToInt32(data, offset + rowSize - 4);
                     row.RemoteIsLoopback = IsLoopback(row.RemoteAddress);
