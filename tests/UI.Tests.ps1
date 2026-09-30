@@ -83,6 +83,20 @@ function Test-LiveMeterWindow {
     Assert-Ui ($script:liveAppsList.Items[0].Name -ceq 'Microsoft Edge') 'Switching back must restore connection chips.'
     Write-Host 'PASS the live apps panel renders connections and today usage without rate promises'
 
+    $accent = $script:window.Resources['Accent']
+    Assert-Ui ($accent -is [Windows.Media.SolidColorBrush] -and $accent.Color.ToString() -ceq '#FF5A63E8') 'The accent token must keep its hue.'
+    $pageBackground = $script:window.Resources['PageBackground']
+    Assert-Ui ($pageBackground -is [Windows.Media.SolidColorBrush] -and $pageBackground.Color.ToString() -ceq '#FFF5F7FB') 'The page background token must keep the light base.'
+    Assert-Ui ($script:window.Background -ceq $pageBackground) 'The window must be painted with the named page background token.'
+    $cardStyle = $script:window.Resources['Card']
+    $cardRadius = @($cardStyle.Setters | Where-Object { $_ -is [Windows.Setter] -and $_.Property -ceq [Windows.Controls.Border]::CornerRadiusProperty } | Select-Object -First 1).Value
+    Assert-Ui ($cardRadius -eq 12) 'Cards must keep the 12px corner radius.'
+    $rowStyle = $script:window.Resources[[Windows.Controls.DataGridRow]]
+    Assert-Ui (@($rowStyle.Triggers | Where-Object { $_ -is [Windows.Trigger] -and $_.Property -ceq [Windows.Controls.DataGridRow]::IsMouseOverProperty }).Count -gt 0) 'Table rows must have a hover state.'
+    $buttonTemplate = @($script:window.Resources[[Windows.Controls.Button]].Setters | Where-Object { $_ -is [Windows.Setter] -and $_.Property -ceq [Windows.Controls.Control]::TemplateProperty } | Select-Object -First 1).Value
+    Assert-Ui (@($buttonTemplate.Triggers | Where-Object { $_ -is [Windows.Trigger] -and $_.Property -ceq [Windows.Controls.Control]::IsKeyboardFocusedProperty }).Count -gt 0) 'Buttons must show a keyboard focus indicator.'
+    Write-Host 'PASS the design tokens keep the palette, radii and interaction states consistent'
+
     Assert-Ui ($null -eq $script:window.FindName('DateControls')) 'Date selection must appear in its dialog, not a separate main-window row.'
     $dateDialog = New-MeterDateDialog
     $dateDialog.From.SelectedDate = [DateTime]::Today

@@ -362,7 +362,7 @@ try {
             $script:loadError = ''
         } catch {
             $script:loadError = $_.Exception.Message
-            $StatusBadge.Text = Text-Meter 'ReadFailed'; $StatusPill.Background = '#FDEEEF'; $StatusBadge.Foreground = '#C45664'
+            $StatusBadge.Text = Text-Meter 'ReadFailed'; $StatusPill.Background = $window.Resources['DangerSoft']; $StatusBadge.Foreground = $window.Resources['DangerText']
             $StatusDetail.Text = Format-MeterError $script:loadError 'Read'
             $StatusDetail.ToolTip = $StatusDetail.Text + [Environment]::NewLine + (Text-Meter 'TechnicalDetails') + ': ' + $script:loadError
         }
@@ -370,7 +370,7 @@ try {
 
     function Refresh-MeterStatus {
         if ($Preview) {
-            $StatusBadge.Text = Text-Meter 'Preview'; $StatusPill.Background = '#EEEDFE'; $StatusBadge.Foreground = '#6567BC'
+            $StatusBadge.Text = Text-Meter 'Preview'; $StatusPill.Background = $window.Resources['PreviewSoft']; $StatusBadge.Foreground = $window.Resources['PreviewText']
             $ConnectionName.Text = '家里的 Wi-Fi'; $DownloadSpeed.Text = '2.84 MB/s'; $UploadSpeed.Text = '0.16 MB/s'
             $HeaderSubtitle.Text = Text-Meter 'PreviewSubtitle'
             $StartupDetail.Text = Text-Meter 'PreviewStartup'
@@ -390,8 +390,8 @@ try {
         Show-MeterQuotaAlerts -Status $status
         $ToggleButton.Content = if ($status.Running) { Text-Meter 'Stop' } else { Text-Meter 'Start' }
         $StatusBadge.Text = if ($status.Running -and $status.Healthy) { Text-Meter 'Tracking' } elseif ($status.Running) { Text-Meter 'WaitingSample' } else { Text-Meter 'Stopped' }
-        $StatusPill.Background = if ($status.Running) { '#E9F6F0' } else { '#EAEDF4' }
-        $StatusBadge.Foreground = if ($status.Running) { '#26996E' } else { '#7C879D' }
+        $StatusPill.Background = if ($status.Running) { $window.Resources['SuccessSoft'] } else { $window.Resources['NeutralSoft'] }
+        $StatusBadge.Foreground = if ($status.Running) { $window.Resources['SuccessText'] } else { $window.Resources['Muted'] }
         $ConnectionName.Text = if ($status.Running -and @($status.Connections).Count -gt 0) { $status.Connections -join ' / ' } else { Text-Meter 'NoConnection' }
         $ConnectionName.ToolTip = $ConnectionName.Text
         $DownloadSpeed.Text = $(if ($status.Running) { $status.DownloadPerSecond / 1e6 } else { 0 }).ToString('N2') + ' MB/s'

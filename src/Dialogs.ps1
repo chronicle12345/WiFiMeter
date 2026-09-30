@@ -2,7 +2,7 @@
 
 function New-MeterDialog {
     param([string]$TitleKey, [int]$Width, [int]$Height, [string]$Content)
-    $markup = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="#F5F7FB" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="#202B43" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"><Border Background="#F5F7FB" Padding="24"><Grid>' + $Content + '</Grid></Border></Window>'
+    $markup = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"><Border Background="{DynamicResource PageBackground}" Padding="24"><Grid>' + $Content + '</Grid></Border></Window>'
     $dialog = [Windows.Markup.XamlReader]::Parse($markup)
     $dialog.Title = Text-Meter $TitleKey
     $dialog.Width = $Width
@@ -24,17 +24,17 @@ function New-MeterDateDialog {
 <TextBlock Text="{DynamicResource CustomRange}" FontSize="23" FontWeight="SemiBold" Margin="0,0,0,18" />
 <UniformGrid Grid.Row="1" Columns="2">
   <StackPanel Margin="0,0,12,0">
-    <TextBlock Text="{DynamicResource StartDate}" Foreground="#7C879D" Margin="0,0,0,8" />
+    <TextBlock Text="{DynamicResource StartDate}" Foreground="{DynamicResource Muted}" Margin="0,0,0,8" />
     <Calendar x:Name="From" HorizontalAlignment="Left" />
   </StackPanel>
   <StackPanel Margin="12,0,0,0">
-    <TextBlock Text="{DynamicResource EndDate}" Foreground="#7C879D" Margin="0,0,0,8" />
+    <TextBlock Text="{DynamicResource EndDate}" Foreground="{DynamicResource Muted}" Margin="0,0,0,8" />
     <Calendar x:Name="To" HorizontalAlignment="Left" />
   </StackPanel>
 </UniformGrid>
-<TextBlock x:Name="Error" Grid.Row="2" Foreground="#C45664" Margin="0,0,0,10" TextWrapping="Wrap" />
+<TextBlock x:Name="Error" Grid.Row="2" Foreground="{DynamicResource DangerText}" Margin="0,0,0,10" TextWrapping="Wrap" />
 <Grid Grid.Row="3">
-  <TextBlock Text="{DynamicResource Inclusive}" Foreground="#7C879D" VerticalAlignment="Center" />
+  <TextBlock Text="{DynamicResource Inclusive}" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" />
   <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
     <Button x:Name="Cancel" Content="{DynamicResource Cancel}" MinWidth="84" Margin="0,0,8,0" IsCancel="True" />
     <Button x:Name="Apply" Content="{DynamicResource Apply}" MinWidth="84" Style="{DynamicResource PrimaryButton}" IsDefault="True" />
@@ -85,49 +85,53 @@ function Show-MeterDateDialog {
 }
 
 function New-MeterSettingsDialog {
-    $dialog = New-MeterDialog -TitleKey Settings -Width 510 -Height 660 -Content @'
+    $dialog = New-MeterDialog -TitleKey Settings -Width 560 -Height 660 -Content @'
 <Grid.RowDefinitions>
   <RowDefinition Height="Auto" />
   <RowDefinition Height="*" />
   <RowDefinition Height="Auto" />
 </Grid.RowDefinitions>
 <TextBlock Text="{DynamicResource Settings}" FontSize="23" FontWeight="SemiBold" Margin="0,0,0,20" />
-<StackPanel Grid.Row="1">
-  <TextBlock Text="{DynamicResource Retention}" FontWeight="SemiBold" />
-  <StackPanel Orientation="Horizontal" Margin="0,12,0,10">
-    <TextBox x:Name="Days" Width="110" Padding="9,7" MaxLength="5" />
-    <TextBlock Text="{DynamicResource Days}" Margin="10,0,0,0" VerticalAlignment="Center" />
+<ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,0,8,0">
+  <StackPanel>
+    <TextBlock Text="{DynamicResource Retention}" FontWeight="SemiBold" FontSize="14" />
+    <StackPanel Orientation="Horizontal" Margin="0,12,0,10">
+      <TextBox x:Name="Days" Width="110" Padding="9,7" MaxLength="5" VerticalContentAlignment="Center" />
+      <TextBlock Text="{DynamicResource Days}" Foreground="{DynamicResource Muted}" Margin="10,0,0,0" VerticalAlignment="Center" />
+    </StackPanel>
+    <TextBlock Text="{DynamicResource RetentionHint}" Foreground="{DynamicResource Muted}" FontSize="11" LineHeight="17" TextWrapping="Wrap" />
+    <Border BorderBrush="{DynamicResource DividerSoft}" BorderThickness="0,1,0,0" Margin="0,16,0,0" />
+    <TextBlock Text="{DynamicResource TotalQuota}" FontWeight="SemiBold" FontSize="14" Margin="0,16,0,0" />
+    <UniformGrid Columns="3" Margin="0,12,0,0">
+      <StackPanel Margin="0,0,16,0">
+        <TextBlock Text="{DynamicResource QuotaGB}" Foreground="{DynamicResource Muted}" FontSize="11" />
+        <TextBox x:Name="TotalLimit" Padding="9,7" MaxLength="20" Margin="0,8,0,0" VerticalContentAlignment="Center" />
+      </StackPanel>
+      <StackPanel Margin="0,0,16,0">
+        <TextBlock Text="{DynamicResource QuotaPeriod}" Foreground="{DynamicResource Muted}" FontSize="11" />
+        <ComboBox x:Name="TotalPeriod" Padding="8,6" Margin="0,8,0,0">
+          <ComboBoxItem Tag="Day" Content="{DynamicResource PeriodDay}" />
+          <ComboBoxItem Tag="Month" Content="{DynamicResource PeriodMonth}" />
+          <ComboBoxItem Tag="All" Content="{DynamicResource PeriodAll}" />
+        </ComboBox>
+      </StackPanel>
+      <StackPanel>
+        <TextBlock Text="{DynamicResource WarnPercent}" Foreground="{DynamicResource Muted}" FontSize="11" />
+        <TextBox x:Name="TotalWarn" Padding="9,7" MaxLength="6" Margin="0,8,0,0" VerticalContentAlignment="Center" />
+      </StackPanel>
+    </UniformGrid>
+    <CheckBox x:Name="TotalDisconnect" Content="{DynamicResource TotalDisconnectAtLimit}" Margin="0,14,0,0" />
+    <TextBlock Text="{DynamicResource TotalDisconnectHint}" Foreground="{DynamicResource Muted}" FontSize="11" LineHeight="17" TextWrapping="Wrap" Margin="22,7,0,0" />
+    <TextBlock Text="{DynamicResource TotalQuotaHint}" Foreground="{DynamicResource Muted}" FontSize="11" LineHeight="17" TextWrapping="Wrap" Margin="0,10,0,0" />
+    <Border BorderBrush="{DynamicResource DividerSoft}" BorderThickness="0,1,0,0" Margin="0,16,0,0" />
+    <TextBlock Text="{DynamicResource ProxyPorts}" FontWeight="SemiBold" FontSize="14" Margin="0,16,0,0" />
+    <TextBox x:Name="Ports" Padding="9,7" Margin="0,12,0,0" VerticalContentAlignment="Center" />
+    <TextBlock Text="{DynamicResource ProxyProcesses}" FontWeight="SemiBold" FontSize="14" Margin="0,14,0,0" />
+    <TextBox x:Name="Processes" Padding="9,7" Margin="0,12,0,0" VerticalContentAlignment="Center" />
+    <TextBlock Text="{DynamicResource ProxyHint}" Foreground="{DynamicResource Muted}" FontSize="11" LineHeight="17" TextWrapping="Wrap" Margin="0,10,0,0" />
+    <TextBlock x:Name="Error" Foreground="{DynamicResource DangerText}" TextWrapping="Wrap" Margin="0,14,0,0" />
   </StackPanel>
-  <TextBlock Text="{DynamicResource RetentionHint}" Foreground="#7C879D" TextWrapping="Wrap" />
-  <TextBlock Text="{DynamicResource TotalQuota}" FontWeight="SemiBold" Margin="0,16,0,0" />
-  <UniformGrid Columns="3" Margin="0,10,0,0">
-    <StackPanel Margin="0,0,16,0">
-      <TextBlock Text="{DynamicResource QuotaGB}" Foreground="#7C879D" />
-      <TextBox x:Name="TotalLimit" Padding="9,7" MaxLength="20" Margin="0,8,0,0" />
-    </StackPanel>
-    <StackPanel Margin="0,0,16,0">
-      <TextBlock Text="{DynamicResource QuotaPeriod}" Foreground="#7C879D" />
-      <ComboBox x:Name="TotalPeriod" Padding="8,6" Margin="0,8,0,0">
-        <ComboBoxItem Tag="Day" Content="{DynamicResource PeriodDay}" />
-        <ComboBoxItem Tag="Month" Content="{DynamicResource PeriodMonth}" />
-        <ComboBoxItem Tag="All" Content="{DynamicResource PeriodAll}" />
-      </ComboBox>
-    </StackPanel>
-    <StackPanel>
-      <TextBlock Text="{DynamicResource WarnPercent}" Foreground="#7C879D" />
-      <TextBox x:Name="TotalWarn" Padding="9,7" MaxLength="6" Margin="0,8,0,0" />
-    </StackPanel>
-  </UniformGrid>
-  <CheckBox x:Name="TotalDisconnect" Content="{DynamicResource TotalDisconnectAtLimit}" Margin="0,10,0,0" />
-  <TextBlock Text="{DynamicResource TotalDisconnectHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="22,7,0,0" />
-  <TextBlock Text="{DynamicResource TotalQuotaHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="0,10,0,0" />
-  <TextBlock Text="{DynamicResource ProxyPorts}" FontWeight="SemiBold" Margin="0,16,0,0" />
-  <TextBox x:Name="Ports" Padding="9,7" Margin="0,8,0,0" />
-  <TextBlock Text="{DynamicResource ProxyProcesses}" FontWeight="SemiBold" Margin="0,12,0,0" />
-  <TextBox x:Name="Processes" Padding="9,7" Margin="0,8,0,0" />
-  <TextBlock Text="{DynamicResource ProxyHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="0,10,0,0" />
-  <TextBlock x:Name="Error" Foreground="#C45664" TextWrapping="Wrap" Margin="0,10,0,0" />
-</StackPanel>
+</ScrollViewer>
 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
   <Button x:Name="Cancel" Content="{DynamicResource Cancel}" MinWidth="84" Margin="0,0,8,0" IsCancel="True" />
   <Button x:Name="Save" Content="{DynamicResource Save}" MinWidth="84" Style="{DynamicResource PrimaryButton}" IsDefault="True" />
@@ -302,7 +306,7 @@ function New-MeterNetworkDialog {
   <RowDefinition Height="Auto" />
 </Grid.RowDefinitions>
 <TextBlock x:Name="Name" FontSize="23" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-<TextBlock x:Name="SSID" Grid.Row="1" Foreground="#7C879D" Margin="0,6,0,20" TextTrimming="CharacterEllipsis" />
+<TextBlock x:Name="SSID" Grid.Row="1" Foreground="{DynamicResource Muted}" Margin="0,6,0,20" TextTrimming="CharacterEllipsis" />
 <TabControl Grid.Row="2" x:Name="Tabs" Background="Transparent" BorderThickness="0">
   <TabItem Header="{DynamicResource NetworkSettings}" Padding="14,8">
     <StackPanel Margin="4,22,4,0">
@@ -326,10 +330,10 @@ function New-MeterNetworkDialog {
           <TextBox x:Name="Warn" Padding="10,8" MaxLength="6" Margin="0,8,0,0" />
         </StackPanel>
       </UniformGrid>
-      <TextBlock Text="{DynamicResource QuotaHint}" Foreground="#7C879D" Margin="0,12,0,18" TextWrapping="Wrap" />
+      <TextBlock Text="{DynamicResource QuotaHint}" Foreground="{DynamicResource Muted}" Margin="0,12,0,18" TextWrapping="Wrap" />
       <CheckBox x:Name="Disconnect" Content="{DynamicResource DisconnectAtLimit}" />
-      <TextBlock Text="{DynamicResource DisconnectHint}" Foreground="#7C879D" Margin="22,7,0,0" TextWrapping="Wrap" />
-      <TextBlock x:Name="Error" Foreground="#C45664" Margin="0,14,0,0" TextWrapping="Wrap" />
+      <TextBlock Text="{DynamicResource DisconnectHint}" Foreground="{DynamicResource Muted}" Margin="22,7,0,0" TextWrapping="Wrap" />
+      <TextBlock x:Name="Error" Foreground="{DynamicResource DangerText}" Margin="0,14,0,0" TextWrapping="Wrap" />
     </StackPanel>
   </TabItem>
   <TabItem Header="{DynamicResource Applications}" Padding="14,8"><Grid x:Name="AppsHost" Margin="0,16,0,0" /></TabItem>
@@ -337,7 +341,7 @@ function New-MeterNetworkDialog {
 </TabControl>
 <Grid Grid.Row="3" Margin="0,18,0,0">
   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-  <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="#7C879D" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0" />
+  <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0" />
   <StackPanel Grid.Column="1" Orientation="Horizontal">
     <Button x:Name="Close" Content="{DynamicResource Close}" MinWidth="84" Margin="0,0,8,0" IsCancel="True" />
     <Button x:Name="Save" Content="{DynamicResource Save}" MinWidth="84" Style="{DynamicResource PrimaryButton}" />
@@ -380,9 +384,9 @@ function New-MeterNetworkDialog {
             $state.Saved = $true
             $script:renderKey = ''
             Refresh-MeterView
-            $state.Error.Foreground = '#26996E'
+            $state.Error.Foreground = $state.Window.Resources['SuccessText']
             $state.Error.Text = Text-Meter 'Saved'
-        } catch { $state.Error.Foreground = '#C45664'; $state.Error.Text = Format-MeterError $_.Exception.Message 'Settings' }
+        } catch { $state.Error.Foreground = $state.Window.Resources['DangerText']; $state.Error.Text = Format-MeterError $_.Exception.Message 'Settings' }
     })
     $dialog.Tag = $context
     $dialog.Add_Loaded({ param($sender, $eventArgs) Start-MeterAppUsageRead -Context $sender.Tag })
@@ -406,7 +410,7 @@ function Show-MeterCloseDialog {
     $dialog = New-MeterDialog -TitleKey CloseTitle -Width 555 -Height 240 -Content @'
 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
 <TextBlock Text="{DynamicResource CloseTitle}" FontSize="22" FontWeight="SemiBold" />
-<TextBlock Grid.Row="1" Text="{DynamicResource CloseHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="0,14,0,20" />
+<TextBlock Grid.Row="1" Text="{DynamicResource CloseHint}" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,14,0,20" />
 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
   <Button x:Name="Cancel" Content="{DynamicResource Cancel}" Margin="0,0,8,0" IsCancel="True" />
   <Button x:Name="Exit" Content="{DynamicResource Exit}" Margin="0,0,8,0" />
