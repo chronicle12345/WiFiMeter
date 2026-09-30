@@ -84,7 +84,7 @@ ledger per Wi-Fi network instead:
 
 ### Windows
 
-Download `WiFiMeter-Demo-0.1.0-x64-Setup.exe` from [Releases](https://github.com/shw940/WiFiMeter/releases) and run the wizard.
+Download `WiFiMeter-Demo-1.0.0-x64-Setup.exe` from [Releases](https://github.com/shw940/WiFiMeter/releases) and run the wizard.
 The installer is unsigned, so SmartScreen may report an unknown publisher — choose
 "More info" → "Run anyway".
 
@@ -96,7 +96,7 @@ The installer is unsigned, so SmartScreen may report an unknown publisher — ch
 ### Linux
 
 ```bash
-sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
+sudo apt install ./dist/linux/WiFiMeter-1.0.0-linux-amd64.deb
 ```
 
 Launch it from the application menu or run `wifimeter`. The package depends on `libsqlite3-0`.

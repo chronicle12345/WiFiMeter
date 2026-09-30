@@ -73,7 +73,7 @@
 
 ### Windows
 
-从 [Releases](https://github.com/shw940/WiFiMeter/releases) 下载 `WiFiMeter-Demo-0.1.0-x64-Setup.exe` 运行安装向导。
+从 [Releases](https://github.com/shw940/WiFiMeter/releases) 下载 `WiFiMeter-Demo-1.0.0-x64-Setup.exe` 运行安装向导。
 安装包未签名，SmartScreen 可能提示「未知发布者」，选择「更多信息 → 仍要运行」。
 
 - 安装目录：`%LOCALAPPDATA%\Programs\WiFiMeter Demo`
@@ -83,7 +83,7 @@
 ### Linux
 
 ```bash
-sudo apt install ./dist/linux/WiFiMeter-0.1.0-linux-amd64.deb
+sudo apt install ./dist/linux/WiFiMeter-1.0.0-linux-amd64.deb
 ```
 
 安装后从应用菜单打开，或运行 `wifimeter`。包依赖 `libsqlite3-0`。

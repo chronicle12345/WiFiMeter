@@ -25,7 +25,7 @@ const unpacked = path.join(repositoryRoot, 'dist/windows/win-unpacked');
 const applicationBinary = path.join(unpacked, 'WiFiMeter Demo.exe');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
 const bundledCapture = path.join(unpacked, 'resources/wifimeter-app-capture.exe');
-const installer = path.join(repositoryRoot, 'dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe');
+const installer = path.join(repositoryRoot, 'dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe');
 
 // PE 文件的头两个字节是 "MZ"。
 function startsWithMz(file) {

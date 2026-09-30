@@ -90,7 +90,7 @@ jobs:
       - name: Verify the packaged artifacts
         shell: pwsh
         run: |
-          $setup = 'dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe'
+          $setup = 'dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe'
           $app = 'dist/windows/win-unpacked/WiFiMeter Demo.exe'
           $backend = 'dist/windows/win-unpacked/resources/wifimeter-backend.exe'
           $capture = 'dist/windows/win-unpacked/resources/wifimeter-app-capture.exe'
@@ -101,12 +101,14 @@ jobs:
 
           # 随包的后端必须能独立运行并自报版本（这是它被真正分发出去的证明）。
           $version = & $backend --version
-          if ($version -notmatch 'wifimeter-backend') { throw "后端自报版本异常：$version" }
+          if ($version -notmatch 'wifimeter-backend 1\.0\.0') { throw "后端自报版本异常：$version" }
+          $productVersion = (Get-Item -LiteralPath $app).VersionInfo.ProductVersion
+          if ($productVersion -notmatch '^1\.0\.0($|\.)') { throw "桌面应用版本异常：$productVersion" }
           Write-Output "打包产物校验通过：$version"
 
       - name: Upload the installer
         uses: actions/upload-artifact@v7
         with:
           name: WiFiMeter-Demo-Windows-x64
-          path: dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe
+          path: dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe
           if-no-files-found: error

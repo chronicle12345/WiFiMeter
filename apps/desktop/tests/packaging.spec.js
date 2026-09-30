@@ -15,7 +15,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const unpacked = path.join(repositoryRoot, 'dist/linux/linux-unpacked');
 const packagedBinary = path.join(unpacked, 'wifimeter');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend');
-const deb = path.join(repositoryRoot, 'dist/linux/WiFiMeter-0.1.0-linux-amd64.deb');
+const deb = path.join(repositoryRoot, 'dist/linux/WiFiMeter-1.0.0-linux-amd64.deb');
 
 test.describe('打包产物', () => {
     test.skip(!existsSync(packagedBinary), '未构建 Linux 产物，先运行 npm run dist:linux');
@@ -24,7 +24,7 @@ test.describe('打包产物', () => {
         expect(existsSync(bundledBackend)).toBe(true);
         // 随包的后端必须能独立运行并自报版本。
         const version = execFileSync(bundledBackend, ['--version'], { encoding: 'utf8' });
-        expect(version).toContain('wifimeter-backend');
+        expect(version).toContain('wifimeter-backend 1.0.0');
         expect(version).toContain('协议版本 1');
 
         if (existsSync(deb)) {
@@ -33,6 +33,7 @@ test.describe('打包产物', () => {
             // 后端链接系统 SQLite，deb 必须声明这个依赖。
             const control = execFileSync('dpkg-deb', ['-f', deb, 'Depends'], { encoding: 'utf8' });
             expect(control).toContain('libsqlite3-0');
+            expect(execFileSync('dpkg-deb', ['-f', deb, 'Version'], { encoding: 'utf8' }).trim()).toBe('1.0.0');
         }
     });
 

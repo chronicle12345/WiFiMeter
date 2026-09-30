@@ -1,6 +1,6 @@
 {
   "name": "wifimeter-linux",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "WiFiMeter cross-platform desktop demo with local sample data",
   "private": true,
   "type": "module",
