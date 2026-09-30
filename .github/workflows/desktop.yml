@@ -2,8 +2,7 @@ name: Desktop application tests
 
 # 共享桌面应用与 Windows 交叉编译的验证工作流。
 #
-# 与 windows.yml / release.yml 无关：那两个只负责 legacy/windows 里的旧版应用。
-# 这里在 Linux 上跑两件事：
+# 在 Linux 上跑两件事：
 #
 #   * C++ 后端：本机构建 + ctest，再交叉编译 Windows 目标并在 Wine 下运行；
 #   * Electron 侧：单元测试（不需要图形会话）。
