@@ -22,6 +22,9 @@ set_target_properties(wifimeter-backend PROPERTIES
 
 target_link_libraries(wifimeter-backend PRIVATE wifimeter-ipc ${WIFIMETER_PLATFORM_LIBRARY})
 target_link_libraries(wifimeter-backend PRIVATE wifimeter-warnings)
+if(TARGET wifimeter-app-capture)
+    add_dependencies(wifimeter-backend wifimeter-app-capture)
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # 静态链接运行库：安装包里不必再附带 libstdc++-6.dll / libgcc_s_seh-1.dll。

@@ -86,6 +86,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         nmcli_parse_test
         wifi_control_test
         linux_platform_test
+        linux_app_traffic_test
     )
 
     foreach(test_name IN LISTS WIFIMETER_LINUX_TESTS)
@@ -94,6 +95,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     # 跨层接缝：平台实现 + 业务规则一起跑。
     wifimeter_add_test(integration_usage_test wifimeter-platform-linux wifimeter-core)
+    if(TARGET wifimeter-app-capture)
+        target_compile_definitions(linux_app_traffic_test PRIVATE WIFIMETER_APP_CAPTURE_EXECUTABLE="$<TARGET_FILE:wifimeter-app-capture>")
+        add_dependencies(linux_app_traffic_test wifimeter-app-capture)
+        find_package(Python3 COMPONENTS Interpreter REQUIRED)
+        add_test(NAME linux_app_capture_smoke COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/linux_app_capture_smoke.py" "$<TARGET_FILE:wifimeter-app-capture>")
+        set_tests_properties(linux_app_capture_smoke PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 # 端到端：真的拉起后端进程按协议对话。测试数据（假网卡、假计数）在两端是同一份，

@@ -12,6 +12,14 @@ int main()
     WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t{1});
     if (!report.samples.empty())
         WIFIMETER_CHECK_EQ(report.samples[0].rxBytes, std::uint64_t{18446744073709551615ULL});
+    const auto roundtrip = platform::parseAppTrafficReport(platform::serializeAppTrafficReport(report));
+    WIFIMETER_CHECK(roundtrip.state == platform::AppCollectorState::running);
+    WIFIMETER_CHECK_EQ(roundtrip.samples.size(), std::size_t{1});
+    if (!roundtrip.samples.empty())
+    {
+        WIFIMETER_CHECK_EQ(roundtrip.samples[0].rxBytes, std::uint64_t{18446744073709551615ULL});
+        WIFIMETER_CHECK_EQ(roundtrip.samples[0].name, std::string("浏览器"));
+    }
     WIFIMETER_CHECK(platform::parseAppTrafficReport("invalid").state == platform::AppCollectorState::unavailable);
     WIFIMETER_CHECK(platform::parseAppTrafficReport(R"({"state":"unknown"})").state == platform::AppCollectorState::unavailable);
     WIFIMETER_CHECK(platform::parseAppTrafficReport(R"({"state":"permission","detail":"Access denied"})").state == platform::AppCollectorState::permission);

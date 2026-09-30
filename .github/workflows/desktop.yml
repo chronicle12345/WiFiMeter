@@ -33,10 +33,14 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ libsqlite3-dev xz-utils
+          sudo apt-get install -y cmake g++ libsqlite3-dev xz-utils clang libbpf-dev libelf-dev
 
       - name: Build and test the backend natively
         run: npm run test:backend
+
+      - name: Verify actual Linux application capture
+        # 权限仅给辅助进程验证脚本，测试流量限制在本机回环。
+        run: sudo python3 backend/tests/linux_app_capture_smoke.py build/app/wifimeter-app-capture
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

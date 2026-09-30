@@ -54,5 +54,6 @@ public:
 
 // 原生采集辅助进程和测试夹具共用的快照格式，字节必须是十进制字符串。
 AppTrafficReport parseAppTrafficReport(std::string_view text);
+std::string serializeAppTrafficReport(const AppTrafficReport& report);
 
 }  // namespace wifimeter::platform

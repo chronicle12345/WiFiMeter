@@ -25,7 +25,7 @@
 应用记录格式为 `{networkId, date, appId, name, rxBytes, txBytes}`。`appId` 是稳定应用标识，不能用 PID 作为历史标识。
 `snapshot` 使用 `networkKey`、`from`、`to` 查询相应应用记录。完整后端备份标记为 `backupType: "wifimeter-backend-backup"`，
 包含 `appRecords`；恢复接受缺少该字段的旧版备份，但拒绝无效日期、未知网络、无效字节与重复的应用每日记录。
-原生应用采集仍待实现，当前不会把网卡总量按比例分摊给应用。
+Linux 原生采集接入 eBPF，Windows 原生采集仍待实现；不会把网卡总量按比例分摊给应用。
 
 ## 应用采集链路
 
@@ -40,7 +40,8 @@
 字节计数从同一个 generation 开始累计；首份快照只建基线，新进程实例随后从零计入。
 `instanceId` 区分 PID 重用，`appId` 用于跨进程归并；已退出进程应保留 generation 内的累计计数并设 `active: false`。
 接口的 Wi-Fi 身份变化或不明时丢弃边界区间，计数重置、源重启和权限失败留下独立的缺失记录。
-测试使用 `--fake-apps <JSON 文件>` 或 `WIFIMETER_FAKE_APPS`，与真实进程、IPC 和数据库配合运行；默认构建尚未启用原生源。
+测试使用 `--fake-apps <JSON 文件>` 或 `WIFIMETER_FAKE_APPS`，与真实进程、IPC 和数据库配合运行。
+Linux 原生源仅在构建辅助进程时可用，仍默认不采集；统计口径与授权验证见 [Linux 应用采集](../docs/LINUX_APP_CAPTURE.md)。
 
 ## 待定的接入约定
 

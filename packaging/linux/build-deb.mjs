@@ -13,6 +13,9 @@ const output = path.join(root, 'dist/linux', `WiFiMeter-${metadata.version}-linu
 try {
     const installDir = path.join(stage, 'opt/WiFiMeter');
     await cp(path.join(root, 'dist/linux/linux-unpacked'), installDir, { recursive: true, verbatimSymlinks: true });
+    const capture = path.join(installDir, 'resources/wifimeter-app-capture');
+    const dependencies = execFileSync('readelf', ['-d', capture], { encoding: 'utf8' });
+    if (dependencies.includes('libbpf.so.')) throw Error('采集辅助进程应静态链接 libbpf。');
     // dpkg-deb assigns root ownership; Chromium's installed sandbox helper needs this mode.
     await chmod(path.join(installDir, 'chrome-sandbox'), 0o4755);
     await mkdir(path.join(stage, 'usr/bin'), { recursive: true });
@@ -40,7 +43,7 @@ Priority: optional
 Architecture: amd64
 Maintainer: WiFiMeter contributors <noreply@wifimeter.local>
 Homepage: ${metadata.homepage}
-Depends: libgtk-3-0, libnss3, libxss1, libxtst6, libgbm1, libasound2, libatspi2.0-0, libuuid1, libsecret-1-0, libsqlite3-0, xdg-utils
+Depends: libgtk-3-0, libnss3, libxss1, libxtst6, libgbm1, libasound2, libatspi2.0-0, libuuid1, libsecret-1-0, libsqlite3-0, xdg-utils, libelf1, pkexec | policykit-1
 Description: WiFiMeter Wi-Fi traffic meter for Linux
  Per-network Wi-Fi traffic collection, history, quotas and exports.
  Traffic is collected locally and stored in a local SQLite database.

@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <memory>
 #include <string>
 
 #include "../core/local_time.h"
@@ -18,6 +20,7 @@
 #include "../platform/counter_source.h"
 #include "../platform/fake_app_traffic.h"
 #include "../platform/linux/linux_network_platform.h"
+#include "../platform/linux/linux_app_traffic.h"
 #include "../storage/store.h"
 
 namespace
@@ -173,6 +176,16 @@ int main(int argc, char** argv)
     std::unique_ptr<wifimeter::platform::AppTrafficSource> applications;
     if (!fakeAppsPath.empty())
         applications = std::make_unique<wifimeter::platform::fake::FileAppTrafficSource>(fakeAppsPath);
+#if defined(WIFIMETER_HAS_LINUX_APP_CAPTURE)
+    else
+    {
+        std::error_code error;
+        const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+        if (!error)
+            applications = std::make_unique<wifimeter::platform::linux::LinuxAppTrafficSource>(
+                wifimeter::platform::linux::LinuxAppTrafficSource::Options{(executable.parent_path() / "wifimeter-app-capture").string()});
+    }
+#endif
     ipc::BackendService service(ipc::BackendService::Deps{*store, network, applications.get()}, paused);
     ipc::StdioServer server(service);
 

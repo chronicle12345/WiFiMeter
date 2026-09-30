@@ -86,4 +86,28 @@ AppTrafficReport parseAppTrafficReport(std::string_view text)
     return report;
 }
 
+std::string serializeAppTrafficReport(const AppTrafficReport& report)
+{
+    auto document = support::JsonValue::makeObject();
+    document.set("state", support::JsonValue::makeString(std::string(appCollectorStateName(report.state))));
+    document.set("generation", support::JsonValue::makeString(report.generation));
+    document.set("detail", support::JsonValue::makeString(report.detail));
+    auto samples = support::JsonValue::makeArray();
+    for (const auto& sample : report.samples)
+    {
+        auto value = support::JsonValue::makeObject();
+        value.set("interfaceId", support::JsonValue::makeString(sample.interfaceId));
+        value.set("appId", support::JsonValue::makeString(sample.appId));
+        value.set("name", support::JsonValue::makeString(sample.name));
+        value.set("instanceId", support::JsonValue::makeString(sample.instanceId));
+        value.set("processId", support::JsonValue::makeInt(sample.processId));
+        value.set("rxBytes", support::JsonValue::makeString(std::to_string(sample.rxBytes)));
+        value.set("txBytes", support::JsonValue::makeString(std::to_string(sample.txBytes)));
+        value.set("active", support::JsonValue::makeBool(sample.active));
+        samples.push(std::move(value));
+    }
+    document.set("samples", std::move(samples));
+    return document.dump();
+}
+
 }  // namespace wifimeter::platform

@@ -201,7 +201,24 @@ inline void talksTheProtocol(ProcessRunner& runner, ProcessFixture& fixture)
 
     // 坏 JSON 也要回错误而不是让进程崩掉。
     WIFIMETER_CHECK(runner.send("{not json"));
-    const auto garbage = runner.readLine(std::chrono::seconds(10));
+    std::optional<std::string> garbage;
+    const auto garbageDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < garbageDeadline)
+    {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(garbageDeadline - std::chrono::steady_clock::now());
+        const auto line = runner.readLine(remaining);
+        if (!line)
+            break;
+        std::string error;
+        const auto parsed = JsonValue::parse(*line, error);
+        if (parsed && parsed->find("event") != nullptr)
+        {
+            session.events.push_back(*parsed);
+            continue;
+        }
+        garbage = line;
+        break;
+    }
     WIFIMETER_CHECK(garbage.has_value());
     if (garbage)
         WIFIMETER_CHECK(garbage->find("\"ok\":false") != std::string::npos);
