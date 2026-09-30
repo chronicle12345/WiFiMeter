@@ -316,7 +316,7 @@ private:
                 identified ? owner.name : "未识别应用", instance, identified ? packet.processId : 0, 0, 0, identified}).first;
         }
         auto& bytes = packet.receive ? found->second.rxBytes : found->second.txBytes;
-        if (std::numeric_limits<std::uint64_t>::max() - bytes < packet.bytes)
+        if ((std::numeric_limits<std::uint64_t>::max)() - bytes < packet.bytes)
         {
             ++missing_;
             return;
