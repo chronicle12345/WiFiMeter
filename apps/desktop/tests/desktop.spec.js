@@ -51,7 +51,8 @@ async function expectToast(text) {
 function query(sql) {
     const database = new DatabaseSync(harness.databasePath, { readOnly: true });
     try {
-        return Object.values(database.prepare(sql).get()).join('|');
+        const row = database.prepare(sql).get();
+        return row ? Object.values(row).join('|') : '';
     } finally {
         database.close();
     }
