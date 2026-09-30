@@ -46,6 +46,11 @@ try {
     $script:closeDialogOpen = $false
     $script:seenAlerts = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $script:lastViewRefresh = [DateTime]::MinValue
+    $script:liveAppsStatus = $null
+    $script:liveMode = 'Connections'
+    $script:liveAppsKey = ''
+    $script:liveUsageQuery = @{ Worker = $null; Pending = $null; Poll = $null; Ssid = ''; Rows = @(); MessageKey = '' }
+    $script:wiredNameCache = @{ Time = [datetime]::MinValue; Map = $null }
 
     function Format-MeterError([string]$Message, [string]$Context = 'Action') {
         if (-not $script:isReadOnly -and $script:lastLoggedError -cne $Message) {
@@ -82,7 +87,7 @@ try {
     }
     $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'MainWindow.xaml'))
     try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
-    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TableView', 'LanguageEnglish', 'LanguageChinese')
+    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList')
     foreach ($name in $names) { Set-Variable -Scope Script -Name $name -Value $window.FindName($name) }
     function Update-MeterLocalizedControls {
         foreach ($key in $script:strings.Keys) { $window.Resources[$key] = $script:strings[$key] }
@@ -115,6 +120,181 @@ try {
 
     function Format-MeterGigabytes([double]$Bytes) { ($Bytes / 1e9).ToString('N3') + ' GB' }
 
+    function Get-MeterNetworkAliasMap {
+        $aliases = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        foreach ($network in $script:preferences.Networks) { $aliases[$network.SSID] = [string]$network.Alias }
+        return $aliases
+    }
+
+    function ConvertTo-MeterWiredNameMap {
+        param([AllowNull()]$Interfaces)
+        # Wired adapters are sampled under the reserved "Ethernet:<GUID>" identity;
+        # this maps each identity to the adapter's Windows connection name for display.
+        $map = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        try {
+            foreach ($interface in @($Interfaces)) {
+                try {
+                    if ($interface.NetworkInterfaceType -ne [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet) { continue }
+                    $name = [string]$interface.Name
+                    if ([string]::IsNullOrWhiteSpace($name)) { continue }
+                    $map['Ethernet:' + ([guid]$interface.Id).ToString('D')] = $name
+                } catch { }
+            }
+        } catch { }
+        return $map
+    }
+
+    function Get-MeterWiredNameMap {
+        param([AllowNull()]$Interfaces = $null)
+        # Tests inject fake interface objects; live calls share a short-lived cache.
+        if ($null -ne $Interfaces) { return (ConvertTo-MeterWiredNameMap -Interfaces $Interfaces) }
+        if ($null -ne $script:wiredNameCache.Map -and ([datetime]::UtcNow - $script:wiredNameCache.Time) -lt [TimeSpan]::FromSeconds(10)) {
+            return $script:wiredNameCache.Map
+        }
+        try { $adapters = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() } catch { $adapters = @() }
+        $map = ConvertTo-MeterWiredNameMap -Interfaces $adapters
+        $script:wiredNameCache.Time = [datetime]::UtcNow
+        $script:wiredNameCache.Map = $map
+        return $map
+    }
+
+    function Resolve-MeterNetworkDisplayName {
+        param([Parameter(Mandatory)][AllowEmptyString()][string]$SSID, [AllowNull()]$Aliases, [AllowNull()]$WiredNames)
+        # Wired identities show the user's alias or the adapter's connection name.
+        # The raw identity stays visible in the details dialog and in exports.
+        $isWired = Test-MeterWiredIdentity $SSID
+        if ($null -ne $Aliases -and $Aliases.ContainsKey($SSID) -and -not [string]::IsNullOrWhiteSpace($Aliases[$SSID])) { return [string]$Aliases[$SSID] }
+        if ($isWired -and $null -ne $WiredNames -and $WiredNames.ContainsKey($SSID)) { return [string]$WiredNames[$SSID] }
+        return $SSID
+    }
+
+    function Get-MeterCsvNetworkNames {
+        param($State, $Aliases, $WiredNames)
+        # Export mappings may only replace wired identities; Wi-Fi SSIDs stay verbatim.
+        $names = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+        if ($null -eq $State -or $null -eq $State.PSObject.Properties['Networks']) { return $names }
+        foreach ($network in @($State.Networks)) {
+            if ($null -eq $network -or -not $network.PSObject.Properties['SSID'] -or -not (Test-MeterWiredIdentity ([string]$network.SSID))) { continue }
+            $display = Resolve-MeterNetworkDisplayName -SSID ([string]$network.SSID) -Aliases $Aliases -WiredNames $WiredNames
+            if ($display -cne [string]$network.SSID) { $names[[string]$network.SSID] = $display }
+        }
+        return $names
+    }
+
+    function Get-MeterStatusApps($Status) {
+        # status.Apps is a best-effort collector addition; tolerate older status files.
+        $apps = [Collections.Generic.List[object]]::new()
+        if ($null -ne $Status -and $null -ne $Status.PSObject.Properties['Apps'] -and $null -ne $Status.Apps) {
+            foreach ($app in @($Status.Apps)) {
+                if ($null -eq $app -or -not $app.PSObject.Properties['Name']) { continue }
+                $name = [string]$app.Name
+                if ([string]::IsNullOrWhiteSpace($name)) { continue }
+                $connections = [long]0
+                if ($app.PSObject.Properties['Connections']) { try { $connections = [long]$app.Connections } catch { $connections = [long]0 } }
+                $apps.Add([pscustomobject]@{ Name = $name; Connections = $connections })
+            }
+        }
+        return @($apps | Sort-Object -Property @{ Expression = 'Connections'; Descending = $true }, Name | Select-Object -First 12)
+    }
+
+    function Get-MeterCurrentConnectionSsid {
+        param($Status, $WiredNames)
+        # The collector lists Wi-Fi SSIDs first and wired connection names after;
+        # skip names that belong to wired adapters so usage queries get an SSID.
+        if ($null -eq $Status -or $null -eq $Status.PSObject.Properties['Connections']) { return '' }
+        $wired = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        if ($null -ne $WiredNames) { foreach ($name in $WiredNames.Values) { [void]$wired.Add([string]$name) } }
+        foreach ($connection in @($Status.Connections)) {
+            $name = [string]$connection
+            if ([string]::IsNullOrWhiteSpace($name) -or $wired.Contains($name)) { continue }
+            return $name
+        }
+        return ''
+    }
+
+    function Start-MeterLiveUsageWorker {
+        param([Parameter(Mandatory)][string]$Ssid)
+        $script:liveUsageQuery.Worker = [PowerShell]::Create()
+        # Same worker pattern as the network dialog: the WinRT query and proxy
+        # repair run outside the UI thread and the poll forwards the result.
+        [void]$script:liveUsageQuery.Worker.AddScript('param($module, $monitorModule, $proxyRowName, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Import-Module $monitorModule -Force -ErrorAction Stop; $result = Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop; return (Repair-MeterProxyAttribution -Result $result -DataDirectory $directory -UnattributedName $proxyRowName)').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument((Join-Path $PSScriptRoot 'AppMonitor.psm1')).AddArgument((Text-Meter 'ProxyUnattributedRow')).AddArgument($Ssid).AddArgument([DateTime]::Today).AddArgument([DateTime]::Today).AddArgument($script:directory)
+        $script:liveUsageQuery.Pending = $script:liveUsageQuery.Worker.BeginInvoke()
+        $script:liveUsageQuery.Poll = [Windows.Threading.DispatcherTimer]::new()
+        $script:liveUsageQuery.Poll.Interval = [TimeSpan]::FromMilliseconds(200)
+        $script:liveUsageQuery.Poll.Add_Tick({
+            $state = $script:liveUsageQuery
+            if ($null -eq $state.Pending -or -not $state.Pending.IsCompleted) { return }
+            $state.Poll.Stop()
+            try {
+                $results = @($state.Worker.EndInvoke($state.Pending))
+                if ($state.Worker.HadErrors -or $results.Count -eq 0) { throw 'Application usage query failed.' }
+                $result = $results[-1]
+                $script:liveUsageQuery.Rows = @(ConvertTo-MeterAppRows -Rows @($result.Rows))
+                $script:liveUsageQuery.MessageKey = Get-MeterAppUsageMessageKey -Result $result
+            } catch {
+                $script:liveUsageQuery.Rows = @()
+                $script:liveUsageQuery.MessageKey = 'AppUsageUnavailable'
+            } finally {
+                $state.Worker.Dispose(); $state.Worker = $null; $state.Pending = $null; $state.Poll = $null
+            }
+            Update-MeterLiveAppsPanel
+        })
+        $script:liveUsageQuery.Poll.Start()
+    }
+
+    function Enter-MeterLiveUsageMode {
+        # Today's usage is queried on demand for the current network, not on the 2s tick.
+        if ($script:isReadOnly) {
+            $script:liveUsageQuery.Rows = @(
+                [pscustomobject]@{ Name = 'Microsoft Edge'; DownloadGB = 1.850; UploadGB = 0.085; TotalGB = 1.935 }
+                [pscustomobject]@{ Name = 'Windows Update'; DownloadGB = 0.610; UploadGB = 0.005; TotalGB = 0.615 }
+            )
+            $script:liveUsageQuery.MessageKey = 'AppUsageSource'
+            return
+        }
+        $status = $script:liveAppsStatus
+        $connections = @()
+        if ($null -ne $status -and $null -ne $status.PSObject.Properties['Connections']) { $connections = @($status.Connections) }
+        if ($connections.Count -eq 0) { $script:liveUsageQuery.Rows = @(); $script:liveUsageQuery.MessageKey = 'NoConnection'; return }
+        $ssid = Get-MeterCurrentConnectionSsid -Status $status -WiredNames (Get-MeterWiredNameMap)
+        if (-not $ssid) { $script:liveUsageQuery.Rows = @(); $script:liveUsageQuery.MessageKey = 'AppUsageWired'; return }
+        if ($null -ne $script:liveUsageQuery.Worker) { return }
+        if ($script:liveUsageQuery.Ssid -ceq $ssid -and $script:liveUsageQuery.MessageKey) { return }
+        $script:liveUsageQuery.Ssid = $ssid
+        $script:liveUsageQuery.Rows = @()
+        $script:liveUsageQuery.MessageKey = 'AppUsageLoading'
+        Start-MeterLiveUsageWorker -Ssid $ssid
+    }
+
+    function Update-MeterLiveAppsPanel {
+        $items = [Collections.Generic.List[object]]::new()
+        $hint = ''
+        $hintVisible = $false
+        if ($script:liveMode -ceq 'Usage') {
+            $hintVisible = $true
+            $hint = Text-Meter $(if ($script:liveUsageQuery.MessageKey) { $script:liveUsageQuery.MessageKey } else { 'AppUsageLoading' })
+            foreach ($row in @($script:liveUsageQuery.Rows)) {
+                $gb = '{0:N3}' -f [double]$row.TotalGB
+                $detail = (Text-Meter 'LiveAppUsageChip') -f [string]$row.Name, $gb
+                $items.Add([pscustomobject]@{ Name = [string]$row.Name; Value = ($gb + ' GB'); Detail = $detail })
+            }
+        } else {
+            foreach ($app in @(Get-MeterStatusApps $script:liveAppsStatus)) {
+                $detail = (Text-Meter 'LiveAppChip') -f $app.Name, $app.Connections
+                $items.Add([pscustomobject]@{ Name = $app.Name; Value = [string]$app.Connections; Detail = $detail })
+            }
+            if ($items.Count -eq 0) { $hintVisible = $true; $hint = Text-Meter 'LiveAppsEmpty' }
+        }
+        # Rebind only when the visible data or language changed; the panel updates every 2s.
+        $parts = @(foreach ($item in $items) { $item.Name + '=' + $item.Value })
+        $key = $script:uiLanguage + '|' + $script:liveMode + '|' + ($parts -join ';')
+        if ($key -ceq $script:liveAppsKey) { return }
+        $script:liveAppsKey = $key
+        $LiveAppsList.ItemsSource = $items
+        $LiveAppsHint.Text = $hint
+        $LiveAppsHint.Visibility = if ($hintVisible -or $items.Count -eq 0) { 'Visible' } else { 'Collapsed' }
+    }
+
     function Get-CurrentMeterRange {
         @{ Period = $script:periodKey; StartDate = $script:rangeStart; EndDate = $script:rangeEnd }
     }
@@ -123,7 +303,9 @@ try {
         if ([IO.Path]::GetExtension($Path) -ine '.csv' -or [IO.Path]::GetFileName($Path) -in @('usage.csv', 'daily.csv')) { throw (Text-Meter 'InvalidExport') }
         $range = Get-CurrentMeterRange
         $state = if ($Preview) { $script:previewState } else { Read-MeterState -DataDirectory $script:directory }
-        Export-MeterRangeCsv -State $state -Path $Path @range
+        # Export wired rows under their connection names; Wi-Fi SSIDs stay verbatim.
+        $names = Get-MeterCsvNetworkNames -State $state -Aliases (Get-MeterNetworkAliasMap) -WiredNames (Get-MeterWiredNameMap)
+        Export-MeterRangeCsv -State $state -Path $Path -NetworkNames $names @range
     }
 
     function Refresh-MeterView {
@@ -147,15 +329,15 @@ try {
                 if ($rows.Count -gt 0) { $maximum = [Math]::Max(1, [double]$rows[0].TotalBytes) }
                 $items = [Collections.Generic.List[object]]::new()
                 $rank = 0
-                $aliases = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
-                foreach ($network in $script:preferences.Networks) { $aliases[$network.SSID] = $network.Alias }
+                $aliases = Get-MeterNetworkAliasMap
+                $wiredNames = Get-MeterWiredNameMap
                 foreach ($row in $rows) {
                     $rank++; $download += $row.RxBytes; $upload += $row.TxBytes
                     $rxShare = 100.0 * [double]$row.RxBytes / $maximum
                     $txShare = 100.0 * [double]$row.TxBytes / $maximum
                     $items.Add([pscustomobject]@{
                         SSID = $row.SSID; Rank = $rank; RxBytes = $row.RxBytes; TxBytes = $row.TxBytes; TotalBytes = $row.TotalBytes
-                        DisplayName = $(if ($aliases.ContainsKey($row.SSID) -and $aliases[$row.SSID]) { $aliases[$row.SSID] } else { $row.SSID })
+                        DisplayName = (Resolve-MeterNetworkDisplayName -SSID $row.SSID -Aliases $aliases -WiredNames $wiredNames)
                         DownloadGB = [double]$row.RxBytes / 1e9; UploadGB = [double]$row.TxBytes / 1e9; TotalGB = [double]$row.TotalBytes / 1e9
                         TotalText = Format-MeterGigabytes $row.TotalBytes
                         DetailText = ('↓ ' + (Format-MeterGigabytes $row.RxBytes) + '     ↑ ' + (Format-MeterGigabytes $row.TxBytes))
@@ -193,6 +375,15 @@ try {
             $HeaderSubtitle.Text = Text-Meter 'PreviewSubtitle'
             $StartupDetail.Text = Text-Meter 'PreviewStartup'
             $StatusDetail.Text = Text-Meter 'PreviewDetail'
+            $script:liveAppsStatus = [pscustomobject]@{
+                Running = $true
+                Apps = @(
+                    [pscustomobject]@{ Name = 'Microsoft Edge'; Connections = [long]14 }
+                    [pscustomobject]@{ Name = 'Windows Terminal'; Connections = [long]5 }
+                    [pscustomobject]@{ Name = 'Spotify'; Connections = [long]3 }
+                )
+            }
+            Update-MeterLiveAppsPanel
             return
         }
         $status = Get-MeterStatus -DataDirectory $script:directory
@@ -216,6 +407,8 @@ try {
         try { $AutoStart.IsChecked = [bool]$startup.Registered } finally { $script:updatingSettings = $false }
         $StartupDetail.Text = if ($startup.DisabledByWindows) { Text-Meter 'StartupDisabled' } elseif ($startup.Enabled) { Text-Meter 'StartupEnabled' } else { Text-Meter 'StartupOff' }
         $StartupSettingsButton.Visibility = if ($startup.DisabledByWindows) { 'Visible' } else { 'Collapsed' }
+        $script:liveAppsStatus = $status
+        Update-MeterLiveAppsPanel
     }
 
     function Invoke-MeterAction([scriptblock]$Action, [switch]$PassThru) {
@@ -288,6 +481,8 @@ try {
     $LanguageChinese.Add_Checked({ Set-MeterUiLanguage 'zh-CN' })
     $ChartView.Add_Checked({ $ChartList.Visibility = 'Visible'; $TrafficTable.Visibility = 'Collapsed' })
     $TableView.Add_Checked({ $ChartList.Visibility = 'Collapsed'; $TrafficTable.Visibility = 'Visible' })
+    $LiveConnections.Add_Checked({ $script:liveMode = 'Connections'; Update-MeterLiveAppsPanel })
+    $LiveUsage.Add_Checked({ $script:liveMode = 'Usage'; Enter-MeterLiveUsageMode; Update-MeterLiveAppsPanel })
     $AutoStart.Add_Click({
         if ($script:updatingSettings -or $script:mutating -or $Preview) { return }
         Invoke-MeterAction { Set-MeterAutoStart -Enabled ([bool]$AutoStart.IsChecked) }
@@ -394,6 +589,13 @@ try {
     $script:frame = [Windows.Threading.DispatcherFrame]::new()
     $window.Add_Closed({
         $timer.Stop()
+        if ($null -ne $script:liveUsageQuery.Poll) { $script:liveUsageQuery.Poll.Stop() }
+        if ($null -ne $script:liveUsageQuery.Worker) {
+            # The WinRT query has a bounded timeout; cancellation interrupts its wait.
+            $script:liveUsageQuery.Worker.Stop()
+            $script:liveUsageQuery.Worker.Dispose()
+        }
+        $script:liveUsageQuery.Poll = $null; $script:liveUsageQuery.Pending = $null; $script:liveUsageQuery.Worker = $null
         if ($null -ne $script:trayIcon) {
             $script:trayIcon.Visible = $false
             $script:trayIcon.Icon.Dispose()

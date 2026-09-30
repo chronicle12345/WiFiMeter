@@ -227,10 +227,8 @@ function ConvertTo-MeterAppRows {
     })
 }
 
-function Complete-MeterAppUsage {
-    param($Context, $Result)
-    $Context.Apps.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Rows))
-    $Context.Daily.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Days))
+function Get-MeterAppUsageMessageKey {
+    param($Result)
     $messageKey = 'AppUsageUnavailable'
     if ($Result.Available) { $messageKey = if (@($Result.Rows).Count -gt 0) { 'AppUsageSource' } else { 'AppUsageEmpty' } }
     if ($Result.PSObject.Properties['MessageCode']) {
@@ -244,12 +242,24 @@ function Complete-MeterAppUsage {
             'WiredNetwork' { $messageKey = 'AppUsageWired' }
         }
     }
-    $Context.Status.Text = Text-Meter $messageKey
+    return $messageKey
+}
+
+function Complete-MeterAppUsage {
+    param($Context, $Result)
+    $Context.Apps.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Rows))
+    $Context.Daily.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Days))
+    $Context.Status.Text = Text-Meter (Get-MeterAppUsageMessageKey -Result $Result)
     $Context.Status.ToolTip = $Result.Message
 }
 
 function Start-MeterAppUsageRead {
     param($Context)
+    # Wired identities have no Wi-Fi profile; Windows keeps no app usage for them.
+    if (Test-MeterWiredIdentity $Context.SSID) {
+        Complete-MeterAppUsage -Context $Context -Result ([pscustomobject]@{ Available = $false; MessageCode = 'WiredNetwork'; Rows = @(); Days = @(); Message = (Text-Meter 'AppUsageWired') })
+        return
+    }
     if ($script:isReadOnly) {
         $sample = @(
             [pscustomobject]@{ Name = 'Microsoft Edge'; AppId = 'msedge'; RxBytes = 1850000000; TxBytes = 85000000; TotalBytes = 1935000000; Date = [DateTime]::Today.ToString('yyyy-MM-dd') },
@@ -340,7 +350,9 @@ function New-MeterNetworkDialog {
     $end = if ($range.Period -eq 'Range') { $range.EndDate } else { [DateTime]::Today }
     $context = @{ Window = $dialog; SSID = $SSID; Start = $start; End = $end; Worker = $null; Pending = $null; Poll = $null; Saved = $false }
     foreach ($name in @('Alias', 'Limit', 'Period', 'Warn', 'Disconnect', 'Error', 'Save', 'Status')) { $context[$name] = $dialog.FindName($name) }
-    $dialog.FindName('Name').Text = if ($network.Alias) { $network.Alias } else { $SSID }
+    # Wired identities show the connection name (or alias); the raw identity stays below.
+    $display = Resolve-MeterNetworkDisplayName -SSID $SSID -Aliases (Get-MeterNetworkAliasMap) -WiredNames (Get-MeterWiredNameMap)
+    $dialog.FindName('Name').Text = $display
     $dialog.FindName('SSID').Text = $SSID
     $context.Alias.Text = $network.Alias
     $context.Limit.Text = [string]$network.LimitGB

@@ -214,6 +214,7 @@
       <Grid.RowDefinitions>
         <RowDefinition Height="76" />
         <RowDefinition Height="112" />
+        <RowDefinition Height="Auto" />
         <RowDefinition Height="58" />
         <RowDefinition Height="*" />
         <RowDefinition Height="40" />
@@ -255,7 +256,43 @@
           </StackPanel>
         </Border>
       </Grid>
-      <Grid Grid.Row="2">
+      <Border Grid.Row="2" Style="{StaticResource Card}" Padding="20,12,20,12">
+        <StackPanel>
+          <Grid>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="{DynamicResource LiveApps}" FontSize="14" FontWeight="SemiBold" />
+              <TextBlock Text="{DynamicResource LiveAppsNote}" Foreground="#9AA5B8" FontSize="10" Margin="12,4,0,0" />
+            </StackPanel>
+            <Border Background="#F0F2F8" CornerRadius="7" Padding="2" HorizontalAlignment="Right" VerticalAlignment="Top">
+              <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="LiveConnections" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveConnections}" Height="24" Padding="10,0" FontSize="11" IsChecked="True" AutomationProperties.Name="{DynamicResource LiveConnectionsAccessible}" />
+                <RadioButton x:Name="LiveUsage" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveAppsToday}" Height="24" Padding="10,0" FontSize="11" AutomationProperties.Name="{DynamicResource LiveAppsTodayAccessible}" />
+              </StackPanel>
+            </Border>
+          </Grid>
+          <TextBlock x:Name="LiveAppsHint" Text="{DynamicResource LiveAppsEmpty}" Foreground="#9AA5B8" FontSize="11" Margin="0,8,0,2" Visibility="Collapsed" TextWrapping="Wrap" />
+          <ItemsControl x:Name="LiveAppsList" Margin="0,9,0,1" IsTabStop="False" AutomationProperties.Name="{DynamicResource LiveAppsAccessible}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Background="#F3F5FB" CornerRadius="6" Padding="10,5" Margin="0,0,8,6" ToolTip="{Binding Detail}">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Name}" FontSize="11" Foreground="#39435C" VerticalAlignment="Center" />
+                    <Border Background="#E4E9F6" CornerRadius="5" Margin="8,0,0,0" Padding="7,1">
+                      <TextBlock Text="{Binding Value}" FontSize="10" Foreground="#515CE2" FontFamily="Segoe UI" VerticalAlignment="Center" />
+                    </Border>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+      <Grid Grid.Row="3">
         <Border Background="#EDEFF6" CornerRadius="8" Padding="3" HorizontalAlignment="Left" VerticalAlignment="Top">
           <StackPanel Orientation="Horizontal">
             <RadioButton x:Name="PeriodAll" GroupName="Period" Style="{StaticResource Segment}" Content="{DynamicResource AllTime}" IsChecked="True" Tag="All" />
@@ -266,7 +303,7 @@
         </Border>
         <Button x:Name="ExportButton" Content="{DynamicResource Export}" HorizontalAlignment="Right" VerticalAlignment="Top" AutomationProperties.Name="{DynamicResource ExportAccessible}" />
       </Grid>
-      <Border Grid.Row="3" Style="{StaticResource Card}" Padding="20,16,20,8">
+      <Border Grid.Row="4" Style="{StaticResource Card}" Padding="20,16,20,8">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="44" />
@@ -377,7 +414,7 @@
           </Grid>
         </Grid>
       </Border>
-      <Grid Grid.Row="4" Margin="1,10,0,0">
+      <Grid Grid.Row="5" Margin="1,10,0,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition />
           <ColumnDefinition Width="Auto" />

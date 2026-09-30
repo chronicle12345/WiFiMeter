@@ -67,6 +67,22 @@ function Test-LiveMeterWindow {
     Assert-Ui ($scroll.VerticalOffset -gt 0) 'The last network must be reachable by scrolling.'
     Write-Host 'PASS all networks are available in virtualized, scrollable chart and table'
 
+    Assert-Ui ($script:liveConnections.IsChecked) 'Live connections must be the default panel mode.'
+    Assert-Ui ($script:liveAppsList.Items.Count -ge 1) 'Preview must show live per-program connection chips.'
+    $chipValues = @($script:liveAppsList.Items | ForEach-Object { [string]$_.Value })
+    Assert-Ui (-not (($chipValues -join ' ') -match 'MB/s|GB')) 'Live connection chips must not show byte rates or volumes.'
+    Assert-Ui ($script:liveAppsList.Items[0].Name -ceq 'Microsoft Edge') 'Live chips must be sorted by connection count.'
+    $tolerant = @(Get-MeterStatusApps ([pscustomobject]@{ Apps = @([pscustomobject]@{ Name = 'ok'; Connections = '7' }, [pscustomobject]@{ }, [pscustomobject]@{ Name = ' ' }, 'junk') }))
+    Assert-Ui ($tolerant.Count -eq 1 -and [long]$tolerant[0].Connections -eq 7) 'Live app parsing must tolerate incomplete status rows.'
+    $script:LiveUsage.IsChecked = $true
+    Assert-Ui ($script:liveAppsList.Items.Count -ge 1) 'Usage mode must show today usage chips in preview.'
+    Assert-Ui ($script:liveAppsHint.Text.Length -gt 0 -and $script:liveAppsHint.Visibility -eq 'Visible') 'Usage mode must show its delayed-data caption.'
+    $usageChip = [string]$script:liveAppsList.Items[0].Detail
+    Assert-Ui ($usageChip -match 'GB') 'Usage chips must be labelled as today usage in GB.'
+    $script:LiveConnections.IsChecked = $true
+    Assert-Ui ($script:liveAppsList.Items[0].Name -ceq 'Microsoft Edge') 'Switching back must restore connection chips.'
+    Write-Host 'PASS the live apps panel renders connections and today usage without rate promises'
+
     Assert-Ui ($null -eq $script:window.FindName('DateControls')) 'Date selection must appear in its dialog, not a separate main-window row.'
     $dateDialog = New-MeterDateDialog
     $dateDialog.From.SelectedDate = [DateTime]::Today
@@ -93,6 +109,29 @@ function Test-LiveMeterWindow {
     Assert-Ui ($networkDialog.Status.Text -match '60 days') 'Partial application history must clearly explain its date limits.'
     $networkDialog.Window.Close()
     Assert-Ui (-not [IO.Directory]::Exists($unusedData)) 'Network preview must not write settings or application records.'
+
+    $wiredContext = @{ SSID = 'Ethernet:00000000-0000-0000-0000-000000000000'; Status = [Windows.Controls.TextBlock]::new() }
+    $wiredContext.Apps = New-MeterUsageGrid
+    $wiredContext.Daily = New-MeterUsageGrid -IncludeDate $true
+    Start-MeterAppUsageRead -Context $wiredContext
+    Assert-Ui ($wiredContext.Apps.Items.Count -eq 0 -and $wiredContext.Daily.Items.Count -eq 0) 'Wired identities must not show demo application rows.'
+    Assert-Ui ($wiredContext.Status.Text -match 'wired Ethernet') 'Wired identities must explain that Windows keeps no application usage for them.'
+
+    $fakeAdapters = @(
+        [pscustomobject]@{ Id = '{C8F2E5A0-1111-2222-3333-444455556666}'; Name = 'Ethernet 2'; NetworkInterfaceType = [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet },
+        [pscustomobject]@{ Id = 'not-a-guid'; Name = 'Broken'; NetworkInterfaceType = [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet },
+        [pscustomobject]@{ Id = '{C8F2E5A0-1111-2222-3333-444455556666}'; Name = 'Wi-Fi adapter'; NetworkInterfaceType = [System.Net.NetworkInformation.NetworkInterfaceType]::Wireless80211 }
+    )
+    $map = Get-MeterWiredNameMap -Interfaces $fakeAdapters
+    Assert-Ui ($map['Ethernet:c8f2e5a0-1111-2222-3333-444455556666'] -ceq 'Ethernet 2') 'Wired identities must map to the adapter connection name.'
+    Assert-Ui ($map.Count -eq 1) 'Only Ethernet adapters with valid identities may enter the wired name map.'
+    $aliases = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    $aliases['Ethernet:c8f2e5a0-1111-2222-3333-444455556666'] = 'Desk uplink'
+    Assert-Ui ((Resolve-MeterNetworkDisplayName -SSID 'Ethernet:c8f2e5a0-1111-2222-3333-444455556666' -Aliases $aliases -WiredNames $map) -ceq 'Desk uplink') 'Aliases must win over adapter connection names.'
+    Assert-Ui ((Resolve-MeterNetworkDisplayName -SSID 'Ethernet:c8f2e5a0-1111-2222-3333-444455556666' -Aliases (Get-MeterNetworkAliasMap) -WiredNames $map) -ceq 'Ethernet 2') 'Wired rows must resolve to the adapter name when no alias exists.'
+    Assert-Ui ((Resolve-MeterNetworkDisplayName -SSID 'Ethernet:00000000-0000-0000-0000-000000000000' -Aliases (Get-MeterNetworkAliasMap) -WiredNames $map) -ceq 'Ethernet:00000000-0000-0000-0000-000000000000') 'Unknown wired identities must keep their raw key.'
+    Assert-Ui ((Resolve-MeterNetworkDisplayName -SSID 'Home Wi-Fi' -Aliases $aliases -WiredNames $map) -ceq 'Home Wi-Fi') 'Wi-Fi SSIDs without aliases must stay unchanged.'
+    Write-Host 'PASS wired identities resolve to connection names and wired app usage explains its limits'
 
     $originalDirectory = $script:directory
     $originalPreferences = $script:preferences
@@ -121,6 +160,25 @@ function Test-LiveMeterWindow {
         $saved = Read-MeterPreferences -DataDirectory $isolatedPreferences
         Assert-Ui ($settingsDialog.Saved -and $saved.RetentionDays -eq 30) 'Valid retention must persist.'
         Assert-Ui ($saved.Networks[0].Alias -ceq 'Home') 'Retention changes must preserve network settings.'
+        $settingsDialog = New-MeterSettingsDialog
+        $settingsDialog.Ports.Text = '7890, 7891 0'
+        $settingsDialog.Save.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        Assert-Ui (-not $settingsDialog.Saved -and $settingsDialog.Error.Text) 'Out-of-range proxy ports must not be saved.'
+        $settingsDialog = New-MeterSettingsDialog
+        $settingsDialog.Days.Text = '30'
+        $settingsDialog.Ports.Text = '7890, 7891'
+        $settingsDialog.Processes.Text = 'mihomo, Clash'
+        $settingsDialog.TotalLimit.Text = '50'
+        $settingsDialog.TotalWarn.Text = '85'
+        $settingsDialog.TotalDisconnect.IsChecked = $true
+        foreach ($item in $settingsDialog.TotalPeriod.Items) { if ([string]$item.Tag -ceq 'Day') { $settingsDialog.TotalPeriod.SelectedItem = $item } }
+        $settingsDialog.Save.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        Assert-Ui $settingsDialog.Saved 'Proxy and total quota settings must save successfully.'
+        $saved = Read-MeterPreferences -DataDirectory $isolatedPreferences
+        Assert-Ui ((@($saved.Proxy.Ports) -join ',') -ceq '7890,7891') 'Proxy ports must persist through the settings dialog.'
+        Assert-Ui ((@($saved.Proxy.ProcessNames) -join ',') -ceq 'mihomo,Clash') 'Proxy process names must persist through the settings dialog.'
+        Assert-Ui ($saved.TotalLimit.LimitGB -eq 50 -and [string]$saved.TotalLimit.Period -ceq 'Day' -and $saved.TotalLimit.WarnPercent -eq 85 -and $saved.TotalLimit.DisconnectAtLimit) 'Total Wi-Fi quota settings must persist together.'
+        Assert-Ui ($saved.RetentionDays -eq 30) 'Saving proxy and total quota settings must preserve retention.'
     } finally {
         $script:directory = $originalDirectory
         $script:preferences = $originalPreferences

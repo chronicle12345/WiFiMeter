@@ -128,6 +128,16 @@ function Get-MeterStrings {
         @('TotalDisconnectHint', 'Off by default. When enabled, WiFiMeter disconnects all currently connected Wi-Fi adapters after a sample reaches the total limit; wired connections stay connected. Small overages are possible.', '默认关闭。启用后，采样流量达到总限额时会断开当前连接的全部 Wi-Fi 网卡，有线连接不受影响，实际流量可能略微超过限额。'),
         @('Applications', 'Applications', '应用流量'),
         @('Application', 'Application', '应用'),
+        @('LiveApps', 'Live apps', '实时应用'),
+        @('LiveAppsNote', 'Connections right now · not traffic volume', '当前连接数 · 不代表流量大小'),
+        @('LiveAppsEmpty', 'Start tracking to see which programs are connecting', '启动统计后，这里显示当前有连接的程序'),
+        @('LiveConnections', 'Connections', '实时连接'),
+        @('LiveConnectionsAccessible', 'Show live connection counts per program', '显示各程序的实时连接数'),
+        @('LiveAppsToday', 'Today usage', '当日用量'),
+        @('LiveAppsTodayAccessible', 'Show today application usage for the current network', '显示当前网络今日的应用流量'),
+        @('LiveAppsAccessible', 'Live per-program connections or today application usage', '程序实时连接数或当日应用流量'),
+        @('LiveAppChip', '{0} · {1} connections', '{0} · {1} 个连接'),
+        @('LiveAppUsageChip', '{0} · {1} GB today', '{0} · 今日 {1} GB'),
         @('ByDay', 'By day', '每日明细'),
         @('Date', 'Date', '日期'),
         @('AppUsageLoading', 'Loading application usage from Windows…', '正在读取 Windows 应用流量记录…'),
@@ -159,6 +169,8 @@ function Get-MeterStrings {
         @('ErrorExport', 'Usage was saved, but CSV export failed. Close applications using the CSV files, then try again.', '统计数据已保存，但 CSV 导出失败。请关闭正在使用 CSV 文件的程序后重试。'),
         @('ErrorSamplePartial', 'Some Wi-Fi adapters could not be sampled. Available adapters are still being tracked.', '部分 Wi-Fi 网卡无法采样，其他网卡仍在统计。'),
         @('ErrorSample', 'Wi-Fi connection or traffic data is unavailable. Check the connection and try again shortly.', '暂时无法读取 Wi-Fi 连接或流量信息，请检查网络连接后重试。'),
+        @('ErrorWiredSamplePartial', 'Some wired adapters could not be sampled. Available adapters are still being tracked.', '部分有线网卡采样失败，已保留其他网卡的数据。'),
+        @('ErrorWiredSample', 'Wired connection or traffic data is unavailable. Check the network cable and try again shortly.', '无法读取有线网络的连接或流量信息，请稍后重试。'),
         @('ErrorRecovered', 'Usage data was recovered from its backup.', '已从备份读取统计数据。'),
         @('ErrorAction', 'The operation could not finish. Check access to the data folder and see ui.log for details.', '操作未能完成，请检查数据文件夹的访问权限，并查看 ui.log 中的详细信息。'),
         @('ErrorRead', 'Usage data could not be loaded. Open the data folder and check ui.log for details.', '无法加载统计数据，请打开数据文件夹查看 ui.log 中的详细信息。'),
@@ -192,6 +204,8 @@ function Get-MeterErrorText {
         '导出失败' { 'ErrorExport'; break }
         '部分 Wi-Fi 接口采样失败' { 'ErrorSamplePartial'; break }
         '无法读取 Wi-Fi 连接或流量信息' { 'ErrorSample'; break }
+        '部分有线网卡采样失败' { 'ErrorWiredSamplePartial'; break }
+        '无法读取有线网络的连接或流量信息' { 'ErrorWiredSample'; break }
         '已使用备份恢复' { 'ErrorRecovered'; break }
         '数据文件|主数据|备份|网络列表格式|每日流量|网络名称无效|累计流量|流量字节数' { 'ErrorData'; break }
         default {

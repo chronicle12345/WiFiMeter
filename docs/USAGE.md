@@ -12,7 +12,7 @@ Windows 10 or 11, Windows PowerShell 5.1 and .NET Framework 4.7.2 or later are r
 
 Choose All time, Today or This month. Custom dates opens a calendar dialog: select both dates and apply them. Both endpoints are included. Cancel keeps the previous range. The chart, table and CSV export use the selected range, with no top-network limit.
 
-Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. Original SSIDs remain visible in the details and CSV: Wi-Fi SSIDs are always exported unchanged, and wired adapters appear under their reserved `Ethernet:` identities. Identical SSIDs share totals; names with different letter case remain separate.
+Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. The details dialog shows the original identity: Wi-Fi SSIDs unchanged and wired adapters under their reserved `Ethernet:` identity. The network list and CSV exports show wired adapters under their Windows connection name, or the alias you set for that identity, whenever this machine can identify the adapter; otherwise the raw `Ethernet:` identity is used. Wi-Fi SSIDs are always exported unchanged. Identical SSIDs share totals; names with different letter case remain separate.
 
 ## Traffic limits
 
@@ -32,7 +32,7 @@ Windows may report application activity later than the adapter counters, and the
 
 Traffic through a local proxy is attributed by Windows to the proxy process. In Settings you can enter the proxy's TCP ports and process names. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
 
-The collector also counts the connections each program currently holds and keeps the busiest programs in its status data. These counts are activity hints only: real-time per-application byte rates would need administrator-level Windows counters that this app does not use, so no live rates are shown, and a program's connection count can diverge from its actual traffic.
+The collector also counts the connections each program currently holds and keeps the busiest programs in its status data. The dashboard's Live apps card shows these counts for up to twelve programs and refreshes every few seconds; its Today usage view queries Windows on demand for the current network's application usage for today and states that the record may be delayed. These counts are activity hints only: real-time per-application byte rates would need administrator-level Windows counters that this app does not use, so no live rates are shown, a program's connection count can diverge from its actual traffic, and the today view follows the same limitations as the application queries above. When the only connection is wired, the card explains that Windows keeps no application usage for wired networks.
 
 ## Retention
 
