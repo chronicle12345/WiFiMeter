@@ -192,6 +192,30 @@ try {
         Assert-Equal $unattributed[0].RxBytes 500L 'The remainder must keep the unattributed bytes.'
         Assert-True $unattributed[0].Estimated 'The remainder row must be marked as an estimate.'
     }
+    Invoke-MonitorTest 'Port-only proxy settings are attributed through the live table' {
+        param($module, $directory)
+        & $module {
+            param($Rows, $Owners)
+            $script:TestRows = $Rows
+            $script:TestOwners = $Owners
+        } @(
+            (New-Row '127.0.0.1' 7890 '127.0.0.1' 51000 111 $true)
+        ) @{ 111 = 'clash' }
+        [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Proxy":{"Ports":[7890]}}')
+        [IO.File]::WriteAllText((Join-Path $directory 'proxy-clients.json'), '{"SchemaVersion":1,"Days":[{"Date":"2026-10-01","Clients":[{"Name":"chrome","Connections":1}],"Keys":["a"]}]}')
+        $fake = [pscustomobject]@{
+            Available = $true; MessageCode = 'Available'
+            Rows = @()
+            Days = @(
+                [pscustomobject]@{ Date = '2026-10-01'; AppId = 'C:\proxy\clash.exe'; Name = 'clash.exe'; RxBytes = [long]300; TxBytes = [long]0; TotalBytes = [long]300 }
+            )
+        }
+        $repaired = Repair-MeterProxyAttribution -Result $fake -DataDirectory $directory -UnattributedName 'Via proxy'
+        Assert-Equal @($repaired.Days | Where-Object { $_.Name -ieq 'clash.exe' }).Count 0 'The proxy row must be split even without configured process names.'
+        $chrome = @($repaired.Days | Where-Object { $_.Name -ieq 'chrome' })[0]
+        Assert-Equal $chrome.RxBytes 300L 'The observed client must receive the proxy bytes.'
+        Assert-True $chrome.Estimated 'Distributed rows are estimates.'
+    }
     Invoke-MonitorTest 'Repairs without proxy configuration or availability stay untouched' {
         param($module, $directory)
         $fake = [pscustomobject]@{

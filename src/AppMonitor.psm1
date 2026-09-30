@@ -368,7 +368,26 @@ function Repair-MeterProxyAttribution {
     try {
         if ($null -eq $Result -or $Result.Available -ne $true) { return $Result }
         if ($Result.PSObject.Properties['Days'] -eq $null -or @($Result.Days).Count -eq 0) { return $Result }
-        $proxyNames = (Read-MeterProxySettings $DataDirectory).ProcessNames
+        $settings = Read-MeterProxySettings $DataDirectory
+        $proxyNames = [Collections.Generic.List[string]]::new($settings.ProcessNames)
+        if ($proxyNames.Count -eq 0 -and $settings.Ports.Count -gt 0) {
+            # 采集端在只配置端口时也会观测客户端连接；这里从当前连接表反查占用这些
+            # 端口的进程作为代理进程，让拆分不依赖进程名配置。代理当前没有活跃的
+            # 客户端连接时反查不到名字，查询结果保持原样。
+            try {
+                $portSet = [Collections.Generic.HashSet[int]]::new()
+                foreach ($port in $settings.Ports) { [void]$portSet.Add([int]$port) }
+                $ownerIds = @(@(Get-MeterTcpConnections) |
+                    Where-Object { $portSet.Contains([int]$_.LocalPort) } |
+                    ForEach-Object { [int]$_.OwningPid } |
+                    Select-Object -Unique)
+                $owners = Get-MeterProcessNames -ProcessIds $ownerIds
+                foreach ($ownerName in $owners.Values) {
+                    $key = Get-MeterProcessKey ([string]$ownerName)
+                    if ($key) { [void]$proxyNames.Add($key) }
+                }
+            } catch { }
+        }
         if ($proxyNames.Count -eq 0) { return $Result }
         $proxyKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach ($name in $proxyNames) { [void]$proxyKeys.Add($name) }
@@ -489,6 +508,7 @@ function Read-MeterProxySettings {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$DataDirectory)
     $names = [Collections.Generic.List[string]]::new()
+    $ports = [Collections.Generic.List[int]]::new()
     try {
         $path = Join-Path ([IO.Path]::GetFullPath($DataDirectory)) 'settings.json'
         if ([IO.File]::Exists($path)) {
@@ -507,6 +527,12 @@ function Read-MeterProxySettings {
                                 if ($key) { [void]$names.Add($key) }
                             }
                         }
+                        $portsProperty = $settings.Proxy.PSObject.Properties['Ports']
+                        if ($null -ne $portsProperty -and $portsProperty.Value -is [array]) {
+                            foreach ($port in $portsProperty.Value) {
+                                if ($port -is [int] -or $port -is [long]) { [void]$ports.Add([int]$port) }
+                            }
+                        }
                     }
                 }
             } finally {
@@ -514,7 +540,7 @@ function Read-MeterProxySettings {
             }
         }
     } catch { }
-    return [pscustomobject]@{ ProcessNames = [string[]]$names.ToArray() }
+    return [pscustomobject]@{ ProcessNames = [string[]]$names.ToArray(); Ports = [int[]]$ports.ToArray() }
 }
 
 Export-ModuleMember -Function Get-MeterAppConnections, Get-MeterProxyClientSample, Update-MeterProxyDay, Read-MeterProxyClients, Save-MeterProxyClients, Remove-MeterExpiredProxyDays, Repair-MeterProxyAttribution
