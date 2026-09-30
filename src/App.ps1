@@ -319,7 +319,14 @@ try {
         foreach ($alert in @($Status.Alerts)) {
             if (-not $alert.Id -or -not $script:seenAlerts.Add([string]$alert.Id)) { continue }
             $name = if ($alert.Alias) { $alert.Alias } else { $alert.SSID }
-            $key = switch ($alert.Type) { 'Disconnected' { 'QuotaDisconnected' }; 'DisconnectFailed' { 'QuotaDisconnectFailed' }; 'Limit' { 'QuotaReached' }; default { 'QuotaWarning' } }
+            # Total-scope alerts carry their own wording; older persisted notices have no Scope.
+            $isTotal = $null -ne $alert.PSObject.Properties['Scope'] -and $alert.Scope -ceq 'Total'
+            $key = switch ($alert.Type) {
+                'Disconnected' { 'QuotaDisconnected' }
+                'DisconnectFailed' { 'QuotaDisconnectFailed' }
+                'Limit' { if ($isTotal) { 'TotalQuotaReached' } else { 'QuotaReached' } }
+                default { if ($isTotal) { 'TotalQuotaWarning' } else { 'QuotaWarning' } }
+            }
             $script:trayIcon.ShowBalloonTip(8000, 'WiFiMeter', ((Text-Meter $key) -f $name, [Math]::Round([double]$alert.Percent)), [Windows.Forms.ToolTipIcon]::Warning)
         }
     }

@@ -1,8 +1,10 @@
 ﻿#requires -Version 5.1
 Set-StrictMode -Version Latest
+# Total quotas sum Wi-Fi networks only and must exclude reserved wired identities.
+Import-Module (Join-Path $PSScriptRoot 'Core.psm1') -Scope Local
 
 function New-MeterQuotaLedger {
-    [pscustomobject]@{ Version = 1; Networks = @(); Notices = @() }
+    [pscustomobject]@{ Version = 1; Networks = @(); Notices = @(); Total = $null }
 }
 
 function Read-MeterQuotaLedger {
@@ -21,6 +23,20 @@ function Read-MeterQuotaLedger {
     foreach ($notice in $ledger.Notices) {
         if ($notice.Key -isnot [string] -or $notice.Id -isnot [string]) { throw 'Invalid quota notification.' }
     }
+    # The total counter lives in its own property, never as a fake SSID inside Networks.
+    # A ledger written before the total quota has no Total member or a null one.
+    $total = $null
+    if ($null -ne $ledger.PSObject.Properties['Total']) { $total = $ledger.Total }
+    if ($null -ne $total) {
+        [decimal]$bytes = 0
+        if ($total.PeriodKey -isnot [string] -or
+            $total.PeriodKey -cnotmatch '^(All|Day:\d{4}-\d{2}-\d{2}|Month:\d{4}-\d{2})$' -or
+            -not [decimal]::TryParse([string]$total.UsedBytes, [ref]$bytes) -or $bytes -lt 0 -or [decimal]::Truncate($bytes) -ne $bytes) {
+            throw 'Invalid quota counter.'
+        }
+        $total = [pscustomobject]@{ PeriodKey = $total.PeriodKey; UsedBytes = $bytes }
+    }
+    $ledger | Add-Member -NotePropertyName Total -NotePropertyValue $total -Force
     return $ledger
 }
 
@@ -87,6 +103,61 @@ function Update-MeterQuotaLedger {
         })
     }
     $Ledger.Networks = $records.ToArray()
+    # Total Wi-Fi quota: an independent ledger property, never a fake SSID inside Networks.
+    # Seeding and accumulation both exclude reserved wired identities with Test-MeterWiredIdentity.
+    $totalPolicy = $null
+    if ($null -ne $Preferences.PSObject.Properties['TotalLimit']) { $totalPolicy = $Preferences.TotalLimit }
+    if ($null -ne $totalPolicy) {
+        $key = switch ($totalPolicy.Period) {
+            'Day' { 'Day:' + $Timestamp.ToLocalTime().ToString('yyyy-MM-dd') }
+            'Month' { 'Month:' + $Timestamp.ToLocalTime().ToString('yyyy-MM') }
+            default { 'All' }
+        }
+        $entry = $null
+        if ($null -ne $Ledger.Total -and $Ledger.Total.PeriodKey -ceq $key) { $entry = $Ledger.Total }
+        if ($null -eq $entry) {
+            # Seed from retained history. Future increments are independent of history pruning.
+            $period = if ($totalPolicy.Period -eq 'Day') { 'Today' } else { $totalPolicy.Period }
+            [decimal]$used = 0
+            foreach ($row in @(Get-MeterRows -State $State -Period $period -Now $Timestamp)) {
+                if (-not (Test-MeterWiredIdentity $row.SSID)) { $used += [decimal]$row.RxBytes + [decimal]$row.TxBytes }
+            }
+            $entry = [pscustomobject]@{ PeriodKey = $key; UsedBytes = $used }
+        } else {
+            foreach ($delta in $Deltas) {
+                if (-not (Test-MeterWiredIdentity $delta.SSID)) {
+                    $entry.UsedBytes = [decimal]$entry.UsedBytes + [decimal]$delta.RxBytes + [decimal]$delta.TxBytes
+                }
+            }
+        }
+        $Ledger | Add-Member -NotePropertyName Total -NotePropertyValue $entry -Force
+        [decimal]$limit = [decimal]$totalPolicy.LimitGB * 1000000000
+        if ($limit -gt 0) {
+            # A NUL sentinel prefix keeps total keys separate from any real SSID's notice keys.
+            $noticePrefix = [char]0 + 'Total' + [char]0 + $key + [char]0 + $limit.ToString([cultureinfo]::InvariantCulture) + ':' + $totalPolicy.WarnPercent.ToString([cultureinfo]::InvariantCulture) + ':'
+            [void]$activeNoticeKeys.Add($noticePrefix + 'Warning')
+            [void]$activeNoticeKeys.Add($noticePrefix + 'Limit')
+            [double]$percent = [double]([decimal]$entry.UsedBytes / $limit * 100)
+            if ($percent -ge $totalPolicy.WarnPercent -or $percent -ge 100) {
+                $type = if ($percent -ge 100) { 'Limit' } else { 'Warning' }
+                $noticeKey = $noticePrefix + $type
+                $known = @($Ledger.Notices | Where-Object { $_.Key -ceq $noticeKey }).Count -gt 0
+                $notice = $null
+                if (-not $known) {
+                    $notice = [pscustomobject]@{
+                        Key = $noticeKey; Id = [guid]::NewGuid().ToString('N'); SSID = 'Total'; Alias = ''; Scope = 'Total'
+                        Type = $type; Percent = $percent
+                        UsedBytes = [decimal]$entry.UsedBytes; LimitBytes = $limit; Timestamp = $Timestamp.ToString('o')
+                    }
+                    $Ledger.Notices = @($Ledger.Notices) + @($notice)
+                }
+                $actions.Add([pscustomobject]@{
+                    SSID = 'Total'; Alias = ''; Scope = 'Total'; Percent = $percent
+                    Disconnect = ($percent -ge 100 -and $totalPolicy.DisconnectAtLimit); Notice = $notice
+                })
+            }
+        }
+    }
     # Keep at most two acknowledgement records per active policy, without limiting network count.
     $Ledger.Notices = @($Ledger.Notices | Where-Object { $activeNoticeKeys.Contains($_.Key) })
     return $actions.ToArray()

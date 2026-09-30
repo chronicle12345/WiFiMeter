@@ -85,7 +85,7 @@ function Show-MeterDateDialog {
 }
 
 function New-MeterSettingsDialog {
-    $dialog = New-MeterDialog -TitleKey Settings -Width 510 -Height 470 -Content @'
+    $dialog = New-MeterDialog -TitleKey Settings -Width 510 -Height 660 -Content @'
 <Grid.RowDefinitions>
   <RowDefinition Height="Auto" />
   <RowDefinition Height="*" />
@@ -99,6 +99,28 @@ function New-MeterSettingsDialog {
     <TextBlock Text="{DynamicResource Days}" Margin="10,0,0,0" VerticalAlignment="Center" />
   </StackPanel>
   <TextBlock Text="{DynamicResource RetentionHint}" Foreground="#7C879D" TextWrapping="Wrap" />
+  <TextBlock Text="{DynamicResource TotalQuota}" FontWeight="SemiBold" Margin="0,16,0,0" />
+  <UniformGrid Columns="3" Margin="0,10,0,0">
+    <StackPanel Margin="0,0,16,0">
+      <TextBlock Text="{DynamicResource QuotaGB}" Foreground="#7C879D" />
+      <TextBox x:Name="TotalLimit" Padding="9,7" MaxLength="20" Margin="0,8,0,0" />
+    </StackPanel>
+    <StackPanel Margin="0,0,16,0">
+      <TextBlock Text="{DynamicResource QuotaPeriod}" Foreground="#7C879D" />
+      <ComboBox x:Name="TotalPeriod" Padding="8,6" Margin="0,8,0,0">
+        <ComboBoxItem Tag="Day" Content="{DynamicResource PeriodDay}" />
+        <ComboBoxItem Tag="Month" Content="{DynamicResource PeriodMonth}" />
+        <ComboBoxItem Tag="All" Content="{DynamicResource PeriodAll}" />
+      </ComboBox>
+    </StackPanel>
+    <StackPanel>
+      <TextBlock Text="{DynamicResource WarnPercent}" Foreground="#7C879D" />
+      <TextBox x:Name="TotalWarn" Padding="9,7" MaxLength="6" Margin="0,8,0,0" />
+    </StackPanel>
+  </UniformGrid>
+  <CheckBox x:Name="TotalDisconnect" Content="{DynamicResource TotalDisconnectAtLimit}" Margin="0,10,0,0" />
+  <TextBlock Text="{DynamicResource TotalDisconnectHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="22,7,0,0" />
+  <TextBlock Text="{DynamicResource TotalQuotaHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="0,10,0,0" />
   <TextBlock Text="{DynamicResource ProxyPorts}" FontWeight="SemiBold" Margin="0,16,0,0" />
   <TextBox x:Name="Ports" Padding="9,7" Margin="0,8,0,0" />
   <TextBlock Text="{DynamicResource ProxyProcesses}" FontWeight="SemiBold" Margin="0,12,0,0" />
@@ -111,16 +133,24 @@ function New-MeterSettingsDialog {
   <Button x:Name="Save" Content="{DynamicResource Save}" MinWidth="84" Style="{DynamicResource PrimaryButton}" IsDefault="True" />
 </StackPanel>
 '@
-    $context = @{ Window = $dialog; Days = $dialog.FindName('Days'); Ports = $dialog.FindName('Ports'); Processes = $dialog.FindName('Processes'); Error = $dialog.FindName('Error'); Save = $dialog.FindName('Save'); Saved = $false }
+    $context = @{ Window = $dialog; Days = $dialog.FindName('Days'); Ports = $dialog.FindName('Ports'); Processes = $dialog.FindName('Processes'); TotalLimit = $dialog.FindName('TotalLimit'); TotalPeriod = $dialog.FindName('TotalPeriod'); TotalWarn = $dialog.FindName('TotalWarn'); TotalDisconnect = $dialog.FindName('TotalDisconnect'); Error = $dialog.FindName('Error'); Save = $dialog.FindName('Save'); Saved = $false }
     $context.Days.Text = [string]$script:preferences.RetentionDays
     $context.Ports.Text = (@($script:preferences.Proxy.Ports) -join ', ')
     $context.Processes.Text = (@($script:preferences.Proxy.ProcessNames) -join ', ')
+    $context.TotalLimit.Text = [string]$script:preferences.TotalLimit.LimitGB
+    $context.TotalWarn.Text = [string]$script:preferences.TotalLimit.WarnPercent
+    $context.TotalDisconnect.IsChecked = $script:preferences.TotalLimit.DisconnectAtLimit
+    foreach ($item in $context.TotalPeriod.Items) { if ($item.Tag -ceq $script:preferences.TotalLimit.Period) { $context.TotalPeriod.SelectedItem = $item } }
     $context.Save.Tag = $context
     $context.Save.Add_Click({
         param($sender, $eventArgs)
         $state = $sender.Tag
         [int]$days = 0
         if (-not [int]::TryParse($state.Days.Text, [ref]$days) -or $days -lt 0 -or $days -gt 36500) { $state.Error.Text = Text-Meter 'RetentionInvalid'; return }
+        [double]$totalLimit = 0; [double]$totalWarn = 0
+        if (-not [double]::TryParse($state.TotalLimit.Text, [ref]$totalLimit) -or [double]::IsNaN($totalLimit) -or $totalLimit -lt 0 -or $totalLimit -gt 9e9 -or ($totalLimit -gt 0 -and $totalLimit -lt 1e-9) -or
+            -not [double]::TryParse($state.TotalWarn.Text, [ref]$totalWarn) -or [double]::IsNaN($totalWarn) -or $totalWarn -lt 1 -or $totalWarn -gt 100 -or
+            $null -eq $state.TotalPeriod.SelectedItem) { $state.Error.Text = Text-Meter 'QuotaInvalid'; return }
         $ports = [System.Collections.Generic.List[int]]::new()
         foreach ($token in @($state.Ports.Text -split '[,\s;，；]+' | Where-Object { $_ })) {
             [int]$port = 0
@@ -143,6 +173,7 @@ function New-MeterSettingsDialog {
                 $script:preferences = Save-MeterPreferences -DataDirectory $script:directory -Preferences ([pscustomobject]@{
                     RetentionDays = $days
                     Proxy = [pscustomobject]@{ Ports = $ports.ToArray(); ProcessNames = $names.ToArray() }
+                    TotalLimit = [pscustomobject]@{ LimitGB = $totalLimit; Period = [string]$state.TotalPeriod.SelectedItem.Tag; WarnPercent = $totalWarn; DisconnectAtLimit = [bool]$state.TotalDisconnect.IsChecked }
                 })
             }
             $state.Saved = $true

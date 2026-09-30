@@ -60,4 +60,69 @@ Assert (-not [WiFiMeter.Networking.WirelessControl]::MatchesConnection($attribut
 [BitConverter]::GetBytes(33).CopyTo($attributes, 520)
 Assert (-not [WiFiMeter.Networking.WirelessControl]::MatchesConnection($attributes, '家庭 WiFi')) 'Malformed native SSID length must be rejected.'
 Assert (-not [WiFiMeter.Networking.WirelessControl]::MatchesConnection((New-Object byte[] 10), 'Home')) 'Truncated native data must be rejected.'
-Write-Output 'PASS: quota thresholds, opt-in disconnect, acknowledgements, restart, retention, period rollover, native SSID guard (no network disconnection).'
+
+# Total Wi-Fi quota: an independent ledger property whose seeding and accumulation
+# both exclude reserved wired identities via Test-MeterWiredIdentity.
+$totalState = New-MeterState
+$stamp = '2026-09-20T02:00:00.0000000+00:00'
+$totalState.Networks = @(
+    [pscustomobject]@{ SSID = 'Home'; RxBytes = 800000000L; TxBytes = 300000000L; FirstSeen = $stamp; LastSeen = $stamp; Days = @(
+        [pscustomobject]@{ Date = '2026-08-31'; RxBytes = 100000000L; TxBytes = 50000000L },
+        [pscustomobject]@{ Date = '2026-09-19'; RxBytes = 200000000L; TxBytes = 0L },
+        [pscustomobject]@{ Date = '2026-09-20'; RxBytes = 500000000L; TxBytes = 250000000L }) },
+    [pscustomobject]@{ SSID = 'Hotspot'; RxBytes = 500000000L; TxBytes = 150000000L; FirstSeen = $stamp; LastSeen = $stamp; Days = @(
+        [pscustomobject]@{ Date = '2026-08-31'; RxBytes = 100000000L; TxBytes = 50000000L },
+        [pscustomobject]@{ Date = '2026-09-20'; RxBytes = 400000000L; TxBytes = 100000000L }) },
+    [pscustomobject]@{ SSID = 'Ethernet:GUID-1'; RxBytes = 900000000L; TxBytes = 100000000L; FirstSeen = $stamp; LastSeen = $stamp; Days = @(
+        [pscustomobject]@{ Date = '2026-09-20'; RxBytes = 900000000L; TxBytes = 100000000L }) }
+)
+$totalPreferences = [pscustomobject]@{ Networks = @(); TotalLimit = [pscustomobject]@{ LimitGB = 1; Period = 'Month'; WarnPercent = 80; DisconnectAtLimit = $false } }
+$totalLedger = New-MeterQuotaLedger
+Assert ($null -eq $totalLedger.Total) 'A new ledger must start without a total counter.'
+$actions = @(Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Timestamp $now)
+Assert ($totalLedger.Total.UsedBytes -eq 1450000000) 'The total must seed from every Wi-Fi network of the period and exclude wired identities.'
+Assert (@($totalLedger.Networks).Count -eq 0) 'The total must never be stored as a fake SSID inside Networks.'
+Assert ($actions.Count -eq 1 -and $actions[0].Scope -ceq 'Total' -and $actions[0].Notice.Type -eq 'Limit') 'The total quota must notify with its own scope.'
+$actions = @(Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Timestamp $now)
+Assert ($actions.Count -eq 1 -and $null -eq $actions[0].Notice) 'A total limit notification must not repeat every sample.'
+$actions = @(Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Deltas @((Delta 'Ethernet:GUID-2' 500000000), (Delta 'Hotspot' 100000000)) -Timestamp $now)
+Assert ($totalLedger.Total.UsedBytes -eq 1550000000) 'Total accumulation must add Wi-Fi deltas only, never wired deltas.'
+$totalPreferences.TotalLimit.DisconnectAtLimit = $true
+$actions = @(Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Timestamp $now)
+Assert ($actions[0].Disconnect) 'The total limit must honor DisconnectAtLimit.'
+$totalPreferences.TotalLimit.Period = 'Day'
+$null = Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Timestamp $now
+Assert ($totalLedger.Total.PeriodKey -ceq 'Day:2026-09-20' -and $totalLedger.Total.UsedBytes -eq 1250000000) 'A period change must reseed the total from that period of Wi-Fi history.'
+$totalPreferences.TotalLimit.Period = 'Month'
+$null = Update-MeterQuotaLedger $totalLedger $totalState $totalPreferences -Timestamp (Local-Date '2026-10-01')
+Assert ($totalLedger.Total.PeriodKey -ceq 'Month:2026-10' -and $totalLedger.Total.UsedBytes -eq 0) 'A new month must start a new total counter.'
+$bothPreferences = [pscustomobject]@{
+    Networks = @([pscustomobject]@{ SSID = 'Hotspot'; Alias = 'Hot'; Period = 'Month'; LimitGB = 0.5; WarnPercent = 80; DisconnectAtLimit = $false })
+    TotalLimit = [pscustomobject]@{ LimitGB = 1; Period = 'Month'; WarnPercent = 80; DisconnectAtLimit = $false }
+}
+$bothLedger = New-MeterQuotaLedger
+$actions = @(Update-MeterQuotaLedger $bothLedger $totalState $bothPreferences -Timestamp $now)
+Assert ($actions.Count -eq 2 -and @($bothLedger.Networks).Count -eq 1) 'Network and total quotas must stay independent ledger entries.'
+Assert ($bothLedger.Networks[0].UsedBytes -eq 500000000 -and $bothLedger.Networks[0].SSID -ceq 'Hotspot') 'A total policy must not disturb per-network counters.'
+Assert (@($actions | Where-Object { $null -ne $_.PSObject.Properties['Scope'] -and $_.Scope -ceq 'Total' }).Count -eq 1) 'The total action must be distinguishable by scope.'
+$trackPreferences = [pscustomobject]@{ Networks = @(); TotalLimit = [pscustomobject]@{ LimitGB = 0; Period = 'Month'; WarnPercent = 80; DisconnectAtLimit = $false } }
+$trackLedger = New-MeterQuotaLedger
+$null = Update-MeterQuotaLedger $trackLedger $totalState $trackPreferences -Timestamp $now
+$null = Update-MeterQuotaLedger $trackLedger $totalState $trackPreferences -Deltas @((Delta 'Home' 700000000)) -Timestamp $now
+Assert ($trackLedger.Total.UsedBytes -eq 2150000000) 'A disabled total must keep tracking Wi-Fi usage for a later limit.'
+$roundtripState = New-MeterState
+$roundtripState | Add-Member QuotaLedger $trackLedger
+$serialized = $roundtripState | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+$restoredTotal = Read-MeterQuotaLedger $serialized
+Assert ($restoredTotal.Total.UsedBytes -eq 2150000000 -and $restoredTotal.Total.PeriodKey -ceq 'Month:2026-09') 'A total counter must survive a save and load roundtrip.'
+$legacy = [pscustomobject]@{ QuotaLedger = [pscustomobject]@{ Version = 1; Networks = @(); Notices = @() } }
+Assert ($null -eq (Read-MeterQuotaLedger $legacy).Total) 'A ledger without a total counter must remain readable.'
+$badTotal = [pscustomobject]@{ QuotaLedger = [pscustomobject]@{ Version = 1; Networks = @(); Notices = @(); Total = [pscustomobject]@{ PeriodKey = 'All'; UsedBytes = -1 } } }
+$rejected = $false
+try { $null = Read-MeterQuotaLedger $badTotal } catch { $rejected = $true }
+Assert $rejected 'Malformed total counters must be rejected.'
+$badTotal = [pscustomobject]@{ QuotaLedger = [pscustomobject]@{ Version = 1; Networks = @(); Notices = @(); Total = [pscustomobject]@{ PeriodKey = 'Fortnight:2026-09'; UsedBytes = 0 } } }
+$rejected = $false
+try { $null = Read-MeterQuotaLedger $badTotal } catch { $rejected = $true }
+Assert $rejected 'An unknown total period key must be rejected.'
+Write-Output 'PASS: quota thresholds, opt-in disconnect, acknowledgements, restart, retention, period rollover, total Wi-Fi quota, native SSID guard (no network disconnection).'

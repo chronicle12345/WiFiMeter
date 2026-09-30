@@ -48,6 +48,31 @@ function ConvertTo-ValidatedMeterNetwork {
     return [pscustomobject]$value
 }
 
+function ConvertTo-ValidatedMeterTotalLimit {
+    param([Parameter(Mandatory)]$TotalLimit)
+    $value = ConvertTo-MeterPropertyMap $TotalLimit
+    $defaults = [ordered]@{ LimitGB = 0; Period = 'Month'; WarnPercent = 80; DisconnectAtLimit = $false }
+    foreach ($key in $defaults.Keys) {
+        if (-not $value.Contains($key)) { $value[$key] = $defaults[$key] }
+    }
+    if (-not (Test-MeterNumber $value.LimitGB) -or [double]::IsNaN([double]$value.LimitGB) -or
+        [double]::IsInfinity([double]$value.LimitGB) -or $value.LimitGB -lt 0 -or $value.LimitGB -gt 9000000000) {
+        throw 'The total traffic limit must be a number from 0 to 9000000000 GB.'
+    }
+    if ($value.LimitGB -gt 0 -and $value.LimitGB -lt 0.000000001) { throw 'An enabled total traffic limit must be at least one byte.' }
+    if ($value.Period -isnot [string] -or $value.Period -cnotin @('Day', 'Month', 'All')) {
+        throw 'The total quota period must be Day, Month, or All.'
+    }
+    if (-not (Test-MeterNumber $value.WarnPercent) -or [double]::IsNaN([double]$value.WarnPercent) -or
+        [double]::IsInfinity([double]$value.WarnPercent) -or $value.WarnPercent -lt 1 -or $value.WarnPercent -gt 100) {
+        throw 'The total warning threshold must be a number from 1 to 100 percent.'
+    }
+    if ($value.DisconnectAtLimit -isnot [bool]) { throw 'DisconnectAtLimit must be true or false.' }
+    $value.LimitGB = [decimal]$value.LimitGB
+    $value.WarnPercent = [decimal]$value.WarnPercent
+    return [pscustomobject]$value
+}
+
 function ConvertTo-ValidatedMeterProxy {
     param([Parameter(Mandatory)]$Proxy)
     $value = ConvertTo-MeterPropertyMap $Proxy
@@ -87,7 +112,7 @@ function ConvertTo-ValidatedMeterProxy {
 function ConvertTo-ValidatedMeterPreferences {
     param([Parameter(Mandatory)]$Preferences)
     $value = ConvertTo-MeterPropertyMap $Preferences
-    $defaults = [ordered]@{ Language = 'en'; RetentionDays = 0; Networks = @(); Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @() } }
+    $defaults = [ordered]@{ Language = 'en'; RetentionDays = 0; Networks = @(); Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @() }; TotalLimit = [pscustomobject]@{ LimitGB = 0; Period = 'Month'; WarnPercent = 80; DisconnectAtLimit = $false } }
     foreach ($key in $defaults.Keys) {
         if (-not $value.Contains($key)) { $value[$key] = $defaults[$key] }
     }
@@ -110,9 +135,13 @@ function ConvertTo-ValidatedMeterPreferences {
     if ($value.Proxy -isnot [System.Collections.IDictionary] -and $value.Proxy -isnot [System.Management.Automation.PSCustomObject]) {
         throw 'Proxy settings must be a JSON object.'
     }
+    if ($value.TotalLimit -isnot [System.Collections.IDictionary] -and $value.TotalLimit -isnot [System.Management.Automation.PSCustomObject]) {
+        throw 'Total limit settings must be a JSON object.'
+    }
     $value.RetentionDays = [int]$value.RetentionDays
     $value.Networks = $networks
     $value.Proxy = ConvertTo-ValidatedMeterProxy $value.Proxy
+    $value.TotalLimit = ConvertTo-ValidatedMeterTotalLimit $value.TotalLimit
     return [pscustomobject]$value
 }
 

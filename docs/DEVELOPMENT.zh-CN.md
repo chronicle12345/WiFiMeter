@@ -49,6 +49,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-Performa
 
 默认目录为 `%LOCALAPPDATA%\WiFiMeter\data`。`state.json` 使用 Schema 1，包含每日记录和可选的 `QuotaLedger`；没有该字段的旧记录仍可读取。当前额度和日记录在同一次保存中写入，历史清理不影响额度累计。新规则从保留的历史初始化，再随采样累加。每条有效规则保留提醒和到达上限的通知记录，周期或规则变化后删除失效通知。
 
+可选的顶级 `TotalLimit` 设置启用跨全部 Wi-Fi 网络的总额度。它的计数器保存在独立的 `QuotaLedger.Total` 属性中，绝不作为伪 SSID 写入 `Networks`，并按相同的周期键与字节规则校验。播种与增量累加都通过 `Test-MeterWiredIdentity` 排除保留的有线身份，有线流量不会进入总额；一旦混入有线增量，只能重新播种修复。总限额达到上限且启用断开时，采集进程会断开当前采样的全部 WLAN 网卡，沿用 10 秒节流与原生调用内的逐网卡 SSID 复核。总额通知带有 `Scope: Total`，界面据此使用独立的提示文案。
+
 JSON 使用临时文件和原子替换，上一份有效记录保存为 `state.json.bak`。保留期限清理会重算总量，并轮换两个副本，防止恢复时带回已删除的日期。CSV 属于派生导出，文件被占用不会阻止 JSON 保存。配置更新通过目录级互斥锁和原子替换合并，语言修改不会覆盖同时保存的网络规则。
 
 应用流量来自 `ConnectionProfile.GetAttributedNetworkUsageAsync`，在界面工作线程中查询，同时最多执行 4 个原生请求，总查询时限为 15 秒。未完成的操作会取消并释放。查询最多覆盖 60 天，同时受统计开始时间和保留期限约束。模块区分无记录、部分结果、不可用和超时，不按比例拆分网卡总量来生成应用数据。

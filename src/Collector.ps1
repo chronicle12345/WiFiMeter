@@ -104,14 +104,17 @@ try {
                 $status.Alerts = @(@($status.Alerts) + @($action.Notice) | Select-Object -Last 20)
                 $needsSave = $true
             }
-            if ($action.Disconnect -and (-not $lastDisconnect.ContainsKey($action.SSID) -or ($now - $lastDisconnect[$action.SSID]).TotalSeconds -ge 10)) {
+            # 总额度动作断开当前采样的全部 WLAN 适配器；单个网络只断开匹配 SSID 的网卡。
+            $isTotal = $null -ne $action.PSObject.Properties['Scope'] -and $action.Scope -ceq 'Total'
+            $disconnectKey = if ($isTotal) { [char]0 + 'Total' } else { $action.SSID }
+            if ($action.Disconnect -and (-not $lastDisconnect.ContainsKey($disconnectKey) -or ($now - $lastDisconnect[$disconnectKey]).TotalSeconds -ge 10)) {
                 # Recheck the current SSID inside the native call before disconnecting this adapter.
                 # Only Wi-Fi samples participate: the WLAN helper cannot disconnect a wired adapter.
                 foreach ($connection in $sample.Samples) {
-                    if ($connection.SSID -cne $action.SSID) { continue }
-                    try { $null = Disconnect-MeterWifi -AdapterId $connection.AdapterId -SSID $action.SSID }
+                    if (-not $isTotal -and $connection.SSID -cne $action.SSID) { continue }
+                    try { $null = Disconnect-MeterWifi -AdapterId $connection.AdapterId -SSID $connection.SSID }
                     catch { $policyError = $_.Exception.Message; Write-CollectorLog $policyError }
-                    $lastDisconnect[$action.SSID] = $now
+                    $lastDisconnect[$disconnectKey] = $now
                 }
             }
         }

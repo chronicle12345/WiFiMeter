@@ -20,6 +20,8 @@ In a network's settings, enter a limit in GB, choose Daily, Monthly or All time,
 
 A new rule starts from that period's retained records. Its active counter then survives restarts and history cleanup. Changing the amount preserves the counter. Changing the period starts the selected period from available records. Removing old records cannot recover earlier traffic when creating a new rule.
 
+Settings also offer a total Wi-Fi limit that counts every metered Wi-Fi network together for a daily, monthly or all-time period. Wired Ethernet traffic is excluded from the total, and the total is independent of each network's own limit, so both kinds of rule can trigger in the same sample. The total counter is seeded from retained Wi-Fi records and then accumulates sampling deltas like a network counter. Disconnect at limit for the total disconnects every currently connected Wi-Fi adapter; wired connections stay connected. A total limit of 0 disables the rule.
+
 Warnings appear through the tray icon at the chosen percentage and at the limit. Windows notification settings can hide these messages. Disconnect at limit is off by default. When enabled, the collector checks that the adapter is still on the configured SSID before disconnecting it. Sampling runs every five seconds, so a download can exceed the limit between samples. Reconnecting while still over the limit can trigger another disconnection. Raise or disable that rule before reconnecting if you want to continue using the network.
 
 ## Application usage
@@ -55,7 +57,7 @@ The data-folder button opens `%LOCALAPPDATA%\WiFiMeter\data`.
 | File | Contents |
 | --- | --- |
 | `state.json`, `state.json.bak` | Metered daily records, active quota counters and recovery copy |
-| `settings.json` | Language, retention, network names and limit rules |
+| `settings.json` | Language, retention, network names, limit rules and the total Wi-Fi limit |
 | `usage.csv`, `daily.csv` | Generated exports of retained totals and daily records |
 | `app-usage-profiles.json` | Observed Windows profile-to-SSID mappings |
 | `app-usage.json` | Disposable application-query cache |

@@ -334,6 +334,65 @@ try {
         Assert-Equal @($preferences.Proxy.Ports).Count 64
         Assert-Equal @($preferences.Proxy.ProcessNames).Count 32
     }
+    Test-Case 'missing total limit settings default to a disabled month rule' {
+        $directory = New-TestDirectory
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal $preferences.TotalLimit.LimitGB 0
+        Assert-Equal $preferences.TotalLimit.Period 'Month'
+        Assert-Equal $preferences.TotalLimit.WarnPercent 80
+        Assert-Equal $preferences.TotalLimit.DisconnectAtLimit $false
+        Assert-True (-not [IO.File]::Exists((Join-Path $directory 'settings.json')))
+    }
+    Test-Case 'legacy settings without a total limit gain disabled defaults and stay readable' {
+        $directory = New-TestDirectory
+        [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Language":"zh-CN","Networks":[{"SSID":"Home"}]}')
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal $preferences.Language 'zh-CN'
+        Assert-Equal $preferences.TotalLimit.LimitGB 0
+        Assert-Equal $preferences.TotalLimit.Period 'Month'
+        Assert-Equal @($preferences.Networks).Count 1
+    }
+    Test-Case 'total limit settings persist and survive other updates' {
+        $directory = New-TestDirectory
+        $null = Save-MeterPreferences -DataDirectory $directory -Preferences ([pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = 25; Period = 'All'; WarnPercent = 90; DisconnectAtLimit = $true } })
+        $null = Set-MeterRetention -DataDirectory $directory -Days 30
+        $null = Set-MeterNetworkPreference -DataDirectory $directory -Network (New-Network 'Home')
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal $preferences.TotalLimit.LimitGB 25
+        Assert-Equal $preferences.TotalLimit.Period 'All'
+        Assert-Equal $preferences.TotalLimit.WarnPercent 90
+        Assert-Equal $preferences.TotalLimit.DisconnectAtLimit $true
+        Assert-Equal @($preferences.Networks).Count 1
+        Assert-Equal $preferences.RetentionDays 30
+    }
+    Test-Case 'a partial total limit object gains defaults for its other fields' {
+        $directory = New-TestDirectory
+        $saved = Save-MeterPreferences -DataDirectory $directory -Preferences ([pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = 5 } })
+        Assert-Equal $saved.TotalLimit.LimitGB 5
+        Assert-Equal $saved.TotalLimit.Period 'Month'
+        Assert-Equal $saved.TotalLimit.WarnPercent 80
+        Assert-Equal $saved.TotalLimit.DisconnectAtLimit $false
+    }
+    Test-Case 'invalid total limit settings are rejected before any disk change' {
+        $directory = New-TestDirectory
+        $null = Save-MeterPreferences -DataDirectory $directory -Preferences ([pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = 5 } })
+        $path = Join-Path $directory 'settings.json'
+        $before = [IO.File]::ReadAllText($path)
+        foreach ($invalid in @(
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = -1 } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = [double]::NaN } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = [double]::PositiveInfinity } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = '10' } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = 9000000001 } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ LimitGB = 0.0000000001 } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ Period = 'Week' } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ WarnPercent = 0 } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ WarnPercent = 101 } },
+            [pscustomobject]@{ TotalLimit = [pscustomobject]@{ DisconnectAtLimit = 'false' } },
+            [pscustomobject]@{ TotalLimit = 'invalid' }
+        )) { Assert-Throws { Save-MeterPreferences -DataDirectory $directory -Preferences $invalid } }
+        Assert-Equal ([IO.File]::ReadAllText($path)) $before
+    }
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)
     $expectedParent = [IO.Path]::GetFullPath($artifactDirectory).TrimEnd('\') + '\'
