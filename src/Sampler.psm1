@@ -165,6 +165,13 @@ function Get-EthernetSamples {
             if ($interface.NetworkInterfaceType -ne [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet) { continue }
             if ($interface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) { continue }
 
+            # Hyper-V/WSL/VMware 等虚拟网卡也报告为 Ethernet 且状态 Up，其流量与物理
+            # 网卡重复统计；按名称与描述特征排除，只采样物理有线网卡。
+            $identity = [string]$interface.Name
+            $descriptionProperty = $interface.PSObject.Properties['Description']
+            if ($null -ne $descriptionProperty) { $identity += ' ' + [string]$descriptionProperty.Value }
+            if ($identity -imatch 'vethernet|virtual|vmware|hyper-v') { continue }
+
             $adapterId = ([guid]$interface.Id).ToString('D')
             if (-not $seen.Add($adapterId)) { continue }
 

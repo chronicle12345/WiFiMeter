@@ -255,6 +255,14 @@ Invoke-EthernetTest 'Down or wireless interfaces are not sampled as wired' @(
     Assert-True ($result.Samples.Count -eq 0 -and -not $result.HasError) 'Down or wireless interfaces must be excluded from wired sampling.'
 }
 
+Invoke-EthernetTest 'Virtual Ethernet adapters are not sampled as wired' @(
+    (New-TestInterface $id1 10 20 'Up' 'Ethernet' $false 'vEthernet (WSL (Hyper-V firewall))'),
+    (New-TestInterface $id2 10 20 'Up' 'Ethernet' $false 'VMware Network Adapter VMnet1')
+) {
+    param($result)
+    Assert-True ($result.Samples.Count -eq 0 -and -not $result.HasError) 'Virtual Ethernet adapters must be excluded from wired sampling.'
+}
+
 Invoke-EthernetTest 'Duplicate wired interfaces produce one sample' @(
     (New-TestInterface $id1 10 20 'Up' 'Ethernet'), (New-TestInterface $id1 999 999 'Up' 'Ethernet')
 ) {
