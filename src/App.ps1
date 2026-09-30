@@ -49,7 +49,7 @@ try {
     $script:liveAppsStatus = $null
     $script:liveMode = 'Connections'
     $script:liveAppsKey = ''
-    $script:liveUsageQuery = @{ Worker = $null; Pending = $null; Poll = $null; Ssid = ''; Rows = @(); MessageKey = '' }
+    $script:liveUsageQuery = @{ Worker = $null; Pending = $null; Poll = $null; Ssid = ''; Rows = @(); MessageKey = ''; Completed = [datetime]::MinValue }
     $script:wiredNameCache = @{ Time = [datetime]::MinValue; Map = $null }
     $script:trendData = $null
 
@@ -237,6 +237,7 @@ try {
                 $script:liveUsageQuery.MessageKey = 'AppUsageUnavailable'
             } finally {
                 $state.Worker.Dispose(); $state.Worker = $null; $state.Pending = $null; $state.Poll = $null
+                $state.Completed = [datetime]::UtcNow
             }
             Update-MeterLiveAppsPanel
         })
@@ -260,7 +261,11 @@ try {
         $ssid = Get-MeterCurrentConnectionSsid -Status $status -WiredNames (Get-MeterWiredNameMap)
         if (-not $ssid) { $script:liveUsageQuery.Rows = @(); $script:liveUsageQuery.MessageKey = 'AppUsageWired'; return }
         if ($null -ne $script:liveUsageQuery.Worker) { return }
-        if ($script:liveUsageQuery.Ssid -ceq $ssid -and $script:liveUsageQuery.MessageKey) { return }
+        # A finished query is only reused while it can still be fresher than the
+        # application usage cache (5 minutes); re-entering the mode afterwards
+        # queries again, so stale snapshots and failed attempts do not stick.
+        if ($script:liveUsageQuery.Ssid -ceq $ssid -and $script:liveUsageQuery.MessageKey -and
+            ([datetime]::UtcNow - $script:liveUsageQuery.Completed) -lt [TimeSpan]::FromMinutes(5)) { return }
         $script:liveUsageQuery.Ssid = $ssid
         $script:liveUsageQuery.Rows = @()
         $script:liveUsageQuery.MessageKey = 'AppUsageLoading'
