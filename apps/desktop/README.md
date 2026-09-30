@@ -26,6 +26,10 @@ npm run dist:linux
 
 桌面桥通过只读的 `appName` 提供当前平台产品名，文件操作公开 `saveFile({ filename, body })` 和 `openBackup()`（取消返回 `canceled: true`，失败返回 `error`），后端通信公开 `backend.request(method, params)` 与 `backend.onEvent(handler)`。
 
+用量按大小自动选择单位，最多保留两位小数并去掉尾零；真实零显示 `0 B`，无记录显示 `—`。
+设置中的单位进制沿用已有偏好：十进制显示 B / KB / MB / GB，二进制显示 B / KiB / MiB / GiB。
+趋势图按当前图的峰值选择共同单位；CSV 导出仍使用选定的 GB / GiB 固定单位与六位小数。
+
 后端失败以 `{ ok: false, error: { code, message } }` 返回而不是抛出：Electron 跨进程只保留错误消息，抛出会丢掉错误码，而页面需要靠错误码决定提示文案。
 
 ## 数据存放

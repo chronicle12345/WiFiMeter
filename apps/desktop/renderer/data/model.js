@@ -1,6 +1,26 @@
 const clone = value => JSON.parse(JSON.stringify(value));
 const GB = 1000000000n, GiB = 1073741824n;
 const B = value => BigInt(value ?? '0');
+function byteUnitFor(bytes, preference = 'GB') {
+    const value = B(bytes), base = preference === 'GiB' ? 1024n : 1000n;
+    const units = preference === 'GiB'
+        ? ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB', 'EiB']
+        : ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB'];
+    let divisor = 1n, index = 0;
+    while (index < units.length - 1 && value >= divisor * base) { divisor *= base; index++; }
+    // 舍入后达到进位阈值时继续提升单位，避免显示 1000 KB 或 1024 KiB。
+    if (index < units.length - 1 && (value * 100n + divisor / 2n) / divisor >= base * 100n) {
+        divisor *= base; index++;
+    }
+    return { unit: units[index], divisor };
+}
+function formatByteParts(bytes, preference = 'GB') {
+    const { unit, divisor } = byteUnitFor(bytes, preference);
+    const scaled = (B(bytes) * 100n + divisor / 2n) / divisor;
+    const integer = (scaled / 100n).toLocaleString('en-US');
+    const fraction = String(scaled % 100n).padStart(2, '0').replace(/0+$/, '');
+    return { value: integer + (fraction ? '.' + fraction : ''), unit, divisor };
+}
 const dayKey = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const dateOf = key => new Date(`${key}T12:00:00`);
 const shiftDay = (key, n) => {const d=dateOf(key);d.setDate(d.getDate()+n);return dayKey(d);};
@@ -89,5 +109,5 @@ function sortApps(apps, sort = 'total', search = '') {
         a[key] > b[key] ? -1 : a[key] < b[key] ? 1 : a.name.localeCompare(b.name, 'zh') || a.id.localeCompare(b.id));
 }
 
-export { GB, GiB, B, dayKey, dateOf, shiftDay, today, monthStart, niceDate, defaults,
+export { GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, defaults,
     totalOf, validDate, validateSnapshot, quotaFor, appUsageInRange, bytePercent, sortApps };
