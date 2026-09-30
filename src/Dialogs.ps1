@@ -1,5 +1,54 @@
 ﻿#requires -Version 5.1
 
+$script:AppIconCache = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+# Bound for the icon cache: clearing at the limit keeps icon handles and memory in check.
+$script:AppIconCacheLimit = 256
+$script:AppIconCellTemplate = $null
+
+function ConvertTo-MeterAppIconFrom {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    Add-Type -AssemblyName PresentationCore -ErrorAction Stop
+    $drawingIcon = $null
+    try {
+        $drawingIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
+        if ($null -eq $drawingIcon) { return $null }
+        # BitmapSizeOptions::FromWidth(18) is rejected by CreateBitmapSourceFromHIcon
+        # (E_INVALIDARG); convert at the native 32x32 size and scale with a frozen
+        # TransformedBitmap so the result is safe to use on the UI thread.
+        $source = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($drawingIcon.Handle, [Windows.Int32Rect]::Empty, [Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+        $scale = 18.0 / 32.0
+        $scaled = [Windows.Media.Imaging.TransformedBitmap]::new($source, [Windows.Media.ScaleTransform]::new($scale, $scale))
+        $scaled.Freeze()
+        return $scaled
+    } finally { if ($null -ne $drawingIcon) { $drawingIcon.Dispose() } }
+}
+
+function Get-MeterAppIcon {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$AppId, [AllowEmptyString()][string]$Name)
+    # Only rooted, existing executable paths are worth extracting; everything else
+    # (package identifiers, bare process names) stays on the placeholder glyph.
+    if ($script:AppIconCache.Count -ge $script:AppIconCacheLimit) { $script:AppIconCache.Clear() }
+    foreach ($candidate in @($AppId, $Name)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        if ($script:AppIconCache.ContainsKey($candidate)) { return $script:AppIconCache[$candidate] }
+    }
+    foreach ($candidate in @($AppId, $Name)) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $icon = $null
+        try {
+            if ([IO.Path]::IsPathRooted($candidate) -and [IO.File]::Exists($candidate)) {
+                $icon = ConvertTo-MeterAppIconFrom -Path $candidate
+            }
+        } catch { $icon = $null }
+        # Misses are cached too so repeated lookups do not probe the file system.
+        $script:AppIconCache[$candidate] = $icon
+        if ($null -ne $icon) { return $icon }
+    }
+    return $null
+}
+
 function New-MeterDialog {
     param([string]$TitleKey, [int]$Width, [int]$Height, [string]$Content)
     $markup = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"><Border Background="{DynamicResource PageBackground}" Padding="24"><Grid>' + $Content + '</Grid></Border></Window>'
@@ -201,6 +250,21 @@ function New-MeterUsageGrid {
     $table.GridLinesVisibility = 'None'
     $table.BorderThickness = 0
     $table.Background = [Windows.Media.Brushes]::White
+    if ($null -eq $script:AppIconCellTemplate) {
+        # Icon + name share the Application column; a placeholder glyph shows
+        # through whenever the row's Icon is empty.
+        $script:AppIconCellTemplate = [Windows.Markup.XamlReader]::Parse(@'
+<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <Grid Width="20" Height="20" VerticalAlignment="Center">
+      <TextBlock FontFamily="Segoe MDL2 Assets" Text="" FontSize="13" Foreground="{DynamicResource Faint}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <Image Source="{Binding Icon}" Width="18" Height="18" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Grid>
+    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
+  </StackPanel>
+</DataTemplate>
+'@)
+    }
     $fields = @()
     if ($IncludeDate) { $fields += ,@('Date', 'Date', 112) }
     $fields += ,@('Name', 'Application', '*')
@@ -208,11 +272,18 @@ function New-MeterUsageGrid {
     $fields += ,@('UploadGB', 'UploadGB', 110)
     $fields += ,@('TotalGB', 'TotalGB', 110)
     foreach ($field in $fields) {
-        $column = [Windows.Controls.DataGridTextColumn]::new()
-        $column.Header = Text-Meter $field[1]
-        $column.Binding = [Windows.Data.Binding]::new($field[0])
-        if ($field[0] -like '*GB') { $column.Binding.StringFormat = 'N3' }
-        $column.Width = [Windows.Controls.DataGridLengthConverter]::new().ConvertFromString([string]$field[2])
+        if ($field[0] -ceq 'Name') {
+            $column = [Windows.Controls.DataGridTemplateColumn]::new()
+            $column.Header = Text-Meter $field[1]
+            $column.CellTemplate = $script:AppIconCellTemplate
+            $column.Width = [Windows.Controls.DataGridLengthConverter]::new().ConvertFromString([string]$field[2])
+        } else {
+            $column = [Windows.Controls.DataGridTextColumn]::new()
+            $column.Header = Text-Meter $field[1]
+            $column.Binding = [Windows.Data.Binding]::new($field[0])
+            if ($field[0] -like '*GB') { $column.Binding.StringFormat = 'N3' }
+            $column.Width = [Windows.Controls.DataGridLengthConverter]::new().ConvertFromString([string]$field[2])
+        }
         $table.Columns.Add($column)
     }
     return $table
@@ -227,6 +298,7 @@ function ConvertTo-MeterAppRows {
             DownloadGB = [double]$row.RxBytes / 1e9
             UploadGB = [double]$row.TxBytes / 1e9
             TotalGB = [double]$row.TotalBytes / 1e9
+            Icon = $(if ($row.PSObject.Properties['Icon']) { $row.Icon } else { $null })
         }
     })
 }
@@ -269,14 +341,16 @@ function Start-MeterAppUsageRead {
             [pscustomobject]@{ Name = 'Microsoft Edge'; AppId = 'msedge'; RxBytes = 1850000000; TxBytes = 85000000; TotalBytes = 1935000000; Date = [DateTime]::Today.ToString('yyyy-MM-dd') },
             [pscustomobject]@{ Name = 'Windows Update'; AppId = 'system'; RxBytes = 610000000; TxBytes = 5000000; TotalBytes = 615000000; Date = [DateTime]::Today.ToString('yyyy-MM-dd') }
         )
+        foreach ($row in $sample) { $row | Add-Member -NotePropertyName Icon -NotePropertyValue (Get-MeterAppIcon -AppId ([string]$row.AppId) -Name ([string]$row.Name)) -Force }
         Complete-MeterAppUsage -Context $Context -Result ([pscustomobject]@{ Available = $true; Rows = $sample; Days = $sample; Message = Text-Meter 'PreviewDetail' })
         return
     }
     $Context.Status.Text = Text-Meter 'AppUsageLoading'
     $Context.Worker = [PowerShell]::Create()
     # The worker imports AppMonitor so proxy-attributed bytes can be redistributed
-    # by observed client connections before the result reaches the dialog.
-    [void]$Context.Worker.AddScript('param($module, $monitorModule, $proxyRowName, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Import-Module $monitorModule -Force -ErrorAction Stop; $result = Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop; return (Repair-MeterProxyAttribution -Result $result -DataDirectory $directory -UnattributedName $proxyRowName)').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument((Join-Path $PSScriptRoot 'AppMonitor.psm1')).AddArgument((Text-Meter 'ProxyUnattributedRow')).AddArgument($Context.SSID).AddArgument($Context.Start).AddArgument($Context.End).AddArgument($script:directory)
+    # by observed client connections, and Dialogs for icon extraction, before the
+    # result reaches the dialog; the UI thread never extracts icons in bulk.
+    [void]$Context.Worker.AddScript('param($module, $monitorModule, $dialogModule, $proxyRowName, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Import-Module $monitorModule -Force -ErrorAction Stop; Import-Module $dialogModule -Force -ErrorAction Stop; $result = Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop; $result = Repair-MeterProxyAttribution -Result $result -DataDirectory $directory -UnattributedName $proxyRowName; foreach ($row in @($result.Rows) + @($result.Days)) { $row | Add-Member -NotePropertyName Icon -NotePropertyValue (Get-MeterAppIcon -AppId ([string]$row.AppId) -Name ([string]$row.Name)) -Force }; return $result').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument((Join-Path $PSScriptRoot 'AppMonitor.psm1')).AddArgument((Join-Path $PSScriptRoot 'Dialogs.ps1')).AddArgument((Text-Meter 'ProxyUnattributedRow')).AddArgument($Context.SSID).AddArgument($Context.Start).AddArgument($Context.End).AddArgument($script:directory)
     $Context.Pending = $Context.Worker.BeginInvoke()
     $Context.Poll = [Windows.Threading.DispatcherTimer]::new()
     $Context.Poll.Interval = [TimeSpan]::FromMilliseconds(200)

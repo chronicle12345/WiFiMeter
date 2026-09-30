@@ -28,7 +28,7 @@ Warnings appear through the tray icon at the chosen percentage and at the limit.
 
 ## Application usage
 
-The Applications and By day tabs show records from Windows for the selected network and dates. Queries run in the background; closing the details window cancels pending work. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
+The Applications and By day tabs show records from Windows for the selected network and dates. Queries run in the background; closing the details window cancels pending work. Each program's icon appears next to its name whenever its executable can be identified, and a placeholder glyph appears otherwise. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
 
 Windows may report application activity later than the adapter counters, and the two totals can differ. The query covers at most the most recent 60 days, beginning no earlier than WiFiMeter's first tracking date or the configured retention cutoff. Missing Windows records stay unavailable. Application history is queried on demand; it is not a permanent archive. Up to four recent queries are cached for five minutes.
 

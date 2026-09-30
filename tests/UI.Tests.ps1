@@ -158,6 +158,18 @@ function Test-LiveMeterWindow {
     Assert-Ui ((Resolve-MeterNetworkDisplayName -SSID 'Home Wi-Fi' -Aliases $aliases -WiredNames $map) -ceq 'Home Wi-Fi') 'Wi-Fi SSIDs without aliases must stay unchanged.'
     Write-Host 'PASS wired identities resolve to connection names and wired app usage explains its limits'
 
+    $appsGrid = New-MeterUsageGrid
+    Assert-Ui ($appsGrid.Columns[0] -is [Windows.Controls.DataGridTemplateColumn] -and $appsGrid.Columns[0].Header -ceq 'Application') 'Application cells must combine the icon and name in one localized column.'
+    $dailyGrid = New-MeterUsageGrid -IncludeDate $true
+    Assert-Ui ($dailyGrid.Columns[0].Header -ceq 'Date' -and $dailyGrid.Columns[1] -is [Windows.Controls.DataGridTemplateColumn]) 'Daily tables must keep their date column before the icon column.'
+    $notepadIcon = Get-MeterAppIcon -AppId (Join-Path $env:SystemRoot 'System32\notepad.exe') -Name ''
+    Assert-Ui ($null -ne $notepadIcon -and $notepadIcon.IsFrozen) 'Identifiable executables must yield a frozen, UI-thread-safe icon.'
+    Assert-Ui ([object]::ReferenceEquals($notepadIcon, (Get-MeterAppIcon -AppId (Join-Path $env:SystemRoot 'System32\notepad.exe') -Name ''))) 'Icon lookups must be cached per identifier.'
+    Assert-Ui ($null -eq (Get-MeterAppIcon -AppId 'msedge' -Name 'Microsoft Edge')) 'Unresolvable identifiers must fall back to the placeholder glyph.'
+    for ($i = 0; $i -lt 300; $i++) { $null = Get-MeterAppIcon -AppId ('C:\nonexistent\' + $i + '.exe') -Name '' }
+    Assert-Ui ($script:AppIconCache.Count -le 256) 'The icon cache must stay bounded.'
+    Write-Host 'PASS application tables render icons from a bounded, worker-filled cache'
+
     $originalDirectory = $script:directory
     $originalPreferences = $script:preferences
     $isolatedPreferences = Join-Path $temporary 'dialog-settings'
