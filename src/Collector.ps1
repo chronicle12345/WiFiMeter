@@ -13,6 +13,7 @@ $self = Get-Process -Id $PID
 $status = [pscustomobject]@{ Running = $true; Healthy = $true; ProcessId = $PID; ProcessStartTicks = $self.StartTime.ToUniversalTime().Ticks; LaunchId = [guid]::NewGuid().ToString('N'); UpdatedAt = ''; Message = '正在初始化'; Connections = @(); DownloadPerSecond = 0.0; UploadPerSecond = 0.0; Error = ''; SkippedIntervals = 0; Alerts = @() }
 $self.Dispose()
 $state = $null
+$proxyState = $null
 $exitCode = 0
 $script:storageWarning = ''
 $needsSave = $true
@@ -52,6 +53,7 @@ try {
     Import-Module (Join-Path $PSScriptRoot 'Preferences.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'QuotaRuntime.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'AppUsage.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'AppMonitor.psm1') -Force
     $recoveryWarnings = @()
     $state = Read-MeterState -DataDirectory $directory -WarningAction SilentlyContinue -WarningVariable recoveryWarnings
     $ledger = Read-MeterQuotaLedger -State $state
@@ -67,6 +69,8 @@ try {
     # Remove a previous launch's stop request before accepting requests for this launch.
     if ([IO.File]::Exists($stopPath)) { [IO.File]::Delete($stopPath) }
     $lastSave = [DateTimeOffset]::MinValue
+    $lastProxySave = [DateTimeOffset]::MinValue
+    $proxyState = Read-MeterProxyClients -DataDirectory $directory
     $previousTime = $null
     $previousDate = ''
     while ($true) {
@@ -111,9 +115,27 @@ try {
                 }
             }
         }
+        # Proxy client observation: deduplicated connections through the configured proxy ports.
+        $proxyPorts = @($preferences.Proxy.Ports)
+        $proxyNames = @($preferences.Proxy.ProcessNames)
+        if ($proxyPorts.Count -gt 0 -or $proxyNames.Count -gt 0) {
+            try {
+                $proxySample = Get-MeterProxyClientSample -Ports $proxyPorts -ProcessNames $proxyNames
+                if (Update-MeterProxyDay -State $proxyState -Timestamp $now -Sample $proxySample) {
+                    if (($now - $lastProxySave).TotalSeconds -ge 10) {
+                        Save-MeterProxyClients -DataDirectory $directory -State $proxyState
+                        $lastProxySave = $now
+                    }
+                }
+            } catch { Write-CollectorLog ('Proxy client sampling: ' + $_.Exception.Message) }
+        }
         if ($changedPreferences -or $previousDate -ne $now.ToString('yyyy-MM-dd')) {
             $removed = Remove-MeterExpiredRecords -State $state -RetentionDays $preferences.RetentionDays -Timestamp $now
             $needsSave = $true
+            if (Remove-MeterExpiredProxyDays -State $proxyState -RetentionDays $preferences.RetentionDays -Timestamp $now) {
+                Save-MeterProxyClients -DataDirectory $directory -State $proxyState
+                $lastProxySave = $now
+            }
             if ($preferences.RetentionDays -gt 0) {
                 # Rotate twice so both primary and recovery copy obey the retention setting.
                 Save-CollectorData
@@ -169,6 +191,9 @@ try {
     if ($exitCode -eq 0) { $status.Message = '统计已停止，数据已保存' }
     $status.UpdatedAt = [DateTimeOffset]::UtcNow.ToString('o')
     try { Write-MeterJson -Path (Join-Path $directory 'status.json') -Value $status } catch { Write-CollectorLog $_.Exception.Message }
+    if ($null -ne $proxyState) {
+        try { Save-MeterProxyClients -DataDirectory $directory -State $proxyState } catch { Write-CollectorLog $_.Exception.Message }
+    }
     if ($null -ne $lock) { $lock.Dispose() }
 }
 exit $exitCode

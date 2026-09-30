@@ -35,6 +35,7 @@ The optional live query reads Windows usage records. The performance script samp
 | `Preferences.psm1` | Validated settings, atomic merge operations and retention rules |
 | `QuotaRuntime.psm1`, `NetworkControl.cs` | Active quota counters, notification acknowledgements and guarded WLAN disconnection |
 | `AppUsage.psm1` | Windows application attribution, profile mappings and bounded query cache |
+| `AppMonitor.psm1`, `TcpTable.cs` | Proxy process attribution, per-application connection snapshots and bounded observation storage |
 | `Control.psm1`, `Collector.ps1` | Collector lifecycle, sampling loop and login startup |
 | `installer/Setup.cs` | Per-user installation, upgrade and uninstall |
 
@@ -51,6 +52,8 @@ Data defaults to `%LOCALAPPDATA%\WiFiMeter\data`. Schema 1 in `state.json` store
 JSON saves use temporary files and atomic replacement. The previous valid state becomes `state.json.bak`. Retention recalculates retained totals and rotates both state copies so recovery cannot restore deleted days. CSV files are derived exports; a locked export does not block JSON saving. Settings updates use a per-directory mutex and atomic replacement, so changing language cannot erase a concurrently saved network rule.
 
 Application attribution uses `ConnectionProfile.GetAttributedNetworkUsageAsync`. Queries run in a UI worker with up to four native requests at once and a 15-second budget. Pending operations are cancelled and closed. Windows queries are limited to 60 days and clipped to tracking start and retention. The module returns explicit empty, partial, unavailable and timeout states; it never divides adapter totals among applications.
+
+Proxy attribution is optional. When proxy TCP ports and process names are configured, the collector reads the owner-PID TCP tables every five seconds, classifies loopback connections to those ports as clients (a proxy row is one whose local port is configured or whose owner name is listed), and stores the day's deduplicated connections in `proxy-clients.json`. A connection counts once per local day by its local and remote address/port tuple; the file keeps at most 60 days, 1024 tuples and 48 clients per day, and obeys the retention setting. Application queries pass through `Repair-MeterProxyAttribution`, which redistributes the bytes Windows attributed to the proxy process across client applications by each day's share of deduplicated connections; days without observations keep a "via proxy · unattributed" estimate row. The split is an estimate: five-second sampling misses short connections, UDP and QUIC are outside the TCP tables, and Windows attributes bytes with a delay relative to the observed connections.
 
 The application cache stores at most four recent ranges, expires after five minutes, and is capped at 8 MiB. A query stops at 12,000 daily rows and asks for a shorter interval. Collector maintenance clears expired cached data. This cache is not an archive. Profile mappings use adapter GUID plus profile name observed with a connected SSID; a profile name alone is not treated as an SSID.
 

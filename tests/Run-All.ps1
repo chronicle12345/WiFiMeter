@@ -30,6 +30,7 @@ $suites = @(
     [pscustomobject]@{ Name = 'Preferences.Tests.ps1'; Extra = @(); Desktop = $false },
     [pscustomobject]@{ Name = 'QuotaRuntime.Tests.ps1'; Extra = @(); Desktop = $false },
     [pscustomobject]@{ Name = 'AppUsage.Tests.ps1'; Extra = @(); Desktop = $false },
+    [pscustomobject]@{ Name = 'AppMonitor.Tests.ps1'; Extra = @(); Desktop = $false },
     [pscustomobject]@{ Name = 'Control.Tests.ps1'; Extra = @(); Desktop = $false },
     [pscustomobject]@{ Name = 'Sampler.Tests.ps1'; Extra = @('-Live'); Desktop = $false },
     [pscustomobject]@{ Name = 'Integration.Tests.ps1'; Extra = @(); Desktop = $false },

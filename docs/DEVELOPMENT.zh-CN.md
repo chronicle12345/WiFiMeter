@@ -35,6 +35,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-Performa
 | `Preferences.psm1` | 配置验证、原子合并与保留期限 |
 | `QuotaRuntime.psm1`、`NetworkControl.cs` | 当前额度、通知去重与 WLAN 断开前校验 |
 | `AppUsage.psm1` | Windows 应用统计、配置映射与查询缓存 |
+| `AppMonitor.psm1`、`TcpTable.cs` | 代理进程归属、每应用连接数快照与有界观测存储 |
 | `Control.psm1`、`Collector.ps1` | 统计进程、采样循环与登录自启动 |
 | `installer/Setup.cs` | 当前用户安装、更新与卸载 |
 
@@ -51,6 +52,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-Performa
 JSON 使用临时文件和原子替换，上一份有效记录保存为 `state.json.bak`。保留期限清理会重算总量，并轮换两个副本，防止恢复时带回已删除的日期。CSV 属于派生导出，文件被占用不会阻止 JSON 保存。配置更新通过目录级互斥锁和原子替换合并，语言修改不会覆盖同时保存的网络规则。
 
 应用流量来自 `ConnectionProfile.GetAttributedNetworkUsageAsync`，在界面工作线程中查询，同时最多执行 4 个原生请求，总查询时限为 15 秒。未完成的操作会取消并释放。查询最多覆盖 60 天，同时受统计开始时间和保留期限约束。模块区分无记录、部分结果、不可用和超时，不按比例拆分网卡总量来生成应用数据。
+
+代理归属是可选功能。配置代理 TCP 端口与进程名后，采集进程每 5 秒读取属主 PID 的 TCP 表，把指向这些端口的环回连接识别为客户端（代理进程指本地端口在配置端口中、或进程名在名单中的连接），并把当天的去重连接写入 `proxy-clients.json`。一条连接按本地地址、本地端口、远端地址和远端端口组成的四元组在当天只计一次；该文件最多保留 60 天，每天最多 1024 条连接与 48 个客户端，并遵循保留期限设置。应用查询会经过 `Repair-MeterProxyAttribution`，把 Windows 归给代理进程的字节按各应用当天去重连接数的占比逐日分摊；没有观测记录的日期保留为"经代理·未归属"估算行。分摊是估算：5 秒轮询会漏采短连接，UDP 和 QUIC 不在 TCP 表范围内，Windows 的字节归账与实时观测存在时间差。
 
 应用缓存最多保留最近 4 次范围查询，5 分钟过期，上限 8 MiB。单次查询达到 12,000 条每日记录时停止，并提示缩短范围。后台维护会清理过期缓存，它不承担历史归档。配置映射使用连接时观察到的网卡 GUID、配置文件名和 SSID，不能仅凭配置文件名推断 SSID。
 

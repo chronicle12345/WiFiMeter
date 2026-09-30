@@ -48,10 +48,46 @@ function ConvertTo-ValidatedMeterNetwork {
     return [pscustomobject]$value
 }
 
+function ConvertTo-ValidatedMeterProxy {
+    param([Parameter(Mandatory)]$Proxy)
+    $value = ConvertTo-MeterPropertyMap $Proxy
+    $defaults = [ordered]@{ Ports = @(); ProcessNames = @() }
+    foreach ($key in $defaults.Keys) {
+        if (-not $value.Contains($key)) { $value[$key] = $defaults[$key] }
+    }
+    if ($value.Ports -isnot [array]) { throw 'Proxy ports must be an array.' }
+    $seenPorts = [System.Collections.Generic.HashSet[int]]::new()
+    $ports = @(
+        foreach ($port in $value.Ports) {
+            if (($port -isnot [int] -and $port -isnot [long]) -or $port -lt 1 -or $port -gt 65535) {
+                throw 'Proxy ports must be whole numbers from 1 to 65535.'
+            }
+            if (-not $seenPorts.Add([int]$port)) { throw 'Proxy ports must not repeat.' }
+            [int]$port
+        }
+    )
+    if (@($ports).Count -gt 64) { throw 'At most 64 proxy ports are supported.' }
+    if ($value.ProcessNames -isnot [array]) { throw 'Proxy process names must be an array.' }
+    $seenNames = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $names = @(
+        foreach ($name in $value.ProcessNames) {
+            if ($name -isnot [string] -or $name.Length -eq 0 -or $name.Length -gt 64 -or $name -match '[\x00-\x1f\x7f]') {
+                throw 'A proxy process name must be a string of 1 to 64 characters without control characters.'
+            }
+            if (-not $seenNames.Add($name)) { throw 'Proxy process names must not repeat.' }
+            $name
+        }
+    )
+    if (@($names).Count -gt 32) { throw 'At most 32 proxy process names are supported.' }
+    $value.Ports = [int[]]$ports
+    $value.ProcessNames = [string[]]$names
+    return [pscustomobject]$value
+}
+
 function ConvertTo-ValidatedMeterPreferences {
     param([Parameter(Mandatory)]$Preferences)
     $value = ConvertTo-MeterPropertyMap $Preferences
-    $defaults = [ordered]@{ Language = 'en'; RetentionDays = 0; Networks = @() }
+    $defaults = [ordered]@{ Language = 'en'; RetentionDays = 0; Networks = @(); Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @() } }
     foreach ($key in $defaults.Keys) {
         if (-not $value.Contains($key)) { $value[$key] = $defaults[$key] }
     }
@@ -71,8 +107,12 @@ function ConvertTo-ValidatedMeterPreferences {
             $validated
         }
     )
+    if ($value.Proxy -isnot [System.Collections.IDictionary] -and $value.Proxy -isnot [System.Management.Automation.PSCustomObject]) {
+        throw 'Proxy settings must be a JSON object.'
+    }
     $value.RetentionDays = [int]$value.RetentionDays
     $value.Networks = $networks
+    $value.Proxy = ConvertTo-ValidatedMeterProxy $value.Proxy
     return [pscustomobject]$value
 }
 
@@ -200,6 +240,20 @@ function Set-MeterRetention {
     }
 }
 
+function Set-MeterProxyPreference {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$DataDirectory,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$Ports,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$ProcessNames
+    )
+    return Update-MeterPreferences -DataDirectory $DataDirectory -Update {
+        param($existing)
+        $existing.Proxy = [pscustomobject]@{ Ports = @($Ports); ProcessNames = @($ProcessNames) }
+        return $existing
+    }
+}
+
 function Set-MeterLanguagePreference {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$DataDirectory, [Parameter(Mandatory)][ValidateSet('en', 'zh-CN')][string]$Language)
@@ -279,4 +333,4 @@ function Remove-MeterExpiredRecords {
     return $removed
 }
 
-Export-ModuleMember -Function Read-MeterPreferences, Save-MeterPreferences, Get-MeterNetworkPreference, Set-MeterNetworkPreference, Set-MeterRetention, Set-MeterLanguagePreference, Get-MeterQuotaActions, Remove-MeterExpiredRecords
+Export-ModuleMember -Function Read-MeterPreferences, Save-MeterPreferences, Get-MeterNetworkPreference, Set-MeterNetworkPreference, Set-MeterRetention, Set-MeterLanguagePreference, Set-MeterProxyPreference, Get-MeterQuotaActions, Remove-MeterExpiredRecords

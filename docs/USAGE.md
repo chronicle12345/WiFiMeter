@@ -28,6 +28,8 @@ The Applications and By day tabs show records from Windows for the selected netw
 
 Windows may report application activity later than the adapter counters, and the two totals can differ. The query covers at most the most recent 60 days, beginning no earlier than WiFiMeter's first tracking date or the configured retention cutoff. Missing Windows records stay unavailable. Application history is queried on demand; it is not a permanent archive. Up to four recent queries are cached for five minutes.
 
+Traffic through a local proxy is attributed by Windows to the proxy process. In Settings you can enter the proxy's TCP ports and process names. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
+
 ## Retention
 
 Open Settings and enter how many local calendar days to keep. Today counts as one day; 0 keeps all metered daily records. Cleanup runs when collection starts, when the setting changes, and after the date changes. The recovery copy and generated CSV files are refreshed as well. A locked CSV refreshes after the other program releases it.
@@ -55,6 +57,7 @@ The data-folder button opens `%LOCALAPPDATA%\WiFiMeter\data`.
 | `usage.csv`, `daily.csv` | Generated exports of retained totals and daily records |
 | `app-usage-profiles.json` | Observed Windows profile-to-SSID mappings |
 | `app-usage.json` | Disposable application-query cache |
+| `proxy-clients.json` | Daily deduplicated connections observed through the configured proxy |
 | Status files and logs | Process control and error information |
 
 Stop collection before backing up or restoring this folder. If the primary record is damaged, the app tries its backup. If both copies are unreadable, it reports the error and preserves them. When Excel holds a CSV open, JSON saving continues; close Excel to allow the export to refresh.

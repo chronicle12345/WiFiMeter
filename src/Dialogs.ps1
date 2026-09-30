@@ -85,7 +85,7 @@ function Show-MeterDateDialog {
 }
 
 function New-MeterSettingsDialog {
-    $dialog = New-MeterDialog -TitleKey Settings -Width 510 -Height 315 -Content @'
+    $dialog = New-MeterDialog -TitleKey Settings -Width 510 -Height 470 -Content @'
 <Grid.RowDefinitions>
   <RowDefinition Height="Auto" />
   <RowDefinition Height="*" />
@@ -99,6 +99,11 @@ function New-MeterSettingsDialog {
     <TextBlock Text="{DynamicResource Days}" Margin="10,0,0,0" VerticalAlignment="Center" />
   </StackPanel>
   <TextBlock Text="{DynamicResource RetentionHint}" Foreground="#7C879D" TextWrapping="Wrap" />
+  <TextBlock Text="{DynamicResource ProxyPorts}" FontWeight="SemiBold" Margin="0,16,0,0" />
+  <TextBox x:Name="Ports" Padding="9,7" Margin="0,8,0,0" />
+  <TextBlock Text="{DynamicResource ProxyProcesses}" FontWeight="SemiBold" Margin="0,12,0,0" />
+  <TextBox x:Name="Processes" Padding="9,7" Margin="0,8,0,0" />
+  <TextBlock Text="{DynamicResource ProxyHint}" Foreground="#7C879D" TextWrapping="Wrap" Margin="0,10,0,0" />
   <TextBlock x:Name="Error" Foreground="#C45664" TextWrapping="Wrap" Margin="0,10,0,0" />
 </StackPanel>
 <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -106,16 +111,40 @@ function New-MeterSettingsDialog {
   <Button x:Name="Save" Content="{DynamicResource Save}" MinWidth="84" Style="{DynamicResource PrimaryButton}" IsDefault="True" />
 </StackPanel>
 '@
-    $context = @{ Window = $dialog; Days = $dialog.FindName('Days'); Error = $dialog.FindName('Error'); Save = $dialog.FindName('Save'); Saved = $false }
+    $context = @{ Window = $dialog; Days = $dialog.FindName('Days'); Ports = $dialog.FindName('Ports'); Processes = $dialog.FindName('Processes'); Error = $dialog.FindName('Error'); Save = $dialog.FindName('Save'); Saved = $false }
     $context.Days.Text = [string]$script:preferences.RetentionDays
+    $context.Ports.Text = (@($script:preferences.Proxy.Ports) -join ', ')
+    $context.Processes.Text = (@($script:preferences.Proxy.ProcessNames) -join ', ')
     $context.Save.Tag = $context
     $context.Save.Add_Click({
         param($sender, $eventArgs)
         $state = $sender.Tag
         [int]$days = 0
         if (-not [int]::TryParse($state.Days.Text, [ref]$days) -or $days -lt 0 -or $days -gt 36500) { $state.Error.Text = Text-Meter 'RetentionInvalid'; return }
+        $ports = [System.Collections.Generic.List[int]]::new()
+        foreach ($token in @($state.Ports.Text -split '[,\s;，；]+' | Where-Object { $_ })) {
+            [int]$port = 0
+            if (-not [int]::TryParse($token, [ref]$port) -or $port -lt 1 -or $port -gt 65535) { $state.Error.Text = Text-Meter 'ProxyPortsInvalid'; return }
+            if (-not $ports.Contains($port)) { $ports.Add($port) }
+        }
+        if ($ports.Count -gt 64) { $state.Error.Text = Text-Meter 'ProxyPortsInvalid'; return }
+        $names = [System.Collections.Generic.List[string]]::new()
+        foreach ($token in @($state.Processes.Text -split '[,;，；]+' | Where-Object { $_ })) {
+            $name = $token.Trim()
+            if (-not $name) { continue }
+            if ($name.Length -gt 64 -or $name -match '[\x00-\x1f\x7f]') { $state.Error.Text = Text-Meter 'ProxyNamesInvalid'; return }
+            $duplicate = $false
+            foreach ($existing in $names) { if ($existing -ieq $name) { $duplicate = $true; break } }
+            if (-not $duplicate) { $names.Add($name) }
+        }
+        if ($names.Count -gt 32) { $state.Error.Text = Text-Meter 'ProxyNamesInvalid'; return }
         try {
-            if (-not $script:isReadOnly) { $script:preferences = Set-MeterRetention -DataDirectory $script:directory -Days $days }
+            if (-not $script:isReadOnly) {
+                $script:preferences = Save-MeterPreferences -DataDirectory $script:directory -Preferences ([pscustomobject]@{
+                    RetentionDays = $days
+                    Proxy = [pscustomobject]@{ Ports = $ports.ToArray(); ProcessNames = $names.ToArray() }
+                })
+            }
             $state.Saved = $true
             $state.Window.Close()
         } catch { $state.Error.Text = Format-MeterError $_.Exception.Message 'Settings' }
@@ -200,7 +229,9 @@ function Start-MeterAppUsageRead {
     }
     $Context.Status.Text = Text-Meter 'AppUsageLoading'
     $Context.Worker = [PowerShell]::Create()
-    [void]$Context.Worker.AddScript('param($module, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument($Context.SSID).AddArgument($Context.Start).AddArgument($Context.End).AddArgument($script:directory)
+    # The worker imports AppMonitor so proxy-attributed bytes can be redistributed
+    # by observed client connections before the result reaches the dialog.
+    [void]$Context.Worker.AddScript('param($module, $monitorModule, $proxyRowName, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Import-Module $monitorModule -Force -ErrorAction Stop; $result = Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop; return (Repair-MeterProxyAttribution -Result $result -DataDirectory $directory -UnattributedName $proxyRowName)').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument((Join-Path $PSScriptRoot 'AppMonitor.psm1')).AddArgument((Text-Meter 'ProxyUnattributedRow')).AddArgument($Context.SSID).AddArgument($Context.Start).AddArgument($Context.End).AddArgument($script:directory)
     $Context.Pending = $Context.Worker.BeginInvoke()
     $Context.Poll = [Windows.Threading.DispatcherTimer]::new()
     $Context.Poll.Interval = [TimeSpan]::FromMilliseconds(200)

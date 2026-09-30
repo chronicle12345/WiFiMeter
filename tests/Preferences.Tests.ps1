@@ -281,6 +281,59 @@ try {
         Assert-Equal $state.Networks[0].TxBytes 0L
         Save-MeterState -State $state -DataDirectory (New-TestDirectory)
     }
+    Test-Case 'missing proxy settings default to empty lists without touching the file' {
+        $directory = New-TestDirectory
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal @($preferences.Proxy.Ports).Count 0
+        Assert-Equal @($preferences.Proxy.ProcessNames).Count 0
+        Assert-True (-not [IO.File]::Exists((Join-Path $directory 'settings.json')))
+    }
+    Test-Case 'legacy settings without proxy keys gain empty defaults and stay readable' {
+        $directory = New-TestDirectory
+        [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Language":"zh-CN"}')
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal $preferences.Language 'zh-CN'
+        Assert-Equal @($preferences.Proxy.Ports).Count 0
+        Assert-Equal @($preferences.Proxy.ProcessNames).Count 0
+    }
+    Test-Case 'proxy ports and process names persist and survive other updates' {
+        $directory = New-TestDirectory
+        $null = Set-MeterProxyPreference -DataDirectory $directory -Ports @(7897, 1080) -ProcessNames @('mihomo', 'Clash Core')
+        $null = Set-MeterRetention -DataDirectory $directory -Days 30
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal ($preferences.Proxy.Ports -join ',') '7897,1080'
+        Assert-Equal ($preferences.Proxy.ProcessNames -join ',') 'mihomo,Clash Core'
+        Assert-Equal $preferences.RetentionDays 30
+    }
+    Test-Case 'invalid proxy settings are rejected before any disk change' {
+        $directory = New-TestDirectory
+        $null = Set-MeterProxyPreference -DataDirectory $directory -Ports @(7897) -ProcessNames @('mihomo')
+        $path = Join-Path $directory 'settings.json'
+        $before = [IO.File]::ReadAllText($path)
+        foreach ($invalid in @(
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(0); ProcessNames = @() } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(65536); ProcessNames = @() } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(1.5); ProcessNames = @() } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(7897, 7897); ProcessNames = @() } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(1..65); ProcessNames = @() } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @("bad`nname") } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @('') } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @('n', 'N') } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @(1..33 | ForEach-Object { 'n' + $_ }) } },
+            [pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = @(); ProcessNames = @(42) } },
+            [pscustomobject]@{ Proxy = 'invalid' }
+        )) { Assert-Throws { Save-MeterPreferences -DataDirectory $directory -Preferences $invalid } }
+        Assert-Equal ([IO.File]::ReadAllText($path)) $before
+    }
+    Test-Case 'valid proxy settings accept the documented range limits' {
+        $directory = New-TestDirectory
+        $ports = @(1..64)
+        $names = @(1..32 | ForEach-Object { 'proxy-' + $_ })
+        $null = Save-MeterPreferences -DataDirectory $directory -Preferences ([pscustomobject]@{ Proxy = [pscustomobject]@{ Ports = $ports; ProcessNames = $names } })
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal @($preferences.Proxy.Ports).Count 64
+        Assert-Equal @($preferences.Proxy.ProcessNames).Count 32
+    }
 } finally {
     $resolved = [IO.Path]::GetFullPath($testRoot)
     $expectedParent = [IO.Path]::GetFullPath($artifactDirectory).TrimEnd('\') + '\'
