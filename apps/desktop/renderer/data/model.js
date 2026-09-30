@@ -67,5 +67,27 @@ function quotaFor(data, network, now = new Date()) {
         period: network.quotaPeriod === 'day' ? '今日' : '本月' };
 }
 
+// 应用统计使用独立记录；搜索和排序不改变占比的分母。
+function appUsageInRange(records, networkId, start, end) {
+    const apps = new Map();
+    for (const row of records) {
+        if (row.networkId !== networkId || row.date < start || row.date > end) continue;
+        const app = apps.get(row.appId) ?? { id: row.appId, name: row.name, rx: 0n, tx: 0n };
+        app.name = row.name;
+        app.rx += B(row.rxBytes); app.tx += B(row.txBytes);
+        apps.set(row.appId, app);
+    }
+    return [...apps.values()].map(app => ({ ...app, total: app.rx + app.tx }));
+}
+function bytePercent(value, total) {
+    return total > 0n ? Number(value * 1000n / total) / 10 : 0;
+}
+function sortApps(apps, sort = 'total', search = '') {
+    const needle = search.trim().toLocaleLowerCase();
+    const key = ['rx', 'tx'].includes(sort) ? sort : 'total';
+    return apps.filter(app => app.name.toLocaleLowerCase().includes(needle)).sort((a, b) =>
+        a[key] > b[key] ? -1 : a[key] < b[key] ? 1 : a.name.localeCompare(b.name, 'zh') || a.id.localeCompare(b.id));
+}
+
 export { GB, GiB, B, dayKey, dateOf, shiftDay, today, monthStart, niceDate, defaults,
-    totalOf, validDate, validateSnapshot, quotaFor };
+    totalOf, validDate, validateSnapshot, quotaFor, appUsageInRange, bytePercent, sortApps };

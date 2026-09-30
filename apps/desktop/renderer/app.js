@@ -1,4 +1,4 @@
-import { GB, GiB, B, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor } from './data/model.js';
+import { GB, GiB, B, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, appUsageInRange, bytePercent, sortApps } from './data/model.js';
 import { createDataClient } from './data/client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -163,7 +163,7 @@ function syncInert(){
  document.body.style.overflow=hasDrawer||hasModal?'hidden':'';
 }
 function openDrawer(id,tab='usage'){
- if(!getNetwork(id))return;ui.lastFocus=document.activeElement;ui.drawer={id,tab};renderDrawer();syncInert();setTimeout(()=>$('#closeDrawer')?.focus(),0);
+ if(!getNetwork(id))return;ui.lastFocus=document.activeElement;ui.drawer={id,tab,appSearch:'',appSort:'total',appAll:false};renderDrawer();syncInert();setTimeout(()=>$('#closeDrawer')?.focus(),0);
 }
 function closeDrawer(){
  ui.drawer=null;$('#drawerRoot').innerHTML='';syncInert();if(ui.lastFocus?.isConnected)ui.lastFocus.focus();
@@ -173,11 +173,25 @@ function drawerUsage(n){
  return `<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">本机采样</span></div><div class="drawer-total"><div class="small muted">总用量</div><div class="metric-number">${rows.length?fmt(v.total):'—'}<span>${data.settings.unit}</span></div></div><div class="metrics"><div class="metric"><div class="metric-title">下载 ${icon('down')}</div><div class="metric-number">${rows.length?fmt(v.rx):'—'}<span>${data.settings.unit}</span></div></div><div class="metric"><div class="metric-title">上传 ${icon('up')}</div><div class="metric-number">${rows.length?fmt(v.tx):'—'}<span>${data.settings.unit}</span></div></div></div><div class="detail-section"><div class="between"><h3>用量趋势</h3><div class="legend"><span><i></i>下载</span><span><i class="tx"></i>上传</span></div></div><div class="chart-wrap">${chartSvg(chartRows(n.id),'drawer-chart')}</div></div>${connection&&data.live.state==='connected'?`<dl class="kv-grid"><div><dt>无线网卡</dt><dd>${esc(connection.adapterAlias)}</dd></div><div><dt>频段 / 信号</dt><dd>${esc(connection.band)} / ${connection.signal}%</dd></div><div><dt>连接开始</dt><dd>${esc(new Date(connection.since).toLocaleString('zh-CN',{hour12:false}))}</dd></div><div><dt>统计状态</dt><dd>${data.live.collector==='paused'?'已暂停':'采样中'}</dd></div></dl>`:''}<div class="detail-section"><h3>最近记录</h3>${days.length?`<table><thead><tr><th>日期</th><th class="right">下载</th><th class="right">上传</th></tr></thead><tbody>${days.map(d=>`<tr><td>${niceDate(d.date)}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">所选时间内没有该网络的记录。</p>'}</div>${button('export-network','导出此网络记录','export','','data-id="'+n.id+'"')}`;
 }
 function drawerApps(n){
- const {start,end}=getRange(),rows=data.appRecords.filter(r=>r.networkId===n.id&&r.date>=start&&r.date<=end),m=new Map();
- for(const r of rows){const a=m.get(r.appId)||{id:r.appId,name:r.name,rx:0n,tx:0n};a.rx+=B(r.rxBytes);a.tx+=B(r.txBytes);m.set(r.appId,a);}
- const list=[...m.values()].sort((a,b)=>a.rx+a.tx>b.rx+b.tx?-1:a.rx+a.tx<b.rx+b.tx?1:0),sum=list.reduce((s,a)=>s+a.rx+a.tx,0n);
- if(!list.length)return `<div class="source-tag">${icon('info')}尚未采集</div>${empty('应用级流量尚未采集','按进程归属流量需要额外的系统能力，当前版本只统计网卡总量。')}<div class="note-box" style="margin-top:16px">${icon('info')}<div>网卡总量不受影响：下方网络详情与历史记录都来自真实采集。应用分布会在实现按进程统计后填充。</div></div>`;
+ const {start,end}=getRange(),apps=appUsageInRange(data.appRecords,n.id,start,end);
+ const heading=`<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">应用记录</span></div>`;
+ if(!data.appRecords.length)return `${heading}<div class="source-tag" style="margin-top:16px">${icon('info')}尚未采集</div>${empty('应用级流量尚未采集','按进程归属流量需要额外的系统能力，当前版本只统计网卡总量。')}<div class="note-box" style="margin-top:16px">${icon('info')}<div>网卡用量明细与历史记录来自真实采集；应用分布将在接入按进程统计后填充。</div></div>`;
+ if(!apps.length)return `${heading}${empty('所选时段没有应用记录','试试其他日期或网络。应用采集开始前的流量无法补算。')}`;
+ const sum=apps.reduce((s,a)=>s+a.total,0n);
+ return `${heading}<div class="drawer-total"><div class="small muted">已统计应用总用量</div><div class="metric-number">${fmt(sum)}<span>${data.settings.unit}</span></div></div><div class="note-box">${icon('info')}<div>占比按当前网络和时段的已统计应用流量计算。应用统计与网卡统计口径可能不同，两者分别展示。</div></div><div class="app-filters"><label class="search-box">${icon('search')}<input id="appSearch" type="search" placeholder="搜索应用" aria-label="搜索应用" value="${esc(ui.drawer.appSearch)}"></label><label><span class="sr-only">应用排序</span><select class="select compact" id="appSort">${[['total','按总量'],['rx','按下载'],['tx','按上传']].map(([v,label])=>option(v,label,ui.drawer.appSort)).join('')}</select></label></div><div id="appListRegion" aria-live="polite">${appList(n)}</div>`;
 }
+function appList(n){
+ const {start,end}=getRange(),apps=appUsageInRange(data.appRecords,n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
+ const list=sortApps(apps,ui.drawer.appSort,ui.drawer.appSearch),visible=ui.drawer.appAll?list:list.slice(0,10);
+ if(!list.length)return empty('没有匹配的应用','试试其他应用名称。');
+ return `<div class="small muted">共 ${list.length} 个应用 · 显示 ${visible.length} 个</div><ol class="app-list">${visible.map(a=>{const percent=bytePercent(a.total,sum);return `<li class="app-row"><div class="app-avatar" aria-hidden="true">${esc([...a.name][0]||'?')}</div><div class="app-description"><div class="app-name">${esc(a.name)}</div><div class="app-source">下载 ${fmtAppBytes(a.rx)} · 上传 ${fmtAppBytes(a.tx)}</div><div class="progress" aria-hidden="true"><span style="width:${percent}%"></span></div></div><div class="app-value"><strong>${fmtAppBytes(a.total)}</strong><div class="app-source">${sum?percent.toFixed(1)+'%':'—'}</div></div></li>`;}).join('')}</ol>${list.length>10?button('apps-expand',ui.drawer.appAll?'收起列表':'显示全部应用','','small-btn'):''}`;
+}
+function fmtAppBytes(value){
+ const base=data.settings.unit==='GiB'?1024n:1000n,units=data.settings.unit==='GiB'?['B','KiB','MiB','GiB','TiB']:['B','KB','MB','GB','TB'];
+ let divisor=1n,i=0;while(i<units.length-1&&value>=divisor*base){divisor*=base;i++;}
+ return `${(Number(value)/Number(divisor)).toLocaleString('en-US',{maximumFractionDigits:2})} ${units[i]}`;
+}
+function renderAppList(){if(ui.drawer?.tab==='apps'&&$('#appListRegion'))$('#appListRegion').innerHTML=appList(getNetwork(ui.drawer.id));}
 function drawerSettings(n){
  return `<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"><div class="field-hint">仅用于显示；原始 SSID 为 ${esc(n.ssid)}。</div></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="100000" step="0.01"><span>GB</span></div><div class="field-hint">固定十进制 GB；留空或 0 表示不设额度。</div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month','每自然月',n.quotaPeriod)}${option('day','每天',n.quotaPeriod)}</select><div class="field-hint">按本地日期重置，不随页面筛选变化。</div></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div><div class="setting-desc">此网络的提醒还受全局提醒开关控制。</div></div>${toggle('notify',n.notify,'接近额度时提醒')}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><select class="input" id="warnPercent" name="warnPercent">${[50,75,80,90,95,100].map(v=>option(v,`已用额度的 ${v}%`,n.warnPercent)).join('')}${![50,75,80,90,95,100].includes(n.warnPercent)?option(n.warnPercent,`已用额度的 ${n.warnPercent}%`,n.warnPercent):''}</select></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div><div class="setting-desc">达到额度后由后端核对网络身份并断开当前连接。</div></div>${toggle('autoDisconnect',n.autoDisconnect,'达到额度后自动断开')}</div><div class="note-box warn" style="margin:18px 0">${icon('alert')}<div>达到额度后，后端会先确认当前连接的正是这个网络，再执行断开并复核结果。</div></div><div class="form-error" id="networkFormError" role="alert"></div><button class="btn primary" type="submit" style="width:100%">${icon('check')}保存网络设置</button></form>`;
 }
@@ -302,6 +316,7 @@ const actions={
  detail:e=>{networkDirty=false;openDrawer(e.dataset.id,e.dataset.tab||'usage');},
  'close-drawer':requestCloseDrawer,
  'drawer-tab':e=>{const change=()=>{networkDirty=false;ui.drawer.tab=e.dataset.tab;renderDrawer();$(`.drawer-tab[data-tab="${e.dataset.tab}"]`)?.focus();};if(networkDirty)confirmModal('放弃未保存的网络设置？','切换标签页将放弃当前表单中的更改。','放弃更改',change);else change();},
+ 'apps-expand':()=>{ui.drawer.appAll=!ui.drawer.appAll;renderAppList();$('#appListRegion [data-action="apps-expand"]')?.focus();},
  'close-modal':closeModal,
  confirm:async()=>{const fn=pendingConfirm;pendingConfirm=null;closeModal();if(fn)await fn();},
  export:()=>exportModal(), 'export-network':e=>exportModal(e.dataset.id),
@@ -343,6 +358,7 @@ document.addEventListener('change',async event=>{
  const e=event.target;
  if(e.id==='networkFilter'){ui.networkId=e.value;ui.historyPage=1;renderMain();}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
+ if(e.id==='appSort'){ui.drawer.appSort=e.value;renderAppList();}
  if(e.closest('#settingsForm')){settingsDirty=true;$('#settingsSaveHint').textContent='有尚未保存的更改。';}
  if(e.closest('#networkForm'))networkDirty=true;
 
@@ -350,6 +366,7 @@ document.addEventListener('change',async event=>{
 document.addEventListener('input',event=>{
  const e=event.target;
  if(e.id==='networkSearch'){ui.search=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
+ if(e.id==='appSearch'){ui.drawer.appSearch=e.value;ui.drawer.appAll=false;renderAppList();}
  if(e.id==='confirmText')$('#confirmAction').disabled=e.value!=='清空';
  if(e.closest('#settingsForm')){settingsDirty=true;if($('#settingsSaveHint'))$('#settingsSaveHint').textContent='有尚未保存的更改。';}
  if(e.closest('#networkForm'))networkDirty=true;

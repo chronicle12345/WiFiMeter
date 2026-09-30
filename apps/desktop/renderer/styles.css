@@ -54,3 +54,4 @@ svg.icon{width:19px;height:19px;stroke:currentColor;stroke-width:1.65;fill:none;
 /* Give the principal total a restrained blue emphasis. */
 .metric.featured .metric-number{color:var(--accent-dark)}
 
+.app-filters{display:flex;align-items:center;gap:12px;margin:20px 0 14px;flex-wrap:wrap}.app-filters .search-box{flex:1;min-width:150px}.app-list{list-style:none;margin:0;padding:0}.app-description{flex:1;min-width:0}.app-row .app-name{overflow-wrap:anywhere}.app-row .app-source{line-height:1.7}.app-row .progress{max-width:none}.app-row .app-value{flex-shrink:0}.app-row .app-value strong{font-weight:500}

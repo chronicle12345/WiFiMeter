@@ -109,6 +109,63 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
     await expect(page.locator('.settings-aside')).toContainText('本机数据库');
 });
 
+// 第一阶段单独验证应用展示：仅替换快照中的应用记录，网卡数据仍来自真实后端。
+// 原生应用采集接入后，另用进程夹具覆盖采集到 SQLite 再到界面的完整路径。
+async function applicationSnapshot(records) {
+    await page.evaluate(() => window.desktop.backend.request('setPaused', { paused: true }));
+    const response = await page.evaluate(() => window.desktop.backend.request('snapshot'));
+    const snapshot = response.result;
+    snapshot.appRecords = records.map(record => ({ networkId: snapshot.networks[0].id, ...record }));
+    await app.evaluate(({ ipcMain }, snapshot) => {
+        ipcMain.removeHandler('backend:request');
+        ipcMain.handle('backend:request', (_event, payload) => ({ ok: true,
+            result: payload.method === 'snapshot' ? snapshot : { protocol: 1 } }));
+    }, snapshot);
+    await page.reload();
+    await navigate('总览');
+    await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
+    await navigate('网络');
+    await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
+    await page.getByRole('tab', { name: '应用分布' }).click();
+}
+
+test('应用分布聚合、排序、搜索与展开，占比分母不随搜索改变', async () => {
+    const date = new Date().toLocaleDateString('en-CA');
+    const records = Array.from({ length: 12 }, (_, i) => ({ date, appId: `app-${i}`, name: `应用 ${i}`,
+        rxBytes: String((12 - i) * 1000000), txBytes: '0' }));
+    records.push({ date, appId: 'app-0', name: '应用 0', rxBytes: '1000000', txBytes: '20000000' });
+    await applicationSnapshot(records);
+    await expect(page.locator('.app-row')).toHaveCount(10);
+    await expect(page.locator('.app-row').first()).toContainText('应用 0');
+    await expect(page.locator('.app-row').first()).toContainText('33 MB');
+    await expect(page.locator('.app-row').first()).toContainText('33.3%');
+    await page.getByRole('button', { name: '显示全部应用' }).click();
+    await expect(page.locator('.app-row')).toHaveCount(12);
+    await page.locator('#appSort').selectOption('rx');
+    await page.locator('#appSearch').fill('应用 0');
+    await expect(page.locator('.app-row')).toHaveCount(1);
+    await expect(page.locator('.app-row')).toContainText('33.3%');
+    await expect(page.locator('#appSearch')).toBeFocused();
+    await page.locator('#appSearch').fill('不存在');
+    await expect(page.locator('#appListRegion')).toContainText('没有匹配的应用');
+    await page.locator('#appSearch').fill('');
+    await page.getByRole('tab', { name: '用量明细' }).click();
+    await expect(page.locator('.drawer-total .metric-number')).toContainText('3.60');
+});
+
+test('应用零用量、名称转义与历史无记录状态正常展示', async () => {
+    const date = new Date().toLocaleDateString('en-CA');
+    await applicationSnapshot([{ date, appId: 'zero', name: '<img src=x onerror=alert(1)>', rxBytes: '0', txBytes: '0' }]);
+    await expect(page.locator('.app-row')).toContainText('<img src=x onerror=alert(1)>');
+    await expect(page.locator('.app-row img')).toHaveCount(0);
+    await expect(page.locator('.app-row')).toContainText('0 B');
+    await expect(page.locator('.app-value')).toContainText('—');
+    await page.keyboard.press('Escape');
+    await applicationSnapshot([{ date: '2000-01-01', appId: 'old', name: '历史应用', rxBytes: '123', txBytes: '456' }]);
+    await expect(page.locator('.drawer')).toContainText('所选时段没有应用记录');
+    await expect(page.locator('.drawer')).not.toContainText('尚未采集');
+});
+
 test('采集状态显示真实网卡，暂停与恢复都由后端执行', async () => {
     await page.getByRole('button', { name: '采集状态' }).click();
     await expect(page.locator('.modal')).toContainText('采集器：运行中');
