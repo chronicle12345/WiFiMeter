@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const unpacked = path.join(repositoryRoot, 'dist/windows/win-unpacked');
-const applicationBinary = path.join(unpacked, 'WiFiMeter Demo.exe');
+const applicationBinary = path.join(unpacked, 'WiFiMeter.exe');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
 const bundledCapture = path.join(unpacked, 'resources/wifimeter-app-capture.exe');
 const installer = path.join(repositoryRoot, 'dist/windows/WiFiMeter-1.0.0-x64-Setup.exe');

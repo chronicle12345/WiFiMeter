@@ -91,7 +91,7 @@ jobs:
         shell: pwsh
         run: |
           $setup = 'dist/windows/WiFiMeter-1.0.0-x64-Setup.exe'
-          $app = 'dist/windows/win-unpacked/WiFiMeter Demo.exe'
+          $app = 'dist/windows/win-unpacked/WiFiMeter.exe'
           $backend = 'dist/windows/win-unpacked/resources/wifimeter-backend.exe'
           $capture = 'dist/windows/win-unpacked/resources/wifimeter-app-capture.exe'
           foreach ($path in @($setup, $app, $backend, $capture)) {

@@ -6,7 +6,7 @@
 //   Linux 主机：用 Zig 交叉编译后端（build-backend.mjs），再由 electron-builder 交叉打包，
 //               此时 NSIS 需要一个能运行 Windows 工具的运行时，因此用便携版 Wine。
 //
-// 两条路径产出同一个产品：WiFiMeter Demo，64 位，未签名，始终随包分发 wifimeter-backend.exe。
+// 两条路径产出同一个产品：WiFiMeter，64 位，未签名，始终随包分发 wifimeter-backend.exe。
 
 const path = require('node:path');
 

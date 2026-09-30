@@ -15,8 +15,8 @@ import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } fr
 import os from 'node:os';
 import path from 'node:path';
 
-const APP = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'WiFiMeter Demo', 'WiFiMeter Demo.exe');
-const BACKEND = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'WiFiMeter Demo', 'resources', 'wifimeter-backend.exe');
+const APP = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'WiFiMeter', 'WiFiMeter.exe');
+const BACKEND = path.join(process.env.LOCALAPPDATA ?? '', 'Programs', 'WiFiMeter', 'resources', 'wifimeter-backend.exe');
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 // 启动项名是 App User Model ID（Electron 用它作为登录项标识），不是产品名。
 const RUN_VALUE = 'io.wifimeter.demo';
@@ -97,7 +97,7 @@ function appLog() {
 }
 
 function stopEverything() {
-    spawnSync('taskkill', ['/IM', 'WiFiMeter Demo.exe', '/T', '/F'], { stdio: 'ignore' });
+    spawnSync('taskkill', ['/IM', 'WiFiMeter.exe', '/T', '/F'], { stdio: 'ignore' });
     spawnSync('taskkill', ['/IM', 'wifimeter-backend.exe', '/F'], { stdio: 'ignore' });
 }
 

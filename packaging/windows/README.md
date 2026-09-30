@@ -1,6 +1,6 @@
 # Windows 安装包：本机构建与在 Linux 上交叉编译
 
-生成带向导的 NSIS `.exe` 安装包。两条路径产出同一个产品 **WiFiMeter Demo**（64 位、未签名），
+生成带向导的 NSIS `.exe` 安装包。两条路径产出同一个产品 **WiFiMeter**（64 位、未签名），
 安装包里包含 Electron 应用与真正的采集后端 `wifimeter-backend.exe`。不使用 Docker。
 
 ## 打包
@@ -36,19 +36,20 @@ Zig 用自带的 clang 完成 `x86_64-windows-gnu` 的编译与链接，因此�
 
 ```text
 dist/windows/WiFiMeter-1.0.0-x64-Setup.exe
-dist/windows/win-unpacked/WiFiMeter Demo.exe
+dist/windows/win-unpacked/WiFiMeter.exe
 dist/windows/win-unpacked/resources/wifimeter-backend.exe
 ```
 
-安装包文件名跟随桌面应用 `package.json` 中的版本号变化。也可在 `apps/desktop/` 下执行 `npm run dist:windows`。
+安装包文件名跟随桌面应用 `package.json` 中的版本号变化。构建期间的中间包名为
+`wifimeter-1.0.0-x64.nsis.7z`，成功生成安装包后会清理。也可在 `apps/desktop/` 下执行 `npm run dist:windows`。
 
 ## 安装行为
 
-- 名称：**WiFiMeter Demo**；应用标识：`io.wifimeter.demo`。
-- 安装向导默认选择当前用户，默认目录为 `%LOCALAPPDATA%\Programs\WiFiMeter Demo`；可以选择安装目录。
+- 名称：**WiFiMeter**；应用标识：`io.wifimeter.demo`。
+- 安装向导默认选择当前用户，默认目录为 `%LOCALAPPDATA%\Programs\WiFiMeter`；可以选择安装目录。
 - 创建独立的桌面、开始菜单快捷方式与卸载入口。
 - 应用设置与采集记录保存在 `%APPDATA%\WiFiMeter Demo`，数据库是其中的 `wifimeter.db`；
-  与旧版隔离，卸载默认保留数据。主进程始终把该路径显式传给后端（`--db`），
+  沿用原有数据目录，升级后继续读取已有记录，卸载默认保留数据。主进程始终把该路径显式传给后端（`--db`），
   因此两个进程用的是同一个文件；后端自己运行时才使用
   `%LOCALAPPDATA%\WiFiMeter\wifimeter.db` 这个缺省值。
 - 采集真实网络：网卡状态与身份来自 WLAN API，累计流量来自 IP Helper；数据留在本机。
@@ -112,7 +113,7 @@ node packaging/windows/acceptance.mjs
 8. 打开托盘开关，确认关闭窗口只隐藏、托盘图标可恢复窗口、右键可退出。
 9. 设置一个很小的额度上限，确认收到系统通知；若开启超额断开，确认应用真的断开了那个网络，
    并在“采集状态”里能看到断开结果。
-10. 与旧版 WiFiMeter 同时安装和启动，确认安装目录、快捷方式和数据互不覆盖。
+10. 需要与旧版 WiFiMeter 共存时，选择不同的安装目录，确认快捷方式和数据互不覆盖。
 11. 从 Windows 应用列表卸载示例版，确认旧版仍可用，示例版用户数据保留。
 
 已知限制：频段显示为“未知”，因为 Win32 不通过 WLAN API 暴露当前信道。

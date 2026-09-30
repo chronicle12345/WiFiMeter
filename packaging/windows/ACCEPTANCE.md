@@ -28,7 +28,7 @@ node packaging/windows/acceptance.mjs
 
 下面 6 组是**只能由人在 Windows 上确认**的部分，自动脚本会明确跳过它们。
 
-## 已经验证过的（这台机器上实际跑过）
+## 旧版验证记录（当时产品名称为 WiFiMeter Demo）
 
 - [x] 安装向导：静默安装退出码 0，应用、随包后端与开始菜单快捷方式都正确创建；
 - [x] 应用能自己拉起随包后端并创建 `%APPDATA%\WiFiMeter Demo\wifimeter.db`；
@@ -55,7 +55,7 @@ node packaging/windows/acceptance.mjs
 dist\windows\WiFiMeter-1.0.0-x64-Setup.exe
 ```
 
-安装后的程序位于 `%LOCALAPPDATA%\Programs\WiFiMeter Demo`，数据位于
+安装后的程序位于 `%LOCALAPPDATA%\Programs\WiFiMeter`，数据位于
 `%APPDATA%\WiFiMeter Demo`。未签名，SmartScreen 可能提示「未知发布者」，
 选择「更多信息 → 仍要运行」。
 
@@ -70,8 +70,8 @@ dist\windows\WiFiMeter-1.0.0-x64-Setup.exe
 ## 1. 安装向导
 
 - [ ] 双击安装包，向导出现，语言可切换（中文/英文）。
-- [ ] 安装目录可改（默认 `%LOCALAPPDATA%\Programs\WiFiMeter Demo`）。
-- [ ] 安装完成后桌面与开始菜单都有 **WiFiMeter Demo** 快捷方式。
+- [ ] 安装目录可改（默认 `%LOCALAPPDATA%\Programs\WiFiMeter`）。
+- [ ] 安装完成后桌面与开始菜单都有 **WiFiMeter** 快捷方式。
 - [ ] 勾选「运行」后程序能直接启动。
 
 ## 2. 界面与真实数据
@@ -118,7 +118,7 @@ dist\windows\WiFiMeter-1.0.0-x64-Setup.exe
 
 ## 6. 与旧版共存
 
-- [ ] 与旧版 WiFiMeter 同时安装并启动，确认安装目录、快捷方式互不覆盖。
+- [ ] 需要与旧版 WiFiMeter 共存时，选择不同的安装目录，确认快捷方式互不覆盖。
 - [ ] 从「应用和功能」卸载示例版，确认旧版仍可用，示例版的数据目录保留。
 
 ## 7. 可选：一条命令跑系统级检查
@@ -139,7 +139,7 @@ Windows 桌面会话里直接跑即可：
 
 ```powershell
 npm run test:ui                                                    # 开发态
-$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter Demo.exe').Path
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter.exe').Path
 npm run test:ui                                                    # 打包产物
 Remove-Item Env:WIFIMETER_EXECUTABLE
 ```

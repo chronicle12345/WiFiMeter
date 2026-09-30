@@ -3,9 +3,9 @@ const { build } = require('../../apps/desktop/package.json');
 module.exports = {
     ...build,
     appId: 'io.wifimeter.demo',
-    productName: 'WiFiMeter Demo',
+    productName: 'WiFiMeter',
     directories: { ...build.directories, output: '../../dist/windows' },
-    extraMetadata: { name: 'wifimeter-demo', productName: 'WiFiMeter Demo' },
+    extraMetadata: { name: 'wifimeter', productName: 'WiFiMeter' },
     // 采集后端随包分发；主进程通过 resources/wifimeter-backend.exe 找到它。
     // 本机构建与交叉编译都产出到 build/windows/app/。
     extraResources: [
@@ -14,7 +14,7 @@ module.exports = {
     ],
     win: {
         target: [{ target: 'nsis', arch: ['x64'] }],
-        executableName: 'WiFiMeter Demo',
+        executableName: 'WiFiMeter',
         icon: 'assets/icon.ico',
         requestedExecutionLevel: 'asInvoker'
     },
@@ -26,8 +26,8 @@ module.exports = {
         allowToChangeInstallationDirectory: true,
         createDesktopShortcut: true,
         createStartMenuShortcut: true,
-        shortcutName: 'WiFiMeter Demo',
-        uninstallDisplayName: 'WiFiMeter Demo',
+        shortcutName: 'WiFiMeter',
+        uninstallDisplayName: 'WiFiMeter',
         runAfterFinish: true,
         installerLanguages: ['zh_CN', 'en_US'],
         artifactName: 'WiFiMeter-${version}-${arch}-Setup.${ext}'

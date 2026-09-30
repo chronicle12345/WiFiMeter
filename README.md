@@ -88,10 +88,9 @@ Download `WiFiMeter-1.0.0-x64-Setup.exe` from [Releases](https://github.com/shw9
 The installer is unsigned, so SmartScreen may report an unknown publisher — choose
 "More info" → "Run anyway".
 
-- Install directory: `%LOCALAPPDATA%\Programs\WiFiMeter Demo`
+- Install directory: `%LOCALAPPDATA%\Programs\WiFiMeter`
 - Data directory: `%APPDATA%\WiFiMeter Demo` (database `wifimeter.db`), kept on uninstall
-- Uses a different name, install directory and data directory from the original WPF application,
-  so both can coexist
+- Keeps the existing data directory; choose a different install directory when keeping the original WPF application
 
 ### Linux
 

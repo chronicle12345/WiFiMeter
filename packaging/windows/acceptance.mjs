@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const unpacked = path.join(repositoryRoot, 'dist/windows/win-unpacked');
-const appBinary = path.join(unpacked, 'WiFiMeter Demo.exe');
+const appBinary = path.join(unpacked, 'WiFiMeter.exe');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
 const devBackend = path.join(repositoryRoot, 'build/windows/app/wifimeter-backend.exe');
 const smokeTest = path.join(repositoryRoot, 'build/windows/tests/windows_smoke_test.exe');

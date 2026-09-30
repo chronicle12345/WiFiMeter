@@ -7,14 +7,13 @@
 // 不需要真的启动 Electron 就能验证，因此从主进程里抽出来并加测试。
 //
 // 名称与路径与打包文档一致（packaging/windows/README.md、apps/desktop/README.md）：
-//   * 应用名 / 产品名：Windows 上是 "WiFiMeter Demo"（与旧版 WPF 应用区分），
-//     其他平台是 "WiFiMeter"；
+//   * 应用名 / 产品名：各平台统一为 "WiFiMeter"；
 //   * App User Model ID：io.wifimeter.demo（Windows 通知与任务栏分组用）；
-//   * 数据目录：%APPDATA%\WiFiMeter Demo，与旧版隔离，卸载默认保留。
+//   * 数据目录：沿用 %APPDATA%\WiFiMeter Demo，升级后继续读取已有数据，卸载默认保留。
 
 const path = require('node:path');
 
-const WINDOWS_PRODUCT_NAME = 'WiFiMeter Demo';
+const WINDOWS_PRODUCT_NAME = 'WiFiMeter';
 const DEFAULT_PRODUCT_NAME = 'WiFiMeter';
 const WINDOWS_APP_ID = 'io.wifimeter.demo';
 const WINDOWS_DATA_DIRECTORY = 'WiFiMeter Demo';

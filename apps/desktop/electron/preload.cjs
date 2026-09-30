@@ -6,7 +6,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 // 不能引入 product.cjs。为了避免两处写法不一致，测试会加载本文件并比对
 // （tests/product.test.js 的「preload 暴露的产品名与产品身份一致」）。
 contextBridge.exposeInMainWorld('desktop', {
-    appName: process.platform === 'win32' ? 'WiFiMeter Demo' : 'WiFiMeter',
+    appName: 'WiFiMeter',
     saveFile: payload => ipcRenderer.invoke('files:save', payload),
     openBackup: () => ipcRenderer.invoke('files:open-backup'),
     backend: {

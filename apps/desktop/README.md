@@ -32,7 +32,7 @@ npm run dist:linux
 
 历史、网络备注、额度与偏好都存在用户数据目录下的 `wifimeter.db`（SQLite）。备份文件标记为 `wifimeter-backend-backup`，恢复前会校验该标记，避免把流量导出文件当成完整备份。
 
-Windows 使用名称 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo` 和独立数据目录 `%APPDATA%\WiFiMeter Demo`，避免覆盖旧版数据；后端默认数据库位于 `%LOCALAPPDATA%\WiFiMeter\wifimeter.db`，主进程始终显式传入 `--db`，因此界面与后端用的是同一个文件。
+Windows 使用名称 `WiFiMeter`，沿用应用标识 `io.wifimeter.demo` 和数据目录 `%APPDATA%\WiFiMeter Demo`，升级后继续读取已有记录；后端默认数据库位于 `%LOCALAPPDATA%\WiFiMeter\wifimeter.db`，主进程始终显式传入 `--db`，因此界面与后端用的是同一个文件。
 
 完整备份包含记录、备注、额度和偏好；恢复后采集暂停，避免当前计数差立刻覆盖刚恢复的历史。CSV/JSON 流量导出不能代替完整备份。自启动与托盘开关会写入系统（Windows 用“启动”目录，Linux 用 `~/.config/autostart`），额度提醒转成系统通知，超额断开由后端核对网络身份后真实执行。
 
@@ -59,7 +59,7 @@ WIFIMETER_EXECUTABLE="$PWD/dist/linux/linux-unpacked/wifimeter" npm run test:ui
 在 Windows PowerShell 中：
 
 ```powershell
-$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter Demo.exe').Path
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path '.\dist\windows\win-unpacked\WiFiMeter.exe').Path
 npm run test:ui
 ```
 

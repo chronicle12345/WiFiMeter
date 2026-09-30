@@ -76,9 +76,9 @@
 从 [Releases](https://github.com/shw940/WiFiMeter/releases) 下载 `WiFiMeter-1.0.0-x64-Setup.exe` 运行安装向导。
 安装包未签名，SmartScreen 可能提示「未知发布者」，选择「更多信息 → 仍要运行」。
 
-- 安装目录：`%LOCALAPPDATA%\Programs\WiFiMeter Demo`
+- 安装目录：`%LOCALAPPDATA%\Programs\WiFiMeter`
 - 数据目录：`%APPDATA%\WiFiMeter Demo`（数据库 `wifimeter.db`），卸载时保留
-- 与旧版 WPF 应用使用不同的名称、安装目录与数据目录，可以并存
+- 沿用已有数据目录；与旧版 WPF 应用并存时请选择不同的安装目录
 
 ### Linux
 

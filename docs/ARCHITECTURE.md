@@ -64,12 +64,12 @@ platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注
 - **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，再由 electron-builder 调用 NSIS，输出到 `dist/windows/`。
 - **Windows（在 Linux 上交叉编译）**：同一个入口改用 `packaging/windows/build-backend.mjs`（Zig 工具链）与便携版 Wine；工具链与缓存都在 `.cross-build/` 下，不提交。
 
-C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的 Demo 产品身份与数据目录，不读取 Linux 的运行组件路径。
+C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
 
-两个平台的产品身份互相独立：Windows 使用 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo`
+两个平台的产品名统一为 `WiFiMeter`：Windows 沿用应用标识 `io.wifimeter.demo`
 与数据目录 `%APPDATA%\WiFiMeter Demo`；Linux 使用 `WiFiMeter` 与标准的 XDG 目录。
-身份定义集中在 `apps/desktop/electron/product.cjs` 并有单元测试，改名或改路径会让老用户
-的数据看起来消失，因此不允许随手改动。
+身份定义集中在 `apps/desktop/electron/product.cjs` 并有单元测试；显示名称更新时保留
+Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
 
 数据目录之外，应用不写入任何用户可见的位置；`.github/workflows/` 下只有两条工作流：
 `desktop.yml`（Linux 上的后端测试与 Windows 交叉编译）与 `windows-app.yml`（Windows 本机

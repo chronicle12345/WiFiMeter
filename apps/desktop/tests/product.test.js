@@ -13,15 +13,15 @@ import { applyProductIdentity, productIdentityFor, productNameFor } from '../ele
 
 const require = createRequire(import.meta.url);
 
-test('产品名按平台区分，Windows 用 Demo 身份与旧版隔离', () => {
-    assert.equal(productNameFor('win32'), 'WiFiMeter Demo');
+test('各平台产品名统一为 WiFiMeter', () => {
+    assert.equal(productNameFor('win32'), 'WiFiMeter');
     assert.equal(productNameFor('linux'), 'WiFiMeter');
     assert.equal(productNameFor('darwin'), 'WiFiMeter');
 });
 
 test('Windows 的数据目录与 App User Model ID 固定', () => {
     const identity = productIdentityFor('win32', 'C:\\Users\\someone\\AppData\\Roaming');
-    assert.equal(identity.productName, 'WiFiMeter Demo');
+    assert.equal(identity.productName, 'WiFiMeter');
     assert.equal(identity.appUserModelId, 'io.wifimeter.demo');
     // 与旧版 WPF 应用的数据目录不同，卸载示例版不会影响旧版数据。
     assert.equal(identity.userDataPath, path.join('C:\\Users\\someone\\AppData\\Roaming', 'WiFiMeter Demo'));
@@ -42,8 +42,8 @@ test('applyProductIdentity 只设置该平台需要的项', () => {
         setPath: (key, value) => windowsCalls.paths.push([key, value])
     };
     const identity = applyProductIdentity(windowsApp, 'win32', 'C:\\AppData');
-    assert.equal(identity.productName, 'WiFiMeter Demo');
-    assert.deepEqual(windowsCalls.names, ['WiFiMeter Demo']);
+    assert.equal(identity.productName, 'WiFiMeter');
+    assert.deepEqual(windowsCalls.names, ['WiFiMeter']);
     assert.deepEqual(windowsCalls.appIds, ['io.wifimeter.demo']);
     assert.deepEqual(windowsCalls.paths, [['userData', path.join('C:\\AppData', 'WiFiMeter Demo')]]);
 
@@ -96,5 +96,5 @@ test('preload 暴露的产品名与产品身份一致', () => {
     // preload 与 product.cjs 必须给出同一个名字（这里跑在哪个平台就比哪个平台的值）。
     assert.equal(captured.api.appName, productNameFor(process.platform));
     if (process.platform === 'win32')
-        assert.equal(captured.api.appName, 'WiFiMeter Demo');
+        assert.equal(captured.api.appName, 'WiFiMeter');
 });
