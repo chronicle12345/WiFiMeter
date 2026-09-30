@@ -118,12 +118,12 @@ test('采集状态显示真实网卡，暂停与恢复都由后端执行', async
     // 暂停：后端停止采样，界面显示已暂停，并留下一段未结束的覆盖空档。
     await page.getByRole('button', { name: '暂停统计' }).click();
     await expect(page.locator('#collector')).toContainText('统计已暂停');
-    expect(query('SELECT COUNT(*) FROM coverage_gaps')).toBe('1');
+    await expect.poll(() => query('SELECT COUNT(*) FROM coverage_gaps')).toBe('1');
 
     // 恢复：空档被闭合。
     await page.getByRole('button', { name: '恢复统计' }).click();
     await expect(page.locator('#collector')).toContainText('正在采集');
-    expect(query("SELECT COUNT(*) FROM coverage_gaps WHERE ended_at <> ''")).toBe('1');
+    await expect.poll(() => query("SELECT COUNT(*) FROM coverage_gaps WHERE ended_at <> ''")).toBe('1');
 });
 
 test('修改网络备注与额度会写入数据库，重启后仍然保留', async () => {
@@ -136,7 +136,7 @@ test('修改网络备注与额度会写入数据库，重启后仍然保留', as
     await expect(page.locator('.drawer h2')).toHaveText('书房 Wi-Fi');
 
     // 落库校验：不只看界面。
-    expect(query("SELECT alias || '|' || cap_gb FROM networks WHERE alias <> ''")).toBe('书房 Wi-Fi|8.0');
+    await expect.poll(() => query("SELECT alias || '|' || cap_gb FROM networks WHERE alias <> ''")).toBe('书房 Wi-Fi|8.0');
 
     await app.close();
     await launch();
@@ -174,14 +174,14 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     await page.locator('#confirmText').fill('清空');
     await page.locator('.modal').getByRole('button', { name: '清空记录' }).click();
     await expectToast('记录已清空');
-    expect(query('SELECT COUNT(*) FROM daily_usage')).toBe('0');
+    await expect.poll(() => query('SELECT COUNT(*) FROM daily_usage')).toBe('0');
 
     await openDialog(backupFile);
     await page.getByRole('button', { name: '恢复', exact: true }).click();
     await page.locator('.modal').getByRole('button', { name: '确认恢复' }).click();
     await expectToast('已恢复备份');
-    expect(query('SELECT COUNT(*) FROM daily_usage')).toBe('1');
-    expect(query('SELECT alias FROM networks')).toBe('家里的 Wi-Fi');
+    await expect.poll(() => query('SELECT COUNT(*) FROM daily_usage')).toBe('1');
+    await expect.poll(() => query('SELECT alias FROM networks')).toBe('家里的 Wi-Fi');
 });
 
 test('开机启动开关按平台登记并取消', async () => {
@@ -226,16 +226,16 @@ test('偏好设置会落库并影响后端行为', async () => {
     await page.locator('select[name="retention"]').selectOption('30');
     await page.getByRole('button', { name: '保存设置' }).click();
     await expectToast('已保存偏好');
-    expect(query('SELECT retention_days FROM settings')).toBe('30');
+    await expect.poll(() => query('SELECT retention_days FROM settings')).toBe('30');
 
     await page.locator('select[name="interval"]').selectOption('10');
     await page.getByRole('button', { name: '保存设置' }).click();
-    expect(query('SELECT interval_seconds FROM settings')).toBe('10');
+    await expect.poll(() => query('SELECT interval_seconds FROM settings')).toBe('10');
 
     // 单位换算立刻反映在界面上。
     await page.locator('select[name="unit"]').selectOption('GiB');
     await page.getByRole('button', { name: '保存设置' }).click();
-    expect(query('SELECT unit FROM settings')).toBe('GiB');
+    await expect.poll(() => query('SELECT unit FROM settings')).toBe('GiB');
     await navigate('总览');
     await expect(page.locator('.metric.featured')).toContainText('GiB');
 });

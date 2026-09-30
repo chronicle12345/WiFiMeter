@@ -173,6 +173,10 @@ void reportsGlobalFailureWhenWlanUnavailable()
     WIFIMETER_CHECK(hasGlobalFailure(samples.failures, FailureKind::unavailable));
     // 取不到状态时不应该再去读计数。
     WIFIMETER_CHECK_EQ(system.counterCalls, 0);
+
+    const DisconnectReport disconnected = platform->disconnectIfAssociated("WLAN", "Home 5G");
+    WIFIMETER_CHECK(disconnected.outcome == DisconnectOutcome::unavailable);
+    WIFIMETER_CHECK(system.disconnectedInterfaces.empty());
 }
 
 void samplesAssociatedInterfacesWithCounters()

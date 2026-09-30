@@ -40,7 +40,8 @@ void readsTheRealSystemWithoutSideEffects()
     win::WindowsNetworkPlatform network(win::WindowsNetworkPlatform::Options{&system});
 
     const platform::LinkReport links = network.wirelessLinks();
-    if (hasFailure(links.failures, platform::FailureKind::unavailable))
+    const bool wlanUnavailable = hasFailure(links.failures, platform::FailureKind::unavailable);
+    if (wlanUnavailable)
     {
         // 这台机器没有运行 WLAN 服务（例如虚拟机、服务器或已禁用无线网卡）：
         // 计数与守卫检查仍然要过，适配器相关的断言跳过。
@@ -87,9 +88,11 @@ void readsTheRealSystemWithoutSideEffects()
         }
     }
 
-    // 真实系统上的守卫检查：不存在的网卡当前没有关联，只能得到“无需断开”。
+    // 服务不可用时无法判断关联状态，应如实返回 unavailable；
+    // 能查询服务时，不存在的网卡才应返回“未关联”。两种情况都不能执行断开。
     const platform::DisconnectReport report = network.disconnectIfAssociated("wifimeter-not-a-device", "not-a-network");
-    WIFIMETER_CHECK(report.outcome == platform::DisconnectOutcome::notAssociated);
+    const auto expected = wlanUnavailable ? platform::DisconnectOutcome::unavailable : platform::DisconnectOutcome::notAssociated;
+    WIFIMETER_CHECK(report.outcome == expected);
 
     // 采样必须是只读且可重复的：连续两次都要成功，且不因为异常而抛错。
     const platform::SampleReport samples = network.sampleWifi();
