@@ -10,7 +10,7 @@ $lock = $null
 try { $lock = [IO.File]::Open((Join-Path $directory 'collector.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
 catch [IO.IOException] { exit 0 }
 $self = Get-Process -Id $PID
-$status = [pscustomobject]@{ Running = $true; Healthy = $true; ProcessId = $PID; ProcessStartTicks = $self.StartTime.ToUniversalTime().Ticks; LaunchId = [guid]::NewGuid().ToString('N'); UpdatedAt = ''; Message = '正在初始化'; Connections = @(); DownloadPerSecond = 0.0; UploadPerSecond = 0.0; Error = ''; SkippedIntervals = 0; Alerts = @() }
+$status = [pscustomobject]@{ Running = $true; Healthy = $true; ProcessId = $PID; ProcessStartTicks = $self.StartTime.ToUniversalTime().Ticks; LaunchId = [guid]::NewGuid().ToString('N'); UpdatedAt = ''; Message = '正在初始化'; Connections = @(); Apps = @(); DownloadPerSecond = 0.0; UploadPerSecond = 0.0; Error = ''; SkippedIntervals = 0; Alerts = @() }
 $self.Dispose()
 $state = $null
 $proxyState = $null
@@ -115,6 +115,9 @@ try {
                 }
             }
         }
+        # Live per-application connection counts; connection numbers say nothing about bytes.
+        try { $status.Apps = @(Get-MeterAppConnections) }
+        catch { $status.Apps = @(); Write-CollectorLog ('Application connection sampling: ' + $_.Exception.Message) }
         # Proxy client observation: deduplicated connections through the configured proxy ports.
         $proxyPorts = @($preferences.Proxy.Ports)
         $proxyNames = @($preferences.Proxy.ProcessNames)

@@ -34,7 +34,7 @@ function Write-MeterJson {
 
 function Get-MeterStatus {
     param([string]$DataDirectory = (Get-MeterDataDirectory))
-    $result = [pscustomobject]@{ Running = $false; Healthy = $false; Message = '统计尚未启动'; ProcessId = 0; ProcessStartTicks = 0; LaunchId = ''; UpdatedAt = ''; Connections = @(); DownloadPerSecond = 0.0; UploadPerSecond = 0.0; Error = ''; SkippedIntervals = 0; Alerts = @() }
+    $result = [pscustomobject]@{ Running = $false; Healthy = $false; Message = '统计尚未启动'; ProcessId = 0; ProcessStartTicks = 0; LaunchId = ''; UpdatedAt = ''; Connections = @(); Apps = @(); DownloadPerSecond = 0.0; UploadPerSecond = 0.0; Error = ''; SkippedIntervals = 0; Alerts = @() }
     $path = Join-Path $DataDirectory 'status.json'
     $lockPath = Join-Path $DataDirectory 'collector.lock'
     if (-not [IO.File]::Exists($path) -and -not [IO.File]::Exists($lockPath)) { return $result }

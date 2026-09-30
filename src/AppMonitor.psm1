@@ -9,6 +9,9 @@ $script:ProxyMaxDays = 60
 $script:ProxyMaxKeysPerDay = 1024
 $script:ProxyMaxClientsPerDay = 48
 
+# Bound for the live per-application connection snapshot: rows analyzed per sample.
+$script:AppConnectionRowBudget = 512
+
 function Add-MeterTcpTableType {
     if (-not ('WiFiMeter.Networking.TcpTable' -as [type])) {
         Add-Type -Path (Join-Path $PSScriptRoot 'TcpTable.cs') -ErrorAction Stop
@@ -98,6 +101,35 @@ function Get-MeterProxyClientSample {
     }
 
     return [pscustomobject]@{ Clients = [object[]]$clients.ToArray() }
+}
+
+function Get-MeterAppConnections {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $false)][ValidateRange(1, 64)][int]$MaximumApps = 12)
+
+    # 每应用实时连接数：把已建立的 TCP 行按属主进程聚合。连接数只反映活跃程度，
+    # 不代表流量强度；未提权进程读不到每应用字节数，这里不做任何速率承诺。
+    $rows = @(Get-MeterTcpConnections)
+    if ($rows.Count -gt $script:AppConnectionRowBudget) {
+        $rows = @($rows | Select-Object -First $script:AppConnectionRowBudget)
+    }
+    $ownerIds = @($rows | ForEach-Object { [int]$_.OwningPid } | Select-Object -Unique)
+    $owners = Get-MeterProcessNames -ProcessIds $ownerIds
+
+    $counts = [Collections.Generic.Dictionary[string, long]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($row in $rows) {
+        try {
+            $ownerId = [int]$row.OwningPid
+            $name = ''
+            if ($owners.ContainsKey($ownerId)) { $name = [string]$owners[$ownerId] }
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($counts.ContainsKey($name)) { $counts[$name] += 1 } else { $counts[$name] = 1L }
+        } catch { }
+    }
+    return @($counts.GetEnumerator() |
+        Sort-Object -Property @{ Expression = 'Value'; Descending = $true }, Key |
+        Select-Object -First $MaximumApps |
+        ForEach-Object { [pscustomobject]@{ Name = [string]$_.Key; Connections = [long]$_.Value } })
 }
 
 function New-MeterProxyClientsState {
@@ -485,4 +517,4 @@ function Read-MeterProxySettings {
     return [pscustomobject]@{ ProcessNames = [string[]]$names.ToArray() }
 }
 
-Export-ModuleMember -Function Get-MeterProxyClientSample, Update-MeterProxyDay, Read-MeterProxyClients, Save-MeterProxyClients, Remove-MeterExpiredProxyDays, Repair-MeterProxyAttribution
+Export-ModuleMember -Function Get-MeterAppConnections, Get-MeterProxyClientSample, Update-MeterProxyDay, Read-MeterProxyClients, Save-MeterProxyClients, Remove-MeterExpiredProxyDays, Repair-MeterProxyAttribution

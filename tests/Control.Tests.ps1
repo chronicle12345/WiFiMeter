@@ -22,6 +22,11 @@ try {
     if ($actual.Count -ne 12 -or $actual.Message -cne '中文路径与空格') { throw 'FAIL: JSON did not round trip.' }
     Write-MeterJson -Path (Join-Path $dir 'roundtrip.json') -Value @{ Count = 20 }
     if ((Get-Content (Join-Path $dir 'roundtrip.json') -Raw | ConvertFrom-Json).Count -ne 20) { throw 'FAIL: replacement failed.' }
+    Write-MeterJson -Path (Join-Path $dir 'status.json') -Value @{ Running = $false; Healthy = $false; Message = 'stopped'; Apps = @(@{ Name = 'chrome'; Connections = 3 }) }
+    $withApps = Get-MeterStatus $dir
+    if (@($withApps.Apps).Count -ne 1 -or $withApps.Apps[0].Name -cne 'chrome' -or $withApps.Apps[0].Connections -ne 3) { throw 'FAIL: status did not transfer per-application connections.' }
+    Write-MeterJson -Path (Join-Path $dir 'status.json') -Value @{ Running = $false; Healthy = $false; Message = 'stopped' }
+    if (@((Get-MeterStatus $dir).Apps).Count -ne 0) { throw 'FAIL: status without an Apps field must default to an empty list.' }
     $expectedData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'WiFiMeter\data'
     if ((Get-MeterDataDirectory) -ine $expectedData) { throw 'FAIL: data location is not separate from installation.' }
     $fakeExecutable = Join-Path $temp 'WiFiMeter.exe'
@@ -42,7 +47,7 @@ try {
     if ((Get-MeterAutoStartInfo @registryOptions).Registered) { throw 'FAIL: startup disable failed.' }
     $approval = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($registryOptions.ApprovalSubKey)
     try { if ($approval.GetValue('WiFiMeter')[0] -ne 3) { throw 'FAIL: Windows approval record modified.' } } finally { $approval.Dispose() }
-    Write-Output 'PASS: atomic JSON, stale PID, unreadable active status, separate user data, GUI startup command, Windows disable detection, enable/disable isolation.'
+    Write-Output 'PASS: atomic JSON, stale PID, unreadable active status, separate user data, GUI startup command, Windows disable detection, enable/disable isolation, per-application status transfer.'
 } finally {
     [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($registryRoot, $false)
     if ((Test-Path $temp) -and ([IO.Path]::GetFullPath($temp).StartsWith([IO.Path]::GetFullPath($artifactDirectory).TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase))) {

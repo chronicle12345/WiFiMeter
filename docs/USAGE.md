@@ -30,6 +30,8 @@ Windows may report application activity later than the adapter counters, and the
 
 Traffic through a local proxy is attributed by Windows to the proxy process. In Settings you can enter the proxy's TCP ports and process names. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
 
+The collector also counts the connections each program currently holds and keeps the busiest programs in its status data. These counts are activity hints only: real-time per-application byte rates would need administrator-level Windows counters that this app does not use, so no live rates are shown, and a program's connection count can diverge from its actual traffic.
+
 ## Retention
 
 Open Settings and enter how many local calendar days to keep. Today counts as one day; 0 keeps all metered daily records. Cleanup runs when collection starts, when the setting changes, and after the date changes. The recovery copy and generated CSV files are refreshed as well. A locked CSV refreshes after the other program releases it.

@@ -206,6 +206,38 @@ try {
         $untouched = Repair-MeterProxyAttribution -Result $unavailable -DataDirectory $directory -UnattributedName 'Via proxy'
         Assert-Equal $untouched.MessageCode 'Unavailable' 'Unavailable queries must pass through unchanged.'
     }
+    Invoke-MonitorTest 'Live app connections aggregate rows by owner and keep the busiest first' {
+        param($module, $directory)
+        & $module {
+            param($Rows, $Owners)
+            $script:TestRows = $Rows
+            $script:TestOwners = $Owners
+        } @(
+            (New-Row '127.0.0.1' 10001 '93.184.216.34' 443 222 $false),
+            (New-Row '127.0.0.1' 10002 '93.184.216.34' 443 222 $false),
+            (New-Row '127.0.0.1' 10003 '93.184.216.34' 443 222 $false),
+            (New-Row '127.0.0.1' 10004 '93.184.216.34' 443 333 $false),
+            (New-Row '127.0.0.1' 10005 '93.184.216.34' 443 999 $false)
+        ) @{ 222 = 'chrome'; 333 = 'msedge' }
+        $apps = @(Get-MeterAppConnections)
+        Assert-Equal @($apps).Count 2 'Unowned rows must not create applications.'
+        Assert-Equal $apps[0].Name 'chrome'
+        Assert-Equal $apps[0].Connections 3L
+        Assert-Equal $apps[1].Name 'msedge'
+        $limited = @(Get-MeterAppConnections -MaximumApps 1)
+        Assert-Equal @($limited).Count 1 'The snapshot must honor the requested size.'
+    }
+    Invoke-MonitorTest 'Live app connections analyze a bounded number of rows' {
+        param($module, $directory)
+        & $module {
+            param($Rows, $Owners)
+            $script:TestRows = $Rows
+            $script:TestOwners = $Owners
+        } @(1..600 | ForEach-Object { New-Row '127.0.0.1' (20000 + $_) '93.184.216.34' 443 222 $false }) @{ 222 = 'chrome' }
+        $apps = @(Get-MeterAppConnections)
+        Assert-Equal @($apps).Count 1
+        Assert-Equal $apps[0].Connections 512L 'At most 512 rows feed the snapshot.'
+    }
     if ($Live) {
         $module = Import-Module $modulePath -Force -PassThru
         try {
