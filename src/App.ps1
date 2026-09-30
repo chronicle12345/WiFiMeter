@@ -51,6 +51,7 @@ try {
     $script:liveAppsKey = ''
     $script:liveUsageQuery = @{ Worker = $null; Pending = $null; Poll = $null; Ssid = ''; Rows = @(); MessageKey = '' }
     $script:wiredNameCache = @{ Time = [datetime]::MinValue; Map = $null }
+    $script:trendData = $null
 
     function Format-MeterError([string]$Message, [string]$Context = 'Action') {
         if (-not $script:isReadOnly -and $script:lastLoggedError -cne $Message) {
@@ -87,7 +88,7 @@ try {
     }
     $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'MainWindow.xaml'))
     try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
-    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList')
+    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'EmptyTitle', 'EmptyDetail', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TrendView', 'TrendHost', 'TrendCanvas', 'TrendPlaceholder', 'TrendXStart', 'TrendXMid', 'TrendXEnd', 'NetworkSearch', 'NetworkSearchHint', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList')
     foreach ($name in $names) { Set-Variable -Scope Script -Name $name -Value $window.FindName($name) }
     function Update-MeterLocalizedControls {
         foreach ($key in $script:strings.Keys) { $window.Resources[$key] = $script:strings[$key] }
@@ -295,6 +296,113 @@ try {
         $LiveAppsHint.Visibility = if ($hintVisible -or $items.Count -eq 0) { 'Visible' } else { 'Collapsed' }
     }
 
+    function Format-MeterAxisBytes([double]$Bytes) {
+        if ($Bytes -ge 1e9) { return ('{0:0.#}' -f ($Bytes / 1e9)) + ' GB' }
+        if ($Bytes -ge 1e6) { return ('{0:0.#}' -f ($Bytes / 1e6)) + ' MB' }
+        if ($Bytes -ge 1e3) { return ('{0:0.#}' -f ($Bytes / 1e3)) + ' KB' }
+        return ('{0:0.#}' -f $Bytes) + ' B'
+    }
+
+    function Add-MeterTrendSeries {
+        param([Windows.Media.PointCollection]$Points, [string]$BrushKey, [double]$FillOpacity, [double]$Bottom)
+        if ($Points.Count -eq 0) { return }
+        $brush = $window.Resources[$BrushKey]
+        $area = [Windows.Media.PathGeometry]::new()
+        $areaFigure = [Windows.Media.PathFigure]::new()
+        $areaFigure.StartPoint = $Points[0]
+        $areaFigure.Segments.Add([Windows.Media.PolyLineSegment]::new($Points, $true))
+        $areaFigure.Segments.Add([Windows.Media.LineSegment]::new([Windows.Point]::new($Points[$Points.Count - 1].X, $Bottom), $true))
+        $areaFigure.Segments.Add([Windows.Media.LineSegment]::new([Windows.Point]::new($Points[0].X, $Bottom), $true))
+        $areaFigure.IsClosed = $true
+        $area.Figures.Add($areaFigure)
+        $areaPath = [Windows.Shapes.Path]::new()
+        $areaPath.Data = $area
+        $areaPath.Fill = $brush
+        $areaPath.Opacity = $FillOpacity
+        [void]$TrendCanvas.Children.Add($areaPath)
+        $line = [Windows.Media.PathGeometry]::new()
+        $lineFigure = [Windows.Media.PathFigure]::new()
+        $lineFigure.StartPoint = $Points[0]
+        $lineFigure.Segments.Add([Windows.Media.PolyLineSegment]::new($Points, $true))
+        $line.Figures.Add($lineFigure)
+        $linePath = [Windows.Shapes.Path]::new()
+        $linePath.Data = $line
+        $linePath.Stroke = $brush
+        $linePath.StrokeThickness = 2
+        $linePath.StrokeLineJoin = 'Round'
+        $linePath.StrokeStartLineCap = 'Round'
+        $linePath.StrokeEndLineCap = 'Round'
+        [void]$TrendCanvas.Children.Add($linePath)
+    }
+
+    function Update-MeterTrend {
+        # Hand-drawn daily series on the canvas; skipped when data or size is unchanged.
+        $TrendCanvas.Children.Clear()
+        $TrendPlaceholder.Visibility = 'Collapsed'
+        $days = @()
+        if ($null -ne $script:trendData -and $null -ne $script:trendData.Days) { $days = @($script:trendData.Days) }
+        $width = $TrendCanvas.ActualWidth
+        $height = $TrendCanvas.ActualHeight
+        if ($days.Count -lt 2 -or $width -le 60 -or $height -le 20) {
+            $TrendXStart.Text = ''; $TrendXMid.Text = ''; $TrendXEnd.Text = ''
+            $TrendPlaceholder.Visibility = 'Visible'
+            return
+        }
+        $left = 46.0
+        $right = $width - 6.0
+        $top = 8.0
+        $bottom = $height - 6.0
+        $spanStart = [datetime]$script:trendData.SpanStart
+        $spanEnd = [datetime]$script:trendData.SpanEnd
+        $spanDays = [Math]::Max(1.0, ($spanEnd - $spanStart).TotalDays)
+        [double]$maxBytes = 1
+        foreach ($day in $days) { $maxBytes = [Math]::Max($maxBytes, [Math]::Max([double]$day.RxBytes, [double]$day.TxBytes)) }
+        $magnitude = [Math]::Pow(10, [Math]::Floor([Math]::Log10($maxBytes)))
+        $normalized = $maxBytes / $magnitude
+        $nice = if ($normalized -le 1) { 1.0 } elseif ($normalized -le 2) { 2.0 } elseif ($normalized -le 5) { 5.0 } else { 10.0 }
+        $topValue = $nice * $magnitude
+        $gridBrush = $window.Resources['DividerSoft']
+        for ($i = 0; $i -le 4; $i++) {
+            $y = [Math]::Round($bottom - ($bottom - $top) * $i / 4.0) + 0.5
+            $gridLine = [Windows.Shapes.Line]::new()
+            $gridLine.X1 = $left; $gridLine.Y1 = $y; $gridLine.X2 = $right; $gridLine.Y2 = $y
+            $gridLine.Stroke = $gridBrush
+            $gridLine.StrokeThickness = 1
+            [void]$TrendCanvas.Children.Add($gridLine)
+        }
+        for ($i = 0; $i -le 2; $i++) {
+            $value = $topValue * (2 - $i) / 2.0
+            $label = [Windows.Controls.TextBlock]::new()
+            $label.Text = Format-MeterAxisBytes $value
+            $label.FontSize = 9
+            $label.Foreground = $window.Resources['Faint']
+            $label.Width = 38
+            $label.TextAlignment = 'Right'
+            [void]$TrendCanvas.Children.Add($label)
+            [Windows.Controls.Canvas]::SetLeft($label, 2)
+            [Windows.Controls.Canvas]::SetTop($label, [Math]::Round($top + ($bottom - $top) * $i / 2.0) - 6)
+        }
+        foreach ($series in @(@{ Key = 'RxBytes'; BrushKey = 'DownloadBrush'; Opacity = 0.14 }, @{ Key = 'TxBytes'; BrushKey = 'UploadBrush'; Opacity = 0.12 })) {
+            $points = [Windows.Media.PointCollection]::new()
+            foreach ($day in $days) {
+                $date = [datetime]::ParseExact($day.Date, 'yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+                $x = $left + ($right - $left) * ($date - $spanStart).TotalDays / $spanDays
+                $y = $bottom - ($bottom - $top) * ([double]$day.($series.Key)) / $topValue
+                $points.Add([Windows.Point]::new($x, $y))
+            }
+            Add-MeterTrendSeries -Points $points -BrushKey $series.BrushKey -FillOpacity $series.Opacity -Bottom $bottom
+        }
+        $TrendXStart.Text = $spanStart.ToString('yyyy-MM-dd')
+        $TrendXMid.Text = if ($spanDays -ge 3) { $spanStart.AddDays($spanDays / 2.0).ToString('yyyy-MM-dd') } else { '' }
+        $TrendXEnd.Text = $spanEnd.ToString('yyyy-MM-dd')
+    }
+
+    function Set-MeterViewMode([string]$Mode) {
+        $ChartList.Visibility = if ($Mode -ceq 'Chart') { 'Visible' } else { 'Collapsed' }
+        $TrafficTable.Visibility = if ($Mode -ceq 'Table') { 'Visible' } else { 'Collapsed' }
+        $TrendHost.Visibility = if ($Mode -ceq 'Trend') { 'Visible' } else { 'Collapsed' }
+    }
+
     function Get-CurrentMeterRange {
         @{ Period = $script:periodKey; StartDate = $script:rangeStart; EndDate = $script:rangeEnd }
     }
@@ -321,9 +429,22 @@ try {
                 $script:dataStamp = $stamp
             }
             $range = Get-CurrentMeterRange
-            $key = $stamp + '|' + $range.Period + '|' + $range.StartDate.Ticks + '|' + $range.EndDate.Ticks + '|' + [DateTime]::Today.Ticks
+            $searchText = [string]$NetworkSearch.Text
+            $key = $stamp + '|' + $range.Period + '|' + $range.StartDate.Ticks + '|' + $range.EndDate.Ticks + '|' + [DateTime]::Today.Ticks + '|' + $searchText
             if ($script:renderKey -ne $key) {
-                $rows = @(Get-MeterRows -State $script:cachedState @range)
+                $allRows = @(Get-MeterRows -State $script:cachedState @range)
+                $rows = $allRows
+                # The search filters what the chart and table show; filtering is a
+                # case-insensitive substring match on the display name and the SSID.
+                if ($searchText) {
+                    $searchAliases = Get-MeterNetworkAliasMap
+                    $searchWired = Get-MeterWiredNameMap
+                    $rows = @(foreach ($row in $rows) {
+                        $display = Resolve-MeterNetworkDisplayName -SSID $row.SSID -Aliases $searchAliases -WiredNames $searchWired
+                        if ($display.IndexOf($searchText, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                            $row.SSID.IndexOf($searchText, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $row }
+                    })
+                }
                 [double]$download = 0; [double]$upload = 0
                 [double]$maximum = 1
                 if ($rows.Count -gt 0) { $maximum = [Math]::Max(1, [double]$rows[0].TotalBytes) }
@@ -353,9 +474,33 @@ try {
                 $DownloadValue.Text = Format-MeterGigabytes $download
                 $UploadValue.Text = Format-MeterGigabytes $upload
                 $NetworkCount.Text = (Text-Meter 'NetworkCount') -f $rows.Count
-                $EmptyState.Visibility = if ($rows.Count -eq 0) { 'Visible' } else { 'Collapsed' }
+                if ($rows.Count -eq 0) {
+                    $EmptyState.Visibility = 'Visible'
+                    # A filled range with no search hits gets its own message.
+                    if ($allRows.Count -gt 0) { $EmptyTitle.Text = Text-Meter 'NoMatchTitle'; $EmptyDetail.Text = Text-Meter 'NoMatchDetail' }
+                    else { $EmptyTitle.Text = Text-Meter 'EmptyTitle'; $EmptyDetail.Text = Text-Meter 'EmptyDetail' }
+                } else {
+                    $EmptyState.Visibility = 'Collapsed'
+                    $EmptyTitle.Text = Text-Meter 'EmptyTitle'
+                    $EmptyDetail.Text = Text-Meter 'EmptyDetail'
+                }
                 $caption = switch ($range.Period) { 'Today' { Text-Meter 'Today' }; 'Month' { Text-Meter 'Month' }; 'Range' { (Text-Meter 'RangeCaption') -f $range.StartDate.ToString('yyyy-MM-dd'), $range.EndDate.ToString('yyyy-MM-dd') }; default { Text-Meter 'AllTime' } }
                 $RangeCaption.Text = $caption + (Text-Meter 'Sorted')
+                # Trend series: per-day totals of the same range, drawn when the view is visible.
+                $script:trendData = $null
+                $trendDays = @()
+                try { $trendDays = @(Get-MeterDailyTotals -State $script:cachedState @range) } catch { $trendDays = @() }
+                if ($trendDays.Count -gt 0) {
+                    $spanStart = switch ($range.Period) {
+                        'Month' { [DateTime]::Today.AddDays(1 - [DateTime]::Today.Day) }
+                        'Range' { $range.StartDate }
+                        default { [datetime]::ParseExact($trendDays[0].Date, 'yyyy-MM-dd', [cultureinfo]::InvariantCulture) }
+                    }
+                    $spanEnd = if ($range.Period -ceq 'Range') { $range.EndDate } else { [DateTime]::Today }
+                    if ($spanEnd -lt $spanStart) { $spanEnd = $spanStart }
+                    $script:trendData = @{ Days = $trendDays; SpanStart = $spanStart; SpanEnd = $spanEnd }
+                }
+                if ($TrendHost.Visibility -ceq 'Visible') { Update-MeterTrend }
                 $script:renderKey = $key
             }
             Refresh-MeterStatus
@@ -479,8 +624,14 @@ try {
     }
     $LanguageEnglish.Add_Checked({ Set-MeterUiLanguage 'en' })
     $LanguageChinese.Add_Checked({ Set-MeterUiLanguage 'zh-CN' })
-    $ChartView.Add_Checked({ $ChartList.Visibility = 'Visible'; $TrafficTable.Visibility = 'Collapsed' })
-    $TableView.Add_Checked({ $ChartList.Visibility = 'Collapsed'; $TrafficTable.Visibility = 'Visible' })
+    $ChartView.Add_Checked({ Set-MeterViewMode 'Chart' })
+    $TrendView.Add_Checked({ Set-MeterViewMode 'Trend' })
+    $TableView.Add_Checked({ Set-MeterViewMode 'Table' })
+    $TrendCanvas.Add_SizeChanged({ if ($TrendHost.Visibility -ceq 'Visible') { Update-MeterTrend } })
+    $NetworkSearch.Add_TextChanged({
+        $NetworkSearchHint.Visibility = if ([string]::IsNullOrEmpty($NetworkSearch.Text)) { 'Visible' } else { 'Collapsed' }
+        Refresh-MeterView
+    })
     $LiveConnections.Add_Checked({ $script:liveMode = 'Connections'; Update-MeterLiveAppsPanel })
     $LiveUsage.Add_Checked({ $script:liveMode = 'Usage'; Enter-MeterLiveUsageMode; Update-MeterLiveAppsPanel })
     $AutoStart.Add_Click({

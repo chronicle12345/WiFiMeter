@@ -12,6 +12,8 @@ Windows 10 or 11, Windows PowerShell 5.1 and .NET Framework 4.7.2 or later are r
 
 Choose All time, Today or This month. Custom dates opens a calendar dialog: select both dates and apply them. Both endpoints are included. Cancel keeps the previous range. The chart, table and CSV export use the selected range, with no top-network limit.
 
+The card can also draw a trend: a per-day download and upload line chart for the selected range across the listed networks. Ranges with fewer than two days of data show a placeholder instead of a line. The search field filters the network list as you type, matching display names and SSIDs without case sensitivity; the summary cards, the network count and the chart or table then reflect the filtered networks, while CSV export always covers the whole selected range.
+
 Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. The details dialog shows the original identity: Wi-Fi SSIDs unchanged and wired adapters under their reserved `Ethernet:` identity. The network list and CSV exports show wired adapters under their Windows connection name, or the alias you set for that identity, whenever this machine can identify the adapter; otherwise the raw `Ethernet:` identity is used. Wi-Fi SSIDs are always exported unchanged. Identical SSIDs share totals; names with different letter case remain separate.
 
 ## Traffic limits

@@ -97,6 +97,17 @@ function Test-LiveMeterWindow {
     Assert-Ui (@($buttonTemplate.Triggers | Where-Object { $_ -is [Windows.Trigger] -and $_.Property -ceq [Windows.Controls.Control]::IsKeyboardFocusedProperty }).Count -gt 0) 'Buttons must show a keyboard focus indicator.'
     Write-Host 'PASS the design tokens keep the palette, radii and interaction states consistent'
 
+    $script:NetworkSearch.Text = 'studio'
+    Assert-Ui ($script:chartList.Items.Count -eq 1 -and $script:trafficTable.Items.Count -eq 1) 'Searching must filter chart and table together, ignoring case.'
+    Assert-Ui ($script:displayRows[0].SSID -ceq '工作室 · Studio') 'The filtered row must keep its original SSID identity.'
+    $script:NetworkSearch.Text = 'zzz-no-network'
+    Assert-Ui ($script:chartList.Items.Count -eq 0 -and $script:emptyState.Visibility -eq 'Visible') 'No search match must show the empty state.'
+    Assert-Ui ($script:EmptyTitle.Text -match 'matches your search') 'No match must use the search-specific empty message.'
+    $script:NetworkSearch.Text = ''
+    Assert-Ui ($script:chartList.Items.Count -eq 12 -and $script:emptyState.Visibility -ceq 'Collapsed') 'Clearing the search must restore every network.'
+    Assert-Ui ($script:EmptyTitle.Text -match 'No usage recorded yet') 'Clearing the search must restore the original empty message.'
+    Write-Host 'PASS the search filters chart and table with a distinct no-match state'
+
     Assert-Ui ($null -eq $script:window.FindName('DateControls')) 'Date selection must appear in its dialog, not a separate main-window row.'
     $dateDialog = New-MeterDateDialog
     $dateDialog.From.SelectedDate = [DateTime]::Today
@@ -217,6 +228,22 @@ function Test-LiveMeterWindow {
     $exportTotal = ($csv | ForEach-Object { [decimal]$_.'总计_GB' } | Measure-Object -Sum).Sum
     Assert-Ui ([Math]::Abs($exportTotal - $rangeTotal / 1e9) -lt 0.000001) 'Export must use the same inclusive range as the chart and table.'
     Write-Host 'PASS date filter, chart, table, totals and export use the same range'
+
+    $script:TrendView.IsChecked = $true
+    $script:window.UpdateLayout()
+    Assert-Ui ($script:TrendHost.Visibility -ceq 'Visible' -and $script:chartList.Visibility -ceq 'Collapsed' -and $script:trafficTable.Visibility -ceq 'Collapsed') 'Selecting the trend view must show only the trend canvas.'
+    Assert-Ui ($script:TrendPlaceholder.Visibility -ceq 'Visible') 'A single-day range must degrade to the trend placeholder.'
+    $script:periodKey = 'All'
+    Refresh-MeterView
+    $script:window.UpdateLayout()
+    $script:chartList.Dispatcher.Invoke([Action]{}, [Windows.Threading.DispatcherPriority]::ContextIdle)
+    Assert-Ui ($script:TrendPlaceholder.Visibility -ceq 'Collapsed') 'The all-time range must render the trend.'
+    Assert-Ui ($script:TrendCanvas.Children.Count -ge 6) 'The trend must draw grid lines, axis labels and both series.'
+    Assert-Ui ($script:TrendXStart.Text -match '\d{4}-\d{2}-\d{2}' -and $script:TrendXEnd.Text -match '\d{4}-\d{2}-\d{2}') 'The trend must label its date span.'
+    $script:ChartView.IsChecked = $true
+    $script:window.UpdateLayout()
+    Assert-Ui ($script:chartList.Visibility -ceq 'Visible' -and $script:TrendHost.Visibility -ceq 'Collapsed') 'Switching back must restore the chart view.'
+    Write-Host 'PASS the trend view degrades on short ranges and draws both daily series'
 
     foreach ($filename in @('state.json', 'usage.csv', 'daily.csv', 'program.ps1')) {
         $rejected = $false

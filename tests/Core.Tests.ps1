@@ -378,6 +378,49 @@ try {
         $null = Export-MeterRangeCsv -State (New-MeterState) -Path $empty -Period All -NetworkNames @{ $wiredMapped = '主板网卡' }
         Assert-True ([IO.File]::ReadAllText($empty).Contains('"Wi-Fi","下载_GB","上传_GB","总计_GB"')) 'Empty CSV must retain columns.'
     }
+    Test-Case 'daily totals aggregate every network per day' {
+        $state = New-MeterState; $session = New-MeterSession
+        $day1 = Local-Time '2026-09-19 10:00:00'
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 100 10), (Sample 'b' 'Office' 500 50)) $day1
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 1100 110), (Sample 'b' 'Office' 1500 150)) $day1.AddSeconds(5)
+        $day2 = Local-Time '2026-09-20 09:00:00'
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 2100 210)) $day2
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 3100 310)) $day2.AddSeconds(5)
+        $totals = @(Get-MeterDailyTotals $state)
+        Assert-True ($totals.Count -eq 2) 'Two traffic days must produce two totals.'
+        Assert-Equal $totals[0].Date '2026-09-19' 'Totals must be sorted by date.'
+        Assert-Equal $totals[0].RxBytes 2000L 'Same-day bytes from all networks must add up.'
+        Assert-Equal $totals[0].TxBytes 200L 'Same-day upload from all networks must add up.'
+        Assert-Equal $totals[0].TotalBytes 2200L 'Daily totals must expose their sum.'
+        # The overnight gap re-establishes the baseline; the second sample counts alone.
+        Assert-Equal $totals[1].RxBytes 1000L 'A later day must be its own total.'
+    }
+    Test-Case 'daily totals follow the same range semantics as rows' {
+        $state = Seed-RangeState
+        $today = Local-Time '2026-09-02 12:00:00'
+        $all = @(Get-MeterDailyTotals $state -Period All -Now $today)
+        Assert-True ($all.Count -eq 4) 'All-time totals must include every day.'
+        $month = @(Get-MeterDailyTotals $state -Period Month -Now $today)
+        Assert-True ($month.Count -eq 2) 'Monthly totals must start at the first of the month.'
+        Assert-Equal $month[0].Date '2026-09-01' 'Monthly totals must begin on the month boundary.'
+        $range = @(Get-MeterDailyTotals $state -Period Range -StartDate ([datetime]'2026-08-31') -EndDate ([datetime]'2026-09-01') -Now $today)
+        Assert-True ($range.Count -eq 2) 'Range totals must include both endpoints.'
+        Assert-Equal $range[0].Date '2026-08-31' 'Range totals must start on the requested start date.'
+        $single = @(Get-MeterDailyTotals $state -Period Today -Now $today)
+        Assert-True ($single.Count -eq 1 -and $single[0].Date -ceq '2026-09-02') 'Today totals must cover only the current day.'
+        Assert-True (@(Get-MeterDailyTotals (New-MeterState)).Count -eq 0) 'Empty state must produce no totals.'
+        Assert-Throws { Get-MeterDailyTotals $state -Period Range -StartDate ([datetime]'2026-09-01') -EndDate ([datetime]'2026-08-31') -Now $today } '开始日期不能晚于结束日期'
+        Assert-Throws { Get-MeterDailyTotals $state -Period Range -Now $today } '自选日期范围需要同时提供'
+    }
+    Test-Case 'daily totals include wired identities like the network rows' {
+        $state = New-MeterState; $session = New-MeterSession
+        $time = Local-Time '2026-09-19 10:00:00'
+        $wiredSsid = 'Ethernet:01234567-89ab-cdef-0123-456789abcdef'
+        $null = Add-MeterSamples $state $session @((Sample 'a' $wiredSsid 100 10)) $time
+        $null = Add-MeterSamples $state $session @((Sample 'a' $wiredSsid 1100 110)) $time.AddSeconds(5)
+        $totals = @(Get-MeterDailyTotals $state)
+        Assert-True ($totals.Count -eq 1 -and $totals[0].TotalBytes -eq 1100L) 'Wired traffic must appear in the daily totals like in the table.'
+    }
 } finally {
     foreach ($dir in $script:TempDirectories) {
         $resolved = [IO.Path]::GetFullPath($dir)

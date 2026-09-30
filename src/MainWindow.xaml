@@ -384,11 +384,22 @@
             <RowDefinition Height="26" />
           </Grid.RowDefinitions>
           <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Top" Margin="0,5,0,0">
               <TextBlock Text="{DynamicResource NetworkUsage}" FontSize="14" FontWeight="SemiBold" />
               <TextBlock x:Name="NetworkCount" Text="{DynamicResource NoNetworks}" Foreground="{StaticResource Faint}" FontSize="11" Margin="12,2,0,0" />
             </StackPanel>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Border Grid.Column="1" Background="{StaticResource SegmentTrack}" CornerRadius="8" MaxWidth="240" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="18,2,0,0">
+              <Grid>
+                <TextBox x:Name="NetworkSearch" Background="Transparent" BorderThickness="0" Padding="10,5" VerticalAlignment="Center" AutomationProperties.Name="{DynamicResource SearchAccessible}" />
+                <TextBlock x:Name="NetworkSearchHint" Text="{DynamicResource SearchNetworks}" Foreground="{StaticResource Faint}" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+              </Grid>
+            </Border>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
               <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,20,0">
                 <Ellipse Width="6" Height="6" Fill="{StaticResource DownloadBrush}" Margin="0,0,5,0" />
                 <TextBlock Text="{DynamicResource Download}" FontSize="10" Foreground="{StaticResource Muted}" />
@@ -398,6 +409,7 @@
               <Border Background="{StaticResource SegmentTrack}" CornerRadius="8" Padding="2" VerticalAlignment="Top">
                 <StackPanel Orientation="Horizontal">
                   <RadioButton x:Name="ChartView" GroupName="View" Style="{StaticResource Segment}" Content="{DynamicResource Chart}" Padding="12,0" Height="28" IsChecked="True" />
+                  <RadioButton x:Name="TrendView" GroupName="View" Style="{StaticResource Segment}" Content="{DynamicResource Trend}" Padding="12,0" Height="28" />
                   <RadioButton x:Name="TableView" GroupName="View" Style="{StaticResource Segment}" Content="{DynamicResource Details}" Padding="12,0" Height="28" />
                 </StackPanel>
               </Border>
@@ -484,10 +496,23 @@
                 <DataGridTextColumn Binding="{Binding TotalGB, StringFormat=N3}" Width="118" ElementStyle="{StaticResource NumericCell}" />
               </DataGrid.Columns>
             </DataGrid>
+            <Grid x:Name="TrendHost" Visibility="Collapsed" AutomationProperties.Name="{DynamicResource TrendAccessible}">
+              <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <Canvas x:Name="TrendCanvas" Margin="4,6,4,0" />
+              <TextBlock x:Name="TrendPlaceholder" Text="{DynamicResource TrendEmpty}" Foreground="{StaticResource Faint}" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" TextWrapping="Wrap" TextAlignment="Center" Margin="30,0" />
+              <Grid Grid.Row="1" Margin="52,6,12,2">
+                <TextBlock x:Name="TrendXStart" FontSize="9" Foreground="{StaticResource Faint}" HorizontalAlignment="Left" />
+                <TextBlock x:Name="TrendXMid" FontSize="9" Foreground="{StaticResource Faint}" HorizontalAlignment="Center" />
+                <TextBlock x:Name="TrendXEnd" FontSize="9" Foreground="{StaticResource Faint}" HorizontalAlignment="Right" />
+              </Grid>
+            </Grid>
             <StackPanel x:Name="EmptyState" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,25">
               <TextBlock FontFamily="Segoe MDL2 Assets" Text="" FontSize="35" Foreground="#C7CCEC" HorizontalAlignment="Center" />
-              <TextBlock Text="{DynamicResource EmptyTitle}" FontSize="16" Margin="0,16,0,8" HorizontalAlignment="Center" />
-              <TextBlock Text="{DynamicResource EmptyDetail}" FontSize="12" Foreground="{StaticResource Faint}" HorizontalAlignment="Center" />
+              <TextBlock x:Name="EmptyTitle" Text="{DynamicResource EmptyTitle}" FontSize="16" Margin="0,16,0,8" HorizontalAlignment="Center" />
+              <TextBlock x:Name="EmptyDetail" Text="{DynamicResource EmptyDetail}" FontSize="12" Foreground="{StaticResource Faint}" HorizontalAlignment="Center" />
             </StackPanel>
           </Grid>
           <Grid Grid.Row="2" Margin="0,7,0,0">

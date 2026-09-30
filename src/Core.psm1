@@ -179,6 +179,47 @@ function Get-MeterRows {
     $rows | Sort-Object -Property @{ Expression = 'TotalBytes'; Descending = $true }, SSID
 }
 
+function Get-MeterDailyTotals {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [ValidateSet('All','Today','Month','Range')][string]$Period = 'All',
+        [DateTimeOffset]$Now = [DateTimeOffset]::Now,
+        [datetime]$StartDate,
+        [datetime]$EndDate
+    )
+    # Per-day totals across every metered network, using the same range semantics
+    # as Get-MeterRows (inclusive endpoints) so charts and lists always agree.
+    if ($Period -eq 'Range') {
+        if (-not $PSBoundParameters.ContainsKey('StartDate') -or -not $PSBoundParameters.ContainsKey('EndDate')) {
+            throw '自选日期范围需要同时提供开始日期和结束日期。'
+        }
+        if ($StartDate.Date -gt $EndDate.Date) { throw '开始日期不能晚于结束日期。' }
+        $startKey = $StartDate.Date.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+        $endKey = $EndDate.Date.ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+    }
+    $today = $Now.ToLocalTime().ToString('yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+    $month = $today.Substring(0, 7)
+    $totals = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($network in $State.Networks) {
+        foreach ($day in $network.Days) {
+            if (($Period -ceq 'Today' -and $day.Date -cne $today) -or
+                ($Period -ceq 'Month' -and -not $day.Date.StartsWith($month, [StringComparison]::Ordinal)) -or
+                ($Period -ceq 'Range' -and ([string]::CompareOrdinal($day.Date, $startKey) -lt 0 -or [string]::CompareOrdinal($day.Date, $endKey) -gt 0))) {
+                continue
+            }
+            if (-not $totals.ContainsKey($day.Date)) {
+                $totals[$day.Date] = [pscustomobject]@{ Date = $day.Date; RxBytes = [long]0; TxBytes = [long]0; TotalBytes = [long]0 }
+            }
+            $row = $totals[$day.Date]
+            $row.RxBytes = Add-ByteCount $row.RxBytes $day.RxBytes
+            $row.TxBytes = Add-ByteCount $row.TxBytes $day.TxBytes
+            $row.TotalBytes = Add-ByteCount $row.RxBytes $row.TxBytes
+        }
+    }
+    return @($totals.Values | Sort-Object -Property Date)
+}
+
 function Read-ValidatedStateFile([string]$Path) {
     # FileShare.Delete permits an atomic writer to replace the file while this reader holds the old snapshot.
     $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
@@ -326,4 +367,4 @@ function Save-MeterState {
     Export-MeterCsv $State $DataDirectory
 }
 
-Export-ModuleMember -Function New-MeterState, New-MeterSession, Add-MeterSamples, Get-MeterRows, Read-MeterState, Save-MeterState, Export-MeterRangeCsv, Test-MeterWiredIdentity
+Export-ModuleMember -Function New-MeterState, New-MeterSession, Add-MeterSamples, Get-MeterRows, Get-MeterDailyTotals, Read-MeterState, Save-MeterState, Export-MeterRangeCsv, Test-MeterWiredIdentity
