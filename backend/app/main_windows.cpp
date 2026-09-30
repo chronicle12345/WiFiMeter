@@ -23,6 +23,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <memory>
 #include <string>
 
 #include "../core/local_time.h"
@@ -32,6 +34,7 @@
 #include "../platform/fake_app_traffic.h"
 #include "../platform/windows/path_support.h"
 #include "../platform/win32/wlanapi_query.h"
+#include "../platform/win32/windows_app_traffic.h"
 #include "../platform/windows/windows_network_platform.h"
 #include "../storage/store.h"
 
@@ -194,6 +197,17 @@ int main()
     std::unique_ptr<wifimeter::platform::AppTrafficSource> applications;
     if (!fakeAppsPath.empty())
         applications = std::make_unique<wifimeter::platform::fake::FileAppTrafficSource>(fakeAppsPath);
+    else
+    {
+        wchar_t executable[32768]{};
+        const auto length = ::GetModuleFileNameW(nullptr, executable, 32768);
+        if (length && length < 32768)
+        {
+            const auto helper = std::filesystem::path(executable).parent_path() / L"wifimeter-app-capture.exe";
+            applications = std::make_unique<wifimeter::platform::windows::WindowsAppTrafficSource>(
+                wifimeter::platform::windows::WindowsAppTrafficSource::Options{utf8FromWide(helper.c_str())});
+        }
+    }
     ipc::BackendService service(ipc::BackendService::Deps{*store, network, applications.get()}, paused);
     ipc::StdioServer server(service);
 

@@ -27,6 +27,7 @@ set(WIFIMETER_WINDOWS_TESTS
     windows_interface_counters_test
     windows_wlan_test
     windows_platform_test
+    windows_app_network_event_test
     # 接缝测试：真实 WindowsNetworkPlatform + 假的 SystemApi，序列与 Linux 侧共用。
     windows_integration_usage_test
 )
@@ -40,6 +41,7 @@ endforeach()
 # 因此不进 ctest，需要时在 Windows 机器上单独运行 build/windows/tests/windows_smoke_test.exe。
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     wifimeter_add_test(windows_smoke_test wifimeter-platform-win32)
+    wifimeter_add_test(windows_app_traffic_test wifimeter-platform-win32)
 endif()
 
 set(WIFIMETER_CORE_TESTS

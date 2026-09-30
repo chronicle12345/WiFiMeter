@@ -8,7 +8,10 @@ module.exports = {
     extraMetadata: { name: 'wifimeter-demo', productName: 'WiFiMeter Demo' },
     // 采集后端随包分发；主进程通过 resources/wifimeter-backend.exe 找到它。
     // 本机构建与交叉编译都产出到 build/windows/app/。
-    extraResources: [{ from: '../../build/windows/app/wifimeter-backend.exe', to: 'wifimeter-backend.exe' }],
+    extraResources: [
+        { from: '../../build/windows/app/wifimeter-backend.exe', to: 'wifimeter-backend.exe' },
+        { from: '../../build/windows/app/wifimeter-app-capture.exe', to: 'wifimeter-app-capture.exe' }
+    ],
     win: {
         target: [{ target: 'nsis', arch: ['x64'] }],
         executableName: 'WiFiMeter Demo',

@@ -24,6 +24,7 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const unpacked = path.join(repositoryRoot, 'dist/windows/win-unpacked');
 const applicationBinary = path.join(unpacked, 'WiFiMeter Demo.exe');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
+const bundledCapture = path.join(unpacked, 'resources/wifimeter-app-capture.exe');
 const installer = path.join(repositoryRoot, 'dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe');
 
 // PE 文件的头两个字节是 "MZ"。
@@ -41,6 +42,7 @@ function startsWithMz(file) {
 test('Windows 打包产物', { skip: !existsSync(applicationBinary) && '未构建 Windows 产物，先运行 npm run dist:windows' }, () => {
     assert.ok(existsSync(applicationBinary), '解包目录里应当有应用可执行文件');
     assert.ok(existsSync(bundledBackend), '解包目录里应当有随包分发的后端');
+    assert.ok(existsSync(bundledCapture), '解包目录里应当有应用流量采集辅助进程');
 
     // 主进程按 resources/wifimeter-backend.exe 查找后端，路径写死在这里以防改名。
     assert.equal(path.basename(bundledBackend), 'wifimeter-backend.exe');
@@ -48,6 +50,7 @@ test('Windows 打包产物', { skip: !existsSync(applicationBinary) && '未构�
     // 后端必须是真正的 Windows 可执行文件，而不是误打包进去的 Linux 二进制。
     assert.ok(startsWithMz(bundledBackend), '后端应当是 Windows 可执行文件');
     assert.ok(statSync(bundledBackend).size > 100 * 1024, '后端体积明显偏小，可能复制失败');
+    assert.ok(startsWithMz(bundledCapture), '应用流量采集辅助进程应当是 Windows 可执行文件');
 
     // 安装包同样要自报为可执行文件；完整安装与卸载留给 Windows 实机验收。
     // 只读头两个字节：安装包有 100 MB 以上。

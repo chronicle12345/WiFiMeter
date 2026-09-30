@@ -9,6 +9,7 @@ add_library(wifimeter-platform-windows STATIC
     wlan.cpp
     system_api.cpp
     windows_network_platform.cpp
+    app_network_event.cpp
 )
 
 # 共用接口 network_platform.h 位于上一级 platform/ 目录。

@@ -4,13 +4,22 @@
 # 所有解析与判断都在 platform/windows/ 下，可以在任何平台上测试。
 add_library(wifimeter-platform-win32 STATIC
     wlanapi_query.cpp
+    etw_app_capture.cpp
+    windows_app_traffic.cpp
 )
 
 # 平台无关部分的头文件（system_api.h、wlan.h 等）在上一级 platform/windows/ 下。
 target_include_directories(wifimeter-platform-win32 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../windows)
-target_link_libraries(wifimeter-platform-win32 PUBLIC wifimeter-platform-windows wlanapi iphlpapi)
+target_link_libraries(wifimeter-platform-win32 PUBLIC wifimeter-platform-windows wlanapi iphlpapi advapi32 ws2_32 ole32 shell32)
 target_link_libraries(wifimeter-platform-win32 PRIVATE wifimeter-warnings)
 
 # netioapi.h 需要 Winsock 的地址族类型，并且只在定义了目标 Windows 版本时才完整。
-# zig 与 MinGW 的驱动已按目标给出默认值，因此只在尚未定义时补上，避免“宏重定义”告警。
-add_compile_options("$<$<NOT:$<BOOL:$<TARGET_PROPERTY:COMPILE_DEFINITIONS>>>:-D_WIN32_WINNT=0x0A00>")
+# MSVC 显式指定 Windows 10；Zig 与 MinGW 已给出默认值，避免重复定义。
+target_compile_definitions(wifimeter-platform-win32 PUBLIC $<$<CXX_COMPILER_ID:MSVC>:_WIN32_WINNT=0x0A00>)
+
+add_executable(wifimeter-app-capture "${CMAKE_SOURCE_DIR}/app/app_capture_windows.cpp")
+set_target_properties(wifimeter-app-capture PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_BINARY_DIR}/app>")
+target_link_libraries(wifimeter-app-capture PRIVATE wifimeter-platform-win32 wifimeter-warnings)
+if(NOT MSVC)
+    target_link_options(wifimeter-app-capture PRIVATE -static-libgcc -static-libstdc++ -static)
+endif()

@@ -43,6 +43,10 @@ jobs:
         # 后端可执行文件、假数据源与临时目录都在这一步真实运行。
         run: ctest --test-dir build/windows --output-on-failure -C Release
 
+      - name: Verify actual Windows application capture
+        # 必须在 Windows 管理员会话验证真实 ETW；不能由 Wine 或跳过的用例代替。
+        run: python backend/tests/windows_app_capture_smoke.py build/windows/app/wifimeter-app-capture.exe --require-native
+
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -89,7 +93,8 @@ jobs:
           $setup = 'dist/windows/WiFiMeter-Demo-0.1.0-x64-Setup.exe'
           $app = 'dist/windows/win-unpacked/WiFiMeter Demo.exe'
           $backend = 'dist/windows/win-unpacked/resources/wifimeter-backend.exe'
-          foreach ($path in @($setup, $app, $backend)) {
+          $capture = 'dist/windows/win-unpacked/resources/wifimeter-app-capture.exe'
+          foreach ($path in @($setup, $app, $backend, $capture)) {
             if (-not (Test-Path -LiteralPath $path)) { throw "缺少打包产物：$path" }
           }
           if ((Get-Item -LiteralPath $setup).Length -lt 50MB) { throw '安装包体积异常' }
