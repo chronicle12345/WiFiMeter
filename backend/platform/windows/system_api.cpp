@@ -1,6 +1,7 @@
 #include "system_api.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace wifimeter::platform::windows
 {
