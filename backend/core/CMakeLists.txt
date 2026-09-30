@@ -4,6 +4,7 @@ add_library(wifimeter-core STATIC
     local_time.cpp
     network_key.cpp
     usage_accumulator.cpp
+    app_usage_accumulator.cpp
     quota.cpp
 )
 

@@ -47,16 +47,19 @@ struct ProcessFixture
     std::string executable;
     std::string adapterFile;
     std::string countersFile;
+    std::string appsFile;
     std::string database;
 
     explicit ProcessFixture(std::string binary)
         : executable(std::move(binary)),
           adapterFile(directory.file("adapter.json")),
           countersFile(directory.file("counters.json")),
+          appsFile(directory.file("apps.json")),
           database(directory.file("meter.db"))
     {
         setNetwork("Habitat_5G", "21f995e7-fe3b-41a1-ae3a-6468c6918397");
         setCounters(5000000, 900000);
+        setAppCounters(0, 0);
     }
 
     void setNetwork(const std::string& ssid, const std::string& profile)
@@ -81,6 +84,13 @@ struct ProcessFixture
             "{\"interfaces\":[{\"name\":\"wlan0\",\"rx\":" + std::to_string(rx) + ",\"tx\":" + std::to_string(tx) + "}]}");
     }
 
+    void setAppCounters(std::uint64_t rx, std::uint64_t tx) const
+    {
+        writeFile(appsFile, "{\"state\":\"running\",\"generation\":\"one\",\"samples\":[{\"interfaceId\":\"wlan0\","
+            "\"appId\":\"browser\",\"name\":\"浏览器\",\"instanceId\":\"42:1\",\"processId\":42,\"rxBytes\":\"" +
+            std::to_string(rx) + "\",\"txBytes\":\"" + std::to_string(tx) + "\"}]}");
+    }
+
     // 测试数据用命令行参数传入：两端一致，且不必依赖 Windows 的子进程环境块
     // （实测把自定义环境块交给 CreateProcess 时子进程读不到变量）。
     std::vector<std::pair<std::string, std::string>> environment() const
@@ -90,7 +100,7 @@ struct ProcessFixture
 
     std::vector<std::string> arguments() const
     {
-        return {"--db", database, "--fake-adapter", adapterFile, "--fake-counters", countersFile};
+        return {"--db", database, "--fake-adapter", adapterFile, "--fake-counters", countersFile, "--fake-apps", appsFile};
     }
 };
 
@@ -815,6 +825,54 @@ inline void exitsCleanlyWhenInputCloses(ProcessRunner& runner, ProcessFixture& f
         WIFIMETER_CHECK_EQ(*code, 0);
 }
 
+inline void collectsApplicationsThroughTheProcess(ProcessRunner& runner, ProcessFixture& fixture)
+{
+    WIFIMETER_CHECK(runner.start(fixture.executable, fixture.arguments(), fixture.environment()));
+    Session session(runner);
+    auto snapshot = session.request(1, "snapshot");
+    WIFIMETER_CHECK(snapshot && snapshot->find("result"));
+    if (snapshot && snapshot->find("result"))
+        WIFIMETER_CHECK_EQ(snapshot->find("result")->find("appCollection")->stringOr("state"), std::string("disabled"));
+    const auto enabled = session.request(2, "setAppCollection", R"({"enabled":true})");
+    WIFIMETER_CHECK(enabled && enabled->boolOr("ok"));
+    WIFIMETER_CHECK(session.request(3, "collectNow").has_value());
+    fixture.setAppCounters(100000, 20000);
+    fixture.setCounters(5100000, 920000);
+    WIFIMETER_CHECK(session.request(4, "collectNow").has_value());
+    WIFIMETER_CHECK(session.request(5, "collectNow").has_value());
+    snapshot = session.request(6, "snapshot");
+    WIFIMETER_CHECK(snapshot && snapshot->find("result"));
+    if (snapshot && snapshot->find("result"))
+    {
+        const auto* records = snapshot->find("result")->find("appRecords");
+        WIFIMETER_CHECK(records && records->size() == 1);
+        if (records && records->size())
+        {
+            WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::string("100000"));
+            WIFIMETER_CHECK_EQ(records->at(0).stringOr("txBytes"), std::string("20000"));
+        }
+    }
+    const auto paused = session.request(7, "setPaused", R"({"paused":true})");
+    WIFIMETER_CHECK(paused && paused->boolOr("ok"));
+    fixture.setAppCounters(200000, 30000);
+    const auto resumed = session.request(8, "setPaused", R"({"paused":false})");
+    WIFIMETER_CHECK(resumed && resumed->boolOr("ok"));
+    WIFIMETER_CHECK(session.request(9, "collectNow").has_value());
+    fixture.setAppCounters(250000, 40000);
+    WIFIMETER_CHECK(session.request(10, "collectNow").has_value());
+    snapshot = session.request(11, "snapshot");
+    WIFIMETER_CHECK(snapshot && snapshot->find("result"));
+    if (snapshot && snapshot->find("result"))
+    {
+        const auto* records = snapshot->find("result")->find("appRecords");
+        WIFIMETER_CHECK(records && records->size() == 1);
+        if (records && records->size())
+            WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::string("150000"));
+    }
+    WIFIMETER_CHECK(session.request(12, "shutdown").has_value());
+    WIFIMETER_CHECK_EQ(runner.wait(), 0);
+}
+
 // 两个平台共用的入口：各自的 main 只需要提供 ProcessRunner 实现。
 inline int runAllProcessTests(ProcessRunner& runner, const std::string& executable)
 {
@@ -853,6 +911,9 @@ inline int runAllProcessTests(ProcessRunner& runner, const std::string& executab
 
     ProcessFixture polling(executable);
     registersANewNetworkFromPolling(runner, polling);
+
+    ProcessFixture applications(executable);
+    collectsApplicationsThroughTheProcess(runner, applications);
 
     return WIFIMETER_REPORT();
 }

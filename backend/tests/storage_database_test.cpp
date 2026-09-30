@@ -63,7 +63,7 @@ void migratesExistingUsageFromVersionOne()
         WIFIMETER_CHECK(database.has_value());
         if (!database)
             return;
-        WIFIMETER_CHECK(database->exec("DROP TABLE app_usage; INSERT INTO daily_usage VALUES('home', '2026-09-30', 123, 456);").ok);
+        WIFIMETER_CHECK(database->exec("DROP TABLE app_usage; ALTER TABLE coverage_gaps DROP COLUMN scope; INSERT INTO daily_usage VALUES('home', '2026-09-30', 123, 456);").ok);
         WIFIMETER_CHECK(database->setSchemaVersion(1).ok);
     }
     auto database = Database::open(directory.file("meter.db"), status);
@@ -99,6 +99,36 @@ void reportsSqlErrors()
 
     const Status badStatement = database->exec("THIS IS NOT SQL;");
     WIFIMETER_CHECK(!badStatement.ok);
+}
+
+void migratesApplicationHistoryFromVersionTwo()
+{
+    TempDirectory directory("db-migrate-app-scope");
+    Status status;
+    {
+        auto database = Database::open(directory.file("meter.db"), status);
+        WIFIMETER_CHECK(database.has_value());
+        if (!database)
+            return;
+        WIFIMETER_CHECK(database->exec(
+            "ALTER TABLE coverage_gaps DROP COLUMN scope;"
+            "INSERT INTO networks(key) VALUES('home');"
+            "INSERT INTO app_usage VALUES('home', '2026-09-30', 'browser', 'Browser', 123, 456);"
+            "INSERT INTO coverage_gaps(reason, started_at) VALUES('paused', '2026-09-30T10:00:00Z');").ok);
+        WIFIMETER_CHECK(database->setSchemaVersion(2).ok);
+    }
+    auto database = Database::open(directory.file("meter.db"), status);
+    WIFIMETER_CHECK(database.has_value());
+    if (!database)
+        return;
+    auto apps = database->prepare("SELECT rx_bytes FROM app_usage;", status);
+    WIFIMETER_CHECK(apps && apps->step());
+    if (apps)
+        WIFIMETER_CHECK_EQ(apps->columnInt64(0), std::int64_t{123});
+    auto gaps = database->prepare("SELECT scope FROM coverage_gaps;", status);
+    WIFIMETER_CHECK(gaps && gaps->step());
+    if (gaps)
+        WIFIMETER_CHECK_EQ(gaps->columnText(0), std::string("network"));
 }
 
 void runsStatementsWithBinding()
@@ -234,6 +264,7 @@ int main()
 {
     createsSchemaOnFirstOpen();
     migratesExistingUsageFromVersionOne();
+    migratesApplicationHistoryFromVersionTwo();
     rejectsNewerSchemaVersions();
     reportsSqlErrors();
     runsStatementsWithBinding();

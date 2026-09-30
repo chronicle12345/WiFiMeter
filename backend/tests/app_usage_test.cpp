@@ -65,6 +65,27 @@ int main()
     WIFIMETER_CHECK(store->usage().addApp({"home", "2026-08-31", "old", "旧应用", 1, 0}).ok);
     WIFIMETER_CHECK(store->pruneByRetention(utcTime(2026, 9, 30, 12, 0, 0), daily, hourly).ok);
     WIFIMETER_CHECK_EQ(store->usage().appRange("", "2026-01-01", "2026-09-30", status).size(), std::size_t{4});
+    CoverageGap networkGap;
+    networkGap.reason = CoverageReason::paused;
+    networkGap.startedAt = utcTime(2026, 9, 29, 23, 0, 0);
+    WIFIMETER_CHECK(store->usage().addGap(networkGap).ok);
+    CoverageGap appGap = networkGap;
+    appGap.application = true;
+    WIFIMETER_CHECK(store->usage().addGap(appGap).ok);
+    std::size_t closed = 0;
+    WIFIMETER_CHECK(store->usage().closeOpenGaps(utcTime(2026, 9, 30, 1, 0, 0), closed, true).ok);
+    WIFIMETER_CHECK_EQ(closed, std::size_t{1});
+    const auto appsMissing = store->usage().gapsInRange("2026-09-30T00:00:00Z", "2026-09-30T12:00:00Z", status, true);
+    const auto networkMissing = store->usage().gapsInRange("2026-09-30T00:00:00Z", "2026-09-30T12:00:00Z", status);
+    WIFIMETER_CHECK_EQ(appsMissing.size(), std::size_t{1});
+    WIFIMETER_CHECK_EQ(networkMissing.size(), std::size_t{1});
+    if (!appsMissing.empty())
+    {
+        WIFIMETER_CHECK(appsMissing[0].application);
+        WIFIMETER_CHECK_EQ(appsMissing[0].span.count(), std::int64_t{7200});
+    }
+    if (!networkMissing.empty())
+        WIFIMETER_CHECK_EQ(networkMissing[0].span.count(), std::int64_t{0});
     WIFIMETER_CHECK(store->usage().removeNetwork("office").ok);
     WIFIMETER_CHECK(store->usage().appRange("office", "2026-01-01", "2026-09-30", status).empty());
     WIFIMETER_CHECK(store->clearUsage().ok);

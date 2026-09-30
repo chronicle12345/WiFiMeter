@@ -7,6 +7,8 @@ add_library(wifimeter-platform STATIC
     sampling.cpp
     counter_source.cpp
     fake_source.cpp
+    app_traffic.cpp
+    fake_app_traffic.cpp
 )
 
 # 假数据源依赖 JSON 解析，因此这里公开 support。

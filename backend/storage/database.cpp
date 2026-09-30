@@ -454,6 +454,16 @@ Status Database::migrate()
         if (const Status committed = transaction.commit(); !committed)
             return committed;
     }
+    if (version < 3)
+    {
+        Transaction transaction(*this);
+        if (const Status altered = exec("ALTER TABLE coverage_gaps ADD COLUMN scope TEXT NOT NULL DEFAULT 'network' CHECK(scope IN ('network', 'apps'));"); !altered)
+            return altered;
+        if (const Status stamped = setSchemaVersion(3); !stamped)
+            return stamped;
+        if (const Status committed = transaction.commit(); !committed)
+            return committed;
+    }
     return Status::success();
 }
 

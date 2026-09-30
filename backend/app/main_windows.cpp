@@ -29,6 +29,7 @@
 #include "../ipc/server_windows.h"
 #include "../ipc/service.h"
 #include "../platform/counter_source.h"
+#include "../platform/fake_app_traffic.h"
 #include "../platform/windows/path_support.h"
 #include "../platform/win32/wlanapi_query.h"
 #include "../platform/windows/windows_network_platform.h"
@@ -49,6 +50,7 @@ void printUsage()
         "  --paused      启动后不自动采集，等待 setPaused 恢复\n"
         "  --fake-adapter 路径  改用 JSON 文件里的网卡数据，不查询系统（自动测试用）\n"
         "  --fake-counters 路径 改用 JSON 文件里的累计计数，不读系统计数（自动测试用）\n"
+        "  --fake-apps 路径     改用 JSON 文件里的进程累计计数（自动测试用）\n"
         "  --version     输出版本信息\n");
 }
 
@@ -113,6 +115,9 @@ int main()
 
     std::string databasePath;
     bool paused = false;
+    std::string fakeAppsPath;
+    if (const char* path = std::getenv("WIFIMETER_FAKE_APPS"))
+        fakeAppsPath = path;
     bool done = false;  // --help / --version：打印后正常退出
     int exitCode = 0;
 
@@ -153,6 +158,11 @@ int main()
             wifimeter::platform::fake::setCountersPath(utf8FromWide(argumentList[++index]));
             continue;
         }
+        if (argument == "--fake-apps" && index + 1 < argumentCount)
+        {
+            fakeAppsPath = utf8FromWide(argumentList[++index]);
+            continue;
+        }
         std::fprintf(stderr, "未知参数：%s\n", argument.c_str());
         printUsage();
         exitCode = 2;
@@ -181,7 +191,10 @@ int main()
 
     wifimeter::platform::windows::Win32System system;
     wifimeter::platform::windows::WindowsNetworkPlatform network(wifimeter::platform::windows::WindowsNetworkPlatform::Options{&system});
-    ipc::BackendService service(ipc::BackendService::Deps{*store, network}, paused);
+    std::unique_ptr<wifimeter::platform::AppTrafficSource> applications;
+    if (!fakeAppsPath.empty())
+        applications = std::make_unique<wifimeter::platform::fake::FileAppTrafficSource>(fakeAppsPath);
+    ipc::BackendService service(ipc::BackendService::Deps{*store, network, applications.get()}, paused);
     ipc::StdioServer server(service);
 
     std::fprintf(stderr, "wifimeter-backend 已启动：%s\n", databasePath.c_str());

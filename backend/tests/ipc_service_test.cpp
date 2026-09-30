@@ -1,6 +1,7 @@
 // 服务层测试：用假的平台实现覆盖每个协议方法，不碰真实系统也不碰真实网络。
 
 #include <map>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -53,6 +54,18 @@ public:
         lastSsid = expectedSsid;
         return disconnectReport;
     }
+};
+
+class FakeApps : public platform::AppTrafficSource
+{
+public:
+    platform::AppTrafficReport report;
+    int reads = 0;
+    int starts = 0;
+    int stops = 0;
+    void start() override { ++starts; }
+    void stop() override { ++stops; }
+    platform::AppTrafficReport read() override { ++reads; return report; }
 };
 
 platform::WifiLink makeLink(const std::string& interfaceId, const std::string& uuid, const std::string& ssid, int signal = 80)
@@ -696,6 +709,121 @@ void applicationHistorySurvivesSnapshotsAndBackups()
     WIFIMETER_CHECK(snapshot.result.find("appRecords")->size() == 0);
 }
 
+void applicationCollectionIsIndependentAndOptIn()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness harness;
+    if (!harness.service)
+        return;
+    FakeApps apps;
+    harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+    const auto at = utcTime(2026, 9, 30, 10, 0, 0);
+    harness.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 2000));
+    harness.service->collectOnce(at);
+    WIFIMETER_CHECK_EQ(apps.reads, 0);
+    JsonValue enabled = JsonValue::makeObject();
+    enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+    WIFIMETER_CHECK_EQ(apps.starts, 1);
+    apps.report.state = platform::AppCollectorState::running;
+    apps.report.generation = "one";
+    apps.report.samples.push_back({"wlan0", "browser", "浏览器", "42:1", 42, 100, 20});
+    harness.service->collectOnce(at);
+    apps.report.samples[0].rxBytes = 150;
+    apps.report.samples[0].txBytes = 30;
+    apps.report.samples.push_back({"wlan0", "browser", "浏览器", "43:1", 43, 50, 10});
+    harness.network.sampleReport.samples[0].rxBytes = 2000;
+    const auto events = harness.service->collectOnce(at + std::chrono::seconds(5));
+    WIFIMETER_CHECK(events.error.code.empty());
+    bool appEvent = false;
+    for (const auto& name : events.names)
+        appEvent = appEvent || name == event::kAppUsage;
+    WIFIMETER_CHECK(appEvent);
+    auto snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(5));
+    const auto* records = snapshot.result.find("appRecords");
+    WIFIMETER_CHECK(records && records->size() == 1);
+    if (records && records->size())
+    {
+        WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::string("100"));
+        WIFIMETER_CHECK_EQ(records->at(0).stringOr("txBytes"), std::string("20"));
+    }
+    const auto* processes = snapshot.result.find("appProcesses");
+    WIFIMETER_CHECK(processes && processes->size() == 2);
+    if (processes && processes->size())
+        WIFIMETER_CHECK_EQ(processes->at(0).stringOr("rxPerSecond"), std::string("10"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("1000"));
+    harness.service->collectOnce(at + std::chrono::seconds(10));
+    apps.report.state = platform::AppCollectorState::permission;
+    apps.report.detail = "权限不足";
+    harness.network.sampleReport.samples[0].rxBytes = 3000;
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(15)).error.code.empty());
+    snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(15));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appCollection")->stringOr("state"), std::string("permission"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("100"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("2000"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->size(), std::size_t{0});
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appGaps")->size(), std::size_t{1});
+    WIFIMETER_CHECK_EQ(snapshot.result.find("gaps")->size(), std::size_t{0});
+    apps.report.state = platform::AppCollectorState::running;
+    harness.service->collectOnce(at + std::chrono::seconds(20));
+    harness.service->setPaused(true, at + std::chrono::seconds(21));
+    apps.report.samples[0].rxBytes = 10000;
+    harness.service->collectOnce(at + std::chrono::seconds(25));
+    harness.service->setPaused(false, at + std::chrono::seconds(30));
+    harness.service->collectOnce(at + std::chrono::seconds(30));
+    snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(30));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("100"));
+    enabled.set("enabled", JsonValue::makeBool(false));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at + std::chrono::seconds(31)).ok());
+    const int reads = apps.reads;
+    harness.service->collectOnce(at + std::chrono::seconds(35));
+    WIFIMETER_CHECK_EQ(apps.reads, reads);
+    enabled.set("enabled", JsonValue::makeString("true"));
+    WIFIMETER_CHECK(!harness.call(method::kSetAppCollection, enabled, at).ok());
+    Harness unsupported;
+    enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(!unsupported.call(method::kSetAppCollection, enabled, at).ok());
+}
+
+void applicationStorageFailureRollsBackOnlyApplications()
+{
+    Harness harness;
+    if (!harness.service)
+        return;
+    FakeApps apps;
+    harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+    const auto at = utcTime(2026, 9, 30, 10, 0, 0);
+    harness.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 2000));
+    harness.service->collectOnce(at);
+    const auto maximum = static_cast<ByteCount>(std::numeric_limits<std::int64_t>::max());
+    bool created = false;
+    WIFIMETER_CHECK(harness.store->networks().observe({kUuid, "Home"}, "2026-09-30T10:00:00Z", created).ok);
+    WIFIMETER_CHECK(harness.store->usage().setApp({kUuid, "2026-09-30", "full", "Full", maximum, 0}).ok);
+    JsonValue enabled = JsonValue::makeObject();
+    enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+    apps.report = {platform::AppCollectorState::running, "one", {},
+        {{"wlan0", "browser", "Browser", "42:1", 42, 0, 0}, {"wlan0", "full", "Full", "43:1", 43, 0, 0}}};
+    harness.service->collectOnce(at);
+    apps.report.samples[0].rxBytes = 100;
+    apps.report.samples[1].rxBytes = 1;
+    harness.network.sampleReport.samples[0].rxBytes = 2000;
+    const auto events = harness.service->collectOnce(at + std::chrono::seconds(5));
+    WIFIMETER_CHECK(events.error.code.empty());
+    for (const auto& name : events.names)
+        WIFIMETER_CHECK(name != event::kAppUsage);
+    const auto snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(5));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appCollection")->stringOr("state"), std::string("unavailable"));
+    const auto* records = snapshot.result.find("appRecords");
+    WIFIMETER_CHECK(records && records->size() == 1);
+    if (records && records->size())
+    {
+        WIFIMETER_CHECK_EQ(records->at(0).stringOr("appId"), std::string("full"));
+        WIFIMETER_CHECK_EQ(records->at(0).stringOr("rxBytes"), std::to_string(maximum));
+    }
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("1000"));
+}
+
 }  // namespace
 
 int main()
@@ -716,5 +844,7 @@ int main()
     mapsDisconnectOutcomes();
     prunesUsage();
     applicationHistorySurvivesSnapshotsAndBackups();
+    applicationCollectionIsIndependentAndOptIn();
+    applicationStorageFailureRollsBackOnlyApplications();
     return WIFIMETER_REPORT();
 }

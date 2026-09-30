@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "../core/usage_accumulator.h"
+#include "../core/app_usage_accumulator.h"
 #include "../platform/network_platform.h"
 #include "../storage/store.h"
 #include "../support/json.h"
@@ -27,6 +28,7 @@ public:
     {
         storage::Store& store;
         platform::NetworkPlatform& network;
+        platform::AppTrafficSource* applications = nullptr;
     };
 
     explicit BackendService(Deps deps, bool paused = false);
@@ -90,9 +92,18 @@ private:
     support::JsonValue settingsToJson(const storage::SettingsRecord& settings) const;
     void refreshLive(const platform::SampleReport& report, core::TimePoint now);
     void evaluateQuotas(core::TimePoint now, Events& events);
+    support::JsonValue appCollectionToJson() const;
+    void collectApplications(const platform::SampleReport& wifi, core::TimePoint now, Events& events);
+    Response setAppCollection(const support::JsonValue& params, core::TimePoint now);
 
     Deps deps_;
     core::UsageAccumulator accumulator_;
+    core::AppUsageAccumulator appAccumulator_;
+    bool appEnabled_ = false;
+    platform::AppCollectorState appState_ = platform::AppCollectorState::disabled;
+    std::string appDetail_;
+    core::TimePoint appLastAt_{};
+    support::JsonValue appProcesses_ = support::JsonValue::makeArray();
     bool paused_ = false;
     core::TimePoint nextSampleAt_{};
     core::TimePoint lastSampleAt_{};

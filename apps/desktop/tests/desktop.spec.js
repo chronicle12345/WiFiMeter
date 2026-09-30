@@ -206,6 +206,42 @@ test('应用历史来自 SQLite，重启、完整备份恢复与清空都保留�
     await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
 });
 
+test('应用采集需要显式启用，实时列表、进程详情与暂停恢复正确', async () => {
+    await navigate('网络');
+    await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
+    await page.getByRole('tab', { name: '应用分布' }).click();
+    await expect(page.locator('#appStatusRegion')).toContainText('应用采集未启用');
+    await page.getByRole('button', { name: '启用应用采集', exact: true }).click();
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    await expect(page.locator('#appStatusRegion')).toContainText('应用采集中');
+    harness.appCounters(80000000, 20000000);
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
+    await page.locator('#appSearch').fill('浏览');
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    await expect(page.locator('#appSearch')).toBeFocused();
+    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await page.getByRole('button', { name: '最近采样进程', exact: true }).click();
+    await expect(page.locator('.modal')).toContainText('42');
+    await page.locator('.modal').getByRole('button', { name: '关闭', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: '暂停统计', exact: true }).click();
+    harness.appCounters(180000000, 20000000);
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
+    await page.getByRole('button', { name: '恢复统计', exact: true }).click();
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
+    await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
+    await page.getByRole('tab', { name: '应用分布' }).click();
+    await page.getByRole('button', { name: '停止应用采集', exact: true }).click();
+    await expect(page.locator('#appStatusRegion')).toContainText('应用采集未启用');
+    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await page.getByRole('tab', { name: '用量明细' }).click();
+    await expect(page.locator('.drawer-total')).toContainText('3.60');
+});
+
 test('采集状态显示真实网卡，暂停与恢复都由后端执行', async () => {
     await page.getByRole('button', { name: '采集状态' }).click();
     await expect(page.locator('.modal')).toContainText('采集器：运行中');

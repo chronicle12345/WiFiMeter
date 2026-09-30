@@ -38,6 +38,10 @@ Windows 使用名称 `WiFiMeter Demo`、应用标识 `io.wifimeter.demo` 和独�
 
 ## 后端进程
 
+应用分布支持排行榜、搜索、排序和最近采样进程。采集源可用时，用户在网络详情中主动启用；
+该开关仅在当前会话有效，停止或暂停保留已有历史。权限失败和缺失区间独立显示，不影响网卡统计和额度。
+原生应用采集器尚待接入；自动测试通过 `WIFIMETER_FAKE_APPS` 注入进程计数，真实后端负责归属、落库和推送。
+
 `electron/backend.cjs` 按平台查找后端可执行文件：`WIFIMETER_BACKEND` 环境变量优先，其次是打包后的 `resources/wifimeter-backend(.exe)`，最后是开发目录 `build/app/`（Linux）或 `build/windows/app/`（Windows）。Windows 上不检查可执行位（该系统没有这个概念）。
 
 后端退出或启动失败时不会让界面永久失联：下一次请求会自动重新拉起。数据库路径始终由主进程显式传给后端，两个进程不会各用一份数据。

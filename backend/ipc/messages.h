@@ -31,6 +31,7 @@ inline constexpr const char* kUpdateSettings = "updateSettings";
 inline constexpr const char* kUpdateNetwork = "updateNetwork";
 inline constexpr const char* kClearUsage = "clearUsage";
 inline constexpr const char* kSetPaused = "setPaused";
+inline constexpr const char* kSetAppCollection = "setAppCollection";
 inline constexpr const char* kCollectNow = "collectNow";
 inline constexpr const char* kExportUsage = "exportUsage";
 inline constexpr const char* kBackup = "backup";
@@ -44,6 +45,7 @@ namespace event
 {
 inline constexpr const char* kLive = "live";
 inline constexpr const char* kUsage = "usage";
+inline constexpr const char* kAppUsage = "appUsage";
 inline constexpr const char* kAlert = "alert";
 }  // namespace event
 

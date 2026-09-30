@@ -13,6 +13,9 @@
 | `records` | 按本地日期、网络归档的上传和下载字节数 |
 | `hourly` | 小时明细 |
 | `appRecords` | 从 SQLite 查询的独立应用每日用量，不与网卡总量相加 |
+| `appCollection` | `enabled`、`available`、`state` 与错误说明 `detail` |
+| `appProcesses` | 最近采样的进程实例、PID、所属网络和下载/上传速率 |
+| `appGaps` | 独立于网卡覆盖记录的应用采集缺失区间 |
 | `settings` | 显示单位、刷新间隔、保留时长和偏好 |
 | `live` | 本机连接、采集状态、速率和更新时间 |
 
@@ -23,6 +26,21 @@
 `snapshot` 使用 `networkKey`、`from`、`to` 查询相应应用记录。完整后端备份标记为 `backupType: "wifimeter-backend-backup"`，
 包含 `appRecords`；恢复接受缺少该字段的旧版备份，但拒绝无效日期、未知网络、无效字节与重复的应用每日记录。
 原生应用采集仍待实现，当前不会把网卡总量按比例分摊给应用。
+
+## 应用采集链路
+
+`setAppCollection` 接受 `{enabled: boolean}`。启用仅在当前后端会话生效，重启后默认关闭；没有采集源时返回 `unavailable`。
+状态包括 `disabled`、`starting`、`running`、`paused`、`permission`、`unavailable`、`partial`。
+全局 `setPaused` 同时暂停应用采集，恢复时建立新基线；停止应用采集保留已有历史。
+
+`live` 事件携带 `appCollection` 和 `appProcesses`；独立的 `appUsage` 事件携带每日增量 `records` 和新增缺失 `gaps`。
+应用增量不更新网卡总量或额度账本。数据库结构版本 3 为 `coverage_gaps` 增加 `scope`，旧记录迁移为 `network`，应用记录使用 `apps`。
+
+采集源输出 `{state, generation, detail, samples}`，每个 sample 包含 `{interfaceId, appId, name, instanceId, processId, rxBytes, txBytes, active}`。
+字节计数从同一个 generation 开始累计；首份快照只建基线，新进程实例随后从零计入。
+`instanceId` 区分 PID 重用，`appId` 用于跨进程归并；已退出进程应保留 generation 内的累计计数并设 `active: false`。
+接口的 Wi-Fi 身份变化或不明时丢弃边界区间，计数重置、源重启和权限失败留下独立的缺失记录。
+测试使用 `--fake-apps <JSON 文件>` 或 `WIFIMETER_FAKE_APPS`，与真实进程、IPC 和数据库配合运行；默认构建尚未启用原生源。
 
 ## 待定的接入约定
 

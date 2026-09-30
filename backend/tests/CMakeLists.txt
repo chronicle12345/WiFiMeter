@@ -47,6 +47,7 @@ set(WIFIMETER_CORE_TESTS
     local_time_test
     network_key_test
     usage_accumulator_test
+    app_usage_accumulator_test
     quota_test
 )
 
@@ -65,6 +66,7 @@ foreach(test_name IN LISTS WIFIMETER_STORAGE_TESTS)
 endforeach()
 
 wifimeter_add_test(json_test wifimeter-support)
+wifimeter_add_test(app_traffic_test wifimeter-platform)
 
 # 协议与服务层用例都用假的平台实现，不依赖任何系统接口，因此两种平台都能跑。
 set(WIFIMETER_IPC_TESTS

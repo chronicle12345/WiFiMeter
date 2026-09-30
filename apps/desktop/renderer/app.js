@@ -175,23 +175,43 @@ function drawerUsage(n){
 function drawerApps(n){
  const {start,end}=getRange(),apps=appUsageInRange(data.appRecords,n.id,start,end);
  const heading=`<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">应用记录</span></div>`;
- if(!data.appRecords.length)return `${heading}<div class="source-tag" style="margin-top:16px">${icon('info')}尚未采集</div>${empty('应用级流量尚未采集','按进程归属流量需要额外的系统能力，当前版本只统计网卡总量。')}<div class="note-box" style="margin-top:16px">${icon('info')}<div>网卡用量明细与历史记录来自真实采集；应用分布将在接入按进程统计后填充。</div></div>`;
- if(!apps.length)return `${heading}${empty('所选时段没有应用记录','试试其他日期或网络。应用采集开始前的流量无法补算。')}`;
+ if(!data.appRecords.length&&!data.appCollection?.available)return `${heading}<div class="source-tag" style="margin-top:16px">${icon('info')}尚未采集</div>${empty('应用级流量尚未采集','按进程归属流量需要额外的系统能力，当前构建没有可用的应用采集器。')}<div class="note-box" style="margin-top:16px">${icon('info')}<div>网卡用量明细与历史记录来自真实采集；应用分布将在接入原生采集器后填充。</div></div>`;
  const sum=apps.reduce((s,a)=>s+a.total,0n);
- return `${heading}<div class="drawer-total"><div class="small muted">已统计应用总用量</div><div class="metric-number">${fmt(sum)}<span>${data.settings.unit}</span></div></div><div class="note-box">${icon('info')}<div>占比按当前网络和时段的已统计应用流量计算。应用统计与网卡统计口径可能不同，两者分别展示。</div></div><div class="app-filters"><label class="search-box">${icon('search')}<input id="appSearch" type="search" placeholder="搜索应用" aria-label="搜索应用" value="${esc(ui.drawer.appSearch)}"></label><label><span class="sr-only">应用排序</span><select class="select compact" id="appSort">${[['total','按总量'],['rx','按下载'],['tx','按上传']].map(([v,label])=>option(v,label,ui.drawer.appSort)).join('')}</select></label></div><div id="appListRegion" aria-live="polite">${appList(n)}</div>`;
+ return `${heading}<div id="appStatusRegion">${appStatus(n)}</div><div class="drawer-total"><div class="small muted">已统计应用总用量</div><div class="metric-number" id="appTotal">${apps.length?fmt(sum):'—'}<span>${data.settings.unit}</span></div></div><div class="note-box">${icon('info')}<div>占比按当前网络和时段的已统计应用流量计算。应用统计与网卡统计口径可能不同，两者分别展示。</div></div><div class="app-filters"><label class="search-box">${icon('search')}<input id="appSearch" type="search" placeholder="搜索应用" aria-label="搜索应用" value="${esc(ui.drawer.appSearch)}"></label><label><span class="sr-only">应用排序</span><select class="select compact" id="appSort">${[['total','按总量'],['rx','按下载'],['tx','按上传']].map(([v,label])=>option(v,label,ui.drawer.appSort)).join('')}</select></label></div><div id="appListRegion" aria-live="polite">${appList(n)}</div>`;
+}
+function appStatus(n){
+ const c=data.appCollection||{state:'disabled'},labels={disabled:'应用采集未启用',starting:'应用采集正在启动',running:'应用采集中',paused:'应用采集已暂停',permission:'应用采集需要系统授权',unavailable:'应用采集暂不可用',partial:'应用采集有缺失'};
+ const {start,end}=getRange(),gaps=(data.appGaps||[]).filter(g=>(!g.networkId||g.networkId===n.id)&&dayKey(new Date(g.startedAt))<=end&&(!g.endedAt||dayKey(new Date(g.endedAt))>=start));
+ return `<div class="between app-status"><span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?button('app-collection',c.enabled?'停止应用采集':'启用应用采集','','small-btn'):''}</div>${c.state==='permission'?'<p class="small muted">开启应用采集需要额外的系统权限，请完成系统授权后重试。</p>':''}${c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry','重试应用采集','','small-btn'):''}${gaps.length?`<p class="small muted">所选时段有 ${gaps.length} 段应用采集缺失；已记录的流量仍可查看。</p>`:''}`;
 }
 function appList(n){
  const {start,end}=getRange(),apps=appUsageInRange(data.appRecords,n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
  const list=sortApps(apps,ui.drawer.appSort,ui.drawer.appSearch),visible=ui.drawer.appAll?list:list.slice(0,10);
+ if(!apps.length){const historical=data.appRecords.length||data.appCollection?.enabled;return empty(historical?'所选时段没有应用记录':'应用级流量尚未采集',historical?'试试其他日期或网络。应用采集开始前的流量无法补算。':'启用后将从新的基线开始记录应用用量。');}
  if(!list.length)return empty('没有匹配的应用','试试其他应用名称。');
- return `<div class="small muted">共 ${list.length} 个应用 · 显示 ${visible.length} 个</div><ol class="app-list">${visible.map(a=>{const percent=bytePercent(a.total,sum);return `<li class="app-row"><div class="app-avatar" aria-hidden="true">${esc([...a.name][0]||'?')}</div><div class="app-description"><div class="app-name">${esc(a.name)}</div><div class="app-source">下载 ${fmtAppBytes(a.rx)} · 上传 ${fmtAppBytes(a.tx)}</div><div class="progress" aria-hidden="true"><span style="width:${percent}%"></span></div></div><div class="app-value"><strong>${fmtAppBytes(a.total)}</strong><div class="app-source">${sum?percent.toFixed(1)+'%':'—'}</div></div></li>`;}).join('')}</ol>${list.length>10?button('apps-expand',ui.drawer.appAll?'收起列表':'显示全部应用','','small-btn'):''}`;
+ return `<div class="small muted">共 ${list.length} 个应用 · 显示 ${visible.length} 个</div><ol class="app-list">${visible.map(a=>{const percent=bytePercent(a.total,sum);return `<li class="app-row"><div class="app-avatar" aria-hidden="true">${esc([...a.name][0]||'?')}</div><div class="app-description"><div class="app-name">${esc(a.name)}</div><div class="app-source">下载 ${fmtAppBytes(a.rx)} · 上传 ${fmtAppBytes(a.tx)}</div><div class="progress" aria-hidden="true"><span style="width:${percent}%"></span></div>${data.appCollection?.available?button('app-processes','最近采样进程','','small-btn',`data-app-id="${esc(a.id)}"`):''}</div><div class="app-value"><strong>${fmtAppBytes(a.total)}</strong><div class="app-source">${sum?percent.toFixed(1)+'%':'—'}</div></div></li>`;}).join('')}</ol>${list.length>10?button('apps-expand',ui.drawer.appAll?'收起列表':'显示全部应用','','small-btn'):''}`;
 }
 function fmtAppBytes(value){
  const base=data.settings.unit==='GiB'?1024n:1000n,units=data.settings.unit==='GiB'?['B','KiB','MiB','GiB','TiB']:['B','KB','MB','GB','TB'];
  let divisor=1n,i=0;while(i<units.length-1&&value>=divisor*base){divisor*=base;i++;}
  return `${(Number(value)/Number(divisor)).toLocaleString('en-US',{maximumFractionDigits:2})} ${units[i]}`;
 }
-function renderAppList(){if(ui.drawer?.tab==='apps'&&$('#appListRegion'))$('#appListRegion').innerHTML=appList(getNetwork(ui.drawer.id));}
+function renderAppList(){
+ if(ui.drawer?.tab!=='apps')return;
+ if(!$('#appListRegion')){if(data.appRecords.length||data.appCollection?.available)renderDrawer();return;}
+ const active=document.activeElement,focused=active?.matches('#appListRegion button,#appStatusRegion button')?{action:active.dataset.action,appId:active.dataset.appId}:null;
+ const n=getNetwork(ui.drawer.id),{start,end}=getRange(),apps=appUsageInRange(data.appRecords,n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
+ $('#appListRegion').innerHTML=appList(n);$('#appStatusRegion').innerHTML=appStatus(n);$('#appTotal').innerHTML=`${apps.length?fmt(sum):'—'}<span>${data.settings.unit}</span>`;
+ if(focused)$$('#appListRegion button,#appStatusRegion button').find(b=>b.dataset.action===focused.action&&b.dataset.appId===focused.appId)?.focus();
+}
+async function setAppCollection(enabled){
+ const buttons=$$('[data-action="app-collection"],[data-action="app-collection-retry"]');buttons.forEach(b=>b.disabled=true);
+ try{await store.setAppCollection(enabled);renderAppList();}finally{buttons.forEach(b=>b.disabled=false);}
+}
+function appProcessesModal(appId){
+ const processes=(data.appProcesses||[]).filter(p=>p.networkId===ui.drawer.id&&p.appId===appId);
+ showModal('最近采样进程',`<p class="modal-desc">显示本次采集的进程与速率，历史用量已按应用归并。</p>${processes.length?`<table><thead><tr><th>PID</th><th class="right">下载速度</th><th class="right">上传速度</th></tr></thead><tbody>${processes.map(p=>`<tr><td>${esc(p.processId)}</td><td class="right">${speed(p.rxPerSecond)}</td><td class="right">${speed(p.txPerSecond)}</td></tr>`).join('')}</tbody></table>`:'<p class="small muted">当前没有该应用的进程数据。</p>'}`,button('close-modal','关闭'));
+}
 function drawerSettings(n){
  return `<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"><div class="field-hint">仅用于显示；原始 SSID 为 ${esc(n.ssid)}。</div></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="100000" step="0.01"><span>GB</span></div><div class="field-hint">固定十进制 GB；留空或 0 表示不设额度。</div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month','每自然月',n.quotaPeriod)}${option('day','每天',n.quotaPeriod)}</select><div class="field-hint">按本地日期重置，不随页面筛选变化。</div></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div><div class="setting-desc">此网络的提醒还受全局提醒开关控制。</div></div>${toggle('notify',n.notify,'接近额度时提醒')}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><select class="input" id="warnPercent" name="warnPercent">${[50,75,80,90,95,100].map(v=>option(v,`已用额度的 ${v}%`,n.warnPercent)).join('')}${![50,75,80,90,95,100].includes(n.warnPercent)?option(n.warnPercent,`已用额度的 ${n.warnPercent}%`,n.warnPercent):''}</select></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div><div class="setting-desc">达到额度后由后端核对网络身份并断开当前连接。</div></div>${toggle('autoDisconnect',n.autoDisconnect,'达到额度后自动断开')}</div><div class="note-box warn" style="margin:18px 0">${icon('alert')}<div>达到额度后，后端会先确认当前连接的正是这个网络，再执行断开并复核结果。</div></div><div class="form-error" id="networkFormError" role="alert"></div><button class="btn primary" type="submit" style="width:100%">${icon('check')}保存网络设置</button></form>`;
 }
@@ -225,7 +245,7 @@ function demoModal(){
  const gaps=(data.gaps??[]).length;
  showModal('采集状态',`<p class="modal-desc">数据由本机后端进程读取网卡计数器后写入本机数据库，不经过网络。</p><div class="check-row">${icon('database')}<span>采集器：${data.live.collector==='running'?'运行中':data.live.collector==='paused'?'已暂停':'不可用'} · ${title}</span></div><div class="check-row">${icon('info')}<span>${esc(detail)}</span></div>${interfaces}${gaps?`<div class="check-row">${icon('alert')}<span>有 ${gaps} 段区间没有采集到数据，已单独记录，不会显示成 0。</span></div>`:''}<div class="note-box" style="margin-top:18px">${icon('info')}<div>备注、额度、导出与备份都写入本机数据库；开机启动、托盘与真实断网属于系统级设置。</div></div>`,button('close-modal','完成','','primary'));
 }
-function helpModal(){showModal('统计口径与使用说明',`<div class="modal-desc"><strong>总量 = 下载 + 上传</strong><br>首页和网络明细展示采集器记录的网卡流量；单位可切换 GB 或 GiB。<br><br><strong>历史与实时分开</strong><br>日期筛选仅影响历史用量。连接卡片显示当前选中网卡的实时状态，额度使用独立日 / 月周期。<br><br><strong>缺失记录不会伪装成零流量</strong><br>断网、暂停、计数器重置与身份不明期间的覆盖情况，由后端记录并说明。<br><br><strong>应用流量尚未采集</strong><br>按进程归属流量需要额外的系统能力，当前版本没有实现，应用分布页会明确说明。<br><br><strong>数据来源</strong><br>页面读取本机后端进程的采集结果，数据存放在本机 SQLite 数据库，不上传任何内容。</div>`,button('close-modal','知道了','','primary'));}
+function helpModal(){showModal('统计口径与使用说明',`<div class="modal-desc"><strong>总量 = 下载 + 上传</strong><br>首页和网络明细展示采集器记录的网卡流量；单位可切换 GB 或 GiB。<br><br><strong>历史与实时分开</strong><br>日期筛选仅影响历史用量。连接卡片显示当前选中网卡的实时状态，额度使用独立日 / 月周期。<br><br><strong>缺失记录不会伪装成零流量</strong><br>断网、暂停、计数器重置与身份不明期间的覆盖情况，由后端记录并说明。<br><br><strong>应用用量独立统计</strong><br>应用分布按当前网络与时段展示已采集的应用记录。启用应用采集后从新的基线开始，暂停和停止不会删除历史；是否可采集以及缺失区间会在页面说明。<br><br><strong>数据来源</strong><br>页面读取本机后端进程的采集结果，数据存放在本机 SQLite 数据库，不上传任何内容。</div>`,button('close-modal','知道了','','primary'));}
 function permissionModal(){showModal('无法确定网络身份',`<p class="modal-desc">采集器读不到当前连接的网络名。无法归属的流量不会被记到上一次连接的网络。</p><div class="note-box">${icon('shield')}<div>常见原因是 NetworkManager 未运行或当前用户无权查询连接信息。恢复后采集会从新的基线继续，中间区间会记为覆盖空档。</div></div><p class="field-hint" style="margin-top:15px">可以用 <code>nmcli dev status</code> 确认 NetworkManager 是否正常。</p>`,button('close-modal','关闭')+button('demo','查看采集状态','','primary'));}
 async function dataDownload(filename,body){
  const result=await window.desktop.saveFile({filename,body});
@@ -293,7 +313,7 @@ function refreshAfterTick(){
  if(!ui.modal&&!ui.drawer&&ui.page==='overview'&&(active===document.body||active===document.documentElement||active===$('#main')))$('#content').innerHTML=overview();
 }
 // 采集由后端进程按设置的间隔进行，并通过事件推送状态；界面只需要重绘。
-function refreshLive(){refreshAfterTick();}
+function refreshLive(){refreshAfterTick();if(!ui.modal)renderAppList();}
 function showAlert(alert){
  if(alert.kind==='quotaWarn')toast(`额度提醒：${alert.alias||alert.ssid} 已用 ${Number(alert.percent).toFixed(0)}%。`);
  else if(alert.kind==='quotaDisconnect')toast(alert.outcome===0?`已达到额度上限，已断开 ${alert.alias||alert.ssid}。`:`已达到额度上限，但未能断开 ${alert.alias||alert.ssid}：${alert.detail||'请检查系统状态'}`,true);
@@ -317,6 +337,9 @@ const actions={
  'close-drawer':requestCloseDrawer,
  'drawer-tab':e=>{const change=()=>{networkDirty=false;ui.drawer.tab=e.dataset.tab;renderDrawer();$(`.drawer-tab[data-tab="${e.dataset.tab}"]`)?.focus();};if(networkDirty)confirmModal('放弃未保存的网络设置？','切换标签页将放弃当前表单中的更改。','放弃更改',change);else change();},
  'apps-expand':()=>{ui.drawer.appAll=!ui.drawer.appAll;renderAppList();$('#appListRegion [data-action="apps-expand"]')?.focus();},
+ 'app-collection':()=>setAppCollection(!data.appCollection?.enabled),
+ 'app-collection-retry':()=>setAppCollection(true),
+ 'app-processes':e=>appProcessesModal(e.dataset.appId),
  'close-modal':closeModal,
  confirm:async()=>{const fn=pendingConfirm;pendingConfirm=null;closeModal();if(fn)await fn();},
  export:()=>exportModal(), 'export-network':e=>exportModal(e.dataset.id),

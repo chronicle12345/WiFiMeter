@@ -86,6 +86,11 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
     const adapterPath = path.join(directory, 'adapters.json');
     const countersPath = path.join(directory, 'counters.json');
     const databasePath = path.join(directory, 'wifimeter.db');
+    const appsPath = path.join(directory, 'apps.json');
+    const appCounters = (rx, tx) => writeFileSync(appsPath, JSON.stringify({ state: 'running', generation: 'one', samples: [{
+        interfaceId: 'wlan0', appId: '/opt/browser', name: '浏览器', processId: 42, instanceId: '42:100', rxBytes: String(rx), txBytes: String(tx)
+    }] }));
+    appCounters(0, 0);
     writeFileSync(adapterPath, JSON.stringify({ adapters: [{
         name: 'wlan0', description: 'AICSemi AIC8800DC', connected: true,
         mode: 1, profile: 'Habitat_5G', ssid: 'Habitat_5G', signal: 82, frequency: 5180
@@ -106,13 +111,16 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
         databasePath,
         countersPath,
         adapterPath,
+        appsPath,
+        appCounters,
         seedRx: rxStep,
         seedTx: txStep,
         env: {
             WIFIMETER_BACKEND: backendBinary,
             WIFIMETER_USER_DATA: directory,
             WIFIMETER_FAKE_ADAPTER: adapterPath,
-            WIFIMETER_FAKE_COUNTERS: countersPath
+            WIFIMETER_FAKE_COUNTERS: countersPath,
+            WIFIMETER_FAKE_APPS: appsPath
         },
         // 让采集器按秒级间隔工作，测试不必等太久。
         slowDownCounters(rx, tx) {

@@ -59,6 +59,17 @@ JsonValue appRowsToJson(const std::vector<storage::AppUsageRow>& rows)
     return records;
 }
 
+JsonValue appGapToJson(const storage::CoverageGap& gap)
+{
+    JsonValue entry = JsonValue::makeObject();
+    entry.set("networkId", JsonValue::makeString(gap.networkKey));
+    entry.set("reason", JsonValue::makeString(std::string(storage::coverageReasonName(gap.reason))));
+    entry.set("startedAt", JsonValue::makeString(core::isoUtcOf(gap.startedAt)));
+    entry.set("endedAt", JsonValue::makeString(gap.span.count() > 0 ? core::isoUtcOf(gap.endedAt) : ""));
+    entry.set("spanSeconds", JsonValue::makeInt(gap.span.count()));
+    return entry;
+}
+
 std::string periodName(core::QuotaPeriod period)
 {
     return period == core::QuotaPeriod::day ? "day" : "month";
@@ -95,6 +106,7 @@ void BackendService::onStart(TimePoint now)
     // 上次退出时可能留下了未结束的空档（进程被杀、断电），启动时补上结束时间。
     std::size_t closed = 0;
     deps_.store.closeOpenGaps(now, closed);
+    deps_.store.usage().closeOpenGaps(now, closed, true);
     lastSampleAt_ = now;
     nextSampleAt_ = now;
     collectorState_ = paused_ ? "paused" : "running";
@@ -121,11 +133,28 @@ void BackendService::setPaused(bool paused, TimePoint now)
         gap.reason = storage::CoverageReason::paused;
         gap.startedAt = now;
         deps_.store.usage().addGap(gap);
+        if (appEnabled_)
+        {
+            gap.application = true;
+            deps_.store.usage().addGap(gap);
+            if (deps_.applications)
+                deps_.applications->stop();
+            appAccumulator_.clear();
+            appProcesses_ = JsonValue::makeArray();
+            appState_ = platform::AppCollectorState::paused;
+        }
     }
     else
     {
         std::size_t closed = 0;
         deps_.store.closeOpenGaps(now, closed);
+        deps_.store.usage().closeOpenGaps(now, closed, true);
+        if (appEnabled_ && deps_.applications)
+        {
+            deps_.applications->start();
+            appState_ = platform::AppCollectorState::starting;
+            appLastAt_ = now;
+        }
     }
     nextSampleAt_ = now;
 }
@@ -202,7 +231,170 @@ JsonValue BackendService::buildLive() const
         connections.push(std::move(connection));
     }
     live.set("connections", std::move(connections));
+    live.set("appCollection", appCollectionToJson());
+    live.set("appProcesses", appProcesses_);
     return live;
+}
+
+JsonValue BackendService::appCollectionToJson() const
+{
+    JsonValue value = JsonValue::makeObject();
+    value.set("enabled", JsonValue::makeBool(appEnabled_));
+    value.set("available", JsonValue::makeBool(deps_.applications != nullptr));
+    value.set("state", JsonValue::makeString(std::string(platform::appCollectorStateName(appState_))));
+    value.set("detail", JsonValue::makeString(appDetail_));
+    return value;
+}
+
+BackendService::Response BackendService::setAppCollection(const JsonValue& params, TimePoint now)
+{
+    Response response;
+    const auto* enabled = params.find("enabled");
+    if (enabled == nullptr || !enabled->isBool())
+    {
+        response.error = Error{errorCode::kInvalidParams, "enabled 必须是布尔值。"};
+        return response;
+    }
+    if (enabled->asBool() && deps_.applications == nullptr)
+    {
+        response.error = Error{errorCode::kUnavailable, "当前构建没有可用的应用采集器。"};
+        return response;
+    }
+    appEnabled_ = enabled->asBool();
+    if (deps_.applications)
+    {
+        deps_.applications->stop();
+        if (appEnabled_ && !paused_)
+            deps_.applications->start();
+    }
+    appAccumulator_.clear();
+    appProcesses_ = JsonValue::makeArray();
+    appLastAt_ = now;
+    appDetail_.clear();
+    appState_ = !appEnabled_ ? platform::AppCollectorState::disabled : paused_ ? platform::AppCollectorState::paused : platform::AppCollectorState::starting;
+    std::size_t closed = 0;
+    deps_.store.usage().closeOpenGaps(now, closed, true);
+    JsonValue result = JsonValue::makeObject();
+    result.set("appCollection", appCollectionToJson());
+    response.result = std::move(result);
+    pending_.emplace_back(event::kLive, buildLive());
+    return response;
+}
+
+void BackendService::collectApplications(const platform::SampleReport& wifi, TimePoint now, Events& events)
+{
+    if (!appEnabled_ || deps_.applications == nullptr)
+        return;
+    const auto report = deps_.applications->read();
+    appState_ = report.state;
+    appDetail_ = report.detail;
+    const auto accumulated = appAccumulator_.accumulate(report, wifi, now);
+    appProcesses_ = JsonValue::makeArray();
+    Status status;
+    storage::Transaction transaction(deps_.store.database());
+    if (!transaction.active())
+    {
+        appState_ = platform::AppCollectorState::unavailable;
+        appDetail_ = deps_.store.database().lastError();
+        appAccumulator_.clear();
+        appLastAt_ = now;
+        return;
+    }
+    std::vector<storage::AppUsageRow> rows;
+    JsonValue gapRecords = JsonValue::makeArray();
+    for (const auto& delta : accumulated.deltas)
+    {
+        storage::AppUsageRow row{delta.network.key, core::dayKeyOf(core::localStampOf(delta.at)), delta.process.appId, delta.process.name, delta.rxBytes, delta.txBytes};
+        if (const auto written = deps_.store.usage().addApp(row); !written)
+        {
+            // 应用存储失败不撤销已提交的网卡统计，也不推送未保存的应用增量。
+            appState_ = platform::AppCollectorState::unavailable;
+            appDetail_ = written.message;
+            appAccumulator_.clear();
+            appLastAt_ = now;
+            return;
+        }
+        rows.push_back(std::move(row));
+    }
+    for (const auto& missing : accumulated.gaps)
+    {
+        storage::CoverageGap gap;
+        gap.application = true;
+        gap.networkKey = missing.network.key;
+        gap.startedAt = missing.startedAt;
+        gap.endedAt = missing.endedAt;
+        gap.span = std::chrono::duration_cast<std::chrono::seconds>(gap.endedAt - gap.startedAt);
+        switch (missing.kind)
+        {
+            case core::AppGapKind::counterReset: gap.reason = storage::CoverageReason::counterReset; break;
+            case core::AppGapKind::reattributed: gap.reason = storage::CoverageReason::reattributed; break;
+            case core::AppGapKind::identityUnknown: gap.reason = storage::CoverageReason::identityUnknown; break;
+            case core::AppGapKind::sourceRestart: gap.reason = storage::CoverageReason::offline; break;
+        }
+        if (gap.span.count() > 0)
+        {
+            if (!(status = deps_.store.usage().addGap(gap)))
+                break;
+            gapRecords.push(appGapToJson(gap));
+        }
+    }
+    const bool collecting = report.state == platform::AppCollectorState::running || report.state == platform::AppCollectorState::partial;
+    if (status && appLastAt_ != TimePoint{} && now > appLastAt_ && (!collecting || report.state == platform::AppCollectorState::partial || !wifi.complete()))
+    {
+        storage::CoverageGap gap;
+        gap.application = true;
+        gap.startedAt = appLastAt_;
+        gap.endedAt = now;
+        gap.span = std::chrono::duration_cast<std::chrono::seconds>(now - appLastAt_);
+        gap.reason = !wifi.complete() ? storage::CoverageReason::identityUnknown : storage::CoverageReason::offline;
+        if (gap.span.count() > 0)
+        {
+            status = deps_.store.usage().addGap(gap);
+            if (status)
+                gapRecords.push(appGapToJson(gap));
+        }
+    }
+    if (!status || !(status = transaction.commit()))
+    {
+        if (!transaction.active())
+            deps_.store.database().rollback();
+        appState_ = platform::AppCollectorState::unavailable;
+        appDetail_ = status.message;
+        appAccumulator_.clear();
+        appLastAt_ = now;
+        return;
+    }
+    if (collecting && (!accumulated.gaps.empty() || !wifi.complete()))
+        appState_ = platform::AppCollectorState::partial;
+    for (const auto& process : report.samples)
+    {
+        if (!collecting || !process.active || !process.processId)
+            continue;
+        const auto link = std::find_if(wifi.samples.begin(), wifi.samples.end(), [&](const auto& sample) { return sample.interfaceId == process.interfaceId; });
+        if (link == wifi.samples.end())
+            continue;
+        const auto delta = std::find_if(accumulated.deltas.begin(), accumulated.deltas.end(), [&](const auto& item) {
+            return item.process.interfaceId == process.interfaceId && item.process.instanceId == process.instanceId && item.process.appId == process.appId;
+        });
+        const auto seconds = delta != accumulated.deltas.end() && delta->span.count() > 0 ? static_cast<ByteCount>(delta->span.count()) : ByteCount{1};
+        JsonValue value = JsonValue::makeObject();
+        value.set("networkId", JsonValue::makeString(core::networkRefOf(link->identity).key));
+        value.set("appId", JsonValue::makeString(process.appId));
+        value.set("processId", JsonValue::makeInt(process.processId));
+        value.set("instanceId", JsonValue::makeString(process.instanceId));
+        value.set("rxPerSecond", bytes(delta != accumulated.deltas.end() ? delta->rxBytes / seconds : 0));
+        value.set("txPerSecond", bytes(delta != accumulated.deltas.end() ? delta->txBytes / seconds : 0));
+        appProcesses_.push(std::move(value));
+    }
+    appLastAt_ = now;
+    if (!rows.empty() || gapRecords.size())
+    {
+        JsonValue usage = JsonValue::makeObject();
+        usage.set("records", appRowsToJson(rows));
+        usage.set("gaps", std::move(gapRecords));
+        events.names.push_back(event::kAppUsage);
+        events.items.push_back(std::move(usage));
+    }
 }
 
 BackendService::Response BackendService::buildHello() const
@@ -337,6 +529,18 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
         return response;
     }
     result.set("appRecords", appRowsToJson(apps));
+    result.set("appCollection", appCollectionToJson());
+    result.set("appProcesses", appProcesses_);
+    const auto appGaps = deps_.store.usage().gapsInRange(core::isoUtcOf(rangeStart), core::isoUtcOf(rangeEnd), status, true);
+    if (!status)
+    {
+        response.error = Error{errorCode::kStorageFailure, status.message};
+        return response;
+    }
+    JsonValue appGapArray = JsonValue::makeArray();
+    for (const auto& gap : appGaps)
+        appGapArray.push(appGapToJson(gap));
+    result.set("appGaps", std::move(appGapArray));
 
     response.result = std::move(result);
     return response;
@@ -701,6 +905,11 @@ BackendService::Response BackendService::restore(const JsonValue& params)
     // 恢复后暂停采集，避免刚恢复的历史立刻被当前计数差覆盖。
     paused_ = true;
     collectorState_ = "paused";
+    if (deps_.applications)
+        deps_.applications->stop();
+    appAccumulator_.clear();
+    appProcesses_ = JsonValue::makeArray();
+    appState_ = appEnabled_ ? platform::AppCollectorState::paused : platform::AppCollectorState::disabled;
 
     JsonValue result = JsonValue::makeObject();
     result.set("networks", JsonValue::makeInt(static_cast<std::int64_t>(networkCount)));
@@ -789,6 +998,8 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
         return disconnect(request.params);
     if (request.method == method::kPruneUsage)
         return pruneUsage(now);
+    if (request.method == method::kSetAppCollection)
+        return setAppCollection(request.params, now);
 
     if (request.method == method::kClearUsage)
     {
@@ -800,6 +1011,11 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
         }
         paused_ = true;  // 清空后暂停，避免立刻把当前计数差写回新记录
         collectorState_ = "paused";
+        if (deps_.applications)
+            deps_.applications->stop();
+        appAccumulator_.clear();
+        appProcesses_ = JsonValue::makeArray();
+        appState_ = appEnabled_ ? platform::AppCollectorState::paused : platform::AppCollectorState::disabled;
         JsonValue result = JsonValue::makeObject();
         result.set("cleared", JsonValue::makeBool(true));
         result.set("paused", JsonValue::makeBool(true));
@@ -993,6 +1209,7 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     }
 
     // 速率用本次增量除以区间长度，与累计差值保持同一口径。
+    collectApplications(report, now, events);
     std::map<std::string, std::pair<ByteCount, ByteCount>> recorded;
     for (const core::UsageDelta& delta : accumulated.deltas)
     {

@@ -10,6 +10,9 @@ const emptySnapshot = () => ({
     records: [],
     hourly: [],
     appRecords: [],
+    appCollection: { enabled: false, available: false, state: 'disabled' },
+    appProcesses: [],
+    appGaps: [],
     gaps: [],
     settings: { unit: 'GB', speedUnit: 'MB/s', interval: 5, retention: 90, autoStart: false, minimizeToTray: false, notifications: true },
     live: { state: 'loading', collector: 'offline', connections: [], updatedAt: new Date().toISOString(), skippedIntervals: 0 }
@@ -70,7 +73,24 @@ export function createDataClient(handlers = {}) {
         state.unsubscribe = window.desktop.backend.onEvent(message => {
             if (message.event === 'live') {
                 snapshot.live = payloadOf(message);
+                snapshot.appCollection = message.appCollection ?? snapshot.appCollection;
+                snapshot.appProcesses = message.appProcesses ?? snapshot.appProcesses;
                 handlers.onLive?.();
+                return;
+            }
+            if (message.event === 'appUsage') {
+                for (const item of message.records ?? []) {
+                    let row = snapshot.appRecords.find(record => record.date === item.date && record.networkId === item.networkId && record.appId === item.appId);
+                    if (!row) {
+                        row = { ...item, rxBytes: '0', txBytes: '0' };
+                        snapshot.appRecords.push(row);
+                    }
+                    row.name = item.name;
+                    row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes)).toString();
+                    row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes)).toString();
+                }
+                snapshot.appGaps.push(...(message.gaps ?? []));
+                (handlers.onAppUsage ?? handlers.onUsage)?.(message);
                 return;
             }
             if (message.event === 'usage') {
@@ -138,17 +158,29 @@ export function createDataClient(handlers = {}) {
             snapshot.records = [];
             snapshot.hourly = [];
             snapshot.appRecords = [];
+            snapshot.appGaps = [];
+            snapshot.appProcesses = [];
             snapshot.gaps = [];
             for (const network of snapshot.networks) {
                 if (network.quotaLedger) network.quotaLedger.usedBytes = '0';
             }
             snapshot.live = { ...snapshot.live, collector: 'paused' };
+            if (snapshot.appCollection.enabled) snapshot.appCollection = { ...snapshot.appCollection, state: 'paused' };
         },
 
         async pause(paused) {
             const result = await request('setPaused', { paused });
             snapshot.live = { ...snapshot.live, collector: result.paused ? 'paused' : 'running' };
+            if (snapshot.appCollection.enabled) snapshot.appCollection = { ...snapshot.appCollection, state: result.paused ? 'paused' : 'starting' };
+            if (result.paused) snapshot.appProcesses = [];
             return result.paused;
+        },
+
+        async setAppCollection(enabled) {
+            const result = await request('setAppCollection', { enabled });
+            snapshot.appCollection = result.appCollection;
+            snapshot.appProcesses = [];
+            return result.appCollection;
         },
 
         async disconnect(interfaceId, ssid) {

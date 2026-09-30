@@ -68,6 +68,7 @@ struct CoverageGap
     core::TimePoint startedAt{};
     core::TimePoint endedAt{};
     std::chrono::seconds span{0};
+    bool application = false;  // 应用采集空档独立于网卡采集覆盖
 };
 
 class UsageRepository
@@ -99,9 +100,9 @@ public:
     std::vector<AppUsageRow> appRange(const std::string& networkKey, const std::string& fromDay, const std::string& toDay, Status& status) const;
 
     Status addGap(const CoverageGap& gap);
-    std::vector<CoverageGap> gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status) const;
+    std::vector<CoverageGap> gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status, bool application = false) const;
     // 采集恢复时闭合所有未结束的空档（ended_at 为空）。
-    Status closeOpenGaps(core::TimePoint endedAt, std::size_t& closed);
+    Status closeOpenGaps(core::TimePoint endedAt, std::size_t& closed, bool application = false);
 
     // 清空用量记录与空档，并把账本归零；网络与偏好保留。
     Status clearUsage();

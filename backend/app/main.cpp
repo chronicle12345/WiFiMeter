@@ -16,6 +16,7 @@
 #include "../ipc/server.h"
 #include "../ipc/service.h"
 #include "../platform/counter_source.h"
+#include "../platform/fake_app_traffic.h"
 #include "../platform/linux/linux_network_platform.h"
 #include "../storage/store.h"
 
@@ -34,6 +35,7 @@ void printUsage()
         "  --proc-net-dev 路径  计数文件位置，缺省 /proc/net/dev（便于测试与排查）\n"
         "  --fake-adapter 路径  改用 JSON 文件里的网卡数据，不查询系统（自动测试用）\n"
         "  --fake-counters 路径 改用 JSON 文件里的累计计数，不读系统计数（自动测试用）\n"
+        "  --fake-apps 路径     改用 JSON 文件里的进程累计计数（自动测试用）\n"
         "  --paused      启动后不自动采集，等待 setPaused 恢复\n"
         "  --version     输出版本信息\n");
 }
@@ -88,6 +90,9 @@ int main(int argc, char** argv)
     std::string nmcliPath;
     std::string procNetDevPath;
     bool paused = false;
+    std::string fakeAppsPath;
+    if (const char* path = std::getenv("WIFIMETER_FAKE_APPS"))
+        fakeAppsPath = path;
 
     for (int index = 1; index < argc; ++index)
     {
@@ -133,6 +138,11 @@ int main(int argc, char** argv)
             wifimeter::platform::fake::setCountersPath(argv[++index]);
             continue;
         }
+        if (argument == "--fake-apps" && index + 1 < argc)
+        {
+            fakeAppsPath = argv[++index];
+            continue;
+        }
         std::fprintf(stderr, "未知参数：%s\n", argument.c_str());
         printUsage();
         return 2;
@@ -160,7 +170,10 @@ int main(int argc, char** argv)
     if (!procNetDevPath.empty())
         networkOptions.procNetDevPath = procNetDevPath;
     wifimeter::platform::linux::LinuxNetworkPlatform network(networkOptions);
-    ipc::BackendService service(ipc::BackendService::Deps{*store, network}, paused);
+    std::unique_ptr<wifimeter::platform::AppTrafficSource> applications;
+    if (!fakeAppsPath.empty())
+        applications = std::make_unique<wifimeter::platform::fake::FileAppTrafficSource>(fakeAppsPath);
+    ipc::BackendService service(ipc::BackendService::Deps{*store, network, applications.get()}, paused);
     ipc::StdioServer server(service);
 
     std::fprintf(stderr, "wifimeter-backend 已启动：%s\n", databasePath.c_str());

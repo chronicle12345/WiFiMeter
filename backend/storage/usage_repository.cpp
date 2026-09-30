@@ -276,26 +276,26 @@ std::vector<AppUsageRow> UsageRepository::appRange(const std::string& networkKey
 Status UsageRepository::addGap(const CoverageGap& gap)
 {
     Status status;
-    auto statement = database_.prepare("INSERT INTO coverage_gaps(network_key, reason, reason_detail, started_at, ended_at, span_seconds) VALUES(?1, ?2, ?3, ?4, ?5, ?6);", status);
+    auto statement = database_.prepare("INSERT INTO coverage_gaps(network_key, reason, reason_detail, started_at, ended_at, span_seconds, scope) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);", status);
     if (!statement)
         return status;
     const auto span = gap.span.count();
     if (!statement->bind(1, gap.networkKey) || !statement->bind(2, std::string(coverageReasonName(gap.reason))) || !statement->bind(3, gap.reasonDetail) || !statement->bind(4, core::isoUtcOf(gap.startedAt)) || !statement->bind(5, gap.span.count() > 0 ? core::isoUtcOf(gap.endedAt) : std::string()) ||
-        !statement->bind(6, static_cast<std::int64_t>(span)))
+        !statement->bind(6, static_cast<std::int64_t>(span)) || !statement->bind(7, std::string(gap.application ? "apps" : "network")))
         return Status::failure(statement->error());
     return statement->run();
 }
 
-std::vector<CoverageGap> UsageRepository::gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status) const
+std::vector<CoverageGap> UsageRepository::gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status, bool application) const
 {
     std::vector<CoverageGap> gaps;
     auto statement = database_.prepare(
         "SELECT network_key, reason, reason_detail, started_at, ended_at, span_seconds FROM coverage_gaps "
-        "WHERE started_at >= ?1 AND started_at <= ?2 ORDER BY started_at ASC;",
+        "WHERE started_at <= ?2 AND (ended_at = '' OR ended_at >= ?1) AND scope = ?3 ORDER BY started_at ASC;",
         status);
     if (!statement)
         return gaps;
-    if (!statement->bind(1, fromIso) || !statement->bind(2, toIso))
+    if (!statement->bind(1, fromIso) || !statement->bind(2, toIso) || !statement->bind(3, std::string(application ? "apps" : "network")))
     {
         status = Status::failure(statement->error());
         return gaps;
@@ -304,6 +304,7 @@ std::vector<CoverageGap> UsageRepository::gapsInRange(const std::string& fromIso
     while (statement->step())
     {
         CoverageGap gap;
+        gap.application = application;
         gap.networkKey = statement->columnText(0);
         const auto reason = coverageReasonFromName(statement->columnText(1));
         gap.reason = reason.value_or(CoverageReason::offline);
@@ -322,7 +323,7 @@ std::vector<CoverageGap> UsageRepository::gapsInRange(const std::string& fromIso
     return gaps;
 }
 
-Status UsageRepository::closeOpenGaps(core::TimePoint endedAt, std::size_t& closed)
+Status UsageRepository::closeOpenGaps(core::TimePoint endedAt, std::size_t& closed, bool application)
 {
     closed = 0;
     Status status;
@@ -331,11 +332,11 @@ Status UsageRepository::closeOpenGaps(core::TimePoint endedAt, std::size_t& clos
     auto statement = database_.prepare(
         "UPDATE coverage_gaps SET ended_at = ?1, "
         "span_seconds = MAX(0, CAST(strftime('%s', ?1) AS INTEGER) - CAST(strftime('%s', started_at) AS INTEGER)) "
-        "WHERE ended_at = '';",
+        "WHERE ended_at = '' AND scope = ?2;",
         status);
     if (!statement)
         return status;
-    if (!statement->bind(1, end))
+    if (!statement->bind(1, end) || !statement->bind(2, std::string(application ? "apps" : "network")))
         return Status::failure(statement->error());
     if (const Status ran = statement->run(); !ran)
         return ran;
