@@ -90,7 +90,7 @@ jobs:
       - name: Verify the packaged artifacts
         shell: pwsh
         run: |
-          $setup = 'dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe'
+          $setup = 'dist/windows/WiFiMeter-1.0.0-x64-Setup.exe'
           $app = 'dist/windows/win-unpacked/WiFiMeter Demo.exe'
           $backend = 'dist/windows/win-unpacked/resources/wifimeter-backend.exe'
           $capture = 'dist/windows/win-unpacked/resources/wifimeter-app-capture.exe'
@@ -109,6 +109,6 @@ jobs:
       - name: Upload the installer
         uses: actions/upload-artifact@v7
         with:
-          name: WiFiMeter-Demo-Windows-x64
-          path: dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe
+          name: WiFiMeter-Windows-x64
+          path: dist/windows/WiFiMeter-1.0.0-x64-Setup.exe
           if-no-files-found: error

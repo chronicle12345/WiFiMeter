@@ -84,7 +84,7 @@ ledger per Wi-Fi network instead:
 
 ### Windows
 
-Download `WiFiMeter-Demo-1.0.0-x64-Setup.exe` from [Releases](https://github.com/shw940/WiFiMeter/releases) and run the wizard.
+Download `WiFiMeter-1.0.0-x64-Setup.exe` from [Releases](https://github.com/shw940/WiFiMeter/releases) and run the wizard.
 The installer is unsigned, so SmartScreen may report an unknown publisher — choose
 "More info" → "Run anyway".
 

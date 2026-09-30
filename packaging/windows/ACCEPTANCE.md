@@ -52,7 +52,7 @@ node packaging/windows/acceptance.mjs
 安装包（含全部最新修复）：
 
 ```text
-dist\windows\WiFiMeter-Demo-1.0.0-x64-Setup.exe
+dist\windows\WiFiMeter-1.0.0-x64-Setup.exe
 ```
 
 安装后的程序位于 `%LOCALAPPDATA%\Programs\WiFiMeter Demo`，数据位于

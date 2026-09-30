@@ -35,7 +35,7 @@ Zig 用自带的 clang 完成 `x86_64-windows-gnu` 的编译与链接，因此�
 输出：
 
 ```text
-dist/windows/WiFiMeter-Demo-1.0.0-x64-Setup.exe
+dist/windows/WiFiMeter-1.0.0-x64-Setup.exe
 dist/windows/win-unpacked/WiFiMeter Demo.exe
 dist/windows/win-unpacked/resources/wifimeter-backend.exe
 ```

@@ -30,6 +30,6 @@ module.exports = {
         uninstallDisplayName: 'WiFiMeter Demo',
         runAfterFinish: true,
         installerLanguages: ['zh_CN', 'en_US'],
-        artifactName: 'WiFiMeter-Demo-${version}-${arch}-Setup.${ext}'
+        artifactName: 'WiFiMeter-${version}-${arch}-Setup.${ext}'
     }
 };
