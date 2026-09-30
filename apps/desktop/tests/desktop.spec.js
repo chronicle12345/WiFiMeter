@@ -365,6 +365,7 @@ test('偏好设置会落库并影响后端行为', async () => {
     await page.locator('select[name="interval"]').selectOption('10');
     await page.getByRole('button', { name: '保存设置' }).click();
     await expect.poll(() => query('SELECT interval_seconds FROM settings')).toBe('10');
+    await expect(page.locator('#settingsForm')).not.toHaveAttribute('data-busy', 'true');
 
     // 单位换算立刻反映在界面上。
     await page.locator('select[name="unit"]').selectOption('GiB');
