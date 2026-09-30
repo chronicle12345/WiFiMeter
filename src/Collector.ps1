@@ -87,7 +87,9 @@ try {
         $before = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
         foreach ($network in $state.Networks) { $before[$network.SSID] = @([long]$network.RxBytes, [long]$network.TxBytes) }
         $sample = Get-WifiSamples
-        $delta = Add-MeterSamples -State $state -Session $session -Samples @($sample.Samples) -Timestamp $now
+        $wired = Get-EthernetSamples
+        $allSamples = @($sample.Samples) + @($wired.Samples)
+        $delta = Add-MeterSamples -State $state -Session $session -Samples $allSamples -Timestamp $now
         $networkDeltas = @(foreach ($network in $state.Networks) {
             $old = if ($before.ContainsKey($network.SSID)) { $before[$network.SSID] } else { @(0L, 0L) }
             [pscustomobject]@{ SSID = $network.SSID; RxBytes = [long]$network.RxBytes - $old[0]; TxBytes = [long]$network.TxBytes - $old[1] }
@@ -100,6 +102,7 @@ try {
             }
             if ($action.Disconnect -and (-not $lastDisconnect.ContainsKey($action.SSID) -or ($now - $lastDisconnect[$action.SSID]).TotalSeconds -ge 10)) {
                 # Recheck the current SSID inside the native call before disconnecting this adapter.
+                # Only Wi-Fi samples participate: the WLAN helper cannot disconnect a wired adapter.
                 foreach ($connection in $sample.Samples) {
                     if ($connection.SSID -cne $action.SSID) { continue }
                     try { $null = Disconnect-MeterWifi -AdapterId $connection.AdapterId -SSID $action.SSID }
@@ -122,16 +125,21 @@ try {
             catch { Write-CollectorLog ('Application profile discovery: ' + $_.Exception.Message) }
             $lastProfiles = $now
         }
-        if ($delta.DownloadBytes -gt 0 -or $delta.UploadBytes -gt 0 -or $delta.Reason -match 'Baseline|NetworkChanged' -or ($sample.Samples.Count -gt 0 -and $now.ToString('yyyy-MM-dd') -ne $previousDate)) { $needsSave = $true }
+        if ($delta.DownloadBytes -gt 0 -or $delta.UploadBytes -gt 0 -or $delta.Reason -match 'Baseline|NetworkChanged' -or ($allSamples.Count -gt 0 -and $now.ToString('yyyy-MM-dd') -ne $previousDate)) { $needsSave = $true }
         $seconds = if ($null -ne $previousTime) { ($now - $previousTime).TotalSeconds } else { 0 }
         $status.DownloadPerSecond = if ($seconds -gt 0) { [double]$delta.DownloadBytes / $seconds } else { 0 }
         $status.UploadPerSecond = if ($seconds -gt 0) { [double]$delta.UploadBytes / $seconds } else { 0 }
         $status.SkippedIntervals += $delta.SkippedIntervals
-        $status.Message = if ($sample.Samples.Count -gt 0 -and -not $sample.HasError) { '正在统计' } else { $sample.Message }
-        $status.Connections = @($sample.Samples | ForEach-Object { $_.SSID } | Select-Object -Unique)
+        $hasSampleError = $sample.HasError -or $wired.HasError
+        $status.Message = if ($allSamples.Count -gt 0 -and -not $hasSampleError) { '正在统计' } elseif ($sample.Message) { $sample.Message } else { $wired.Message }
+        # 有线连接展示网卡连接名，Wi-Fi 连接继续展示 SSID。
+        $status.Connections = @(
+            @($sample.Samples | ForEach-Object { $_.SSID }) +
+            @($wired.Samples | ForEach-Object { if ($_.NetworkName) { $_.NetworkName } else { $_.SSID } })
+        ) | Select-Object -Unique
         $status.UpdatedAt = [DateTimeOffset]::UtcNow.ToString('o')
         if (($needsSave -or $script:storageWarning) -and ($now - $lastSave).TotalSeconds -ge 10) { Save-CollectorData; $lastSave = $now; $needsSave = $false }
-        $status.Error = @($(if ($sample.HasError) { $sample.Message }), $script:storageWarning, $policyError) | Where-Object { $_ }
+        $status.Error = @($(if ($sample.HasError) { $sample.Message }), $(if ($wired.HasError) { $wired.Message }), $script:storageWarning, $policyError) | Where-Object { $_ }
         $status.Error = $status.Error -join '; '
         Write-MeterJson -Path (Join-Path $directory 'status.json') -Value $status
         $previousTime = $now

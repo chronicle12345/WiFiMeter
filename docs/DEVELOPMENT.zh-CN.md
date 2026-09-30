@@ -29,7 +29,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-Performa
 | `Host.cs` | GUI 可执行文件、STA PowerShell 运行空间、单窗口激活和退出信号 |
 | `App.ps1`、`MainWindow.xaml`、`Dialogs.ps1` | 概览、弹窗、托盘生命周期与应用流量后台查询 |
 | `Strings.psm1` | 中英文界面文案 |
-| `Sampler.psm1` | WinRT SSID 识别与 .NET 网卡计数器 |
+| `Sampler.psm1` | WinRT SSID 识别与 .NET Wi-Fi/有线网卡计数器 |
 | `Core.psm1` | 增量、每日记录、范围查询、JSON 恢复与 CSV 导出 |
 | `Storage.psm1` | 原子文件替换，以及短暂文件占用时的有限重试 |
 | `Preferences.psm1` | 配置验证、原子合并与保留期限 |
@@ -43,6 +43,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\Measure-Performa
 每 5 秒采样，有变化时约每 10 秒保存，正常停止时保存剩余数据。每个采样间隔归入结束时的本地日期，日期范围包含两个端点。SSID 按字符精确匹配并区分大小写，备注不改变身份。
 
 采样器通过 GUID 对应 WinRT 配置与网卡，在计数器读取前后核对连接。首次采样、SSID 变化、网卡消失、计数器下降、时钟回退或间隔超过 15 秒时重建基准，舍弃无法确认归属的增量。具体限制见[使用指南](USAGE.zh-CN.md#统计范围与排错)。
+
+有线网卡按接口类型直接采样，没有 Wi-Fi 配置文件。它们以保留的 `Ethernet:<网卡 GUID>` 身份统计，同时保存网卡连接名用于显示；插拔网线沿用相同的基准与断开清理规则。`Core.psm1` 提供 `Test-MeterWiredIdentity`，供额度汇总等调用方排除保留身份。区间 CSV 导出可选地提供连接名，仅替换保留的有线身份；Wi-Fi SSID 与未映射的身份原样导出。
 
 默认目录为 `%LOCALAPPDATA%\WiFiMeter\data`。`state.json` 使用 Schema 1，包含每日记录和可选的 `QuotaLedger`；没有该字段的旧记录仍可读取。当前额度和日记录在同一次保存中写入，历史清理不影响额度累计。新规则从保留的历史初始化，再随采样累加。每条有效规则保留提醒和到达上限的通知记录，周期或规则变化后删除失效通知。
 

@@ -14,6 +14,13 @@ function New-MeterSession {
     [pscustomobject]@{ Baselines = [System.Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal) }
 }
 
+function Test-MeterWiredIdentity {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SSID)
+    # 有线网卡身份使用保留前缀，与真实 SSID 的比较保持序数大小写敏感。
+    return $SSID.StartsWith('Ethernet:', [StringComparison]::Ordinal)
+}
+
 function Assert-ByteCount($Value) {
     if (($Value -isnot [int] -and $Value -isnot [long]) -or $Value -lt 0) {
         throw '流量字节数必须是非负 64 位整数。'
@@ -231,6 +238,19 @@ function ConvertTo-CsvCell([string]$Value, [switch]$ProtectFormula) {
     '"' + $Value.Replace('"', '""') + '"'
 }
 
+function Resolve-MeterCsvNetworkName {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$SSID,
+        [AllowNull()][System.Collections.IDictionary]$NetworkNames
+    )
+    # 名称映射只作用于保留的有线身份；Wi-Fi SSID 与未映射的身份一律原样输出。
+    if ($null -eq $NetworkNames -or -not (Test-MeterWiredIdentity $SSID)) { return $SSID }
+    $name = $NetworkNames[$SSID]
+    if ($name -isnot [string] -or $name.Length -eq 0) { return $SSID }
+    return $name
+}
+
 function ConvertTo-Gigabytes([long]$Bytes) {
     ([decimal]$Bytes / [decimal]1000000000).ToString('0.#########', [cultureinfo]::InvariantCulture)
 }
@@ -243,7 +263,8 @@ function Export-MeterRangeCsv {
         [ValidateSet('All','Today','Month','Range')][string]$Period = 'All',
         [DateTimeOffset]$Now = [DateTimeOffset]::Now,
         [datetime]$StartDate,
-        [datetime]$EndDate
+        [datetime]$EndDate,
+        [AllowNull()][System.Collections.IDictionary]$NetworkNames
     )
     $rowParameters = @{ State = $State; Period = $Period; Now = $Now }
     if ($PSBoundParameters.ContainsKey('StartDate')) { $rowParameters.StartDate = $StartDate }
@@ -252,7 +273,8 @@ function Export-MeterRangeCsv {
     $lines = [System.Collections.Generic.List[string]]::new()
     $lines.Add('"Wi-Fi","下载_GB","上传_GB","总计_GB"')
     foreach ($row in $rows) {
-        $lines.Add(((ConvertTo-CsvCell $row.SSID -ProtectFormula), (ConvertTo-Gigabytes $row.RxBytes), (ConvertTo-Gigabytes $row.TxBytes), (ConvertTo-Gigabytes $row.TotalBytes) -join ','))
+        $name = Resolve-MeterCsvNetworkName -SSID $row.SSID -NetworkNames $NetworkNames
+        $lines.Add(((ConvertTo-CsvCell $name -ProtectFormula), (ConvertTo-Gigabytes $row.RxBytes), (ConvertTo-Gigabytes $row.TxBytes), (ConvertTo-Gigabytes $row.TotalBytes) -join ','))
     }
     Write-AtomicText $Path (($lines -join "`r`n") + "`r`n") $null
 }
@@ -304,4 +326,4 @@ function Save-MeterState {
     Export-MeterCsv $State $DataDirectory
 }
 
-Export-ModuleMember -Function New-MeterState, New-MeterSession, Add-MeterSamples, Get-MeterRows, Read-MeterState, Save-MeterState, Export-MeterRangeCsv
+Export-ModuleMember -Function New-MeterState, New-MeterSession, Add-MeterSamples, Get-MeterRows, Read-MeterState, Save-MeterState, Export-MeterRangeCsv, Test-MeterWiredIdentity

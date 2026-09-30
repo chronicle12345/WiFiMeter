@@ -12,7 +12,7 @@ Windows 10 or 11, Windows PowerShell 5.1 and .NET Framework 4.7.2 or later are r
 
 Choose All time, Today or This month. Custom dates opens a calendar dialog: select both dates and apply them. Both endpoints are included. Cancel keeps the previous range. The chart, table and CSV export use the selected range, with no top-network limit.
 
-Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. Original SSIDs remain visible in the details and CSV. Identical SSIDs share totals; names with different letter case remain separate.
+Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. Original SSIDs remain visible in the details and CSV: Wi-Fi SSIDs are always exported unchanged, and wired adapters appear under their reserved `Ethernet:` identities. Identical SSIDs share totals; names with different letter case remain separate.
 
 ## Traffic limits
 
@@ -63,8 +63,8 @@ Updates and uninstall preserve the data folder. Uninstall through Windows Instal
 
 ## Accounting and troubleshooting
 
-WiFiMeter measures this PC's wireless adapter, including local transfers and VPN traffic carried over Wi-Fi. Ethernet and other devices on the router are excluded. Figures are not an ISP bill. Collection begins when the program runs and saves changed totals about every ten seconds.
+WiFiMeter measures this PC's Wi-Fi and wired Ethernet adapters, including local transfers and VPN traffic they carry. Other devices on the router are excluded. Figures are not an ISP bill. Collection begins when the program runs and saves changed totals about every ten seconds.
 
-A first sample, a network change, a counter reset or a long sampling gap establishes a new baseline. Ambiguous increments are discarded; brief traffic near a transition can be missed. A fast switch away and back between samples can go undetected. Power loss can discard the latest unsaved records.
+A first sample, a network change, a counter reset or a long sampling gap establishes a new baseline; for wired adapters this includes plugging the cable in or out. Ambiguous increments are discarded; brief traffic near a transition can be missed. A fast switch away and back between samples can go undetected. Power loss can discard the latest unsaved records.
 
-If no network appears, check the Wi-Fi connection. For read or save errors, inspect the in-app message and `collector.log`, `ui.log` or `host.log` in the data folder. If application details remain empty, try an earlier date range after Windows has updated its records.
+If no network appears, check the Wi-Fi connection or the wired network cable. For read or save errors, inspect the in-app message and `collector.log`, `ui.log` or `host.log` in the data folder. If application details remain empty, try an earlier date range after Windows has updated its records. Application usage records are not available for wired connections.

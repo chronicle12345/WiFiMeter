@@ -34,7 +34,8 @@ function New-TestInterface {
         [long]$Tx = 80,
         [string]$Status = 'Up',
         [string]$Type = 'Wireless80211',
-        [bool]$ThrowOnRead = $false
+        [bool]$ThrowOnRead = $false,
+        [string]$Name = 'Wi-Fi'
     )
     $adapter = [pscustomobject]@{
         Id = $Id
@@ -43,6 +44,7 @@ function New-TestInterface {
         Rx = $Rx
         Tx = $Tx
         ThrowOnRead = $ThrowOnRead
+        Name = $Name
     }
     $adapter | Add-Member ScriptMethod GetIPStatistics {
         if ($this.ThrowOnRead) { throw 'Simulated adapter statistics failure.' }
@@ -86,6 +88,36 @@ function Invoke-SamplerTest {
             }
         } $Before $After $Interfaces $ThrowProfiles $ThrowInterfaces $ProfileFailureCall
         $result = Get-WifiSamples
+        Assert-True ($null -ne $result) 'Result must be an object.'
+        Assert-True ($result.Samples -is [object[]]) 'Samples must always be an object array.'
+        Assert-True ($result.Message -is [string]) 'Message must be a string.'
+        Assert-True ($result.HasError -is [bool]) 'HasError must be a boolean.'
+        & $Assert $result
+        $script:testCount++
+        Write-Output ('PASS: ' + $Name)
+    }
+    finally { Remove-Module $module -Force }
+}
+
+function Invoke-EthernetTest {
+    param(
+        [string]$Name,
+        [object[]]$Interfaces,
+        [scriptblock]$Assert,
+        [bool]$ThrowInterfaces = $false
+    )
+    $module = Import-Module $modulePath -Force -PassThru
+    try {
+        & $module {
+            param($Adapters, $FailInterfaces)
+            $script:TestAdapters = $Adapters
+            $script:TestFailInterfaces = $FailInterfaces
+            function script:Get-EthernetNetworkInterfaces {
+                if ($script:TestFailInterfaces) { throw 'Simulated interface enumeration failure.' }
+                return $script:TestAdapters
+            }
+        } $Interfaces $ThrowInterfaces
+        $result = Get-EthernetSamples
         Assert-True ($null -ne $result) 'Result must be an object.'
         Assert-True ($result.Samples -is [object[]]) 'Samples must always be an object array.'
         Assert-True ($result.Message -is [string]) 'Message must be a string.'
@@ -201,6 +233,55 @@ Invoke-SamplerTest 'One unreadable profile preserves a different verified adapte
     param($result)
     Assert-True ($result.HasError -and $result.Samples.Count -eq 1) 'One unreadable profile must not remove verified adapters.'
     Assert-True ($result.Samples[0].AdapterId -ceq $id2) 'Only the verified adapter can be included.'
+}
+
+Invoke-EthernetTest 'Up wired adapters use reserved identities and keep connection names' @(
+    (New-TestInterface ('{' + $id1.ToUpperInvariant() + '}') 5000 700 'Up' 'Ethernet' $false 'Ethernet 2')
+) {
+    param($result)
+    Assert-True ($result.Samples.Count -eq 1 -and -not $result.HasError) 'Expected exactly one wired sample.'
+    $sample = $result.Samples[0]
+    Assert-True ($sample.AdapterId -ceq $id1) 'Wired adapter ID must be a normalized GUID.'
+    Assert-True ($sample.SSID -ceq ('Ethernet:' + $id1)) 'Wired identity must use the reserved prefix and adapter GUID.'
+    Assert-True ($sample.NetworkName -ceq 'Ethernet 2') 'Wired samples must keep the adapter connection name.'
+    Assert-True ($sample.RxBytes -is [long] -and $sample.RxBytes -eq 5000) 'RX must be an Int64 byte count.'
+    Assert-True ($sample.TxBytes -is [long] -and $sample.TxBytes -eq 700) 'TX must be an Int64 byte count.'
+}
+
+Invoke-EthernetTest 'Down or wireless interfaces are not sampled as wired' @(
+    (New-TestInterface $id1 10 20 'Down' 'Ethernet'), (New-TestInterface $id2 10 20 'Up' 'Wireless80211')
+) {
+    param($result)
+    Assert-True ($result.Samples.Count -eq 0 -and -not $result.HasError) 'Down or wireless interfaces must be excluded from wired sampling.'
+}
+
+Invoke-EthernetTest 'Duplicate wired interfaces produce one sample' @(
+    (New-TestInterface $id1 10 20 'Up' 'Ethernet'), (New-TestInterface $id1 999 999 'Up' 'Ethernet')
+) {
+    param($result)
+    Assert-True ($result.Samples.Count -eq 1 -and -not $result.HasError) 'Each wired adapter must be sampled once.'
+    Assert-True ($result.Samples[0].RxBytes -eq 10) 'The first interface observation must be kept.'
+}
+
+Invoke-EthernetTest 'One failed wired interface preserves the other successful sample' @(
+    (New-TestInterface $id1 0 0 'Up' 'Ethernet' $true), (New-TestInterface $id2 30 40 'Up' 'Ethernet' $false 'Ethernet')
+) {
+    param($result)
+    Assert-True ($result.HasError -and $result.Samples.Count -eq 1) 'Partial wired failure must retain successful samples.'
+    Assert-True ($result.Samples[0].AdapterId -ceq $id2) 'Only the successful adapter can be included.'
+    Assert-True (-not [string]::IsNullOrWhiteSpace($result.Message)) 'Wired errors need a readable message.'
+}
+
+Invoke-EthernetTest 'Wired interface enumeration failure is reported without throwing' @() {
+    param($result)
+    Assert-True ($result.HasError -and $result.Samples.Count -eq 0) 'Wired enumeration error must be explicit.'
+} -ThrowInterfaces $true
+
+Invoke-EthernetTest 'Invalid negative wired counters are rejected' @(
+    (New-TestInterface $id1 -1 20 'Up' 'Ethernet')
+) {
+    param($result)
+    Assert-True ($result.HasError -and $result.Samples.Count -eq 0) 'Invalid wired counters must not enter totals.'
 }
 
 if ($Live) {

@@ -316,6 +316,68 @@ try {
             Assert-Equal (Read-MeterState $dir).Networks[0].RxBytes 1010L
         } finally { $lock.Dispose() }
     }
+    Test-Case 'wired identity test is ordinal, case-sensitive and prefix based' {
+        Assert-True (Test-MeterWiredIdentity 'Ethernet:ed7a8b9c-11a2-43d4-85e6-778899aabbcc') 'The reserved wired prefix must be recognized.'
+        Assert-True (-not (Test-MeterWiredIdentity 'ethernet:ed7a8b9c-11a2-43d4-85e6-778899aabbcc')) 'Wired identity matching must stay case-sensitive.'
+        Assert-True (-not (Test-MeterWiredIdentity 'Ethernet')) 'The prefix alone is not a wired identity.'
+        Assert-True (-not (Test-MeterWiredIdentity 'Home')) 'Wi-Fi SSIDs must not be treated as wired identities.'
+        Assert-True (-not (Test-MeterWiredIdentity '')) 'An empty SSID is not a wired identity.'
+    }
+    Test-Case 'wired samples keep separate identities and baseline rules' {
+        $state = New-MeterState; $session = New-MeterSession; $time = Local-Time '2026-09-19 10:00:00'
+        $wired = 'Ethernet:ed7a8b9c-11a2-43d4-85e6-778899aabbcc'
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 100 10), (Sample 'w' $wired 500 50)) $time
+        $summary = Add-MeterSamples $state $session @((Sample 'a' 'Home' 200 20), (Sample 'w' $wired 900 90)) $time.AddSeconds(5)
+        Assert-Equal $summary.DownloadBytes 500L
+        Assert-Equal $summary.UploadBytes 50L
+        $rows = @(Get-MeterRows $state)
+        Assert-Equal $rows.Count 2
+        Assert-True (Test-MeterWiredIdentity $rows[0].SSID) 'The wired identity must be preserved in the state.'
+        Assert-Equal $rows[0].TotalBytes 440L
+        Assert-Equal $rows[1].SSID 'Home'
+        Assert-True (-not (Test-MeterWiredIdentity $rows[1].SSID)) 'The Wi-Fi SSID must not be treated as wired.'
+    }
+    Test-Case 'wired adapter disappearance clears its baseline only' {
+        $state = New-MeterState; $session = New-MeterSession; $time = Local-Time '2026-09-19 10:00:00'
+        $wired = 'Ethernet:ed7a8b9c-11a2-43d4-85e6-778899aabbcc'
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 100 10), (Sample 'w' $wired 500 50)) $time
+        $summary = Add-MeterSamples $state $session @((Sample 'a' 'Home' 200 20)) $time.AddSeconds(5)
+        Assert-Equal $summary.SkippedIntervals 1
+        Assert-True ($summary.Reason.Contains('Disconnected')) 'A missing wired adapter must be reported as disconnected.'
+        $summary = Add-MeterSamples $state $session @((Sample 'a' 'Home' 300 30), (Sample 'w' $wired 5000 500)) $time.AddSeconds(10)
+        Assert-Equal $summary.SkippedIntervals 0
+        Assert-True ($summary.Reason.Contains('Baseline')) 'A re-plugged wired adapter must re-establish its baseline.'
+        Assert-Equal (Get-MeterRows $state | Where-Object { Test-MeterWiredIdentity $_.SSID } | Select-Object -ExpandProperty TotalBytes) 0L
+        $summary = Add-MeterSamples $state $session @((Sample 'a' 'Home' 400 40), (Sample 'w' $wired 5100 600)) $time.AddSeconds(15)
+        Assert-Equal $summary.DownloadBytes 200L
+        Assert-Equal $summary.UploadBytes 110L
+    }
+    Test-Case 'exported CSV keeps headers and maps only wired identities' {
+        $dir = New-TestDirectory
+        $wiredMapped = 'Ethernet:9f8e7d6c-5b4a-4321-8765-abcdefabcdef'
+        $wiredUnmapped = 'Ethernet:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+        $state = New-MeterState; $session = New-MeterSession; $time = Local-Time '2026-09-19 10:00:00'
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 100 10), (Sample 'w' $wiredMapped 500 50), (Sample 'x' $wiredUnmapped 70 7)) $time
+        $null = Add-MeterSamples $state $session @((Sample 'a' 'Home' 1100 120), (Sample 'w' $wiredMapped 1500 150), (Sample 'x' $wiredUnmapped 170 17)) $time.AddSeconds(5)
+        $path = Join-Path $dir 'selected.csv'
+        $null = Export-MeterRangeCsv -State $state -Path $path -Period All -NetworkNames @{
+            $wiredMapped = '=1+1"主板网卡'
+            'Home' = '不 应 出 现'
+            'Ethernet:missing-identity' = '未观察到的网卡'
+        }
+        $csv = @(Import-Csv -LiteralPath $path -Encoding UTF8)
+        Assert-True ($csv.Count -eq 3) 'Each network must produce one row.'
+        Assert-Equal $csv[0].'Wi-Fi' 'Home' 'Wi-Fi SSIDs must never be replaced by a supplied name.'
+        Assert-Equal $csv[1].'Wi-Fi' ("'" + '=1+1"' + '主板网卡') 'Mapped wired names must keep the formula-protection prefix.'
+        Assert-Equal $csv[2].'Wi-Fi' $wiredUnmapped 'Unmapped wired identities must be exported unchanged.'
+        $text = [IO.File]::ReadAllText($path)
+        Assert-True (-not $text.Contains('不 应 出 现')) 'Supplied Wi-Fi names must be ignored.'
+        Assert-True (-not $text.Contains('未观察到的网卡')) 'Names for unobserved identities must be ignored.'
+        Assert-True ($text.Contains('"''=1+1""主板网卡"')) 'Mapped wired names must keep CSV quoting and formula protection.'
+        $empty = Join-Path $dir 'empty.csv'
+        $null = Export-MeterRangeCsv -State (New-MeterState) -Path $empty -Period All -NetworkNames @{ $wiredMapped = '主板网卡' }
+        Assert-True ([IO.File]::ReadAllText($empty).Contains('"Wi-Fi","下载_GB","上传_GB","总计_GB"')) 'Empty CSV must retain columns.'
+    }
 } finally {
     foreach ($dir in $script:TempDirectories) {
         $resolved = [IO.Path]::GetFullPath($dir)

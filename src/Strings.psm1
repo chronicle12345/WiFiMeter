@@ -133,6 +133,7 @@ function Get-MeterStrings {
         @('AppUsageProfile', 'Connect to this Wi-Fi once while WiFiMeter is running so its Windows profile can be identified.', '请在 WiFiMeter 运行时连接一次此 Wi-Fi，以便识别对应的 Windows 网络配置。'),
         @('AppUsagePartial', 'Only part of this range is available. Windows keeps up to 60 days of application history; your retention setting also applies.', '仅能查询所选范围内的部分记录。Windows 最多保留近 60 天的应用历史，同时受本软件的保存天数设置限制。'),
         @('AppUsageOutside', 'This range is outside the retained dates or the Windows 60-day application history.', '此日期范围超出了保留记录的范围或 Windows 近 60 天的应用历史范围。'),
+        @('AppUsageWired', 'Windows does not provide application usage records for wired Ethernet connections.', 'Windows 不提供有线网络连接的应用流量记录。'),
         @('ErrorBusy', 'Another start or stop operation is in progress. Try again shortly.', '另一个启动或停止操作尚未完成，请稍后重试。'),
         @('ErrorStart', 'Tracking could not start. Open the data folder and check collector.log.', '后台统计启动失败，请打开数据文件夹查看 collector.log。'),
         @('ErrorStartTimeout', 'Tracking did not respond in time. Refresh the window and check collector.log in the data folder.', '后台启动超时，请刷新窗口，并打开数据文件夹查看 collector.log。'),

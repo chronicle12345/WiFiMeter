@@ -141,4 +141,71 @@ function Get-WifiSamples {
     }
 }
 
-Export-ModuleMember -Function Get-WifiSamples
+function Get-EthernetNetworkInterfaces {
+    return [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
+}
+
+function Get-EthernetSamples {
+    [CmdletBinding()]
+    param()
+
+    $samples = New-Object 'System.Collections.Generic.List[object]'
+    $hasError = $false
+    try {
+        $interfaces = @(Get-EthernetNetworkInterfaces)
+    }
+    catch {
+        $interfaces = @()
+        $hasError = $true
+    }
+
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($interface in $interfaces) {
+        try {
+            if ($interface.NetworkInterfaceType -ne [System.Net.NetworkInformation.NetworkInterfaceType]::Ethernet) { continue }
+            if ($interface.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) { continue }
+
+            $adapterId = ([guid]$interface.Id).ToString('D')
+            if (-not $seen.Add($adapterId)) { continue }
+
+            $statistics = $interface.GetIPStatistics()
+            if ($null -eq $statistics -or $null -eq $statistics.BytesReceived -or $null -eq $statistics.BytesSent) {
+                throw 'Interface byte counters were unavailable.'
+            }
+            $rx = [long]$statistics.BytesReceived
+            $tx = [long]$statistics.BytesSent
+            if ($rx -lt 0 -or $tx -lt 0) { throw 'Interface byte counters were invalid.' }
+
+            # 有线网卡没有 SSID，使用保留前缀加网卡 GUID 组成稳定身份；NetworkName 保存连接名供界面显示。
+            $samples.Add([pscustomobject]@{
+                AdapterId = [string]$adapterId
+                SSID = ('Ethernet:' + $adapterId)
+                NetworkName = [string]$interface.Name
+                RxBytes = $rx
+                TxBytes = $tx
+            })
+        }
+        catch {
+            # 单个接口读取失败时，继续采样其他接口。
+            $hasError = $true
+        }
+    }
+
+    $message = ''
+    if ($hasError) {
+        if ($samples.Count -gt 0) {
+            $message = '部分有线网卡采样失败，已保留其他网卡的数据。'
+        }
+        else {
+            $message = '无法读取有线网络的连接或流量信息，请稍后重试。'
+        }
+    }
+
+    return [pscustomobject]@{
+        Samples = [object[]]$samples.ToArray()
+        Message = [string]$message
+        HasError = [bool]$hasError
+    }
+}
+
+Export-ModuleMember -Function Get-WifiSamples, Get-EthernetSamples

@@ -109,6 +109,15 @@ try {
         Assert-True $threw 'Reversed dates must fail validation.'
         Assert-True ((& $module { $script:QueryCount }) -eq 0) 'Invalid or unavailable intervals must not query Windows.'
     }
+    Invoke-AppTest 'Wired identities return an explicit state without querying Windows' {
+        param($module, $directory)
+        & $module { param($Profiles) $script:TestProfiles = $Profiles } @((New-TestProfile 'Home'))
+        $wired = Get-MeterAppUsage -SSID 'Ethernet:ed7a8b9c-11a2-43d4-85e6-778899aabbcc' -StartDate '2026-09-19' -EndDate '2026-09-19' -DataDirectory $directory
+        Assert-True (-not $wired.Available -and $wired.MessageCode -eq 'WiredNetwork') 'Wired networks must return an explicit wired state.'
+        Assert-True ($wired.Rows.Count -eq 0 -and $wired.Days.Count -eq 0) 'Wired networks must not invent application records.'
+        Assert-True ($wired.Message -and -not [string]::IsNullOrWhiteSpace($wired.Message)) 'Wired networks need a readable message.'
+        Assert-True ((& $module { $script:QueryCount }) -eq 0) 'The wired early return must not create provider requests.'
+    }
     Invoke-AppTest 'Empty and denied responses never invent application traffic' {
         param($module, $directory)
         & $module { param($Profiles) $script:TestProfiles = $Profiles; $script:TestFailure = 'Empty' } @((New-TestProfile 'Home'))

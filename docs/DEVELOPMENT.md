@@ -29,7 +29,7 @@ The optional live query reads Windows usage records. The performance script samp
 | `Host.cs` | GUI executable, STA PowerShell runspace, single-window activation and exit signals |
 | `App.ps1`, `MainWindow.xaml`, `Dialogs.ps1` | Dashboard, modal forms, tray lifecycle and background application queries |
 | `Strings.psm1` | English and Simplified Chinese interface text |
-| `Sampler.psm1` | WinRT SSID discovery and .NET adapter byte counters |
+| `Sampler.psm1` | WinRT SSID discovery and .NET Wi-Fi and wired adapter byte counters |
 | `Core.psm1` | Deltas, daily records, range queries, JSON recovery and CSV export |
 | `Storage.psm1` | Atomic file replacement with bounded retries for short file locks |
 | `Preferences.psm1` | Validated settings, atomic merge operations and retention rules |
@@ -43,6 +43,8 @@ The optional live query reads Windows usage records. The performance script samp
 Samples arrive every five seconds. Changed records save about every ten seconds and on normal stop. Each interval belongs to the local date of its ending sample. Range endpoints are inclusive. SSID identity uses ordinal, case-sensitive comparison; aliases never change it.
 
 The sampler matches WinRT profiles to adapter GUIDs and checks the connection before and after reading counters. A first sample, changed SSID, missing interface, reduced counter, backward clock adjustment or gap over 15 seconds resets the baseline. Ambiguous increments are discarded. [User guide](USAGE.md#accounting-and-troubleshooting) describes the resulting limits.
+
+Wired Ethernet adapters are sampled by interface type without a Wi-Fi profile. They are tracked under reserved `Ethernet:<adapter GUID>` identities that also keep the adapter's connection name for display; plugging or unplugging reuses the same baseline and disconnected-cleanup rules. `Core.psm1` exposes `Test-MeterWiredIdentity` so quota totals and other consumers can exclude reserved identities. The range CSV export accepts optional connection names that replace reserved wired identities only; Wi-Fi SSIDs and unmapped identities are exported unchanged.
 
 Data defaults to `%LOCALAPPDATA%\WiFiMeter\data`. Schema 1 in `state.json` stores daily records plus an optional `QuotaLedger`. Old records without that field remain readable. Active quota counters are saved with the daily state, independently of retention pruning. A new policy is seeded from retained history; later samples update its counter. Each active policy keeps warning and limit acknowledgements. Period or policy changes discard obsolete acknowledgements.
 

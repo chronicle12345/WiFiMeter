@@ -181,6 +181,7 @@ function Complete-MeterAppUsage {
             'ProfileUnavailable' { $messageKey = 'AppUsageProfile' }
             'Partial' { $messageKey = 'AppUsagePartial' }
             'OutsideAvailableRange' { $messageKey = 'AppUsageOutside' }
+            'WiredNetwork' { $messageKey = 'AppUsageWired' }
         }
     }
     $Context.Status.Text = Text-Meter $messageKey

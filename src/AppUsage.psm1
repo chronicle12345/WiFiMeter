@@ -254,6 +254,7 @@ function New-MeterAppResult([string]$Code, [bool]$Available = $false) {
         Partial = 'Only part of the selected interval is available. Windows history is limited to the most recent 60 days; saved-record settings also apply.'
         OutsideAvailableRange = 'This interval is outside the retained tracking dates or the Windows 60-day history window.'
         Unavailable = 'Windows application usage could not be read for this network.'
+        WiredNetwork = 'Windows does not provide application usage records for wired Ethernet connections.'
     }
     return [pscustomobject]@{
         Available = $Available; Message = $messages[$Code]; MessageCode = $Code
@@ -274,6 +275,8 @@ function Get-MeterAppUsage {
     )
 
     if ($StartDate.Date -gt $EndDate.Date) { throw 'The start date must be on or before the end date.' }
+    # 有线身份没有对应的 Wi-Fi 配置文件，Windows 也不提供其应用流量记录，直接返回明确状态。
+    if ($SSID.StartsWith('Ethernet:', [StringComparison]::Ordinal)) { return (New-MeterAppResult 'WiredNetwork') }
     $now = Get-MeterAppNow
     $start = [DateTimeOffset]$StartDate.Date
     $requestedStart = $start
