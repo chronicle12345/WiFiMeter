@@ -68,6 +68,7 @@ function createFakes({ trayThrows = false, notificationSupported = true } = {}) 
         nativeImage: { createFromPath: () => ({}) },
         getWindow: () => window,
         iconPath: '/tmp/icon.png',
+        platform: 'linux',
         logger: () => {}
     });
 

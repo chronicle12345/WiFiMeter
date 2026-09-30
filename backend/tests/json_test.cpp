@@ -2,6 +2,7 @@
 
 #include "../support/json.h"
 
+#include <limits>
 #include <string>
 
 #include "test_support.h"
@@ -269,8 +270,8 @@ void roundTripsThroughText()
 void keepsNonFiniteNumbersOutOfOutput()
 {
     // NaN 与 Infinity 不是合法 JSON，输出成 null 而不是让对面解析失败。
-    WIFIMETER_CHECK_EQ(JsonValue::makeNumber(0.0 / 0.0).dump(), std::string("null"));
-    WIFIMETER_CHECK_EQ(JsonValue::makeNumber(1.0 / 0.0).dump(), std::string("null"));
+    WIFIMETER_CHECK_EQ(JsonValue::makeNumber(std::numeric_limits<double>::quiet_NaN()).dump(), std::string("null"));
+    WIFIMETER_CHECK_EQ(JsonValue::makeNumber(std::numeric_limits<double>::infinity()).dump(), std::string("null"));
     WIFIMETER_CHECK_EQ(JsonValue::makeNumber(1.5).dump(), std::string("1.5"));
 }
 

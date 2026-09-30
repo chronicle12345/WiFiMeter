@@ -1,43 +1,27 @@
 // UI 测试用的后端夹具。
 //
-// 用真实的 wifimeter-backend 可执行文件，配上假的 nmcli 与假的 /proc/net/dev，
+// 用真实的 wifimeter-backend 可执行文件，配上两端共用的 JSON 网卡与计数夹具，
 // 因此测试既确定又不脱离真实实现：进程、协议、SQLite 与页面全都是真的，
 // 只有“网卡报什么”是假的。
 
 import { spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveExecutable } from '../../electron/backend.cjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repositoryRoot = path.resolve(here, '../../../..');
-export const backendBinary = path.join(repositoryRoot, 'build', 'app', 'wifimeter-backend');
-
-// 假的 nmcli：固定报告 wlan0 已关联到 Habitat_5G。
-const FAKE_NMCLI = `#!/bin/sh
-case "$*" in
-  *"dev show"*)
-    printf 'GENERAL.DEVICE:wlan0\\nGENERAL.TYPE:wifi\\nGENERAL.STATE:100 (connected)\\nGENERAL.CONNECTION:Habitat_5G\\nGENERAL.CON-UUID:21f995e7-fe3b-41a1-ae3a-6468c6918397\\nGENERAL.VENDOR:AICSemi\\nGENERAL.PRODUCT:AIC8800DC\\n\\n'
-    ;;
-  *"802-11-wireless.ssid"*) printf '802-11-wireless.ssid:Habitat_5G\\n' ;;
-  *"dev wifi list"*) printf '*:Habitat_5G:82:5180 MHz\\n' ;;
-  *"dev disconnect"*) printf 'Device %s successfully disconnected.\\n' "$4" ;;
-  *) exit 1 ;;
-esac
-exit 0
-`;
+export const backendBinary = resolveExecutable({ repositoryRoot });
 
 function counters(rx, tx) {
-    return `Inter-|   Receive                                                |  Transmit
- face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
-wlan0: ${rx} 0 0 0 0 0 0 0 ${tx} 0 0 0 0 0 0 0
-`;
+    return JSON.stringify({ interfaces: [{ name: 'wlan0', rx, tx }] });
 }
 
 // 与后端对话的最小客户端：按行写请求，按行读响应（事件直接忽略）。
-function createSession(executable, databasePath, nmcliPath, procPath) {
-    const child = spawn(executable, ['--db', databasePath, '--nmcli', nmcliPath, '--proc-net-dev', procPath], { stdio: ['pipe', 'pipe', 'ignore'] });
+function createSession(executable, databasePath, adapterPath, countersPath) {
+    const child = spawn(executable, ['--db', databasePath, '--fake-adapter', adapterPath, '--fake-counters', countersPath], { stdio: ['pipe', 'pipe', 'ignore'] });
     let buffer = '';
     const waiters = new Map();
     child.stdout.setEncoding('utf8');
@@ -99,38 +83,40 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
     if (!existsSync(backendBinary)) throw new Error(`未找到后端可执行文件：${backendBinary}，请先构建后端。`);
 
     const directory = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-ui-'));
-    const nmcliPath = path.join(directory, 'fake-nmcli');
-    const procPath = path.join(directory, 'fake-dev');
+    const adapterPath = path.join(directory, 'adapters.json');
+    const countersPath = path.join(directory, 'counters.json');
     const databasePath = path.join(directory, 'wifimeter.db');
-    const wrapperPath = path.join(directory, 'backend-wrapper');
-
-    writeFileSync(nmcliPath, FAKE_NMCLI);
-    chmodSync(nmcliPath, 0o755);
-    writeFileSync(procPath, counters(5000000, 900000));
+    writeFileSync(adapterPath, JSON.stringify({ adapters: [{
+        name: 'wlan0', description: 'AICSemi AIC8800DC', connected: true,
+        mode: 1, profile: 'Habitat_5G', ssid: 'Habitat_5G', signal: 82, frequency: 5180
+    }] }));
+    writeFileSync(countersPath, counters(5000000, 900000));
 
     // 用两次采样造出一条真实记录：第一次建立基线，第二次产生增量。
-    const session = createSession(backendBinary, databasePath, nmcliPath, procPath);
+    const session = createSession(backendBinary, databasePath, adapterPath, countersPath);
     await session.request('collectNow');
-    writeFileSync(procPath, counters(5000000 + rxStep, 900000 + txStep));
+    writeFileSync(countersPath, counters(5000000 + rxStep, 900000 + txStep));
     await session.request('collectNow');
-    await session.request('updateNetwork', { key: '21f995e7-fe3b-41a1-ae3a-6468c6918397', alias: '家里的 Wi-Fi', capGb: 5, warnPercent: 80, quotaPeriod: 'month', notify: true });
+    const snapshot = await session.request('snapshot');
+    await session.request('updateNetwork', { key: snapshot.networks[0].id, alias: '家里的 Wi-Fi', capGb: 5, warnPercent: 80, quotaPeriod: 'month', notify: true });
     await session.close();
-
-    // 应用由主进程拉起后端；包一层脚本注入假网卡数据，并让 --db 指到播种好的库。
-    writeFileSync(wrapperPath, `#!/bin/sh\nexec "${backendBinary}" --nmcli "${nmcliPath}" --proc-net-dev "${procPath}" "$@" --db "${databasePath}"\n`);
-    chmodSync(wrapperPath, 0o755);
 
     return {
         directory,
         databasePath,
-        procPath,
-        nmcliPath,
+        countersPath,
+        adapterPath,
         seedRx: rxStep,
         seedTx: txStep,
-        env: { WIFIMETER_BACKEND: wrapperPath },
+        env: {
+            WIFIMETER_BACKEND: backendBinary,
+            WIFIMETER_USER_DATA: directory,
+            WIFIMETER_FAKE_ADAPTER: adapterPath,
+            WIFIMETER_FAKE_COUNTERS: countersPath
+        },
         // 让采集器按秒级间隔工作，测试不必等太久。
         slowDownCounters(rx, tx) {
-            writeFileSync(procPath, counters(rx, tx));
+            writeFileSync(countersPath, counters(rx, tx));
         },
         cleanup() {
             rmSync(directory, { recursive: true, force: true });

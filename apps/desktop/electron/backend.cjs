@@ -65,7 +65,7 @@ class BackendClient extends EventEmitter {
     start() {
         if (this.running) return;
         this.stopping = false;
-        const args = ['--db', this.databasePath, ...this.args];
+        const args = [...this.args, '--db', this.databasePath];
         this.logger(`启动后端：${this.executable} ${args.join(' ')}`);
         this.child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 

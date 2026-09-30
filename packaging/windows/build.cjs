@@ -25,9 +25,7 @@ async function main() {
 
     if (isWindows) {
         // Windows 上没有交叉工具链，直接用本机的 CMake 构建后端。
-        const { execFileSync } = require('node:child_process');
-        execFileSync('cmake', ['-S', 'backend', '-B', 'build/windows', '-DCMAKE_BUILD_TYPE=Release'], { cwd: repositoryRoot, stdio: 'inherit' });
-        execFileSync('cmake', ['--build', 'build/windows', '--target', 'wifimeter-backend', '--config', 'Release'], { cwd: repositoryRoot, stdio: 'inherit' });
+        require('../build-backend.cjs').buildBackend();
     } else {
         const { buildWindowsBackend } = await import('./build-backend.mjs');
         const { ensureWine } = await import('./wine.mjs');

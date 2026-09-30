@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 import { BackendClient, resolveExecutable } from '../electron/backend.cjs';
@@ -16,7 +16,7 @@ import { BackendClient, resolveExecutable } from '../electron/backend.cjs';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 // 假后端：认识 hello / echo / slow / emit / shutdown，并记录收到的请求。
-const FAKE_BACKEND = `#!/usr/bin/env node
+const FAKE_BACKEND = `
 const readline = require('node:readline');
 const rl = readline.createInterface({ input: process.stdin });
 let counter = 0;
@@ -53,14 +53,15 @@ function temporaryDirectory(tag) {
 }
 
 function fakeBackendPath(directory) {
-    const file = path.join(directory, 'fake-backend');
-    fs.writeFileSync(file, FAKE_BACKEND, { mode: 0o755 });
+    const file = path.join(directory, 'fake-backend.cjs');
+    fs.writeFileSync(file, FAKE_BACKEND);
     return file;
 }
 
 function clientFor(executable, directory, options = {}) {
     return new BackendClient({
-        executable,
+        executable: executable.endsWith('.cjs') ? process.execPath : executable,
+        args: executable.endsWith('.cjs') ? [executable] : [],
         databasePath: path.join(directory, 'meter.db'),
         requestTimeout: 5000,
         ...options,
@@ -107,7 +108,7 @@ test('解析可执行文件位置：Windows 用 .exe 与 build/windows/app', () 
     }
 });
 
-test('解析可执行文件位置：Linux 要求可执行位', () => {
+test('解析可执行文件位置：Linux 要求可执行位', { skip: process.platform === 'win32' && 'Windows 不支持 Unix 可执行位' }, () => {
     const previous = process.env.WIFIMETER_BACKEND;
     delete process.env.WIFIMETER_BACKEND;
     try {
@@ -191,8 +192,8 @@ test('请求超时会拒绝并且不留下悬挂状态', async () => {
 
 test('后端意外退出时等待中的请求被拒绝，并广播退出事件', async () => {
     const directory = temporaryDirectory('backend-client');
-    const dying = path.join(directory, 'dying-backend');
-    fs.writeFileSync(dying, "#!/bin/sh\nread line\nkill -9 $$\n", { mode: 0o755 });
+    const dying = path.join(directory, 'dying-backend.cjs');
+    fs.writeFileSync(dying, "require('node:readline').createInterface({ input: process.stdin }).on('line', () => process.kill(process.pid, 'SIGKILL'));\n");
 
     const client = clientFor(dying, directory);
     const exits = [];
@@ -269,15 +270,14 @@ test('数据库确实由后端写入', async t => {
     await client.stop();
 
     assert.ok(fs.existsSync(databasePath), '后端应当创建数据库文件');
-    // 用 sqlite3 命令行独立核对，而不是只信后端自己的返回。
-    let schema = '';
+    // 用独立 SQLite 连接核对，不依赖测试机器安装 sqlite3 命令行。
+    const database = new DatabaseSync(databasePath, { readOnly: true });
     try {
-        schema = execFileSync('sqlite3', [databasePath, 'SELECT unit || "|" || retention_days FROM settings;'], { encoding: 'utf8' }).trim();
-    } catch {
-        t.skip('环境缺少 sqlite3 命令行，跳过核对');
-        return;
+        const settings = database.prepare('SELECT unit, retention_days FROM settings').get();
+        assert.equal(settings.unit, 'GiB');
+        assert.equal(settings.retention_days, 30);
+    } finally {
+        database.close();
+        fs.rmSync(directory, { recursive: true, force: true });
     }
-    assert.equal(schema, 'GiB|30');
-
-    fs.rmSync(directory, { recursive: true, force: true });
 });

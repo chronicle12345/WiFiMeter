@@ -2,6 +2,7 @@
 
 #include "../core/quota.h"
 
+#include <limits>
 #include <string>
 
 #include "test_support.h"
@@ -20,7 +21,7 @@ void convertsGigabytes()
     WIFIMETER_CHECK_EQ(bytesOfGigabytes(0.5), ByteCount{500000000});
     // 负值与非法值按 0 处理，避免出现负的上限。
     WIFIMETER_CHECK_EQ(bytesOfGigabytes(-5.0), ByteCount{0});
-    WIFIMETER_CHECK_EQ(bytesOfGigabytes(0.0 / 0.0), ByteCount{0});
+    WIFIMETER_CHECK_EQ(bytesOfGigabytes(std::numeric_limits<double>::quiet_NaN()), ByteCount{0});
 }
 
 void buildsPeriodKeys()

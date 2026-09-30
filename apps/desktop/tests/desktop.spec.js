@@ -1,12 +1,12 @@
 // 界面测试：跑在真实的采集后端之上。
 //
-// 网卡数据由夹具注入（假的 nmcli 与假的 /proc/net/dev），其余全是真实实现：
+// 网卡数据由两端共用的 JSON 夹具注入，其余全是真实实现：
 // 主进程拉起 wifimeter-backend、按行交换 JSON、SQLite 落库、页面读取快照。
 
 import { test, expect, _electron as electron } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
 import { createHarness, backendBinary } from './support/backend-harness.mjs';
@@ -49,7 +49,12 @@ async function expectToast(text) {
 
 // 直接查数据库，验证界面操作真的落盘，而不是只改了内存。
 function query(sql) {
-    return execFileSync('sqlite3', [harness.databasePath, sql], { encoding: 'utf8' }).trim();
+    const database = new DatabaseSync(harness.databasePath, { readOnly: true });
+    try {
+        return Object.values(database.prepare(sql).get()).join('|');
+    } finally {
+        database.close();
+    }
 }
 
 test.beforeEach(async () => {
@@ -63,7 +68,7 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
     if (app) await app.close();
     harness?.cleanup();
-    await rm(profile, { recursive: true, force: true });
+    if (profile) await rm(profile, { recursive: true, force: true });
     if (fakeHome) {
         await rm(fakeHome, { recursive: true, force: true });
         fakeHome = null;
@@ -179,27 +184,41 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     expect(query('SELECT alias FROM networks')).toBe('家里的 Wi-Fi');
 });
 
-test('开机启动开关会写入系统的自启动目录', async () => {
-    // 用一个临时的 HOME 启动应用，避免测试碰到开发机真实的 ~/.config/autostart。
-    await app.close();
-    fakeHome = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-home-'));
-    await launch({ HOME: fakeHome });
+test('开机启动开关按平台登记并取消', async () => {
+    if (process.platform === 'win32') {
+        // 验证界面到登录项接口的调用，不修改运行测试的 Windows 账户启动项。
+        await app.evaluate(({ app }) => {
+            let openAtLogin = false;
+            app.setLoginItemSettings = options => { openAtLogin = options.openAtLogin; };
+            app.getLoginItemSettings = () => ({ openAtLogin });
+        });
+    } else {
+        // 用临时目录隔离 Linux 的 ~/.config/autostart。
+        await app.close();
+        fakeHome = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-home-'));
+        await launch({ HOME: fakeHome });
+    }
 
     await navigate('设置');
     await page.locator('input[name="autoStart"]').check();
     await page.getByRole('button', { name: '保存设置' }).click();
     await expectToast('已保存偏好');
 
-    const file = path.join(fakeHome, '.config/autostart/wifimeter.desktop');
-    await expect.poll(() => existsSync(file), { timeout: 10000 }).toBe(true);
-    const text = await readFile(file, 'utf8');
-    expect(text).toContain('[Desktop Entry]');
-    expect(text).toContain('Exec=');
+    const file = fakeHome && path.join(fakeHome, '.config/autostart/wifimeter.desktop');
+    const enabled = () => process.platform === 'win32'
+        ? app.evaluate(({ app }) => app.getLoginItemSettings().openAtLogin)
+        : existsSync(file);
+    await expect.poll(enabled, { timeout: 10000 }).toBe(true);
+    if (file) {
+        const text = await readFile(file, 'utf8');
+        expect(text).toContain('[Desktop Entry]');
+        expect(text).toContain('Exec=');
+    }
 
     // 关掉后文件应当被删除。
     await page.locator('input[name="autoStart"]').uncheck();
     await page.getByRole('button', { name: '保存设置' }).click();
-    await expect.poll(() => existsSync(file), { timeout: 10000 }).toBe(false);
+    await expect.poll(enabled, { timeout: 10000 }).toBe(false);
 });
 
 test('偏好设置会落库并影响后端行为', async () => {

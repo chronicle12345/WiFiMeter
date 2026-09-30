@@ -14,6 +14,11 @@ else()
 endif()
 
 add_executable(wifimeter-backend ${WIFIMETER_MAIN_SOURCE})
+# MSVC 的多配置生成器默认追加 Release/Debug 子目录；桌面程序与打包配置
+# 都按 app/wifimeter-backend(.exe) 查找，因此固定各配置的输出位置。
+set_target_properties(wifimeter-backend PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${CMAKE_CURRENT_BINARY_DIR}>"
+)
 
 target_link_libraries(wifimeter-backend PRIVATE wifimeter-ipc ${WIFIMETER_PLATFORM_LIBRARY})
 target_link_libraries(wifimeter-backend PRIVATE wifimeter-warnings)
