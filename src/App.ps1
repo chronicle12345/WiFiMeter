@@ -673,7 +673,10 @@ try {
                 'Limit' { if ($isTotal) { 'TotalQuotaReached' } else { 'QuotaReached' } }
                 default { if ($isTotal) { 'TotalQuotaWarning' } else { 'QuotaWarning' } }
             }
-            $script:trayIcon.ShowBalloonTip(8000, 'WiFiMeter', ((Text-Meter $key) -f $name, [Math]::Round([double]$alert.Percent)), [Windows.Forms.ToolTipIcon]::Warning)
+            # The total-scope wording takes only the percentage; per-network wording
+            # takes the network name and the percentage.
+            $text = if ($isTotal) { (Text-Meter $key) -f [Math]::Round([double]$alert.Percent) } else { (Text-Meter $key) -f $name, [Math]::Round([double]$alert.Percent) }
+            $script:trayIcon.ShowBalloonTip(8000, 'WiFiMeter', $text, [Windows.Forms.ToolTipIcon]::Warning)
         }
     }
     function Initialize-MeterTray {
