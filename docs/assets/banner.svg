@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">WiFiMeter</title>
+  <desc id="description">Wi-Fi usage by network. A dark indigo banner with a Wi-Fi symbol and abstract traffic bars.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#12182B" />
+      <stop offset="0.57" stop-color="#171E38" />
+      <stop offset="1" stop-color="#202A51" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(1050 110) rotate(155) scale(590 410)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6571ED" stop-opacity="0.21" />
+      <stop offset="1" stop-color="#6571ED" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="accent" x1="80" y1="86" x2="152" y2="164" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8189F8" />
+      <stop offset="1" stop-color="#5A63E8" />
+    </linearGradient>
+    <linearGradient id="signal" x1="906" y1="88" x2="1110" y2="196" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B9BEFF" />
+      <stop offset="1" stop-color="#80D8F7" />
+    </linearGradient>
+    <linearGradient id="bars" x1="984" y1="200" x2="984" y2="284" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8790F9" stop-opacity="0.65" />
+      <stop offset="1" stop-color="#6571DA" stop-opacity="0.12" />
+    </linearGradient>
+    <linearGradient id="line" x1="774" y1="180" x2="1220" y2="180" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9AA6DF" stop-opacity="0" />
+      <stop offset="0.5" stop-color="#9AA6DF" stop-opacity="0.16" />
+      <stop offset="1" stop-color="#9AA6DF" stop-opacity="0" />
+    </linearGradient>
+    <clipPath id="canvas">
+      <rect width="1280" height="360" rx="24" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#canvas)">
+    <rect width="1280" height="360" fill="url(#background)" />
+    <rect width="1280" height="360" fill="url(#glow)" />
+    <path d="M756 40h480M756 96h480M756 152h480M756 208h480M756 264h480M756 320h480" stroke="url(#line)" />
+    <path d="M824 0v360M880 0v360M936 0v360M992 0v360M1048 0v360M1104 0v360M1160 0v360" stroke="#A8B3EC" stroke-opacity="0.035" />
+    <rect x="80" y="100" width="76" height="76" rx="17" fill="url(#accent)" />
+    <rect x="80.5" y="100.5" width="75" height="75" rx="16.5" stroke="white" stroke-opacity="0.19" />
+    <g transform="translate(80 100) scale(0.296875)" stroke="white" stroke-width="17" stroke-linecap="round">
+      <path d="M59.82 87.79a89 89 0 0 1 136.36 0" />
+      <path d="M85.87 115.65a55 55 0 0 1 84.26 0" />
+      <circle cx="128" cy="177" r="14" fill="white" stroke="none" />
+    </g>
+    <text x="181" y="158" fill="#F7F8FF" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="60" font-weight="650" letter-spacing="-1.8">WiFiMeter</text>
+    <text x="80" y="227" fill="#B9C3E1" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="25" font-weight="400" letter-spacing="0.2">Wi-Fi usage by network</text>
+    <rect x="80" y="258" width="40" height="3" rx="1.5" fill="#8992FB" />
+    <rect x="126" y="258" width="13" height="3" rx="1.5" fill="#79CFEA" fill-opacity="0.8" />
+    <g fill="url(#bars)">
+      <rect x="837" y="247" width="22" height="37" rx="6" />
+      <rect x="880" y="226" width="22" height="58" rx="6" />
+      <rect x="923" y="237" width="22" height="47" rx="6" />
+      <rect x="966" y="211" width="22" height="73" rx="6" />
+      <rect x="1009" y="220" width="22" height="64" rx="6" />
+      <rect x="1052" y="201" width="22" height="83" rx="6" />
+      <rect x="1095" y="229" width="22" height="55" rx="6" />
+      <rect x="1138" y="240" width="22" height="44" rx="6" />
+    </g>
+    <path d="M825 284h347" stroke="#A1ACED" stroke-opacity="0.12" />
+    <g stroke="url(#signal)" stroke-width="12" stroke-linecap="round">
+      <path d="M919 107a120 120 0 0 1 184 0" />
+      <path d="M949.5 140a80 80 0 0 1 123 0" />
+      <path d="M979 170a42 42 0 0 1 64 0" />
+    </g>
+    <circle cx="1011" cy="196" r="7" fill="#A7D7FA" />
+    <rect x="0.5" y="0.5" width="1279" height="359" rx="23.5" stroke="#B7C2F6" stroke-opacity="0.12" />
+  </g>
+</svg>

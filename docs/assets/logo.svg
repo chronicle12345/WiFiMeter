@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title description">
+  <title id="title">WiFiMeter logo</title>
+  <desc id="description">A white Wi-Fi symbol on a rounded indigo square.</desc>
+  <defs>
+    <linearGradient id="background" x1="28" y1="16" x2="240" y2="256" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#787FF3" />
+      <stop offset="0.52" stop-color="#5A63E8" />
+      <stop offset="1" stop-color="#434BCD" />
+    </linearGradient>
+    <radialGradient id="highlight" cx="0" cy="0" r="1" gradientTransform="translate(210 4) rotate(132) scale(268)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B2DFFF" stop-opacity="0.3" />
+      <stop offset="1" stop-color="#B2DFFF" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="border" x1="28" y1="4" x2="236" y2="252" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.38" />
+      <stop offset="1" stop-color="white" stop-opacity="0.04" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="248" height="248" rx="44" fill="url(#background)" />
+  <rect x="4" y="4" width="248" height="248" rx="44" fill="url(#highlight)" />
+  <rect x="4.75" y="4.75" width="246.5" height="246.5" rx="43.25" stroke="url(#border)" stroke-width="1.5" />
+  <g stroke="white" stroke-width="17" stroke-linecap="round">
+    <path d="M59.82 87.79a89 89 0 0 1 136.36 0" />
+    <path d="M85.87 115.65a55 55 0 0 1 84.26 0" />
+  </g>
+  <circle cx="128" cy="177" r="14" fill="white" />
+</svg>

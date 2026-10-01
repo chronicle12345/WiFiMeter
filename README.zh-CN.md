@@ -1,6 +1,28 @@
-# WiFiMeter
+<p align="center">
+  <a href="docs/assets/logo.svg"><img src="docs/assets/banner.svg" alt="WiFiMeter: Wi-Fi usage by network" width="100%" /></a>
+</p>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0_candidate-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0 candidate" /></a>
+  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/platforms-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux" /></a>
+  <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
+</p>
+
+<p align="center">
+  <a href="apps/desktop/README.md"><img src="https://img.shields.io/badge/UI-Electron-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Electron interface" /></a>
+  <a href="docs/MIGRATION.md"><img src="https://img.shields.io/badge/storage-SQLite-2563EB?style=for-the-badge&amp;labelColor=182033" alt="SQLite storage" /></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
+</p>
+
+<p align="center">
+  <a href="#构建与测试">构建与测试</a> &nbsp;·&nbsp;
+  <a href="docs/MIGRATION.md">数据迁移</a> &nbsp;·&nbsp;
+  <a href="docs/PACKAGING-MATRIX.md">平台与安装包</a> &nbsp;·&nbsp;
+  <a href="https://github.com/chronicle12345/WiFiMeter/releases">版本下载</a>
+</p>
+
+<p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
 适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.0，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
