@@ -26,7 +26,11 @@
 
 适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.0，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
-![使用虚构数据的总览界面](docs/assets/screenshot.png)
+以下总览和应用历史截图均使用虚构数据。
+
+![流量总览](docs/assets/screenshot.png)
+
+![按月汇总的应用流量表格](docs/assets/applications-zh-CN.png)
 
 ## 功能
 

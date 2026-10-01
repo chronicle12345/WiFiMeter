@@ -26,7 +26,11 @@
 
 A desktop network-usage meter for Windows and Linux. The interface uses Electron; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. This source tree targets version 1.2.0; published builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
 
-![Overview with synthetic data](docs/assets/screenshot.png)
+The following overview and application history use synthetic data.
+
+![Usage overview in English](docs/assets/screenshot-en.png)
+
+![Monthly application history in English](docs/assets/applications-en.png)
 
 ## Features
 

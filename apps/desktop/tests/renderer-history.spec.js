@@ -5,11 +5,12 @@ import os from 'node:os';
 import { createHarness } from './support/backend-harness.mjs';
 
 let app,page,profile,harness,errors;
-test.beforeEach(async()=>{
+test.beforeEach(async({},testInfo)=>{
     profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-renderer-'));
     harness=await createHarness();errors=[];
     const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-    app=await electron.launch({args:['.'],env});page=await app.firstWindow();
+    const args=['.'];if(testInfo.title==='生成 v1.2 合成数据验收截图')args.push('--force-device-scale-factor=1');
+    app=await electron.launch({args,env});page=await app.firstWindow();
     page.on('pageerror',error=>errors.push(error.message));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.evaluate(()=>window.desktop.backend.request('setPaused',{paused:true}));
@@ -202,28 +203,63 @@ test('有线名称与身份分开显示，无频段信号或无线自动断开',
  await page.locator('button.network-name').first().click();await expect(page.locator('.drawer')).toContainText('Ethernet:original-identity');
 });
 
+// Set WIFIMETER_CAPTURE_README=1 only after the final renderer changes are ready.
+// Ordinary UI runs write previews to artifacts, never overwrite published README assets.
 test('生成 v1.2 合成数据验收截图',async()=>{
- const directory=path.resolve('../..','artifacts');await mkdir(directory,{recursive:true});
+ const directory=path.resolve('../..',process.env.WIFIMETER_CAPTURE_README==='1'?'docs/assets':'artifacts');
+ await mkdir(directory,{recursive:true});
+ await page.clock.setFixedTime(new Date('2026-09-18T12:00:00+08:00'));
  await app.evaluate(({BrowserWindow})=>{
-  BrowserWindow.getAllWindows()[0].setSize(1440,1080);
-  const s=globalThis.rendererFixture.snapshot,stamp=new Date(),today=`${stamp.getFullYear()}-${String(stamp.getMonth()+1).padStart(2,'0')}-${String(stamp.getDate()).padStart(2,'0')}`;
-  const day=Number(today.slice(-2)),first=today.slice(0,8);
+  BrowserWindow.getAllWindows()[0].setContentSize(1440,1000);
+  const s=globalThis.rendererFixture.snapshot,today='2026-09-18';
   s.networks=[
-   {id:'demo-wifi',ssid:'Demo_WiFi_5G',alias:'演示无线网络',type:'wifi',capGb:20,warnPercent:80,quotaPeriod:'month',notify:true,autoDisconnect:false,quotaLedger:{periodKey:today.slice(0,7),usedBytes:'3600000000'}},
+   {id:'demo-wifi',ssid:'Demo_WiFi_5G',alias:'演示无线网络',type:'wifi',capGb:20,warnPercent:80,quotaPeriod:'month',notify:true,autoDisconnect:false,quotaLedger:{periodKey:'2026-09',usedBytes:'3600000000'}},
    {id:'demo-ethernet',ssid:'Ethernet:synthetic-adapter',alias:'演示有线网络',type:'ethernet',capGb:0,warnPercent:80,quotaPeriod:'month',notify:false,autoDisconnect:false}
   ];
-  s.records=Array.from({length:day},(_,i)=>({date:first+String(i+1).padStart(2,'0'),networkId:'demo-wifi',rxBytes:String(Math.floor(3100000000/day)),txBytes:String(Math.floor(500000000/day))}));
+  // Integer weights sum to 100, keeping the chart and quota totals consistent.
+  const weights=[3,5,4,6,3,8,7,4,6,5,8,3,5,7,6,4,8,8];
+  s.records=weights.map((weight,i)=>({date:'2026-09-'+String(i+1).padStart(2,'0'),networkId:'demo-wifi',rxBytes:String(31000000*weight),txBytes:String(5000000*weight)}));
   s.records.push({date:today,networkId:'demo-ethernet',rxBytes:'800000000',txBytes:'100000000'});
-  s.hourly=[{date:today,networkId:'demo-wifi',hour:9,rxBytes:'3100000000',txBytes:'500000000'}];
-  s.appRecords=[{date:today,networkId:'demo-wifi',appId:'demo-browser',name:'演示浏览器',rxBytes:'2000000000',txBytes:'100000000'}];
+  s.hourly=[{date:today,networkId:'demo-wifi',hour:9,rxBytes:'248000000',txBytes:'40000000'}];
+  s.appRecords=[
+   {name:'Demo Browser',appId:'C:\\DemoApps\\Browser.exe',rxBytes:'1800000000',txBytes:'100000000'},
+   {name:'Demo Cloud',appId:'C:\\DemoApps\\Cloud.exe',rxBytes:'600000000',txBytes:'280000000'},
+   {name:'Demo Meeting',appId:'C:\\DemoApps\\Meeting.exe',rxBytes:'400000000',txBytes:'100000000'},
+   {name:'Demo Updater',appId:'C:\\DemoApps\\Updater.exe',rxBytes:'300000000',txBytes:'20000000'}
+  ].map(record=>({...record,date:today,networkId:'demo-wifi'}));
   s.appProcesses=[];s.gaps=[];s.appGaps=[];s.proxyEstimatedRecords=[];
+  s.appCollection={available:true,enabled:true,state:'paused'};
   s.settings={language:'zh-CN',unit:'GB',speedUnit:'MB/s',interval:5,retention:90,notifications:true,autoStart:false,minimizeToTray:false};
-  s.live={state:'connected',collector:'paused',updatedAt:today+'T09:30:00Z',skippedIntervals:0,connections:[{networkId:'demo-wifi',interfaceId:'demo-adapter',adapterAlias:'演示无线网卡',type:'wifi',band:'5 GHz',signal:82,since:today+'T09:00:00Z',rxPerSecond:'0',txPerSecond:'0'}]};
-  s.totalQuota={capGb:30,warnPercent:80,period:'month',notify:true,autoDisconnect:false,usedBytes:'3600000000',periodKey:today.slice(0,7)};
+  s.live={state:'connected',collector:'paused',updatedAt:today+'T04:00:00Z',skippedIntervals:0,connections:[{networkId:'demo-wifi',interfaceId:'demo-adapter',adapterAlias:'Demo Wi-Fi Adapter',type:'wifi',band:'5 GHz',signal:82,since:today+'T01:00:00Z',rxPerSecond:'0',txPerSecond:'0'}]};
+  s.totalQuota={capGb:30,warnPercent:80,period:'month',notify:true,autoDisconnect:false,usedBytes:'3600000000',periodKey:'2026-09'};
   s.proxy={available:true,ports:[7890],processNames:['demo-proxy.exe'],status:'ready',detail:''};
  });
- await page.reload();await expect(page.locator('.connection-title')).toContainText('演示无线网络');await page.evaluate(()=>window.scrollTo(0,0));
- await page.screenshot({path:path.join(directory,'ui-1.2-overview.png'),fullPage:true});
- await page.locator('[data-page="settings"]').click();await expect(page.locator('#totalQuotaForm')).toBeVisible();await page.evaluate(()=>window.scrollTo(0,0));
- await page.screenshot({path:path.join(directory,'settings.png'),fullPage:true});
+ for(const language of ['zh-CN','en']){
+  const english=language==='en';
+  await app.evaluate((_electron,language)=>{
+   const s=globalThis.rendererFixture.snapshot;s.settings.language=language;
+   s.networks[0].alias=language==='en'?'Demo Wi-Fi':'演示无线网络';
+   s.networks[1].alias=language==='en'?'Demo Ethernet':'演示有线网络';
+  },language);
+  await page.reload();
+  await page.locator('[data-page="overview"]').click();
+  await page.locator('[data-action="period"][data-value="month"]').click();
+  await expect(page.locator('h1')).toHaveText(english?'Usage overview':'流量总览');
+  await expect(page.locator('.connection-title')).toContainText(english?'Demo Wi-Fi':'演示无线网络');
+  await expect(page.locator('#brandMark img')).toHaveAttribute('src','../assets/icon.png');
+  await expect.poll(()=>page.locator('#brandMark img').evaluate(image=>image.complete&&image.naturalWidth>0)).toBe(true);
+  await page.evaluate(async()=>{await document.fonts.ready;window.scrollTo(0,0);});
+  await page.mouse.move(0,0);
+  expect(await page.evaluate(()=>({width:innerWidth,height:innerHeight}))).toEqual({width:1440,height:1000});
+  await page.screenshot({path:path.join(directory,english?'screenshot-en.png':'screenshot.png'),animations:'disabled',scale:'css'});
+  await page.locator('button.network-name').first().click();
+  await page.locator('[data-action="drawer-tab"][data-tab="apps"]').click();
+  await page.locator('#appGrouping').selectOption('month');
+  await expect(page.locator('#appListRegion tbody tr')).toHaveCount(4);
+  await expect(page.locator('#appListRegion')).toContainText('Demo Browser');
+  await page.locator('#appListRegion').scrollIntoViewIfNeeded();
+  await page.mouse.move(0,0);
+  await page.screenshot({path:path.join(directory,english?'applications-en.png':'applications-zh-CN.png'),animations:'disabled',scale:'css'});
+  await page.keyboard.press('Escape');
+ }
 });
