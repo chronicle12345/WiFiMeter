@@ -54,6 +54,7 @@ $strings = Get-MeterStrings -Language en
 foreach ($key in $strings.Keys) { $script:window.Resources[$key] = $strings[$key] }
 # Allow standalone screenshots before the coordinator integrates these resources.
 foreach ($entry in @(@('SearchApplications','Search applications'), @('AppUsageNoMatch','No application matches your search'), @('ProxyAutoDetectHint','Enter the proxy listening ports to automatically identify the listening processes.'), @('ProxyAdvanced','Advanced (optional)'), @('ProxyProcessesOptional','Additional process names (optional)'))) { $script:window.Resources[$entry[0]] = $entry[1] }
+foreach ($entry in @(@('AppUsageHistory','Application history'), @('AppUsageGrouping','Group by'), @('AppUsageByDate','Date'), @('AppUsageByMonth','Application and month'), @('AppUsageMonth','Month'), @('AppUsageExportFailed','Could not export application usage.'))) { $script:window.Resources[$entry[0]] = $entry[1] }
 $script:window.Show()
 try {
     $context = New-MeterNetworkDialog 'Test WiFi'
@@ -68,8 +69,47 @@ try {
     Assert-Detail ($context.Apps.Columns[0].ActualWidth -ge 220) 'Application names and icons must have visible column width.'
     $converted = @(ConvertTo-MeterAppRows @([pscustomobject]@{ Name = 'A'; AppId = $exe; RxBytes = 0; TxBytes = 0; TotalBytes = 0 }, [pscustomobject]@{ Name = 'B'; RxBytes = 0; TxBytes = 0; TotalBytes = 0 }))
     Assert-Detail ($converted[0].AppId -eq $exe -and $converted[1].AppId -eq '') 'Converted rows must preserve application paths and allow missing identifiers.'
+    $context.Tabs.SelectedIndex = 2
+    $history = @(
+        [pscustomobject]@{ Date = '2026-08-31'; AppId = 'a'; Name = 'Shared'; RxBytes = [long]100; TxBytes = [long]20; TotalBytes = [long]120 },
+        [pscustomobject]@{ Date = '2026-09-01'; AppId = 'a'; Name = 'Shared'; RxBytes = [long]200; TxBytes = [long]30; TotalBytes = [long]230 },
+        [pscustomobject]@{ Date = '2026-09-02'; AppId = 'a'; Name = 'Shared'; RxBytes = [long]300; TxBytes = [long]40; TotalBytes = [long]340 },
+        [pscustomobject]@{ Date = '2026-09-02'; AppId = 'b'; Name = 'Shared'; RxBytes = [long]10; TxBytes = [long]5; TotalBytes = [long]15 }
+    )
+    Complete-MeterAppUsage $context ([pscustomobject]@{ Available = $true; Rows = @($history[0]); Days = $history; Message = '' })
+    $version = $context.Version
+    $context.AppGrouping.SelectedIndex = 1
+    Assert-Detail ($context.Daily.Items.Count -eq 3 -and $context.Version -eq $version) 'Monthly grouping must keep months and application identities separate without querying again.'
+    $september = @($context.Daily.Items | Where-Object { $_.Date -eq '2026-09' -and $_.AppId -eq 'a' })
+    Assert-Detail ($september.Count -eq 1 -and $september[0].TotalGB -eq (570 / 1e9)) 'Monthly totals must sum only the supplied daily records.'
+    Save-DialogSnapshot $context.Window 'dialog-history-monthly.png'
+    $context.Daily.Items.SortDescriptions.Add([ComponentModel.SortDescription]::new('TotalGB', 'Descending'))
+    $csvPath = Join-Path $root 'artifacts/dialog-history-test.csv'
+    try {
+        Export-MeterAppUsageCsv -Context $context -Path $csvPath
+        $csv = @(Import-Csv -LiteralPath $csvPath)
+        Assert-Detail ($csv.Count -eq 3 -and $csv[0].Date -eq '2026-09' -and $csv[0].AppId -eq 'a') 'CSV must preserve the visible grouping and sort order.'
+        Assert-Detail ($csv[0].PSObject.Properties.Name -notcontains 'Icon') 'CSV must not export WPF image objects.'
+        $context.AppSearch.Text = 'no match'
+        Assert-Detail (-not $context.AppExport.IsEnabled) 'Empty search results must disable export.'
+        $context.AppSearch.Text = ''
+        $context.AppGrouping.SelectedIndex = 0
+        Export-MeterAppUsageCsv -Context $context -Path $csvPath
+        Assert-Detail (@(Import-Csv -LiteralPath $csvPath).Count -eq 4) 'Switching back must export the original daily records.'
+        $context.Tabs.SelectedIndex = 1
+        Export-MeterAppUsageCsv -Context $context -Path $csvPath
+        $csv = @(Import-Csv -LiteralPath $csvPath)
+        Assert-Detail ($csv.Count -eq 1 -and $csv[0].PSObject.Properties.Name -notcontains 'Date') 'Application totals must export the active application table without a date column.'
+    } finally { if (Test-Path -LiteralPath $csvPath) { Remove-Item -LiteralPath $csvPath } }
+    Start-MeterAppUsageRead $context
     $context.AppSearch.Text = ' EDGE '
     Assert-Detail ($context.Apps.Items.Count -eq 1 -and $context.Daily.Items.Count -eq 1) 'Search should trim whitespace and match both tables ignoring case.'
+    $csvPath = Join-Path $root 'artifacts/dialog-history-search-test.csv'
+    try {
+        Export-MeterAppUsageCsv $context $csvPath
+        $filteredCsv = @(Import-Csv -LiteralPath $csvPath)
+        Assert-Detail ($filteredCsv.Count -eq 1 -and $filteredCsv[0].Name -eq 'Microsoft Edge') 'CSV must include only the current literal search results.'
+    } finally { if (Test-Path -LiteralPath $csvPath) { Remove-Item -LiteralPath $csvPath } }
     $context.AppSearch.Text = '[*]'
     Assert-Detail ($context.Apps.Items.Count -eq 0 -and $context.Daily.Items.Count -eq 0 -and $context.Status.Text -eq 'AppUsageNoMatch') 'Search must be literal and explain no matches.'
     $context.AppSearch.Text = ''
@@ -87,6 +127,7 @@ try {
     Assert-Detail ($context.Version -eq $version -and $context.Status.Text -eq 'ErrorDateOrder') 'Reversed dates should not start a query.'
     $context.AppTo.SelectedDate = $null
     $context.AppApply.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Assert-Detail (-not $context.AppExport.IsEnabled) 'Invalid or unapplied dates must disable export.'
     Assert-Detail ($context.Version -eq $version -and $context.Status.Text -eq 'MissingDates') 'Missing dates should not start a query.'
     $context.AppPeriod.SelectedIndex = 0
     Assert-Detail ($context.Apps.Items.Count -eq 2 -and $context.Daily.Items.Count -eq 2) 'Today should restore both tables.'
@@ -105,6 +146,10 @@ try {
     $context.AppPeriod.SelectedIndex = 1
     $context.AppPeriod.SelectedIndex = 0
     Assert-Detail ([object]::ReferenceEquals($oldWorker, $context.Worker)) 'Rapid date changes must not leak or replace a running worker.'
+    Assert-Detail (-not $context.AppExport.IsEnabled) 'A pending query must disable export.'
+    $exportRejected = $false
+    try { Export-MeterAppUsageCsv $context (Join-Path $root 'artifacts/should-not-export.csv') } catch { $exportRejected = $true }
+    Assert-Detail $exportRejected 'The export function must reject stale data during a query.'
     Assert-Detail ($context.Apps.Items.Count -eq 0 -and $context.Daily.Items.Count -eq 0) 'Pending range must clear old table contents.'
     Assert-Detail ($context.Pending.AsyncWaitHandle.WaitOne(5000)) 'Test worker should finish.'
     Receive-MeterAppUsageRead $context
@@ -128,5 +173,5 @@ try {
     Save-DialogSnapshot $settings.Window 'dialog-settings.png'
     $settings.Save.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
     Assert-Detail $settings.Saved 'Port-only settings must validate and save.'
-    Write-Host 'PASS shared search, inclusive dates, validation, completion and optional proxy process names'
+    Write-Host 'PASS shared search, inclusive dates, monthly grouping, filtered CSV export, validation, completion and optional proxy process names'
 } finally { $script:window.Close() }

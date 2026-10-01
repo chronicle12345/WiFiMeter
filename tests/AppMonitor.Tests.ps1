@@ -46,7 +46,7 @@ function Invoke-MonitorTest([string]$Name, [scriptblock]$Body) {
         $script:count++
         Write-Output ('PASS: ' + $Name)
     }
-    finally { Remove-Module $module -Force }
+    finally { if (Get-Module $module.Name) { Remove-Module $module -Force } }
 }
 
 try {
@@ -308,9 +308,194 @@ try {
         Assert-Equal @($apps).Count 1
         Assert-Equal $apps[0].Connections 512L 'At most 512 rows feed the snapshot.'
     }
+    Invoke-MonitorTest 'Network monitor has a nonblocking stopped snapshot and idempotent cleanup' {
+        param($module, $directory)
+        Stop-MeterAppNetworkMonitor
+        $sample = Get-MeterAppNetworkSample
+        Assert-Equal $sample.Status 'Stopped'
+        Assert-True (-not $sample.Available) 'A stopped monitor must not claim zero traffic.'
+        Assert-Equal @($sample.Rows).Count 0
+        Stop-MeterAppNetworkMonitor
+    }
+    Invoke-MonitorTest 'TCP byte intervals preserve paths, aggregate sockets and have no top twelve cutoff' {
+        param($module, $directory)
+        Add-Type -Path (Join-Path $root 'src/AppNetworkSampler.cs')
+        $assembly = [WiFiMeter.Networking.AppNetworkMonitor].Assembly
+        $counterType = $assembly.GetType('WiFiMeter.Networking.TcpByteCounter')
+        $windowType = $assembly.GetType('WiFiMeter.Networking.TcpRateWindow')
+        $listType = [Collections.Generic.List``1].MakeGenericType($counterType)
+        $window = [Activator]::CreateInstance($windowType, $true)
+        $update = $windowType.GetMethod('Update', [Reflection.BindingFlags]'Instance,NonPublic')
+        function New-Counters([uint64]$rx, [uint64]$tx, [string]$generation = 'first') {
+            $list = [Activator]::CreateInstance($listType)
+            foreach ($id in 1..20) {
+                $counter = [Activator]::CreateInstance($counterType, $true)
+                $counter.Key = "$id-$generation"; $counter.ProcessId = $id
+                $counter.Name = "app$id"; $counter.AppId = "C:\Apps\app$id.exe"
+                $counter.Rx = $rx; $counter.Tx = $tx
+                $list.Add($counter)
+            }
+            return ,$list
+        }
+        $first = $update.Invoke($window, @((New-Counters 100000 50000), 10.0, 0, 0))
+        Assert-Equal $first.Status 'WarmingUp'
+        Assert-True (-not $first.Available) 'Initial lifetime bytes are not interval traffic.'
+        Assert-Equal $first.Rows.Count 20 'All process paths are retained even during warmup.'
+        Assert-True ($null -eq $first.Rows[0].DownloadPerSecond) 'Warmup must use null, not zero.'
+        $second = $update.Invoke($window, @((New-Counters 104096 52048), 12.0, 0, 0))
+        Assert-Equal $second.Status 'Available'
+        Assert-True $second.Available 'A measured interval is available.'
+        Assert-Equal $second.Rows.Count 20
+        Assert-Equal $second.Rows[0].DownloadPerSecond 2048.0
+        Assert-Equal $second.Rows[0].UploadPerSecond 1024.0
+        Assert-Equal $second.Rows[0].AppId 'C:\Apps\app1.exe'
+        Assert-Equal $second.Rows[0].Connections 1
+        $multiple = New-Counters 108192 54096
+        $extra = [Activator]::CreateInstance($counterType, $true)
+        $extra.Key = 'extra'; $extra.ProcessId = 1; $extra.Name = 'app1'; $extra.AppId = 'C:\Apps\app1.exe'
+        $extra.Rx = 900000; $extra.Tx = 900000; $multiple.Add($extra)
+        $third = $update.Invoke($window, @($multiple, 14.0, 0, 0))
+        Assert-Equal $third.Status 'Partial' 'A new socket needs its own baseline.'
+        Assert-Equal $third.Rows[0].Connections 2
+        Assert-Equal $third.Rows[0].SampledConnections 1
+        Assert-Equal $third.Rows[0].DownloadPerSecond 2048.0 'New socket lifetime bytes must be excluded.'
+        $multiple = New-Counters 112288 56144
+        $extra = [Activator]::CreateInstance($counterType, $true)
+        $extra.Key = 'extra'; $extra.ProcessId = 1; $extra.Name = 'app1'; $extra.AppId = 'C:\Apps\app1.exe'
+        $extra.Rx = 902048; $extra.Tx = 901024; $multiple.Add($extra)
+        $fourth = $update.Invoke($window, @($multiple, 16.0, 0, 0))
+        Assert-Equal $fourth.Rows[0].DownloadPerSecond 3072.0 'Two measured sockets aggregate by PID.'
+        Assert-Equal $fourth.Rows[0].UploadPerSecond 1536.0
+        $reset = $update.Invoke($window, @((New-Counters 1 1), 18.0, 0, 0))
+        Assert-Equal $reset.Status 'WarmingUp'
+        Assert-True ($null -eq $reset.Rows[0].DownloadPerSecond) 'Counter resets cannot produce negative speed.'
+        $reused = $update.Invoke($window, @((New-Counters 100000 50000 'new-process'), 20.0, 0, 0))
+        Assert-True ($null -eq $reused.Rows[0].UploadPerSecond) 'PID reuse establishes a new baseline.'
+        $empty = [Activator]::CreateInstance($listType)
+        $denied = $update.Invoke($window, @($empty, 22.0, 3, 5))
+        Assert-Equal $denied.Status 'AccessDenied'
+        Assert-True (-not $denied.Available) 'Native failure must not become a zero speed.'
+        Assert-Equal $denied.Rows.Count 0 'Failed reads discard stale applications.'
+        $resumed = $update.Invoke($window, @((New-Counters 200000 100000 'new-process'), 24.0, 0, 0))
+        Assert-Equal $resumed.Status 'WarmingUp' 'A failed interval clears the old baselines.'
+        $sameTime = $update.Invoke($window, @((New-Counters 200000 100000 'new-process'), 24.0, 0, 0))
+        Assert-True (-not $sameTime.Available) 'Zero elapsed time must never divide by zero.'
+        $idle = $update.Invoke($window, @($empty, 26.0, 0, 0))
+        Assert-Equal $idle.Status 'Available'
+        Assert-Equal $idle.Rows.Count 0 'Exited processes disappear from the next snapshot.'
+        $window = [Activator]::CreateInstance($windowType, $true)
+        function New-SharedPathCounters([uint64]$rx) {
+            $list = [Activator]::CreateInstance($listType)
+            foreach ($id in 1..5) {
+                $counter = [Activator]::CreateInstance($counterType, $true)
+                $counter.Key = "shared-$id"; $counter.ProcessId = $id
+                $counter.Name = 'browser'
+                $counter.AppId = @('C:\Browser\browser.exe', 'c:\browser\BROWSER.exe', 'D:\Other\browser.exe', '', '')[$id - 1]
+                $counter.Rx = $rx; $counter.Tx = $rx
+                $list.Add($counter)
+            }
+            return ,$list
+        }
+        $null = $update.Invoke($window, @((New-SharedPathCounters 100), 1.0, 0, 0))
+        $grouped = $update.Invoke($window, @((New-SharedPathCounters 300), 3.0, 0, 0))
+        Assert-Equal $grouped.Rows.Count 4 'Same path merges; different paths and unknown paths remain separate.'
+        $shared = @($grouped.Rows | Where-Object { $_.AppId -ieq 'C:\Browser\browser.exe' })
+        Assert-Equal $shared.Count 1 'Application identity uses a case-insensitive executable path.'
+        Assert-Equal $shared[0].DownloadPerSecond 200.0
+        Assert-Equal $shared[0].UploadPerSecond 200.0
+        Assert-Equal $shared[0].Connections 2
+        Assert-Equal ($shared[0].ProcessIds -join ',') '1,2'
+        Assert-Equal @($grouped.Rows | Where-Object { $_.AppId -eq 'D:\Other\browser.exe' }).Count 1 'Same display name must not merge different executables.'
+        Assert-Equal @($grouped.Rows | Where-Object { $_.AppId -eq '' }).Count 2 'Unknown paths retain PID identity.'
+    }
+    Invoke-MonitorTest 'Background monitor starts once, returns quickly and cleans up on module removal' {
+        param($module, $directory)
+        Start-MeterAppNetworkMonitor
+        $instance = & $module { $script:AppNetworkMonitor }
+        Start-MeterAppNetworkMonitor
+        $again = & $module { $script:AppNetworkMonitor }
+        Assert-True ([object]::ReferenceEquals($instance, $again)) 'Repeated starts must not create workers.'
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        1..50 | ForEach-Object { $null = Get-MeterAppNetworkSample }
+        Assert-True ($timer.Elapsed.TotalSeconds -lt 2) 'Snapshot reads must not wait for the sampling interval.'
+        Remove-Module $module -Force
+        Assert-Equal $instance.GetSnapshot().Status 'Stopped' 'Module unload must dispose the worker.'
+    }
     if ($Live) {
         $module = Import-Module $modulePath -Force -PassThru
         try {
+            Start-MeterAppNetworkMonitor
+            try {
+                $deadline = [DateTime]::UtcNow.AddSeconds(8)
+                do {
+                    Start-Sleep -Milliseconds 100
+                    $network = Get-MeterAppNetworkSample
+                } while ($network.Status -eq 'Starting' -and [DateTime]::UtcNow -lt $deadline)
+                if ($network.Status -eq 'AccessDenied') {
+                    Assert-True (-not $network.Available) 'Unelevated monitoring must report unavailable.'
+                    Assert-Equal $network.Rows.Count 0
+                    Write-Output 'PASS: Live EStats permission failure is explicit (AccessDenied).'
+                    Write-Output 'SKIP: Live TCP byte transfer requires an elevated Windows PowerShell process.'
+                } else {
+                    Assert-True ($network.Status -ne 'Unavailable') ('Native EStats initialization failed: ' + $network.NativeErrorCode)
+                    foreach ($address in @([Net.IPAddress]::Loopback, [Net.IPAddress]::IPv6Loopback)) {
+                        $listener = [Net.Sockets.TcpListener]::new($address, 0)
+                        $client = $null; $server = $null
+                        try {
+                            $listener.Start()
+                            $client = [Net.Sockets.TcpClient]::new($address.AddressFamily)
+                            $client.Connect($address, $listener.LocalEndpoint.Port)
+                            $server = $listener.AcceptTcpClient()
+                            $server.ReceiveTimeout = 5000
+                            $client.ReceiveTimeout = 5000
+                            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+                            $warmTimestamp = (Get-MeterAppNetworkSample).TimestampUtc
+                            $freshSamples = 0
+                            do {
+                                Start-Sleep -Milliseconds 100
+                                $network = Get-MeterAppNetworkSample
+                                if ($network.TimestampUtc -gt $warmTimestamp) {
+                                    $warmTimestamp = $network.TimestampUtc
+                                    $freshSamples++
+                                }
+                                $own = @($network.Rows | Where-Object { $_.ProcessIds -contains $PID -and $_.SampledConnections -ge 2 })
+                            } while (($own.Count -eq 0 -or $freshSamples -lt 2) -and [DateTime]::UtcNow -lt $deadline)
+                            Assert-True ($own.Count -eq 1 -and $freshSamples -ge 2) ('Live sockets did not finish EStats warmup: ' + $network.Status + '/' + $network.NativeErrorCode)
+                            Assert-True ([IO.Path]::IsPathRooted($own[0].AppId)) 'Control needs a full executable path.'
+                            $seen = $network.TimestampUtc
+                            $payload = New-Object byte[] 8192
+                            $client.GetStream().Write($payload, 0, $payload.Length)
+                            $received = 0
+                            while ($received -lt $payload.Length) {
+                                $read = $server.GetStream().Read($payload, $received, $payload.Length - $received)
+                                Assert-True ($read -gt 0) 'TCP receive unexpectedly closed.'
+                                $received += $read
+                            }
+                            $rx = 0L; $tx = 0L
+                            $deadline = [DateTime]::UtcNow.AddSeconds(5)
+                            do {
+                                Start-Sleep -Milliseconds 100
+                                $network = Get-MeterAppNetworkSample
+                                if ($network.TimestampUtc -gt $seen) {
+                                    $seen = $network.TimestampUtc
+                                    foreach ($row in @($network.Rows | Where-Object { $_.ProcessIds -contains $PID })) {
+                                        $rx += [long]$row.RxBytes; $tx += [long]$row.TxBytes
+                                        if ($row.RxBytes -gt 0) {
+                                            Assert-True ([math]::Abs($row.DownloadPerSecond * $network.IntervalSeconds - $row.RxBytes) -lt 0.01) 'Live speed must use the actual elapsed interval.'
+                                        }
+                                    }
+                                }
+                            } while (($rx -lt 8192 -or $tx -lt 8192) -and [DateTime]::UtcNow -lt $deadline)
+                            Assert-True ($rx -ge 8192 -and $tx -ge 8192) ('EStats failed to measure real TCP bytes: rx=' + $rx + ', tx=' + $tx)
+                            Write-Output ('PASS: Live EStats byte transfer, path and interval: ' + $address.AddressFamily + ', rx=' + $rx + ', tx=' + $tx)
+                        } finally {
+                            if ($null -ne $client) { $client.Dispose() }
+                            if ($null -ne $server) { $server.Dispose() }
+                            $listener.Stop()
+                        }
+                    }
+                }
+            } finally { Stop-MeterAppNetworkMonitor }
             $sample = Get-MeterProxyClientSample -Ports @(1) -ProcessNames @('definitely-not-running-proxy')
             Assert-True ($null -ne $sample.Clients) 'The live table read must return a stable collection.'
             Write-Output ('PASS: Live TCP table rows classified: {0}' -f @($sample.Clients).Count)
@@ -343,7 +528,7 @@ try {
                 } finally { $listener.Stop() }
             }
 
-        } finally { Remove-Module $module -Force }
+        } finally { if (Get-Module $module.Name) { Remove-Module $module -Force } }
     }
     Write-Output ('App monitor tests passed: ' + $script:count)
 }

@@ -71,6 +71,15 @@ function Test-LiveMeterWindow {
     $script:ApplicationsNav.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
     $script:window.UpdateLayout()
     Assert-Ui ($script:OverviewPage.Visibility -eq 'Collapsed' -and $script:ApplicationsPage.Visibility -eq 'Visible') 'Sidebar navigation must open the independent applications page.'
+    Assert-Ui ($script:LiveAppsList -is [Windows.Controls.DataGrid]) 'Live applications must render as a table.'
+    Assert-Ui ($script:AppControls.Visibility -eq 'Collapsed') 'Network controls must remain hidden until an application is selected.'
+    Assert-Ui ([object]::ReferenceEquals($script:RefreshButton.Parent, $script:ExportButton.Parent)) 'Refresh and export must share the toolbar.'
+    Assert-Ui ($script:LiveAppsList.Items[0].Download -match '/s' -and $script:LiveAppsList.Items[0].Upload -match '/s') 'Live application rows must show download and upload rates.'
+    $script:LiveAppsList.SelectedIndex = 0
+    Assert-Ui ($script:AppControls.Visibility -eq 'Visible') 'Selecting an application must reveal its controls.'
+    $script:liveAppsKey = ''
+    Update-MeterLiveAppsPanel
+    Assert-Ui ($null -ne $script:LiveAppsList.SelectedItem -and $script:LiveAppsList.SelectedItem.Name -eq 'Microsoft Edge') 'Refreshing rows must preserve application selection.'
     $script:LiveAppSearch.Text = 'terminal'
     Assert-Ui ($script:LiveAppsList.Items.Count -eq 1 -and $script:LiveAppsList.Items[0].Name -eq 'Windows Terminal') 'Application search must filter the application page.'
     $script:LiveAppSearch.Text = ''
@@ -96,7 +105,78 @@ function Test-LiveMeterWindow {
     Assert-Ui ($usageChip -match 'GB') 'Usage chips must be labelled as today usage in GB.'
     $script:LiveConnections.IsChecked = $true
     Assert-Ui ($script:liveAppsList.Items[0].Name -ceq 'Microsoft Edge') 'Switching back must restore connection chips.'
-    Write-Host 'PASS the live apps panel renders connections and today usage without rate promises'
+    Write-Host 'PASS the live apps table renders rates, selections and delayed usage'
+    # Regressions: numeric ordering, refresh preservation, and mode reset.
+    $savedStatus = $script:liveAppsStatus
+    $script:liveAppsStatus = [pscustomobject]@{ Apps = @(
+        [pscustomobject]@{ Name = 'Fast'; Connections = 14; DownloadPerSecond = 2000000; UploadPerSecond = 900 }
+        [pscustomobject]@{ Name = 'Slow'; Connections = 9; DownloadPerSecond = 900; UploadPerSecond = 2000000 }
+        [pscustomobject]@{ Name = 'Unknown'; Connections = 0; DownloadPerSecond = $null; UploadPerSecond = $null }
+    ) }
+    Update-MeterLiveAppsPanel
+    foreach ($case in @(@(1, 'Fast'), @(2, 'Slow'), @(3, 'Fast'))) {
+        $column = $script:LiveAppsList.Columns[$case[0]]
+        $view = [Windows.Data.CollectionViewSource]::GetDefaultView($script:LiveAppsList.ItemsSource)
+        $view.SortDescriptions.Clear()
+        $property = if ($column.SortMemberPath) { $column.SortMemberPath } else { $column.Binding.Path.Path }
+        $view.SortDescriptions.Add([ComponentModel.SortDescription]::new($property, 'Descending'))
+        $column.SortDirection = 'Descending'
+        Assert-Ui ($script:LiveAppsList.Items[0].Name -eq $case[1]) 'Application columns must sort by numeric magnitude, not display text.'
+        $script:liveAppsKey = ''
+        Update-MeterLiveAppsPanel
+        Assert-Ui ($script:LiveAppsList.Items[0].Name -eq $case[1] -and $script:LiveAppsList.Items.SortDescriptions.Count -eq 1 -and $column.SortDirection -eq 'Descending') 'Refresh must preserve the active numeric sort and header direction.'
+        $column.SortDirection = $null
+    }
+    $unknown = @($script:LiveAppsList.Items | Where-Object Name -eq 'Unknown')[0]
+    Assert-Ui ($null -eq $unknown.DownloadValue -and $null -eq $unknown.UploadValue -and $unknown.Download -eq '—') 'Unknown rates must remain null and display a dash.'
+    $script:LiveUsage.IsChecked = $true
+    Assert-Ui ($script:LiveAppsList.Items.SortDescriptions.Count -eq 0 -and @($script:LiveAppsList.Columns | Where-Object { $null -ne $_.SortDirection }).Count -eq 0) 'Changing modes must clear sorting and header arrows.'
+    Assert-Ui ($script:LiveAppsList.Items[0].DownloadValue -eq 1.85 -and $script:LiveAppsList.Items[0].UploadValue -eq 0.085 -and $script:LiveAppsList.Items[0].SortValue -eq 1.935) 'Usage sorting must use numeric usage values.'
+    $script:LiveConnections.IsChecked = $true
+    $script:liveAppsStatus = [pscustomobject]@{ Apps = @(
+        [pscustomobject]@{ Name = 'SameName'; AppId = ''; ProcessId = 101; Connections = 1 }
+        [pscustomobject]@{ Name = 'SameName'; AppId = ''; ProcessId = 202; Connections = 1 }
+    ) }
+    Update-MeterLiveAppsPanel
+    $script:LiveAppsList.SelectedItem = @($script:LiveAppsList.Items | Where-Object { $_.SelectionId -eq 'pid:202' -or $_.AppId -eq 'C:\Other\a.exe' })[0]
+    $script:liveAppsKey = ''
+    Update-MeterLiveAppsPanel
+    Assert-Ui ($script:LiveAppsList.SelectedItem.SelectionId -eq 'pid:202') 'Refreshing unknown-path processes with the same name must preserve the selected PID.'
+    $script:liveAppsStatus.Apps[1].ProcessId = 303
+    Update-MeterLiveAppsPanel
+    Assert-Ui ($null -eq $script:LiveAppsList.SelectedItem) 'A different PID with identical display values must not inherit the old selection.'
+    $script:liveAppsStatus = [pscustomobject]@{ Apps = @(
+        [pscustomobject]@{ Name = 'SameName'; AppId = 'C:\Apps\a.exe'; ProcessId = 101; Connections = 1 }
+        [pscustomobject]@{ Name = 'SameName'; AppId = 'C:\Other\a.exe'; ProcessId = 202; Connections = 1 }
+    ) }
+    Update-MeterLiveAppsPanel
+    $script:LiveAppsList.SelectedItem = @($script:LiveAppsList.Items | Where-Object { $_.SelectionId -eq 'pid:202' -or $_.AppId -eq 'C:\Other\a.exe' })[0]
+    $script:liveAppsStatus.Apps[1].ProcessId = 303
+    $script:liveAppsKey = ''
+    Update-MeterLiveAppsPanel
+    Assert-Ui ($null -ne $script:LiveAppsList.SelectedItem -and $script:LiveAppsList.SelectedItem.AppId -eq 'C:\Other\a.exe') 'Known-path selection must follow AppId even when its member PID changes.'
+    $script:liveAppsStatus = $savedStatus
+    Update-MeterLiveAppsPanel
+    $script:LiveConnections.IsChecked = $true
+
+    $script:appControl.CloseProgramControls.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    $script:ApplicationsNav.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    $script:LiveAppSearch.Text = 'no matching application'
+    $script:window.UpdateLayout()
+    $choose = $script:window.FindName('ChooseProgramButton')
+    Assert-Ui ($null -ne $choose -and $choose.IsVisible -and $choose.IsEnabled) 'An empty application list must retain a visible choose-program entry point.'
+    $originalPicker = (Get-Item Function:Request-MeterProgramPath).ScriptBlock
+    try {
+        function script:Request-MeterProgramPath { return $null }
+        $choose.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        Assert-Ui ($script:AppControls.Visibility -eq 'Collapsed') 'Cancelling the picker must not open controls.'
+        function script:Request-MeterProgramPath { return (Join-Path $env:SystemRoot 'System32/notepad.exe') }
+        $choose.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+        Assert-Ui ($script:AppControls.Visibility -eq 'Visible' -and $script:appControl.ProgramPath.Text -like '*notepad.exe') 'Choosing a file from an empty list must open controls for that executable.'
+    } finally { Set-Item Function:script:Request-MeterProgramPath $originalPicker }
+    $script:LiveAppSearch.Text = ''
+    $script:OverviewNav.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Write-Host 'PASS numeric application sorting, refresh preservation, mode reset and independent program picker'
 
     $accent = $script:window.Resources['Accent']
     Assert-Ui ($accent -is [Windows.Media.SolidColorBrush] -and $accent.Color.ToString() -ceq '#FF5A63E8') 'The accent token must keep its hue.'

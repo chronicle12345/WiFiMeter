@@ -1,4 +1,4 @@
-﻿<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="{DynamicResource WindowTitle}" Width="1240" Height="760" MinWidth="920" MinHeight="650" WindowStartupLocation="CenterScreen" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" UseLayoutRounding="True" SnapsToDevicePixels="True">
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="{DynamicResource WindowTitle}" Width="1240" Height="760" MinWidth="920" MinHeight="650" WindowStartupLocation="CenterScreen" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" UseLayoutRounding="True" SnapsToDevicePixels="True">
   <Window.Resources>
     <!-- Design tokens: every surface, text and status color used below has a named
          brush here so the light theme stays consistent across window and dialogs. -->
@@ -460,7 +460,10 @@
             <RadioButton x:Name="PeriodRange" GroupName="Period" Style="{StaticResource Segment}" Content="{DynamicResource CustomRange}" Tag="Range" />
           </StackPanel>
         </Border>
-        <Button x:Name="ExportButton" Content="{DynamicResource Export}" HorizontalAlignment="Right" VerticalAlignment="Top" AutomationProperties.Name="{DynamicResource ExportAccessible}" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
+          <Button x:Name="RefreshButton" Content="{DynamicResource Refresh}" Margin="0,0,10,0" />
+          <Button x:Name="ExportButton" Content="{DynamicResource Export}" AutomationProperties.Name="{DynamicResource ExportAccessible}" />
+        </StackPanel>
       </Grid>
       <Grid Grid.Row="3">
         <Border Style="{StaticResource CardShadowHost}" />
@@ -617,7 +620,6 @@
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <TextBlock x:Name="StatusDetail" Visibility="Collapsed" Text="{DynamicResource BackgroundHint}" Foreground="{StaticResource Faint}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Top" />
-        <Button x:Name="RefreshButton" Grid.Column="1" Content="{DynamicResource Refresh}" Height="22" Padding="8,0" FontSize="10" Background="Transparent" BorderThickness="0" Margin="10,-3,0,0" />
       </Grid>
       </Grid>
       <Grid x:Name="ApplicationsPage" Visibility="Collapsed">
@@ -626,7 +628,10 @@
           <RowDefinition Height="*" />
           <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <TextBlock Text="{DynamicResource LiveApps}" FontSize="26" FontWeight="SemiBold" />
+        <Grid VerticalAlignment="Top">
+          <TextBlock Text="{DynamicResource LiveApps}" FontSize="26" FontWeight="SemiBold" />
+          <Button x:Name="ChooseProgramButton" Content="{DynamicResource ChooseProgram}" HorizontalAlignment="Right" />
+        </Grid>
         <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20,16">
           <Grid>
             <Grid.RowDefinitions>
@@ -648,55 +653,30 @@
               </Border>
             </Grid>
             <TextBlock x:Name="LiveAppsHint" Grid.Row="1" Text="{DynamicResource LiveAppsEmpty}" Foreground="{StaticResource Faint}" FontSize="11" Margin="0,12,0,0" Visibility="Collapsed" TextWrapping="Wrap" />
-            <ListBox x:Name="LiveAppsList" Grid.Row="2" Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="False" AutomationProperties.Name="{DynamicResource LiveAppsAccessible}">
-              <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
-              <ListBox.ItemContainerStyle>
-                <Style TargetType="ListBoxItem">
-                  <Setter Property="Margin" Value="0,0,8,8" />
-                  <Setter Property="Padding" Value="0" />
-                  <Setter Property="Cursor" Value="Hand" />
-                  <Setter Property="Template">
-                    <Setter.Value>
-                      <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Chip" Background="{StaticResource ChipBackground}" BorderBrush="Transparent" BorderThickness="2" CornerRadius="8">
-                          <ContentPresenter />
+            <DataGrid x:Name="LiveAppsList" Grid.Row="2" Margin="0,16,0,0" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" SelectionUnit="FullRow" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" RowHeight="42" GridLinesVisibility="None" RowHeaderWidth="0" BorderThickness="0" Background="White" AlternatingRowBackground="#FBFCFE" CanUserResizeRows="False" CanUserReorderColumns="False" ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="{DynamicResource LiveAppsAccessible}">
+              <DataGrid.Columns>
+                <DataGridTemplateColumn Width="*" MinWidth="180">
+                  <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding AppId}">
+                      <Grid Width="20" Height="20" Margin="8,0,10,0">
+                        <Border x:Name="AppFallback" Background="{StaticResource AccentSoft}" CornerRadius="4" Visibility="Collapsed">
+                          <Path Data="M 1,1 L 6,1 6,6 1,6 Z M 9,1 L 14,1 14,6 9,6 Z M 1,9 L 6,9 6,14 1,14 Z M 9,9 L 14,9 14,14 9,14 Z" Fill="{StaticResource Accent}" Stretch="Uniform" Margin="3" />
                         </Border>
-                        <ControlTemplate.Triggers>
-                          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chip" Property="Background" Value="{StaticResource AccentHover}" /></Trigger>
-                          <Trigger Property="IsSelected" Value="True">
-                            <Setter TargetName="Chip" Property="Background" Value="{StaticResource RowSelected}" />
-                            <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
-                          </Trigger>
-                          <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
-                        </ControlTemplate.Triggers>
-                      </ControlTemplate>
-                    </Setter.Value>
-                  </Setter>
-                </Style>
-              </ListBox.ItemContainerStyle>
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <Border Background="Transparent" CornerRadius="7" Padding="10,7" ToolTip="{Binding Detail}">
-                  <StackPanel Orientation="Horizontal">
-                    <Grid Width="18" Height="18" Margin="0,0,7,0">
-                      <Border x:Name="AppFallback" Background="{StaticResource AccentSoft}" CornerRadius="4" Visibility="Collapsed">
-                        <Path Data="M 1,1 L 6,1 6,6 1,6 Z M 9,1 L 14,1 14,6 9,6 Z M 1,9 L 6,9 6,14 1,14 Z M 9,9 L 14,9 14,14 9,14 Z" Fill="{StaticResource Accent}" Stretch="Uniform" Margin="3" />
-                      </Border>
-                      <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
-                    </Grid>
-                    <TextBlock Text="{Binding Name}" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                    <Border Background="{StaticResource ChipBadge}" CornerRadius="5" Margin="8,0,0,0" Padding="7,1">
-                      <TextBlock Text="{Binding Value}" FontSize="10" Foreground="{StaticResource AccentDeep}" FontFamily="Segoe UI" VerticalAlignment="Center" />
-                    </Border>
-                  </StackPanel>
-                </Border>
-                <DataTemplate.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter TargetName="AppFallback" Property="Visibility" Value="Visible" /></DataTrigger></DataTemplate.Triggers>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-            </ListBox>
+                        <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                      </Grid>
+                      <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <DataTemplate.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter TargetName="AppFallback" Property="Visibility" Value="Visible" /></DataTrigger></DataTemplate.Triggers>
+                  </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Binding="{Binding Download}" SortMemberPath="DownloadValue" Width="145" ElementStyle="{StaticResource NumericCell}" />
+                <DataGridTextColumn Binding="{Binding Upload}" SortMemberPath="UploadValue" Width="145" ElementStyle="{StaticResource NumericCell}" />
+                <DataGridTextColumn Binding="{Binding Value}" SortMemberPath="SortValue" Width="120" ElementStyle="{StaticResource NumericCell}" />
+              </DataGrid.Columns>
+            </DataGrid>
           </Grid>
         </Border>
-        <Border x:Name="AppControls" Grid.Row="2" Padding="20,16" Margin="0,16,0,0">
+        <Border x:Name="AppControls" Visibility="Collapsed" Grid.Row="2" Padding="20,16" Margin="0,16,0,0">
           <Border.Style>
             <Style TargetType="Border" BasedOn="{StaticResource Card}">
               <Style.Triggers>

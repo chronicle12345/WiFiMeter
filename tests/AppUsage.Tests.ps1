@@ -77,6 +77,17 @@ try {
         Assert-True (($result.Days | Select-Object -ExpandProperty Date -Unique) -join ',' -eq '2026-09-18,2026-09-19') 'Date selection must include both endpoint days.'
         Assert-True ((& $module { $script:QueryCount }) -eq 2) 'SSID matching must remain case sensitive.'
     }
+    Invoke-AppTest 'Custom dates spanning a month query only the selected inclusive days' {
+        param($module, $directory)
+        & $module { param($Profiles) $script:TestProfiles = $Profiles } @((New-TestProfile 'Home'))
+        $result = Get-MeterAppUsage -SSID 'Home' -StartDate '2026-08-31' -EndDate '2026-09-02' -DataDirectory $directory
+        $windows = @(& $module { $script:QueryWindows.ToArray() })
+        Assert-True ($windows.Count -eq 3 -and $result.Days.Count -eq 6) 'A cross-month range must query exactly three days, not full months.'
+        Assert-True ($windows[0].Start.LocalDateTime -eq [datetime]'2026-08-31' -and $windows[-1].End.LocalDateTime -eq [datetime]'2026-09-03') 'The inclusive final day must end at the following local midnight.'
+        Assert-True ($result.Rows[0].RxBytes -eq 300 -and $result.Rows[0].TxBytes -eq 75) 'Application totals must include exactly the requested days.'
+        $single = Get-MeterAppUsage -SSID 'Home' -StartDate '2026-09-01' -EndDate '2026-09-01' -DataDirectory $directory
+        Assert-True ($single.Days.Count -eq 2 -and $single.Rows[0].TotalBytes -eq 125) 'Equal start and end dates must select one complete day.'
+    }
     Invoke-AppTest 'Historical profiles use observed mappings without guessing from profile names' {
         param($module, $directory)
         & $module { param($Profiles) $script:TestProfiles = $Profiles } @((New-TestProfile 'Verified SSID' 'Renamed profile'))

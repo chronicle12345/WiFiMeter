@@ -2,6 +2,8 @@
 
 English | [简体中文](USAGE.zh-CN.md)
 
+This guide describes the current source version. See the [changelog](../CHANGELOG.md) for unreleased changes and the [v1.1.0 release notes](releases/v1.1.0.md) for the published version.
+
 ## Install and open
 
 Download `WiFiMeter-Setup.exe` from the repository's Releases page and follow the installer. It installs into the current user's program directory without administrator rights. Open WiFiMeter from the desktop or Start menu. For a portable copy, extract `WiFiMeter-Portable.zip` and open `WiFiMeter.exe`, keeping the extracted files together. Neither version needs a terminal.
@@ -10,9 +12,11 @@ Windows 10 or 11, Windows PowerShell 5.1 and .NET Framework 4.7.2 or later are r
 
 ## Dates and networks
 
-Choose All time, Today or This month. Custom dates opens a calendar dialog: select both dates and apply them. Both endpoints are included. Cancel keeps the previous range. The chart, table and CSV export use the selected range, with no top-network limit.
+Choose All time, Today or This month. Custom dates opens a calendar dialog: select both dates and apply them. Both endpoints are included. Cancel keeps the previous range. The overview chart, table and CSV export use the selected date range, with no top-network limit. Refresh and Export CSV are in the same toolbar.
 
-The card can also draw a trend: a per-day download and upload line chart for the selected range across the listed networks. Ranges with fewer than two days of data show a placeholder instead of a line. The search field filters the network list as you type, matching display names and SSIDs without case sensitivity; the summary cards, the network count and the chart or table then reflect the filtered networks, while CSV export always covers the whole selected range.
+Trend shows daily download and upload totals across all networks in the selected date range. Hover over a day to see its download, upload and total usage, including download and upload byte counts. Ranges with fewer than two days of data show a placeholder.
+
+Network search matches display names and SSIDs without case sensitivity. In Chart and Details, the summary cards, network count and network rows reflect this search. Trend ignores network search and hides the search field; switching back restores it. The overview CSV export covers all networks in the selected date range, regardless of network search. Application-history export follows its own filters, as described below.
 
 Click a network row to open its settings and usage details. A display name changes its label without changing the original SSID or merging its records. The details dialog shows the original identity: Wi-Fi SSIDs unchanged and wired adapters under their reserved `Ethernet:` identity. The network list and CSV exports show wired adapters under their Windows connection name, or the alias you set for that identity, whenever this machine can identify the adapter; otherwise the raw `Ethernet:` identity is used. Wi-Fi SSIDs are always exported unchanged. Identical SSIDs share totals; names with different letter case remain separate.
 
@@ -28,13 +32,25 @@ Warnings appear through the tray icon at the chosen percentage and at the limit.
 
 ## Application usage
 
-The Applications and By day tabs show records from Windows for the selected network and dates. Name search and Today, This month, or Custom dates filters apply to both application totals and daily rows. Queries run in the background; closing the details window cancels pending work. Each program's icon appears next to its name whenever its executable can be identified, and a placeholder glyph appears otherwise. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
+Click a network to open its details. Applications shows totals for the selected range; Application history shows dated records. Both tabs share application-name search and the Today, This month, Custom dates and All time options. To use custom dates, select a start and end date and click Apply. Both endpoint days are included. Missing dates or an end date before the start date leave the previous query unchanged.
+
+In Application history, use Group by to switch between Date and Application and month. Monthly rows combine records for the same application within each calendar month, using only the selected dates. For example, August 31 through September 2 produces an August subtotal for August 31 and a September subtotal for September 1–2. Different application identifiers remain separate even if their display names match. Switching grouping reuses the loaded result.
+
+Export CSV in the details window exports the active table with its current application-name search, grouping and row order. Applications exports range totals; Application history exports daily or monthly rows. The CSV includes application names, identifiers and download, upload and total GB columns, plus a date or month column for history. Export is disabled while a query is pending, when no rows are available, or when custom dates have changed but have not been applied.
+
+Queries run in the background; a superseded result cannot replace a newer date selection, and closing the details window cancels pending work. Each program's icon appears when its executable can be identified, with a placeholder otherwise. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
 
 Windows may report application activity later than the adapter counters, and the two totals can differ. The query covers at most the most recent 60 days, beginning no earlier than WiFiMeter's first tracking date or the configured retention cutoff. Missing Windows records stay unavailable. Application history is queried on demand; it is not a permanent archive. Up to four recent queries are cached for five minutes.
 
 Traffic through a local proxy is attributed by Windows to the proxy process. In Settings, enter a TCP port such as `7890` to automatically identify the listening proxy process. Separate multiple ports with commas; process names are optional under Advanced options. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
 
-The collector also counts the connections each program currently holds and keeps the busiest programs in its status data. The dashboard's Live apps card shows these counts for up to twelve programs and refreshes every few seconds; its Today usage view queries Windows on demand for the current network's application usage for today and states that the record may be delayed. These counts are activity hints only: real-time per-application byte rates would need administrator-level Windows counters that this app does not use, so no live rates are shown, a program's connection count can diverge from its actual traffic, and the today view follows the same limitations as the application queries above. When the only connection is wired, the card explains that Windows keeps no application usage for wired networks.
+## TCP speed
+
+Open Live apps from the sidebar. The TCP speed table shows application names, download rates, upload rates and connection counts. Search filters application names. Processes with the same AppId are combined into one application row. Rates use B/s, KB/s or MB/s; an unavailable rate appears as a dash (—), not a zero or an estimate derived from connection counts. Click an application to reveal its network controls.
+
+Windows TCP EStats supplies the counters, sampled once per second in the background. Run WiFiMeter as administrator to enable this sampling. Only TCP is included; UDP and QUIC are not measured. Loopback connections and the separate connections involved in proxy forwarding are counted independently, so their rates should not be added together as external-network traffic. Short connections and the final bytes before a connection closes may be missed. Connection counts describe activity and do not measure byte volume.
+
+Today usage switches the table to download, upload and total GB from Windows records for the current network. These records can be delayed and follow the application-history limits above. When the only connection is wired, this history view reports that Windows application usage records are unavailable; this does not describe the scope of TCP speed sampling.
 
 ## Retention
 
@@ -78,8 +94,6 @@ A first sample, a network change, a counter reset or a long sampling gap establi
 
 If no network appears, check the Wi-Fi connection or the wired network cable. For read or save errors, inspect the in-app message and `collector.log`, `ui.log` or `host.log` in the data folder. If application details remain empty, try an earlier date range after Windows has updated its records. Application usage records are not available for wired connections.
 
-The trend view shows daily totals across all networks in the selected date range, independently of network search. Hover over the plot to inspect the date, download, upload, and total usage, including exact download and upload byte counts. Returning to Chart or Details restores the network search.
-
 ## Application network control
 
-Open Live apps from the sidebar, search/select a running program or choose its executable. Block direct network access creates WiFiMeter-owned inbound and outbound Windows Firewall rules. Remove network block deletes only these rules. Upload throttling uses Windows QoS in decimal KB/s, not download throttling. Operations request administrator approval and read back configured policies. Unsupported systems and verification failures report errors. Local proxy loopback and proxy-forwarded traffic may bypass application rules. Policies persist after exit/restart and may remain after uninstall; remove blocks and throttles before uninstalling.
+Open Live apps from the sidebar and click a program row to show its controls, or use Choose program to select an executable. The control panel is hidden until a program is selected; Close hides it again. Block direct network access creates WiFiMeter-owned inbound and outbound Windows Firewall rules. Remove network block deletes only these rules. Upload throttling uses Windows QoS in decimal KB/s, not download throttling. Operations request administrator approval and read back configured policies. Unsupported systems and verification failures report errors. Local proxy loopback and proxy-forwarded traffic may bypass application rules. Policies persist after exit/restart and may remain after uninstall; remove blocks and throttles before uninstalling.

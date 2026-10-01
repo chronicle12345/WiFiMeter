@@ -50,6 +50,10 @@ try {
     $script:liveAppsStatus = $null
     $script:liveMode = 'Connections'
     $script:liveAppsKey = ''
+    $script:liveRowsMode = ''
+    $script:liveNetworkStarted = $false
+    $script:liveNetworkError = ''
+    $script:updatingLiveRows = $false
     $script:liveUsageQuery = @{ Worker = $null; Pending = $null; Poll = $null; Ssid = ''; Rows = @(); MessageKey = ''; Completed = [datetime]::MinValue }
     $script:wiredNameCache = @{ Time = [datetime]::MinValue; Map = $null }
     $script:trendData = $null
@@ -89,7 +93,7 @@ try {
     }
     $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'MainWindow.xaml'))
     try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
-    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'EmptyTitle', 'EmptyDetail', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TrendView', 'TrendHost', 'TrendCanvas', 'TrendPlaceholder', 'TrendXStart', 'TrendXMid', 'TrendXEnd', 'NetworkSearch', 'NetworkSearchHint', 'NetworkSearchBox', 'NetworkSearchRow', 'NetworkHeaderRow', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList', 'OverviewPage', 'ApplicationsPage', 'OverviewNav', 'ApplicationsNav', 'AppControlHost', 'LiveAppSearch')
+    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'EmptyTitle', 'EmptyDetail', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TrendView', 'TrendHost', 'TrendCanvas', 'TrendPlaceholder', 'TrendXStart', 'TrendXMid', 'TrendXEnd', 'NetworkSearch', 'NetworkSearchHint', 'NetworkSearchBox', 'NetworkSearchRow', 'NetworkHeaderRow', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList', 'OverviewPage', 'ApplicationsPage', 'OverviewNav', 'ApplicationsNav', 'AppControlHost', 'AppControls', 'ChooseProgramButton', 'LiveAppSearch')
     foreach ($name in $names) { Set-Variable -Scope Script -Name $name -Value $window.FindName($name) }
     function Update-MeterLocalizedControls {
         foreach ($key in $script:strings.Keys) { $window.Resources[$key] = $script:strings[$key] }
@@ -193,10 +197,15 @@ try {
                 if ([string]::IsNullOrWhiteSpace($name)) { continue }
                 $connections = [long]0
                 if ($app.PSObject.Properties['Connections']) { try { $connections = [long]$app.Connections } catch { $connections = [long]0 } }
-                $apps.Add([pscustomobject]@{ Name = $name; Connections = $connections })
+                $download = $null; $upload = $null
+                if ($app.PSObject.Properties['DownloadPerSecond'] -and $null -ne $app.DownloadPerSecond) { $download = [double]$app.DownloadPerSecond }
+                if ($app.PSObject.Properties['UploadPerSecond'] -and $null -ne $app.UploadPerSecond) { $upload = [double]$app.UploadPerSecond }
+                $appId = if ($app.PSObject.Properties['AppId']) { [string]$app.AppId } else { '' }
+                $processId = if ($app.PSObject.Properties['ProcessId']) { [int]$app.ProcessId } else { 0 }
+                $apps.Add([pscustomobject]@{ Name = $name; AppId = $appId; ProcessId = $processId; Connections = $connections; DownloadPerSecond = $download; UploadPerSecond = $upload })
             }
         }
-        return @($apps | Sort-Object -Property @{ Expression = 'Connections'; Descending = $true }, Name | Select-Object -First 12)
+        return @($apps | Sort-Object -Property @{ Expression = { $_.DownloadPerSecond + $_.UploadPerSecond }; Descending = $true }, @{ Expression = 'Connections'; Descending = $true }, Name)
     }
 
     function Get-MeterCurrentConnectionSsid {
@@ -273,6 +282,13 @@ try {
         Start-MeterLiveUsageWorker -Ssid $ssid
     }
 
+    function Format-MeterAppRate($Bytes) {
+        if ($null -eq $Bytes) { return '—' }
+        if ($Bytes -ge 1e6) { return ('{0:N2} MB/s' -f ($Bytes / 1e6)) }
+        if ($Bytes -ge 1e3) { return ('{0:N1} KB/s' -f ($Bytes / 1e3)) }
+        return ('{0:N0} B/s' -f $Bytes)
+    }
+
     function Update-MeterLiveAppsPanel {
         $items = [Collections.Generic.List[object]]::new()
         $hint = ''
@@ -283,23 +299,57 @@ try {
             foreach ($row in @($script:liveUsageQuery.Rows)) {
                 $gb = '{0:N3}' -f [double]$row.TotalGB
                 $detail = (Text-Meter 'LiveAppUsageChip') -f [string]$row.Name, $gb
-                $items.Add([pscustomobject]@{ Name = [string]$row.Name; Value = ($gb + ' GB'); Detail = $detail; AppId = $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }); Icon = (Get-MeterAppIcon -AppId $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }) -Name ([string]$row.Name)) })
+                $items.Add([pscustomobject]@{ Name = [string]$row.Name; SelectionId = $(if ($row.PSObject.Properties['AppId'] -and $row.AppId) { 'path:' + $row.AppId } else { 'name:' + $row.Name }); DownloadValue = [double]$row.DownloadGB; UploadValue = [double]$row.UploadGB; SortValue = [double]$row.TotalGB; Download = (Format-MeterGigabytes ([double]$row.DownloadGB * 1e9)); Upload = (Format-MeterGigabytes ([double]$row.UploadGB * 1e9)); Value = ($gb + ' GB'); Detail = $detail; AppId = $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }); Icon = (Get-MeterAppIcon -AppId $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }) -Name ([string]$row.Name)) })
             }
         } else {
-            foreach ($app in @(Get-MeterStatusApps $script:liveAppsStatus)) {
+            $source = $script:liveAppsStatus
+            if (-not $script:isReadOnly -and $script:liveNetworkStarted) {
+                $sample = Get-MeterAppNetworkSample
+                $source = if (@($sample.Rows).Count -gt 0 -or $sample.Available) { [pscustomobject]@{ Apps = @($sample.Rows) } } else { $script:liveAppsStatus }
+                $hintVisible = $true
+                $hint = switch ($sample.Status) {
+                    'AccessDenied' { Text-Meter 'LiveSpeedUnavailable' }
+                    'Unavailable' { Text-Meter 'LiveSpeedFailed' }
+                    'Starting' { Text-Meter 'LiveSpeedStarting' }
+                    'WarmingUp' { Text-Meter 'LiveSpeedStarting' }
+                    default { Text-Meter 'LiveSpeedScope' }
+                }
+            } elseif ($script:liveNetworkError) { $hintVisible = $true; $hint = Text-Meter 'LiveSpeedFailed' }
+            foreach ($app in @(Get-MeterStatusApps $source)) {
                 $detail = (Text-Meter 'LiveAppChip') -f $app.Name, $app.Connections
-                $items.Add([pscustomobject]@{ Name = $app.Name; Value = [string]$app.Connections; Detail = $detail; AppId = ''; Icon = (Get-MeterAppIcon -AppId '' -Name ([string]$app.Name)) })
+                $items.Add([pscustomobject]@{ Name = $app.Name; SelectionId = $(if ($app.AppId) { 'path:' + $app.AppId } elseif ($app.ProcessId -gt 0) { 'pid:' + $app.ProcessId } else { 'name:' + $app.Name }); DownloadValue = $app.DownloadPerSecond; UploadValue = $app.UploadPerSecond; SortValue = $app.Connections; Download = (Format-MeterAppRate $app.DownloadPerSecond); Upload = (Format-MeterAppRate $app.UploadPerSecond); Value = [string]$app.Connections; Detail = $detail; AppId = $app.AppId; Icon = (Get-MeterAppIcon -AppId $app.AppId -Name ([string]$app.Name)) })
             }
-            if ($items.Count -eq 0) { $hintVisible = $true; $hint = Text-Meter 'LiveAppsEmpty' }
+            if ($items.Count -eq 0 -and -not $hintVisible) { $hintVisible = $true; $hint = Text-Meter 'LiveAppsEmpty' }
         }
         $search = $LiveAppSearch.Text.Trim()
         if ($search) { $items = @($items | Where-Object { $_.Name.IndexOf($search, [StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
         # Rebind only when the visible data or language changed; the panel updates every 2s.
-        $parts = @(foreach ($item in $items) { $item.Name + '=' + $item.Value })
+        $parts = @(foreach ($item in $items) { $item.SelectionId + '|' + $item.Name + '=' + $item.Value + ':' + $item.Download + ':' + $item.Upload + ':' + $item.DownloadValue + ':' + $item.UploadValue + ':' + $item.SortValue })
         $key = $script:uiLanguage + '|' + $script:liveMode + '|' + ($parts -join ';') + '|' + $hint + '|' + $search
         if ($key -ceq $script:liveAppsKey) { return }
         $script:liveAppsKey = $key
-        $LiveAppsList.ItemsSource = $items
+        $selectedId = if ($null -ne $LiveAppsList.SelectedItem) { $LiveAppsList.SelectedItem.SelectionId } else { '' }
+        $sorts = @()
+        $directions = @()
+        if ($script:liveRowsMode -ceq $script:liveMode) {
+            $sorts = @($LiveAppsList.Items.SortDescriptions)
+            $directions = @($LiveAppsList.Columns | ForEach-Object { $_.SortDirection })
+        }
+        $script:liveRowsMode = $script:liveMode
+        $script:updatingLiveRows = $true
+        try {
+            $LiveAppsList.ItemsSource = $items
+            $view = [Windows.Data.CollectionViewSource]::GetDefaultView($LiveAppsList.ItemsSource)
+            $view.SortDescriptions.Clear()
+            foreach ($sort in $sorts) { $view.SortDescriptions.Add($sort) }
+            for ($i = 0; $i -lt $LiveAppsList.Columns.Count; $i++) {
+                $LiveAppsList.Columns[$i].SortDirection = if ($i -lt $directions.Count) { $directions[$i] } else { $null }
+            }
+            $LiveAppsList.SelectedItem = $null
+            foreach ($item in $items) { if ($item.SelectionId -ceq $selectedId) { $LiveAppsList.SelectedItem = $item; break } }
+        } finally { $script:updatingLiveRows = $false }
+        $headers = if ($script:liveMode -eq 'Usage') { @('Application', 'DownloadGB', 'UploadGB', 'TotalGB') } else { @('Application', 'DownloadSpeed', 'UploadSpeed', 'ConnectionCount') }
+        for ($i = 0; $i -lt $headers.Count; $i++) { $LiveAppsList.Columns[$i].Header = Text-Meter $headers[$i] }
         $LiveAppsHint.Text = $hint
         $LiveAppsHint.Visibility = if ($hintVisible -or $items.Count -eq 0) { 'Visible' } else { 'Collapsed' }
     }
@@ -565,9 +615,9 @@ try {
             $script:liveAppsStatus = [pscustomobject]@{
                 Running = $true
                 Apps = @(
-                    [pscustomobject]@{ Name = 'Microsoft Edge'; Connections = [long]14 }
-                    [pscustomobject]@{ Name = 'Windows Terminal'; Connections = [long]5 }
-                    [pscustomobject]@{ Name = 'Spotify'; Connections = [long]3 }
+                    [pscustomobject]@{ Name = 'Microsoft Edge'; Connections = [long]14; DownloadPerSecond = 2480000; UploadPerSecond = 85000 }
+                    [pscustomobject]@{ Name = 'Windows Terminal'; Connections = [long]5; DownloadPerSecond = 260000; UploadPerSecond = 60000 }
+                    [pscustomobject]@{ Name = 'Spotify'; Connections = [long]3; DownloadPerSecond = 100000; UploadPerSecond = 15000 }
                 )
             }
             Update-MeterLiveAppsPanel
@@ -669,10 +719,21 @@ try {
     }
     Initialize-MeterAppControls
     $OverviewNav.Add_Click({ Set-MeterPage 'Overview' })
-    $ApplicationsNav.Add_Click({ Set-MeterPage 'Applications' })
+    $ApplicationsNav.Add_Click({
+        Set-MeterPage 'Applications'
+        if (-not $script:isReadOnly -and -not $script:liveNetworkStarted) {
+            try {
+                Import-Module (Join-Path $PSScriptRoot 'AppMonitor.psm1') -ErrorAction Stop
+                Start-MeterAppNetworkMonitor
+                $script:liveNetworkStarted = $true
+                $script:liveNetworkError = ''
+            } catch { $script:liveNetworkError = $_.Exception.Message }
+        }
+        Update-MeterLiveAppsPanel
+    })
     $LiveAppSearch.Add_TextChanged({ Update-MeterLiveAppsPanel })
     $LiveAppsList.Add_SelectionChanged({
-        if ($null -eq $LiveAppsList.SelectedItem -or $script:appControl.Busy) { return }
+        if ($script:updatingLiveRows -or $null -eq $LiveAppsList.SelectedItem -or $script:appControl.Busy) { return }
         $item = $LiveAppsList.SelectedItem
         $path = $null
         try { $path = Resolve-MeterAppIconPath -Candidate ([string]$item.AppId); if (-not $path) { $path = Resolve-MeterAppIconPath -Candidate ([string]$item.Name) } } catch { }
@@ -799,6 +860,7 @@ try {
     $script:frame = [Windows.Threading.DispatcherFrame]::new()
     $window.Add_Closed({
         $timer.Stop()
+        if ($script:liveNetworkStarted) { Stop-MeterAppNetworkMonitor; $script:liveNetworkStarted = $false }
         if ($null -ne $script:liveUsageQuery.Poll) { $script:liveUsageQuery.Poll.Stop() }
         if ($null -ne $script:liveUsageQuery.Worker) {
             # The WinRT query has a bounded timeout; cancellation interrupts its wait.

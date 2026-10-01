@@ -358,12 +358,58 @@ function Get-MeterAppUsageMessageKey {
     return $messageKey
 }
 
+function Get-MeterAppMonthlyRows {
+    param([object[]]$Rows)
+    $groups = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+    foreach ($row in $Rows) {
+        $month = ([datetime]::ParseExact([string]$row.Date, 'yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)).ToString('yyyy-MM')
+        $appId = if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }
+        $identity = if ($appId) { 'id:' + $appId } else { 'name:' + $row.Name }
+        $key = $month + "`n" + $identity
+        if (-not $groups.ContainsKey($key)) {
+            $groups[$key] = [pscustomobject]@{
+                Date = $month; AppId = $appId; Name = $row.Name
+                RxBytes = [long]0; TxBytes = [long]0; TotalBytes = [long]0
+                Icon = $(if ($row.PSObject.Properties['Icon']) { $row.Icon } else { $null })
+            }
+        }
+        $target = $groups[$key]
+        foreach ($field in @('RxBytes', 'TxBytes', 'TotalBytes')) {
+            $target.$field = [long][Math]::Min([decimal][long]::MaxValue, ([decimal]$target.$field + [decimal]$row.$field))
+        }
+    }
+    return @($groups.Values | Sort-Object Date, @{ Expression = 'TotalBytes'; Descending = $true }, AppId)
+}
+
+function Update-MeterAppExportState {
+    param($Context)
+    if (-not $Context.ContainsKey('AppExport')) { return }
+    $table = if ($Context.Tabs.SelectedIndex -eq 1) { $Context.Apps } else { $Context.Daily }
+    $datesApplied = $Context.AppPeriod.SelectedItem.Tag -ne 'Range' -or (
+        $null -ne $Context.AppFrom.SelectedDate -and $null -ne $Context.AppTo.SelectedDate -and
+        $Context.AppFrom.SelectedDate -eq $Context.Start -and $Context.AppTo.SelectedDate -eq $Context.End)
+    $Context.AppExport.IsEnabled = $Context.Tabs.SelectedIndex -gt 0 -and $null -ne $Context.Result -and $Context.Result.Available -and $table.Items.Count -gt 0 -and $datesApplied
+}
+
+function Export-MeterAppUsageCsv {
+    param($Context, [Parameter(Mandatory)][string]$Path)
+    Update-MeterAppExportState $Context
+    if (-not $Context.AppExport.IsEnabled) { throw 'No current application usage is available for export.' }
+    $table = if ($Context.Tabs.SelectedIndex -eq 1) { $Context.Apps } else { $Context.Daily }
+    $fields = @('Name', 'AppId', 'DownloadGB', 'UploadGB', 'TotalGB')
+    if ($Context.Tabs.SelectedIndex -eq 2) { $fields = @('Date') + $fields }
+    # Export the collection view so filtering, grouping and user sorting match the table.
+    $table.Items | Select-Object -Property $fields | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+}
+
 function Update-MeterAppUsageFilter {
     param($Context)
     if (-not $Context.ContainsKey('Result') -or $null -eq $Context.Result) { return }
     $query = if ($Context.ContainsKey('AppSearch')) { $Context.AppSearch.Text.Trim() } else { '' }
     foreach ($pair in @(@('Apps', 'Rows'), @('Daily', 'Days'))) {
-        $rows = @($Context.Result.($pair[1]) | Where-Object { -not $query -or ([string]$_.Name).IndexOf($query, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        $source = @($Context.Result.($pair[1]))
+        if ($pair[0] -eq 'Daily' -and $Context.ContainsKey('AppGrouping') -and $Context.AppGrouping.SelectedItem.Tag -eq 'Month') { $source = @(Get-MeterAppMonthlyRows -Rows $source) }
+        $rows = @($source | Where-Object { -not $query -or ([string]$_.Name).IndexOf($query, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
         $Context[$pair[0]].ItemsSource = @(ConvertTo-MeterAppRows -Rows $rows)
     }
     $messageKey = Get-MeterAppUsageMessageKey -Result $Context.Result
@@ -372,6 +418,8 @@ function Update-MeterAppUsageFilter {
     $Context.Status.ToolTip = $Context.Result.Message
     $Context.Apps.ToolTip = Text-Meter $messageKey
     $Context.Daily.ToolTip = $Context.Apps.ToolTip
+    if ($Context.ContainsKey('AppGrouping')) { $Context.Daily.Columns[0].Header = if ($Context.AppGrouping.SelectedItem.Tag -eq 'Month') { Text-Meter 'AppUsageMonth' } else { Text-Meter 'Date' } }
+    Update-MeterAppExportState $Context
 }
 
 function Complete-MeterAppUsage {
@@ -386,6 +434,7 @@ function Set-MeterAppUsageRange {
     $custom = $period -eq 'Range'
     $Context.AppFrom.IsEnabled = $custom
     $Context.AppTo.IsEnabled = $custom
+    Update-MeterAppExportState $Context
     if ($custom) {
         if ($null -eq $Context.AppFrom.SelectedDate -or $null -eq $Context.AppTo.SelectedDate) { $Context.Status.Text = Text-Meter 'MissingDates'; return }
         $start = ([datetime]$Context.AppFrom.SelectedDate).Date
@@ -411,6 +460,7 @@ function Start-MeterAppUsageRead {
     $Context.Result = $null
     $Context.Apps.ItemsSource = @()
     $Context.Daily.ItemsSource = @()
+    Update-MeterAppExportState $Context
     $Context.Status.ToolTip = $null
     $Context.Status.Text = Text-Meter 'AppUsageLoading'
     # Coalesce range changes and discard stale results before starting the latest query.
@@ -489,6 +539,13 @@ function New-MeterNetworkDialog {
     <DatePicker x:Name="AppTo" Width="145" AutomationProperties.Name="{DynamicResource EndDate}" />
     <Button x:Name="AppApply" Content="{DynamicResource Apply}" Margin="12,0,0,0" MinWidth="70" />
   </WrapPanel>
+  <StackPanel x:Name="AppGroupingHost" Orientation="Horizontal" Margin="0,10,0,0" Visibility="Collapsed">
+    <TextBlock Text="{DynamicResource AppUsageGrouping}" VerticalAlignment="Center" Margin="0,0,12,0" />
+    <ComboBox x:Name="AppGrouping" Width="210" SelectedIndex="0" AutomationProperties.Name="{DynamicResource AppUsageGrouping}">
+      <ComboBoxItem Tag="Day" Content="{DynamicResource AppUsageByDate}" />
+      <ComboBoxItem Tag="Month" Content="{DynamicResource AppUsageByMonth}" />
+    </ComboBox>
+  </StackPanel>
 </StackPanel>
 <TabControl Grid.Row="0" x:Name="Tabs" Background="Transparent" BorderThickness="0">
   <TabControl.Template><ControlTemplate TargetType="TabControl"><StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle" /></ControlTemplate></TabControl.Template>
@@ -521,7 +578,7 @@ function New-MeterNetworkDialog {
     </StackPanel>
   </TabItem>
   <TabItem Header="{DynamicResource Applications}" Padding="14,8"><Grid x:Name="AppsHost" Margin="0,16,0,0" /></TabItem>
-  <TabItem Header="{DynamicResource ByDay}" Padding="14,8"><Grid x:Name="DailyHost" Margin="0,16,0,0" /></TabItem>
+  <TabItem Header="{DynamicResource AppUsageHistory}" Padding="14,8"><Grid x:Name="DailyHost" Margin="0,16,0,0" /></TabItem>
 </TabControl>
 <ContentPresenter Grid.Row="2" Content="{Binding SelectedContent, ElementName=Tabs}" />
 </Grid>
@@ -529,6 +586,7 @@ function New-MeterNetworkDialog {
   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
   <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0" />
   <StackPanel Grid.Column="1" Orientation="Horizontal">
+    <Button x:Name="AppExport" Content="{DynamicResource Export}" MinWidth="100" Margin="0,0,8,0" Visibility="Collapsed" IsEnabled="False" />
     <Button x:Name="Close" Content="{DynamicResource Close}" MinWidth="84" Margin="0,0,8,0" IsCancel="True" />
     <Button x:Name="Save" Content="{DynamicResource Save}" MinWidth="84" Style="{DynamicResource PrimaryButton}" />
   </StackPanel>
@@ -539,7 +597,7 @@ function New-MeterNetworkDialog {
     $start = switch ($range.Period) { 'Today' { [DateTime]::Today }; 'Month' { [DateTime]::Today.AddDays(1 - [DateTime]::Today.Day) }; 'Range' { $range.StartDate }; default { [DateTime]::new(2000, 1, 1) } }
     $end = if ($range.Period -eq 'Range') { $range.EndDate } else { [DateTime]::Today }
     $context = @{ Window = $dialog; SSID = $SSID; Start = $start; End = $end; Worker = $null; Pending = $null; Poll = $null; Saved = $false; Closed = $false; Version = 0; Result = $null }
-    foreach ($name in @('Alias', 'Limit', 'Period', 'Warn', 'Disconnect', 'Error', 'Save', 'Status', 'AppSearch', 'AppPeriod', 'AppFrom', 'AppTo', 'AppApply', 'UsageFilters', 'Tabs')) { $context[$name] = $dialog.FindName($name) }
+    foreach ($name in @('Alias', 'Limit', 'Period', 'Warn', 'Disconnect', 'Error', 'Save', 'Status', 'AppSearch', 'AppPeriod', 'AppFrom', 'AppTo', 'AppApply', 'AppGrouping', 'AppGroupingHost', 'AppExport', 'UsageFilters', 'Tabs')) { $context[$name] = $dialog.FindName($name) }
     # Wired identities show the connection name (or alias); the raw identity stays below.
     $display = Resolve-MeterNetworkDisplayName -SSID $SSID -Aliases (Get-MeterNetworkAliasMap) -WiredNames (Get-MeterWiredNameMap)
     $dialog.FindName('Name').Text = $display
@@ -568,12 +626,39 @@ function New-MeterNetworkDialog {
     $context.AppPeriod.Add_SelectionChanged({ param($sender, $eventArgs) Set-MeterAppUsageRange -Context $sender.Tag })
     $context.AppApply.Tag = $context
     $context.AppApply.Add_Click({ param($sender, $eventArgs) Set-MeterAppUsageRange -Context $sender.Tag })
+    $context.AppGrouping.Tag = $context
+    $context.AppGrouping.Add_SelectionChanged({ param($sender, $eventArgs) Update-MeterAppUsageFilter $sender.Tag })
+    foreach ($picker in @($context.AppFrom, $context.AppTo)) {
+        $picker.Tag = $context
+        $picker.Add_SelectedDateChanged({ param($sender, $eventArgs) Update-MeterAppExportState $sender.Tag })
+    }
+    $context.AppExport.Tag = $context
+    $context.AppExport.Add_Click({
+        param($sender, $eventArgs)
+        $state = $sender.Tag
+        $saveDialog = [Microsoft.Win32.SaveFileDialog]::new()
+        $saveDialog.Title = Text-Meter 'ExportTitle'
+        $saveDialog.Filter = Text-Meter 'CsvFilter'
+        $saveDialog.DefaultExt = '.csv'
+        $saveDialog.AddExtension = $true
+        $mode = if ($state.Tabs.SelectedIndex -eq 1) { 'apps' } else { [string]$state.AppGrouping.SelectedItem.Tag }
+        $saveDialog.FileName = 'app-usage-' + $state.Start.ToString('yyyyMMdd') + '-' + $state.End.ToString('yyyyMMdd') + '-' + $mode.ToLowerInvariant() + '.csv'
+        if ($saveDialog.ShowDialog($state.Window)) {
+            try {
+                Export-MeterAppUsageCsv -Context $state -Path $saveDialog.FileName
+                [void][Windows.MessageBox]::Show($state.Window, ((Text-Meter 'ExportedTo') + [Environment]::NewLine + $saveDialog.FileName), (Text-Meter 'ExportComplete'), 'OK', 'Information')
+            } catch { $state.Status.Text = Text-Meter 'AppUsageExportFailed'; $state.Status.ToolTip = $_.Exception.Message }
+        }
+    })
     $context.UsageFilters.Visibility = 'Collapsed'
     $context.Tabs.Tag = $context
     $context.Tabs.Add_SelectionChanged({
         param($sender, $eventArgs)
         if ($eventArgs.OriginalSource -ne $sender) { return }
         $sender.Tag.UsageFilters.Visibility = if ($sender.SelectedIndex -eq 0) { 'Collapsed' } else { 'Visible' }
+        $sender.Tag.AppGroupingHost.Visibility = if ($sender.SelectedIndex -eq 2) { 'Visible' } else { 'Collapsed' }
+        $sender.Tag.AppExport.Visibility = if ($sender.SelectedIndex -eq 0) { 'Collapsed' } else { 'Visible' }
+        Update-MeterAppExportState $sender.Tag
         $sender.Tag.Save.Visibility = if ($sender.SelectedIndex -eq 0) { 'Visible' } else { 'Collapsed' }
     })
     $context.Save.Tag = $context

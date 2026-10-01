@@ -26,6 +26,8 @@
 
 WiFiMeter is a Windows desktop app for tracking traffic by Wi-Fi network. It includes date-range reports, a dedicated Live apps page, application history, traffic quotas and CSV export. It also offers direct network blocking and upload limits for selected applications.
 
+This README describes the current source version. See the [changelog](CHANGELOG.md) for unreleased changes and the [v1.1.0 release notes](docs/releases/v1.1.0.md) for the published version.
+
 Overview with demo data:
 
 ![WiFiMeter overview with demo data](docs/screenshot.png)
@@ -59,12 +61,14 @@ Start-Process .\dist\WiFiMeter\WiFiMeter.exe -ArgumentList '--preview'
 
 - View recorded Wi-Fi and wired networks for today, this month, all retained history, or custom dates. Search networks by name or SSID.
 - Inspect daily trends across all networks in the selected date range; hover to see the date, download, upload and total usage. Network search does not filter the trend.
-- Open the dedicated Live apps page from the sidebar and search programs. Connection counts indicate activity; they are not real-time byte rates. Today's application usage comes from delayed Windows records.
-- Open a network's application history, search application names, and filter totals and daily details by date.
+- Open Live apps from the sidebar to search a table of per-application TCP download and upload rates and connection counts. Unavailable rates appear as a dash. Click an application to reveal its network controls; Today usage shows delayed Windows records.
+- Open a network's application history, choose inclusive start and end dates, and search application names. Switch between daily details and totals grouped by application and month; export the current table with its search, grouping and sort order.
 - Enter only the local proxy's listening TCP port, such as `7890`, in Settings for automatic process detection; multiple ports are comma-separated, and process names are optional advanced settings.
 - Select a program or its executable to block direct network access through Windows Firewall or set an upload limit through Windows QoS. Upload limits use decimal KB/s (1,000 bytes/s) and do not limit downloads.
 - Give networks display names, set per-network and total Wi-Fi quotas with warnings and optional disconnection, and export the selected date range to CSV.
 - Set history retention, minimize to the system tray, manage login startup, and switch between English and Simplified Chinese.
+
+TCP rates use Windows TCP EStats, sampled once per second in the background with administrator rights. Processes with the same AppId are combined. Loopback and proxy connections are counted separately; UDP and QUIC are excluded, and short connections or final bytes before disconnection may be missed. See [TCP speed](docs/USAGE.md#tcp-speed).
 
 Application history can differ from adapter totals and is limited to available Windows records within the last 60 days and the tracking/retention period. Proxy attribution estimates each application's share from observed TCP connections; it can miss short connections and does not cover UDP or QUIC. See [application usage and proxy limitations](docs/USAGE.md#application-usage).
 

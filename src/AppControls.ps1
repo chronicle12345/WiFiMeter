@@ -13,7 +13,10 @@ function Set-MeterPage([ValidateSet('Overview', 'Applications')][string]$Page) {
 function Initialize-MeterAppControls {
     $panel = [Windows.Markup.XamlReader]::Parse(@'
 <StackPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <TextBlock Text="{DynamicResource AppNetworkControl}" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,12" />
+  <DockPanel Margin="0,0,0,12">
+    <Button x:Name="CloseProgramControls" DockPanel.Dock="Right" Content="{DynamicResource Close}" HorizontalAlignment="Right" />
+    <TextBlock Text="{DynamicResource AppNetworkControl}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
+  </DockPanel>
   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <TextBox x:Name="ProgramPath" IsReadOnly="True" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Margin="0,0,10,0" />
     <Button x:Name="BrowseProgram" Grid.Column="1" Content="{DynamicResource ChooseProgram}" />
@@ -37,12 +40,13 @@ function Initialize-MeterAppControls {
 '@)
     $AppControlHost.Content = $panel
     $script:appControl = @{ Worker = $null; Pending = $null; Poll = $null; Path = ''; Busy = $false }
-    foreach ($name in @('ProgramPath','BrowseProgram','BlockProgram','UnblockProgram','ReadProgramState','UploadLimitValue','ThrottleProgram','UnthrottleProgram','ProgramState')) { $script:appControl[$name] = $panel.FindName($name) }
-    $script:appControl.BrowseProgram.Add_Click({
-        $picker = [Microsoft.Win32.OpenFileDialog]::new()
-        $picker.Filter = 'Programs (*.exe)|*.exe'
-        if ($picker.ShowDialog($window)) { Select-MeterControlledProgram -Path $picker.FileName }
+    foreach ($name in @('CloseProgramControls','ProgramPath','BrowseProgram','BlockProgram','UnblockProgram','ReadProgramState','UploadLimitValue','ThrottleProgram','UnthrottleProgram','ProgramState')) { $script:appControl[$name] = $panel.FindName($name) }
+    $script:appControl.CloseProgramControls.Add_Click({
+        $AppControls.Visibility = 'Collapsed'
+        $LiveAppsList.SelectedItem = $null
     })
+    $script:appControl.BrowseProgram.Add_Click({ Show-MeterProgramPicker })
+    $ChooseProgramButton.Add_Click({ Show-MeterProgramPicker })
     $script:appControl.BlockProgram.Add_Click({ Start-MeterAppControlAction 'Block' })
     $script:appControl.UnblockProgram.Add_Click({ Start-MeterAppControlAction 'Unblock' })
     $script:appControl.ReadProgramState.Add_Click({ Start-MeterAppControlAction 'Read' })
@@ -50,16 +54,31 @@ function Initialize-MeterAppControls {
     $script:appControl.UnthrottleProgram.Add_Click({ Start-MeterAppControlAction 'Unthrottle' })
     Set-MeterAppControlButtons
 }
+function Request-MeterProgramPath {
+    $picker = [Microsoft.Win32.OpenFileDialog]::new()
+    $picker.Filter = 'Programs (*.exe)|*.exe'
+    if ($picker.ShowDialog($window)) { return $picker.FileName }
+}
+function Show-MeterProgramPicker {
+    if ($script:appControl.Busy) { return }
+    $path = Request-MeterProgramPath
+    if ($path) {
+        $LiveAppsList.SelectedItem = $null
+        Select-MeterControlledProgram -Path $path
+    }
+}
 function Set-MeterAppControlButtons {
     $state = $script:appControl
     foreach ($name in @('BlockProgram','UnblockProgram','ThrottleProgram','UnthrottleProgram')) { $state[$name].IsEnabled = -not $state.Busy -and -not $script:isReadOnly -and -not [string]::IsNullOrEmpty($state.Path) }
     $state.ReadProgramState.IsEnabled = -not $state.Busy -and -not [string]::IsNullOrEmpty($state.Path)
     $state.BrowseProgram.IsEnabled = -not $state.Busy
+    $ChooseProgramButton.IsEnabled = -not $state.Busy
     $state.UploadLimitValue.IsEnabled = -not $state.Busy
     $LiveAppsList.IsEnabled = -not $state.Busy
 }
 function Select-MeterControlledProgram([string]$Path) {
     if ($script:appControl.Busy) { return }
+    $AppControls.Visibility = 'Visible'
     $script:appControl.Path = $Path
     $script:appControl.ProgramPath.Text = $Path
     $script:appControl.ProgramState.Text = Text-Meter 'AppControlSelectHint'

@@ -19,7 +19,7 @@ $exe = Join-Path $runtime 'WiFiMeter.exe'
 & $compiler /nologo /target:winexe /platform:anycpu /optimize+ /utf8output "/out:$exe" "/win32icon:$icon" "/win32manifest:$manifest" "/reference:$automation" /reference:System.Windows.Forms.dll (Join-Path $root 'src\Host.cs')
 if ($LASTEXITCODE -ne 0) { throw 'WiFiMeter.exe 编译失败。' }
 Copy-Item -LiteralPath (Join-Path $root 'src\WiFiMeter.exe.config') -Destination (Join-Path $runtime 'WiFiMeter.exe.config') -Force
-$runtimeNames = @('App.ps1', 'AppControls.ps1', 'AppNetworkControl.psm1', 'Dialogs.ps1', 'Collector.ps1', 'Control.psm1', 'Core.psm1', 'Sampler.psm1', 'Strings.psm1', 'MainWindow.xaml', 'Preferences.psm1', 'QuotaRuntime.psm1', 'NetworkControl.cs', 'TcpTable.cs', 'AppUsage.psm1', 'AppMonitor.psm1', 'Storage.psm1')
+$runtimeNames = @('App.ps1', 'AppControls.ps1', 'AppNetworkControl.psm1', 'Dialogs.ps1', 'Collector.ps1', 'Control.psm1', 'Core.psm1', 'Sampler.psm1', 'Strings.psm1', 'MainWindow.xaml', 'Preferences.psm1', 'QuotaRuntime.psm1', 'NetworkControl.cs', 'AppNetworkSampler.cs', 'TcpTable.cs', 'AppUsage.psm1', 'AppMonitor.psm1', 'Storage.psm1')
 foreach ($name in $runtimeNames) {
     $source = Join-Path $root ('src\' + $name)
     if ([IO.File]::Exists($source)) { Copy-Item -LiteralPath $source -Destination (Join-Path $runtime ('src\' + $name)) -Force }

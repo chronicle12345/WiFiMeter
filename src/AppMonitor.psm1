@@ -556,3 +556,41 @@ function Read-MeterProxySettings {
 }
 
 Export-ModuleMember -Function Get-MeterAppConnections, Get-MeterProxyClientSample, Update-MeterProxyDay, Read-MeterProxyClients, Save-MeterProxyClients, Remove-MeterExpiredProxyDays, Repair-MeterProxyAttribution
+
+# UI contract: Start once, read snapshots every ~2 seconds, Stop on shutdown.
+# Get performs no native/process queries. Rates cover TCP only, including loopback;
+# UDP/QUIC and short-lived sockets between polls are not represented. No SRUM fallback.
+$script:AppNetworkMonitor = $null
+
+function Start-MeterAppNetworkMonitor {
+    [CmdletBinding()]
+    param()
+    if ($null -ne $script:AppNetworkMonitor) { return }
+    if (-not ('WiFiMeter.Networking.AppNetworkMonitor' -as [type])) {
+        Add-Type -Path (Join-Path $PSScriptRoot 'AppNetworkSampler.cs') -ErrorAction Stop
+    }
+    $script:AppNetworkMonitor = [WiFiMeter.Networking.AppNetworkMonitor]::new()
+}
+
+function Get-MeterAppNetworkSample {
+    [CmdletBinding()]
+    param()
+    if ($null -ne $script:AppNetworkMonitor) { return $script:AppNetworkMonitor.GetSnapshot() }
+    return [pscustomobject]@{
+        Available = $false; Status = 'Stopped'; Source = 'WindowsTcpEStats'
+        TimestampUtc = [DateTime]::UtcNow; IntervalSeconds = 0.0; Rows = [object[]]@()
+        FailedConnections = 0; ObservedConnections = 0; WarmingConnections = 0; NativeErrorCode = 0
+    }
+}
+
+function Stop-MeterAppNetworkMonitor {
+    [CmdletBinding()]
+    param()
+    if ($null -ne $script:AppNetworkMonitor) {
+        try { $script:AppNetworkMonitor.Dispose() }
+        finally { $script:AppNetworkMonitor = $null }
+    }
+}
+
+$ExecutionContext.SessionState.Module.OnRemove = { Stop-MeterAppNetworkMonitor }
+Export-ModuleMember -Function Start-MeterAppNetworkMonitor, Get-MeterAppNetworkSample, Stop-MeterAppNetworkMonitor
