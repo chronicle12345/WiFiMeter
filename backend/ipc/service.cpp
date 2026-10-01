@@ -67,6 +67,7 @@ JsonValue appGapToJson(const storage::CoverageGap& gap)
     JsonValue entry = JsonValue::makeObject();
     entry.set("networkId", JsonValue::makeString(gap.networkKey));
     entry.set("reason", JsonValue::makeString(std::string(storage::coverageReasonName(gap.reason))));
+    entry.set("detail", JsonValue::makeString(gap.reasonDetail));
     entry.set("startedAt", JsonValue::makeString(core::isoUtcOf(gap.startedAt)));
     entry.set("endedAt", JsonValue::makeString(gap.span.count() > 0 ? core::isoUtcOf(gap.endedAt) : ""));
     entry.set("spanSeconds", JsonValue::makeInt(gap.span.count()));
@@ -353,6 +354,11 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         gap.endedAt = now;
         gap.span = std::chrono::duration_cast<std::chrono::seconds>(now - appLastAt_);
         gap.reason = !wifi.complete() ? storage::CoverageReason::identityUnknown : storage::CoverageReason::offline;
+        gap.reasonDetail = std::string(platform::appCollectorStateName(report.state));
+        if (!report.detail.empty())
+            gap.reasonDetail += ": " + report.detail;
+        if (!wifi.complete())
+            gap.reasonDetail += "; wifi: " + wifi.failures.front().detail;
         if (gap.span.count() > 0)
         {
             status = deps_.store.usage().addGap(gap);
@@ -413,6 +419,7 @@ BackendService::Response BackendService::buildHello() const
     result.set("schemaVersion", JsonValue::makeInt(deps_.store.database().schemaVersion()));
     result.set("intervalSeconds", JsonValue::makeInt(intervalSeconds()));
     result.set("paused", JsonValue::makeBool(paused_));
+    result.set("appCollection", appCollectionToJson());
     // 带上设置：主进程据此同步开机启动、托盘与通知等系统级状态，无需再取整份快照。
     result.set("settings", settingsToJson(deps_.store.settings().load(status)));
     response.result = std::move(result);
@@ -1322,6 +1329,7 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
         Status lookup;
         JsonValue usage = JsonValue::makeObject();
         usage.set("day", JsonValue::makeString(core::dayKeyOf(core::localStampOf(now))));
+        usage.set("hour", JsonValue::makeInt(core::localStampOf(now).hour));
         JsonValue networks = JsonValue::makeArray();
         for (const auto& entry : recorded)
         {

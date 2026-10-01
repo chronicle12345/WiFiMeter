@@ -227,6 +227,7 @@ void collectsUsageAndEmitsEvents()
     if (second.names.size() == 2)
     {
         WIFIMETER_CHECK_EQ(second.names[0], std::string(event::kUsage));
+        WIFIMETER_CHECK_EQ(second.items[0].intOr("hour", -1), std::int64_t{10});
         WIFIMETER_CHECK_EQ(second.names[1], std::string(event::kLive));
         const JsonValue& networks = *second.items[0].find("networks");
         WIFIMETER_CHECK_EQ(networks.size(), std::size_t{1});
@@ -836,6 +837,61 @@ void applicationCollectionIsIndependentAndOptIn()
     WIFIMETER_CHECK(!unsupported.call(method::kSetAppCollection, enabled, at).ok());
 }
 
+void applicationFailureDetailsSurviveEventsAndStorage()
+{
+    for (int scenario = 0; scenario < 4; ++scenario)
+    {
+        Harness harness;
+        FakeApps apps;
+        harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+        const auto at = utcTime(2026, 9, 30, 10, 0, 0);
+        harness.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 2000));
+        auto enabled = JsonValue::makeObject();
+        enabled.set("enabled", JsonValue::makeBool(true));
+        WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+        std::vector<std::string> expected;
+        for (int step = 0; step < 3; ++step)
+        {
+            const bool first = step == 0;
+            apps.report.state = scenario == 1 && !first ? platform::AppCollectorState::unavailable :
+                scenario >= 2 ? platform::AppCollectorState::partial : platform::AppCollectorState::permission;
+            apps.report.detail = scenario == 1 ? "" : scenario == 3 ? "partial capture" : first ? "failure A" : "failure B";
+            std::string detail = scenario == 1 && !first ? "unavailable" : scenario >= 2 ? "partial" : "permission";
+            if (!apps.report.detail.empty()) detail += ": " + apps.report.detail;
+            if (scenario == 3)
+            {
+                const std::string wifiDetail = first ? "wifi failure A" : "wifi failure B";
+                harness.network.sampleReport.failures = {{platform::FailureKind::unavailable, "wlan0", wifiDetail}};
+                detail += "; wifi: " + wifiDetail;
+            }
+            expected.push_back(detail);
+            const auto events = harness.service->collectOnce(at + std::chrono::seconds(5 * (step + 1)));
+            WIFIMETER_CHECK(events.error.code.empty());
+            bool found = false;
+            for (std::size_t i = 0; i < events.names.size(); ++i)
+            {
+                if (events.names[i] != event::kAppUsage) continue;
+                found = true;
+                const auto* gaps = events.items[i].find("gaps");
+                WIFIMETER_CHECK(gaps && gaps->size() == 1);
+                if (gaps && gaps->size() == 1)
+                    WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("detail"), detail);
+            }
+            WIFIMETER_CHECK(found);
+        }
+        const auto snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(15));
+        WIFIMETER_CHECK(snapshot.ok());
+        const auto* gaps = snapshot.result.find("appGaps");
+        WIFIMETER_CHECK(gaps && gaps->size() == 2);
+        if (gaps && gaps->size() == 2)
+        {
+            WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("detail"), expected[0]);
+            WIFIMETER_CHECK_EQ(gaps->at(1).stringOr("detail"), expected[1]);
+            WIFIMETER_CHECK_EQ(gaps->at(0).intOr("spanSeconds"), std::int64_t{5});
+            WIFIMETER_CHECK_EQ(gaps->at(1).intOr("spanSeconds"), std::int64_t{10});
+        }
+    }
+}
 void applicationStorageFailureRollsBackOnlyApplications()
 {
     Harness harness;
@@ -913,6 +969,12 @@ void completeBackupRoundTrip()
     WIFIMETER_CHECK(source.store->usage().addGap(gap));
     gap.application = true; gap.endedAt = now + std::chrono::seconds(7); gap.span = std::chrono::seconds(7);
     WIFIMETER_CHECK(source.store->usage().addGap(gap));
+    const auto snapshot = source.call(method::kSnapshot, now);
+    WIFIMETER_CHECK(snapshot.ok());
+    const auto* appGaps = snapshot.result.find("appGaps");
+    WIFIMETER_CHECK(appGaps && appGaps->size() == 1);
+    if (appGaps && appGaps->size() == 1)
+        WIFIMETER_CHECK_EQ(appGaps->at(0).stringOr("detail"), gap.reasonDetail);
     WIFIMETER_CHECK(source.store->database().exec("INSERT INTO legacy_imports(source_id,state_json,settings_json,app_usage_json,imported_at,network_count,daily_count) VALUES('fixture','{\"SchemaVersion\":1}',NULL,NULL,'2026-01-02T00:00:00Z',1,1); INSERT INTO legacy_network_keys VALUES('Fixture','fixture');"));
     SettingsRecord settings; settings.language = "zh-CN"; settings.retentionDays = 1234;
     WIFIMETER_CHECK(source.store->settings().save(settings));
@@ -977,6 +1039,7 @@ int main()
     prunesUsage();
     applicationHistorySurvivesSnapshotsAndBackups();
     applicationCollectionIsIndependentAndOptIn();
+    applicationFailureDetailsSurviveEventsAndStorage();
     applicationStorageFailureRollsBackOnlyApplications();
     return WIFIMETER_REPORT();
 }

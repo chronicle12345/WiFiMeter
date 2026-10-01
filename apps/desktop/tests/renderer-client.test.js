@@ -194,3 +194,42 @@ test('authoritative quota ledgers are neither double-counted nor retained across
     assert.equal(client.snapshot.totalQuota.usedBytes, '5');
     client.stop();
 });
+
+ test('live hourly rows advance with usage events without reloading history', async t => {
+    const original = globalThis.window; t.after(() => { globalThis.window = original; });
+    let receive;
+    globalThis.window = { desktop: { backend: {
+        request: async method => ({ ok: true, result: method === 'snapshot' ? {
+            records: [{date:'2026-10-01',networkId:'home',rxBytes:'100',txBytes:'10'}],
+            hourly: [{date:'2026-10-01',hour:8,networkId:'home',rxBytes:'100',txBytes:'10'}]
+        } : {} }), onEvent: handler => { receive = handler; return () => {}; }
+    } } };
+    const client = createDataClient(); await client.start();
+    receive({event:'usage',day:'2026-10-01',hour:8,networks:[{networkId:'home',rxBytes:'5',txBytes:'2'}]});
+    assert.equal(client.snapshot.hourly[0].rxBytes,'105');
+    receive({event:'usage',day:'2026-10-01',hour:9,networks:[{networkId:'home',rxBytes:'7',txBytes:'3'}]});
+    assert.equal(client.snapshot.hourly.length,2); assert.equal(client.snapshot.hourly[1].hour,9);
+    assert.equal(client.snapshot.hourly[1].rxBytes,'7');
+    receive({event:'usage',day:'2026-10-01',networks:[{networkId:'home',rxBytes:'1',txBytes:'0'}]});
+    assert.equal(client.snapshot.hourly.length,2,'Older events without an hour must not invent hourly attribution');
+    client.stop();
+});
+
+test('live row lookup never retains rows replaced by reload, clearing, or another day', async t => {
+    const original = globalThis.window; t.after(() => { globalThis.window = original; });
+    let receive, total = '100';
+    globalThis.window = { desktop: { backend: {
+        request: async method => ({ ok: true, result: method === 'snapshot' ? {appRecords:[{date:'2026-10-01',networkId:'sample',appId:'app',name:'Example',rxBytes:total,txBytes:'0'}]} : {} }),
+        onEvent: handler => {receive=handler;return()=>{};}
+    } } };
+    const client=createDataClient(); await client.start();
+    const event=date=>({event:'appUsage',records:[{date,networkId:'sample',appId:'app',name:'Example',rxBytes:'5',txBytes:'1'}]});
+    receive(event('2026-10-01')); const old=client.snapshot.appRecords[0];
+    total='200'; await client.reload(); receive(event('2026-10-01'));
+    assert.equal(old.rxBytes,'105'); assert.equal(client.snapshot.appRecords[0].rxBytes,'205');
+    receive(event('2026-10-02')); assert.equal(client.snapshot.appRecords[1].rxBytes,'5');
+    receive(event('2026-10-01')); assert.equal(client.snapshot.appRecords[0].rxBytes,'210');
+    await client.clearRecords(); receive(event('2026-10-01'));
+    assert.equal(client.snapshot.appRecords.length,1); assert.equal(client.snapshot.appRecords[0].rxBytes,'5');
+    client.stop();
+});

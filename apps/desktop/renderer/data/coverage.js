@@ -4,7 +4,8 @@ export function appendCoverageGaps(gaps, incoming) {
         const start = Date.parse(gap.startedAt), end = Date.parse(gap.endedAt);
         const previous = gaps.findLast(candidate =>
             candidate.networkId === gap.networkId && candidate.reason === gap.reason &&
-            candidate.scope === gap.scope && candidate.detail === gap.detail);
+            candidate.scope === gap.scope &&
+            (candidate.detail ?? candidate.reasonDetail) === (gap.detail ?? gap.reasonDetail));
         const previousStart = previous ? Date.parse(previous.startedAt) : NaN;
         const previousEnd = previous ? Date.parse(previous.endedAt) : NaN;
         if (Number.isFinite(start) && Number.isFinite(end) && end > start &&

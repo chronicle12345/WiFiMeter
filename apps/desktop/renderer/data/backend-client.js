@@ -33,6 +33,14 @@ export function createDataClient(handlers = {}) {
 
     let rangeVersion = 0;
     let activeRange = {};
+    // Keep a lookup only for rows touched by live updates, not a second copy of all history.
+    const dailyRows = new Map(), appRows = new Map(), hourlyRows = new Map();
+    let liveDay = null;
+    const keyOf = (...parts) => JSON.stringify(parts);
+    function resetLiveRows() { dailyRows.clear(); appRows.clear(); hourlyRows.clear(); liveDay = null; }
+    function prepareDay(day) {
+        if (liveDay !== day) { resetLiveRows(); liveDay = day; }
+    }
 
     async function request(method, params = {}) {
         if (!state.available) throw Error(t('后端不可用，无法读取本机流量。'));
@@ -48,18 +56,30 @@ export function createDataClient(handlers = {}) {
     function applySnapshot(next) {
         for (const key of Object.keys(snapshot)) delete snapshot[key];
         Object.assign(snapshot, emptySnapshot(), next);
+        resetLiveRows();
     }
 
     function applyUsageEvent(message) {
         // 增量并入本地记录，避免每几秒重新拉取整份历史。
+        prepareDay(message.day);
         for (const item of message.networks ?? []) {
-            let row = snapshot.records.find(record => record.date === message.day && record.networkId === item.networkId);
+            const key = keyOf(message.day, item.networkId);
+            let row = dailyRows.get(key) || snapshot.records.find(record => record.date === message.day && record.networkId === item.networkId);
             if (!row) {
                 row = { date: message.day, networkId: item.networkId, rxBytes: '0', txBytes: '0' };
                 snapshot.records.push(row);
             }
+            dailyRows.set(key, row);
             row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes ?? '0')).toString();
             row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes ?? '0')).toString();
+            if (Number.isInteger(message.hour) && message.hour >= 0 && message.hour < 24) {
+                const hourKey = keyOf(message.day, message.hour, item.networkId);
+                let hour = hourlyRows.get(hourKey) || snapshot.hourly.find(candidate => candidate.date === message.day && candidate.hour === message.hour && candidate.networkId === item.networkId);
+                if (!hour) { hour = {date: message.day, hour: message.hour, networkId: item.networkId, rxBytes: '0', txBytes: '0'}; snapshot.hourly.push(hour); }
+                hourlyRows.set(hourKey, hour);
+                hour.rxBytes = (BigInt(hour.rxBytes) + BigInt(item.rxBytes ?? '0')).toString();
+                hour.txBytes = (BigInt(hour.txBytes) + BigInt(item.txBytes ?? '0')).toString();
+            }
             // 后端在新网络的第一个增量里带上网络记录：首次见到某个网络时（新装的应用、
             // 换了新 Wi-Fi）快照里还没有它，只并增量的话用量会算不出来，界面显示成
             // “未识别网络”且一直 0，必须重启应用才恢复。
@@ -88,11 +108,14 @@ export function createDataClient(handlers = {}) {
             }
             if (message.event === 'appUsage') {
                 for (const item of message.records ?? []) {
-                    let row = snapshot.appRecords.find(record => record.date === item.date && record.networkId === item.networkId && record.appId === item.appId);
+                    prepareDay(item.date);
+                    const key = keyOf(item.date, item.networkId, item.appId);
+                    let row = appRows.get(key) || snapshot.appRecords.find(record => record.date === item.date && record.networkId === item.networkId && record.appId === item.appId);
                     if (!row) {
                         row = { ...item, rxBytes: '0', txBytes: '0' };
                         snapshot.appRecords.push(row);
                     }
+                    appRows.set(key, row);
                     row.name = item.name;
                     row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes)).toString();
                     row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes)).toString();
@@ -186,6 +209,7 @@ export function createDataClient(handlers = {}) {
 
         async clearRecords() {
             await request('clearUsage');
+            resetLiveRows();
             snapshot.records = [];
             snapshot.hourly = [];
             snapshot.appRecords = [];
@@ -249,6 +273,7 @@ export function createDataClient(handlers = {}) {
         stop() {
             state.unsubscribe?.();
             state.unsubscribe = null;
+            resetLiveRows();
         }
     };
 }

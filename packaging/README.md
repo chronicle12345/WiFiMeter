@@ -60,3 +60,7 @@ npx playwright test tests/packaging.spec.js
 已在本地生成 Windows x64 安装包和便携包，单个约 104 MB。运行时只分发英文与简体中文语言资源，不删除业务数据或旧数据迁移逻辑。尚未完成 Linux 全部格式的本地安装验证，不能把 Windows 结果套用到 Linux。
 
 窗口渲染使用统一调度：同一帧内的连续事件合并，原生窗口隐藏或最小化后暂停视觉刷新，仍接收采样增量，恢复后显示最新状态。2026-10-01 在同一虚构数据集的单次 Windows 测量中，隐藏窗口时 Electron 进程 CPU 合计从约 0.289% 降至 0.062%，工作集求和由约 405 MiB 降至 391 MiB。数字存在运行波动，工作集求和可能重复计算共享页，也不包含原生后端；不作为跨设备保证。可使用 `node packaging/measure-runtime.cjs` 复测。
+
+### Live application history updates
+
+`node --expose-gc packaging/benchmark-renderer.mjs 926cefc` compares the previous and current renderer data client with 50,000 synthetic history rows, 100 active applications, and 100 event batches. In one local Node.js run, warmed update processing changed from 11,727.7 ms to 13.2 ms. The improvement comes from looking up only currently active rows instead of scanning the full history for every event. This is a synthetic CPU-time measurement, not an application-wide speedup or memory-reduction claim. The lookup references existing row objects and is cleared on snapshot replacement, data clearing, subscription stop and a change of live day. Historical data is not deleted by this optimization.
