@@ -10,3 +10,17 @@
 /node_modules/
 /.cross-build/
 /artifacts/
+
+# Local data, credentials and agent/editor session state never belong in releases.
+/.zcode/
+/.codex/
+/.aws/
+.env
+.env.*
+!.env.example
+*.log
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

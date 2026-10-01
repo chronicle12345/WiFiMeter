@@ -2,180 +2,59 @@
 
 [English](README.md) | 简体中文
 
-这里是 `cross-platform` 分支，开发基于 Electron + C++ 的 Linux 与 Windows 跨平台应用。稳定的 Windows WPF **v1.1.1** 版本保留在 [main 分支](https://github.com/chronicle12345/WiFiMeter/tree/main)，安装包见 [v1.1.1 发布页](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1)。下文的功能与使用说明均针对跨平台应用。
+适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.0，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
-<p align="center">
-  <img src="docs/assets/screenshot.png" alt="WiFiMeter 总览页：当前网络、用量与趋势" width="100%" />
-</p>
-
-按 Wi-Fi 网络分别统计流量的桌面工具，Linux 与 Windows 共用同一套界面与后端。
-数据全部留在本机：后端读取网卡计数器、把流量归属到具体网络，再把历史、额度与偏好
-写进本机 SQLite 数据库，不联网、不需要账号。
-
-## 它解决什么问题
-
-路由器只看得到整条宽带的总量，运营商账单更是只有一个数字。想知道「这个月的流量是谁用掉的」，
-通常只能靠猜。WiFiMeter 换个做法：**按 Wi-Fi 网络分别记账**。
-
-- 连接 A 网络期间产生的流量只记在 A 名下，换到 B 之后从新的基线重新开始；
-- 不知道归属的区间（比如刚断线、还没识别出网络）单独记为缺失，**不硬塞给上一个网络**；
-- 每个网络可以单独设额度、单独设提醒阈值，超额的网络可以自动断开（默认只提醒）。
+![使用虚构数据的总览界面](docs/assets/screenshot.png)
 
 ## 功能
 
-**采集**
+- 统计 Wi-Fi 和物理有线网卡流量，显示实时下载、上传速度，支持网络备注与历史搜索。有线统计排除虚拟网卡。
+- 使用 Windows ETW 或 Linux eBPF 采集应用流量，显示权限和缺失状态。应用历史支持按日、按月汇总，并导出当前筛选结果。
+- 支持单网络额度和独立的 Wi-Fi 总额度，周期可选每日、每月或累计。有线流量不计入 Wi-Fi 总额度，可设置提醒及达到额度后断开 Wi-Fi。
+- Windows 支持按应用禁止联网和上传限速，选择应用或可执行文件后显示控制项。上传限速不限制下载，Linux 暂不提供这些控制。
+- Windows 支持可选的代理流量估算，与原生记录分开显示。估算依据已观测的 TCP 连接，证据不足的部分保留为未归属流量。
+- 支持包含起止当天的自选日期、全部历史查询、CSV/JSON 导出、完整备份、保存天数、中英切换、托盘和开机启动。
 
-- 按 2 / 5 / 10 秒间隔读取网卡计数器，实时显示当前网络的下载与上传速率；
-- Linux 读 `/proc/net/dev` 并用 `nmcli` 取网络身份；
-  Windows 用 WLAN API 取身份、IP Helper API 取计数，两侧按网卡别名对应同一张网卡；
-- 采样迟于预期（例如系统休眠）时记录区间缺失，界面明确显示，不当作零流量；
-- 可随时暂停统计，暂停期间历史记录仍然可看。
+## 原有数据与升级
 
-**总览**
+Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，其他目录可在设置中选择。导入前需要停止旧采集器；Windows 安装程序会先请求旧采集器保存并退出，再替换程序。
 
-- 当前连接卡片：网络名（优先显示备注）、SSID、频段、信号强度、实时速率；
-- 所选区间的总用量、下载、上传，以及各占比例；
-- 流量趋势图（今日按小时、其他区间按日）；
-- 当前网络的额度进度与剩余；
-- 网络用量列表，按用量 / 名称 / 已连接优先排序。
+迁移保留原文件，先生成恢复备份，再用数据库事务导入符合条件的记录。重复导入同一份数据不会再次累计流量。遇到冲突会拒绝导入，不会直接覆盖现有数据库。无法确定归属的应用缓存，以及不能精确转换的旧设置，会保留原文并列在导入报告中。
 
-**网络**
+已有跨平台 SQLite 配置目录保持不变。Windows 继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，以便读取之前的数据；Linux 沿用已有的 Electron 用户数据目录。卸载不会删除这些数据目录。
 
-- 每个网络一行：下载、上传、总用量、额度进度、是否已连接；
-- 可为网络添加备注（原始 SSID 不会被修改，只是多一个更好认的名字）；
-- 详情页按网络查看趋势与最近记录，并单独设置该网络的额度。
+恢复方法、原文件保留方式和备份范围见[迁移说明](docs/MIGRATION.md)。原文件版 [v1.1.1](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) 仍可下载。
 
-**历史**
+## 安装包
 
-- 按天汇总，分页浏览（每页 10 天），显示区间总量与日均；
-- 可搜索、可筛选、可导出当前筛选范围。
+发布流程分别验证 Windows x64、ARM64 和 x86 兼容包，以及 Linux x64、ARM64 包。Windows 提供 NSIS 安装程序和便携程序；Linux 提供 deb、rpm 和 AppImage。包格式相同不代表所有发行版和内核都兼容，具体范围见[构建与验证矩阵](docs/PACKAGING-MATRIX.md)。
 
-**额度与提醒**
+Windows x86 使用 Electron 43 兼容运行时，其余目标使用 Electron 44。构建会核对前端、后端与采集程序的架构。macOS 和 32 位 Linux 暂不在发布目标中。
 
-- 每个网络独立设置额度上限、提醒阈值（默认 80%）、周期（每自然月 / 每天）；
-- 达到阈值弹出系统通知；系统提醒总开关可一次关掉所有通知；
-- 「达到额度后自动断开」默认关闭，需要在网络详情里明确开启；开启后后端会先核对该
-  网卡确实关联着这个网络才断开，并复核断开结果——断不掉会如实报告，不会谎报成功。
+应用采集需要系统支持和相应权限。Linux eBPF 另有内核要求，详见 [Linux 采集](docs/LINUX_APP_CAPTURE.md)及 [Windows 采集](docs/WINDOWS_APP_CAPTURE.md)。应用网络控制会请求管理员授权。防火墙和 QoS 规则可能在退出或卸载后保留，不再需要时请先在应用内移除。
 
-**数据**
+## 构建与测试
 
-- 流量导出 CSV / JSON：CSV 带 UTF-8 BOM（Excel 直接打开不乱码），
-  单元格做了公式注入转义；导出的是所选区间的原始字节数；
-- 完整备份 / 恢复：包含记录、备注、额度与偏好，带格式标记，不会把流量导出文件
-  误当成备份；恢复后自动暂停采集，避免当前计数差立刻覆盖刚恢复的历史；
-- 历史保留时长可设（30 / 90 / 365 天或长期）；缩短保留期前会确认并提示先备份；
-- 清空记录只清用量，保留网络备注与偏好。
+安装 Node.js、CMake 和支持 C++20 的编译器后运行：
 
-**系统集成**
-
-- 开机启动、关闭窗口最小化到托盘、额度提醒转系统通知；
-- 界面为中文，网卡名、SSID、备注都按 UTF-8 处理，中文与 emoji 都不会乱码。
-
-## 安装使用
-
-### Windows
-
-运行 `npm run dist:windows` 构建跨平台安装包（见[测试与打包](#测试与打包)），再运行 `dist/windows/WiFiMeter-1.0.0-x64-Setup.exe` 启动安装向导。
-安装包未签名，SmartScreen 可能提示「未知发布者」，选择「更多信息 → 仍要运行」。
-
-- 安装目录：`%LOCALAPPDATA%\Programs\WiFiMeter`
-- 数据目录：`%APPDATA%\WiFiMeter Demo`（数据库 `wifimeter.db`），卸载时保留
-- 沿用已有数据目录；与旧版 WPF 应用并存时请选择不同的安装目录
-
-### Linux
-
-```bash
-sudo apt install ./dist/linux/WiFiMeter-1.0.0-linux-amd64.deb
-```
-
-安装后从应用菜单打开，或运行 `wifimeter`。包依赖 `libsqlite3-0`。
-卸载：`sudo apt remove wifimeter-linux`。
-
-### 首次使用
-
-1. 连上 Wi-Fi，等第一个采样周期（默认 5 秒）；
-2. 总览页出现当前网络与实时速率，说明采集正常；
-3. 在「网络」里给这个 Wi-Fi 加个备注，方便以后认；
-4. 需要限额就在该网络详情里设额度与提醒阈值；
-5. 用一会儿之后从「历史」看趋势，或点「导出数据」保存记录。
-
-看不到数据时点右上角「采集状态」，那里会说明采集器、网卡与区间缺失的具体情况。
-
-## 从源码运行
-
-需要 Node.js 22.12 或更新版本、npm 与图形桌面；构建后端还需要 CMake、支持 C++20
-的编译器与 SQLite 开发头文件。首次安装依赖以及下载 Electron 需要联网，
-**应用本身运行时不需要网络**。
-
-```bash
+```sh
 npm ci --prefix apps/desktop
-npm start
+npm run build:backend
+npm run test:unit
+npm run test:ui
 ```
 
-## 测试与打包
+后端测试由 CMake 构建，通过 CTest 执行。平台依赖及打包命令见[打包说明](packaging/README.md)：
 
-```bash
-npm test             # 桌面单元测试 + 界面测试
-npm run test:unit    # 数据、文件操作与产品身份的单元测试
-npm run test:ui      # Playwright 驱动真实 Electron 与真实后端
-npm run test:backend # C++ 后端：构建并运行全部 ctest 目标
-npm run test:windows # 交叉编译 Windows 测试目标并用 Wine 运行
-npm run dist:linux   # 构建 deb
-npm run dist:windows # 构建 NSIS 安装包（Windows 本机或 Linux 交叉编译）
+```sh
+node packaging/windows/build.cjs --arch x64 --formats nsis,portable
+node packaging/linux/build.cjs --arch x64 --formats deb,rpm,AppImage
 ```
 
-界面测试需要图形会话，使用临时用户数据目录，用假的网卡数据驱动真实后端，
-**不会改动机器的网络状态**。`npm run dist:linux` 先构建后端，再把应用与
-`wifimeter-backend` 一起打进 deb。
+测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。发布流程仅在相应架构、迁移、后端、界面和安装包检查通过后发布标签对应的版本。
 
-**跨平台测试**：`backend/tests/backend_process_support.h` 是一份两端共用的端到端用例——
-真的拉起后端子进程、按协议对话、落库到 SQLite，网卡与计数数据由 `--fake-adapter` /
-`--fake-counters` 注入。同一份断言在 Linux、Wine 与 Windows 实机上结果一致。
+## 性能与许可
 
-Windows 上还有两个真机检查脚本：
+采样、计数和存储放在原生后端；界面按所选日期查询，避免反复加载全部历史。不重复写入未变的自启动设置，连续缺失区间合并保存，大型 IPC 消息按新增分段扫描。分发的 Electron 语言资源只保留英文和简体中文。Electron 的基础内存和磁盘占用仍高于之前的 WPF 版本，测量时会区分这部分开销与后端、IPC 的优化收益。
 
-```powershell
-node packaging\windows\acceptance.mjs   # 产物 + 只读自检 + 端到端 + 启动打包后的应用
-node packaging\windows\system-check.mjs # 托盘驻留、导出、备份
-```
-
-详细的构建、验收与故障排查见 [Windows 打包与验收](packaging/windows/README.md)
-和[验收清单](packaging/windows/ACCEPTANCE.md)。
-
-## 目录
-
-```text
-apps/desktop/               共享 Electron 应用、桌面接入与测试
-backend/                    C++ 后端：平台层、业务规则、SQLite 存储、协议与 wifimeter-backend
-backend/platform/linux/     Linux 平台层（/proc/net/dev + nmcli）
-backend/platform/win32/     Windows 系统调用（WLAN API + IP Helper）
-backend/platform/windows/   Windows 平台层与可在任意平台测试的转换逻辑
-backend/third_party/sqlite/ Windows 构建使用的 SQLite 合并源码
-contracts/                  数据格式与协议边界
-packaging/linux/            Linux deb 打包
-packaging/windows/          Windows 本机与交叉打包、验收脚本与清单
-docs/                       架构说明与截图
-```
-
-依赖与锁文件属于 `apps/desktop/`；根目录 `package.json` 只转发命令，不使用 npm workspace。
-
-## 设计取舍
-
-- **不知道就不猜**：读不到网络身份时，那段流量记为缺失，而不是记到上一个网络。
-  宁可显示「有区间没采到」，也不给出看似连续其实错误的历史。
-- **失败不静默**：网卡查不动、别名对不上、内核链路与管理器报告矛盾，都会上报具体原因，
-  界面显示真实状态而不是「未连接」。
-- **超额默认只提醒**：自动断网需要用户明确开启，并且断开前核对网卡身份、断开后复核结果。
-- **数据不出本机**：没有账号、没有云同步，数据库就是一个本地文件，卸载默认保留。
-
-## 架构
-
-Electron 主进程拉起 `wifimeter-backend` 子进程，双方按行交换 JSON；页面只通过受限的
-preload 接口访问桌面能力与后端。业务规则、存储与协议都在后端，两个平台只提供
-「读数据」与「执行断开」两件事，采样时序写在一处共用实现里。
-
-详见[架构说明](docs/ARCHITECTURE.md)与[桌面应用说明](apps/desktop/README.md)。
-
-## 许可证
-
-[MIT](LICENSE)
+应用采用 [MIT 许可证](LICENSE)。第三方组件及 Linux BPF 程序的独立许可见[第三方说明](backend/third_party/README.md)。
