@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/version-1.1.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.1.0" /></a>
+  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/version-1.1.1-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.1.1" /></a>
   <a href="#快速运行"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
   <a href="docs/DEVELOPMENT.zh-CN.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -19,14 +19,14 @@
   <a href="#快速运行">快速运行</a> &nbsp;·&nbsp;
   <a href="docs/USAGE.zh-CN.md">使用指南</a> &nbsp;·&nbsp;
   <a href="docs/DEVELOPMENT.zh-CN.md">开发说明</a> &nbsp;·&nbsp;
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0">版本下载</a>
+  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1">版本下载</a>
 </p>
 
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
 WiFiMeter 是按 Wi-Fi 名称统计流量的 Windows 桌面应用，支持日期范围查询、独立的实时应用页面、应用历史、网络额度和 CSV 导出，也可为指定应用设置直接联网阻止和上传限速。
 
-本文说明当前源码版本。尚未发布的改动见[更新日志](CHANGELOG.md)，已发布版本的功能见 [v1.1.0 发布说明](docs/releases/v1.1.0.md)。
+本文介绍 WiFiMeter v1.1.1。2026-10-01 的更新内容见 [v1.1.1 发布说明](docs/releases/v1.1.1.md)，历史版本见[更新日志](CHANGELOG.md)。
 
 概览页面，使用演示数据：
 
@@ -38,7 +38,7 @@ WiFiMeter 是按 Wi-Fi 名称统计流量的 Windows 桌面应用，支持日期
 
 ## 快速运行
 
-推荐从 [Release v1.1.0](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0) 下载 `WiFiMeter-Setup.exe` 安装，然后从桌面或开始菜单打开。需要便携版时，下载并解压 `WiFiMeter-Portable.zip`，双击 `WiFiMeter.exe`。运行要求与未签名安装包提示见[安装说明](docs/USAGE.zh-CN.md#安装和打开)。
+推荐从 [Release v1.1.1](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) 下载 `WiFiMeter-1.1.1-Setup.exe` 安装，然后从桌面或开始菜单打开。需要便携版时，下载并解压 `WiFiMeter-1.1.1-Portable.zip`，双击 `WiFiMeter.exe`。运行要求与未签名安装包提示见[安装说明](docs/USAGE.zh-CN.md#安装和打开)。
 
 ### 从源码构建
 

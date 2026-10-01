@@ -14,8 +14,8 @@ using System.Windows.Forms;
 [assembly: AssemblyDescription("WiFiMeter - Wi-Fi usage monitor")]
 [assembly: AssemblyProduct("WiFiMeter")]
 [assembly: AssemblyCompany("WiFiMeter")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 namespace WiFiMeter.Native
 {

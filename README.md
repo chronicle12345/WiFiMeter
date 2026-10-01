@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0"><img src="https://img.shields.io/badge/version-1.1.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.1.0" /></a>
+  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1"><img src="https://img.shields.io/badge/version-1.1.1-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.1.1" /></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/Windows-10%20%2F%2011-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows 10 and 11" /></a>
   <a href="docs/DEVELOPMENT.md"><img src="https://img.shields.io/badge/.NET-4.7.2%2B-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt=".NET Framework 4.7.2 or later" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -19,14 +19,14 @@
   <a href="#quick-start">Quick start</a> &nbsp;·&nbsp;
   <a href="docs/USAGE.md">User guide</a> &nbsp;·&nbsp;
   <a href="docs/DEVELOPMENT.md">Development</a> &nbsp;·&nbsp;
-  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0">Releases</a>
+  <a href="https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1">Releases</a>
 </p>
 
 <p align="center"><strong>English</strong> &nbsp;|&nbsp; <a href="README.zh-CN.md">简体中文</a></p>
 
 WiFiMeter is a Windows desktop app for tracking traffic by Wi-Fi network. It includes date-range reports, a dedicated Live apps page, application history, traffic quotas and CSV export. It also offers direct network blocking and upload limits for selected applications.
 
-This README describes the current source version. See the [changelog](CHANGELOG.md) for unreleased changes and the [v1.1.0 release notes](docs/releases/v1.1.0.md) for the published version.
+This README describes WiFiMeter v1.1.1. See the [v1.1.1 release notes](docs/releases/v1.1.1.md) for changes dated 2026-10-01 and the [changelog](CHANGELOG.md) for version history.
 
 Overview with demo data:
 
@@ -38,7 +38,7 @@ Live apps page with demo data:
 
 ## Quick start
 
-Download `WiFiMeter-Setup.exe` from [Release v1.1.0](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0) for the recommended installation, then open WiFiMeter from the desktop or Start menu. For a portable copy, extract `WiFiMeter-Portable.zip` and open `WiFiMeter.exe`. See the [installation guide](docs/USAGE.md#install-and-open) for requirements and the unsigned-installer prompt.
+Download `WiFiMeter-1.1.1-Setup.exe` from [Release v1.1.1](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) for the recommended installation, then open WiFiMeter from the desktop or Start menu. For a portable copy, extract `WiFiMeter-1.1.1-Portable.zip` and open `WiFiMeter.exe`. See the [installation guide](docs/USAGE.md#install-and-open) for requirements and the unsigned-installer prompt.
 
 ### Build from source
 
