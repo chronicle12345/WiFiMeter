@@ -679,7 +679,7 @@ Status importLegacy(storage::Store& store, const JsonValue& params, core::TimePo
         if (!legacy.isObject()) return invalid(code,"旧 Proxy 必须是对象。");
         auto value=JsonValue::makeObject();
         if (const auto* ports=legacy.find("Ports")) value.set("ports",*ports);
-        if (const auto* names=legacy.find("ProcessNames")) value.set("processNames",*names);
+        if (const auto* processNames=legacy.find("ProcessNames")) value.set("processNames",*processNames);
         platform::ProxyOptions options;
         if (const auto valid=validateProxyOptions(value,options); !valid) return invalid(code,valid.message);
         // 首次设置资格已在事务开始时检查；保存与原始网络、账本和导入档案一起提交。

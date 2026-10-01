@@ -150,7 +150,19 @@ void LinuxAppTrafficSource::run()
             pending = false;
         }
     }
-    static_cast<void>(::write(input[1], "shutdown\n", 9));
+    const std::string_view shutdown = "shutdown\n";
+    std::size_t sent = 0;
+    while (sent < shutdown.size())
+    {
+        const auto written = ::write(input[1], shutdown.data() + sent, shutdown.size() - sent);
+        if (written > 0)
+            sent += static_cast<std::size_t>(written);
+        else if (written < 0 && errno == EINTR)
+            continue;
+        else
+            // 管道已满、关闭或写入失败时，关闭管道以 EOF 通知 helper 退出。
+            break;
+    }
     closePipes();
     // 授权尚未结束时 pkexec 的 real UID 仍属调用者，可以取消该进程；授权后由 EOF 结束 helper。
     ::kill(child, SIGTERM);

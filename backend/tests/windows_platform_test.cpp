@@ -218,6 +218,66 @@ void excludesVirtualEthernetAndKeepsStableIdentity()
     WIFIMETER_CHECK(ethernetLinksFromRows({virtualDescription}).empty());
 }
 
+// wirelessLinks 只读取 WLAN，守卫另读 WLAN + 有线；服务在两次调用间也可能变化。
+void missingDeviceGuardUsesItsOwnCombinedRead()
+{
+    for (bool wired : {false, true})
+    {
+        for (bool unavailableBefore : {false, true})
+        {
+            for (bool unavailableDuringGuard : {false, true})
+            {
+                FakeSystem system;
+                if (wired)
+                    system.ethernetRowRounds = {{physicalEthernet()}};
+                if (unavailableBefore)
+                    system.statusesFailure = Failure{FailureKind::unavailable, {}, "WLAN stopped before read"};
+                FakeWait wait;
+                auto platform = makePlatform(system, wait);
+                const auto previous = platform->wirelessLinks();
+                WIFIMETER_CHECK(previous.links.empty());
+                WIFIMETER_CHECK_EQ(previous.failures.empty(), !unavailableBefore);
+                system.statusesFailure.reset();
+                if (unavailableDuringGuard)
+                    system.statusesFailure = Failure{FailureKind::unavailable, {}, "WLAN stopped during guard"};
+
+                const auto report = platform->disconnectIfAssociated("missing", "Home");
+                const auto expected = unavailableDuringGuard && !wired
+                    ? DisconnectOutcome::unavailable : DisconnectOutcome::notAssociated;
+                WIFIMETER_CHECK(report.outcome == expected);
+                if (expected == DisconnectOutcome::unavailable)
+                    WIFIMETER_CHECK_EQ(report.detail, std::string("WLAN stopped during guard"));
+                WIFIMETER_CHECK(system.disconnectedInterfaces.empty());
+                WIFIMETER_CHECK_EQ(system.statusCalls, 2);
+                WIFIMETER_CHECK_EQ(system.ethernetCalls, 1);
+                WIFIMETER_CHECK_EQ(wait.calls, 0);
+            }
+        }
+    }
+}
+
+void emptyExpectedNetworkRemainsSafeAcrossStateChanges()
+{
+    const std::vector<std::vector<WlanStatus>> changes = {
+        {}, {disconnectedStatus("WLAN")}, {connectedStatus("WLAN", "Other", "Other")}
+    };
+    for (const auto& changed : changes)
+    {
+        FakeSystem system;
+        system.statusRounds = {{connectedStatus("WLAN", "Home", "Home")}, changed};
+        FakeWait wait;
+        auto platform = makePlatform(system, wait);
+        WIFIMETER_CHECK_EQ(platform->wirelessLinks().links.size(), std::size_t(1));
+        const auto report = platform->disconnectIfAssociated("WLAN", "");
+        const auto expected = !changed.empty() && changed.front().connected
+            ? DisconnectOutcome::ssidMismatch : DisconnectOutcome::notAssociated;
+        WIFIMETER_CHECK(report.outcome == expected);
+        WIFIMETER_CHECK(system.disconnectedInterfaces.empty());
+        WIFIMETER_CHECK_EQ(system.statusCalls, 2);
+        WIFIMETER_CHECK_EQ(wait.calls, 0);
+    }
+}
+
 void samplesEthernetWithoutWlanAndRefusesDisconnect()
 {
     FakeSystem system;
@@ -233,6 +293,7 @@ void samplesEthernetWithoutWlanAndRefusesDisconnect()
     WIFIMETER_CHECK_EQ(report.samples[0].rxBytes, std::uint64_t(300));
     WIFIMETER_CHECK_EQ(report.samples[0].txBytes, std::uint64_t(400));
     WIFIMETER_CHECK_EQ(system.ethernetCalls, 2);
+    WIFIMETER_CHECK(hasGlobalFailure(report.failures, FailureKind::unavailable));
     const auto refused = platform->disconnectIfAssociated("Ethernet", *report.samples[0].identity.ssid);
     WIFIMETER_CHECK(refused.outcome == DisconnectOutcome::notAssociated);
     WIFIMETER_CHECK(system.disconnectedInterfaces.empty());
@@ -660,6 +721,8 @@ void disconnectReportsCommandFailedWhenStatusUnreadable()
 
 int main()
 {
+    missingDeviceGuardUsesItsOwnCombinedRead();
+    emptyExpectedNetworkRemainsSafeAcrossStateChanges();
     fakeAdapterDataPreservesEthernetType();
     samplesEthernetAlongsideWifi();
     excludesVirtualEthernetAndKeepsStableIdentity();

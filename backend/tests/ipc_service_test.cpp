@@ -161,7 +161,7 @@ void fractionalQuotaRoundTrip()
     WIFIMETER_CHECK(target.call(method::kRestore, restore, now).ok());
     const auto roundTrip = target.call(method::kBackup, now);
     WIFIMETER_CHECK_EQ(roundTrip.result.find("backup")->dump(), backup->dump());
-    for (const auto invalid : {JsonValue::makeNumber(0.9), JsonValue::makeNumber(100.1), JsonValue::makeString("85.5")})
+    for (const auto& invalid : {JsonValue::makeNumber(0.9), JsonValue::makeNumber(100.1), JsonValue::makeString("85.5")})
     {
         patch.set("warnPercent", invalid);
         WIFIMETER_CHECK(!source.call(method::kUpdateNetwork, patch, now).ok());

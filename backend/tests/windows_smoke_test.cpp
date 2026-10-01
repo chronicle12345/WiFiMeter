@@ -24,6 +24,84 @@ namespace win = wifimeter::platform::windows;
 namespace
 {
 
+// 查询仍然来自真机；记录守卫本轮输入，并阻止测试在任何情况下执行真实断开。
+class ReadOnlySystem final : public win::SystemApi
+{
+public:
+    win::Win32System real;
+    win::QueryResult<std::vector<win::WlanStatus>> wlan;
+    win::QueryResult<std::vector<platform::WifiLink>> wired;
+    int disconnectCalls = 0;
+
+    win::QueryResult<std::vector<win::WlanStatus>> wlanStatuses() override
+    {
+        wlan = real.wlanStatuses();
+        if (!wlan.ok())
+        {
+            WIFIMETER_CHECK(!wlan.failures.empty());
+            for (const auto& failure : wlan.failures)
+            {
+                std::printf("WLAN: %s\n", failure.detail.c_str());
+                WIFIMETER_CHECK(failure.kind == platform::FailureKind::unavailable);
+            }
+        }
+        return wlan;
+    }
+    win::QueryResult<std::vector<platform::WifiLink>> ethernetLinks() override
+    {
+        wired = real.ethernetLinks();
+        WIFIMETER_CHECK(wired.ok());
+        WIFIMETER_CHECK(wired.failures.empty());
+        return wired;
+    }
+    win::QueryResult<std::vector<win::InterfaceCounters>> interfaceCounters() override
+    {
+        const auto counters = real.interfaceCounters();
+        WIFIMETER_CHECK(counters.ok());
+        WIFIMETER_CHECK(counters.failures.empty());
+        return counters;
+    }
+    win::DisconnectCommand requestDisconnect(const std::string&) override
+    {
+        ++disconnectCalls;
+        WIFIMETER_CHECK(false);
+        return {false, platform::FailureKind::commandFailed, "smoke forbids disconnect"};
+    }
+};
+
+void checkGuard(ReadOnlySystem& system, win::WindowsNetworkPlatform& network,
+    const std::string& interfaceId, const std::string& expectedSsid)
+{
+    const auto report = network.disconnectIfAssociated(interfaceId, expectedSsid);
+    WIFIMETER_CHECK_EQ(system.disconnectCalls, 0);
+    const bool hasWlan = system.wlan.ok() && !system.wlan.value->empty();
+    const bool hasWired = system.wired.ok() && !system.wired.value->empty();
+    auto expected = platform::DisconnectOutcome::notAssociated;
+    if (!hasWlan && !hasWired && !system.wlan.failures.empty())
+    {
+        // 无线服务不可用且本轮没有任何链路时，才应返回 unavailable。
+        WIFIMETER_CHECK(system.wlan.failures.front().kind == platform::FailureKind::unavailable);
+        expected = platform::DisconnectOutcome::unavailable;
+        WIFIMETER_CHECK_EQ(report.detail, system.wlan.failures.front().detail);
+    }
+    else if (system.wlan.ok())
+    {
+        const auto* status = win::findStatus(*system.wlan.value, interfaceId);
+        if (status && win::identityOf(*status).associated())
+        {
+            WIFIMETER_CHECK(*status->ssid != expectedSsid);
+            expected = platform::DisconnectOutcome::ssidMismatch;
+        }
+    }
+    if (report.outcome != expected)
+        std::printf("guard: actual=%d expected=%d wlan=%d wired=%d detail=%s\n",
+            static_cast<int>(report.outcome), static_cast<int>(expected), hasWlan, hasWired, report.detail.c_str());
+    WIFIMETER_CHECK(report.outcome == expected);
+}
+
+// Windows 接口别名不含 NUL，保证目标不存在，不依赖机器上的命名习惯。
+const std::string missingDevice("wifimeter\0missing", 17);
+
 bool hasFailure(const std::vector<platform::Failure>& failures, platform::FailureKind kind)
 {
     for (const platform::Failure& failure : failures)
@@ -36,7 +114,7 @@ bool hasFailure(const std::vector<platform::Failure>& failures, platform::Failur
 
 void readsTheRealSystemWithoutSideEffects()
 {
-    win::Win32System system;
+    ReadOnlySystem system;
     win::WindowsNetworkPlatform network(win::WindowsNetworkPlatform::Options{&system});
 
     const platform::LinkReport links = network.wirelessLinks();
@@ -88,13 +166,10 @@ void readsTheRealSystemWithoutSideEffects()
         }
     }
 
-    // 服务不可用时无法判断关联状态，应如实返回 unavailable；
-    // 能查询服务时，不存在的网卡才应返回“未关联”。两种情况都不能执行断开。
-    const platform::DisconnectReport report = network.disconnectIfAssociated("wifimeter-not-a-device", "not-a-network");
-    const auto expected = wlanUnavailable ? platform::DisconnectOutcome::unavailable : platform::DisconnectOutcome::notAssociated;
-    WIFIMETER_CHECK(report.outcome == expected);
+    // 守卫另读 WLAN + 有线状态，不能由先前仅含 WLAN 的结果推断。
+    checkGuard(system, network, missingDevice, "not-a-network");
 
-    // 采样必须是只读且可重复的：连续两次都要成功，且不因为异常而抛错。
+    // 采样必须只读：无线与有线样本都须有身份和对应计数。
     const platform::SampleReport samples = network.sampleWifi();
     for (const platform::WifiSample& sample : samples.samples)
     {
@@ -102,12 +177,15 @@ void readsTheRealSystemWithoutSideEffects()
         WIFIMETER_CHECK(sample.identity.associated());
         // 样本里的计数必须能在这台机器的计数表里找到同一张网卡，
         // 否则累计出来的用量会一直为 0。
-        WIFIMETER_CHECK(win::findInterfaceCounters(*counters.value, sample.interfaceId).has_value());
+        if (counters.ok())
+            WIFIMETER_CHECK(win::findInterfaceCounters(*counters.value, sample.interfaceId).has_value());
     }
 
     // 真实网卡的累计计数应当是一个合理的非零值：这台机器正在联网。
     for (const platform::WifiLink& link : links.links)
     {
+        if (!counters.ok())
+            continue;
         const auto counted = win::findInterfaceCounters(*counters.value, link.interfaceId);
         if (!counted)
             continue;
@@ -122,21 +200,16 @@ void readsTheRealSystemWithoutSideEffects()
 // （windows_platform_test 的 disconnectWaitsForStateToChange 等）。
 void refusesDisconnectsOnRealAdapters()
 {
-    win::Win32System system;
+    ReadOnlySystem system;
     win::WindowsNetworkPlatform network(win::WindowsNetworkPlatform::Options{&system});
 
     const platform::LinkReport links = network.wirelessLinks();
-    if (hasFailure(links.failures, platform::FailureKind::unavailable))
-    {
-        std::printf("（跳过）WLAN 服务不可用，无法验证断开守卫。\n");
-        return;
-    }
+    checkGuard(system, network, missingDevice, "not-a-network");
 
     for (const platform::WifiLink& link : links.links)
     {
-        // 1) 不存在的网卡：判定为“未关联”，不执行任何操作。
-        const platform::DisconnectReport missing = network.disconnectIfAssociated("wifimeter-not-a-device", "not-a-network");
-        WIFIMETER_CHECK(missing.outcome == platform::DisconnectOutcome::notAssociated);
+        // 1) 不存在的网卡：根据本轮查询判定未关联或服务不可用，不执行任何操作。
+        checkGuard(system, network, missingDevice, "not-a-network");
 
         if (!link.identity.associated())
             continue;
@@ -145,15 +218,14 @@ void refusesDisconnectsOnRealAdapters()
         WIFIMETER_CHECK(!actual.empty());
 
         // 2) 期望的网络与当前关联的不一致：必须拒绝，且绝不能调用 WlanDisconnect。
-        const platform::DisconnectReport mismatched = network.disconnectIfAssociated(link.interfaceId, actual + "-not-this-network");
-        WIFIMETER_CHECK(mismatched.outcome == platform::DisconnectOutcome::ssidMismatch);
+        // SSID 最长 32 字节，33 个 ASCII 字符保证即使切换网络也不会相等。
+        checkGuard(system, network, link.interfaceId, std::string(33, 'x'));
 
         // 3) 期望空网络名同样不匹配（空值表示“未关联”，不该走到断开）。
-        const platform::DisconnectReport empty = network.disconnectIfAssociated(link.interfaceId, "");
-        WIFIMETER_CHECK(empty.outcome == platform::DisconnectOutcome::ssidMismatch);
+        checkGuard(system, network, link.interfaceId, "");
     }
 
-    // 守卫必须是无副作用的：上述调用之后网卡仍关联在原来的网络上。
+    // 守卫没有提交断开请求；后续样本仍须具有已关联身份。
     const platform::SampleReport samples = network.sampleWifi();
     for (const platform::WifiSample& sample : samples.samples)
         WIFIMETER_CHECK(sample.identity.associated());
@@ -162,7 +234,7 @@ void refusesDisconnectsOnRealAdapters()
 // 别名一致性：平台直接拿 WLAN 的适配器描述作为展示名，接口标识必须与计数一致。
 void interfaceIdentityIsStableAcrossCalls()
 {
-    win::Win32System system;
+    ReadOnlySystem system;
     const win::QueryResult<std::vector<win::WlanStatus>> first = system.wlanStatuses();
     if (!first.ok())
     {

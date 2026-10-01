@@ -67,11 +67,11 @@ struct Harness
         auto query = store->database().prepare("SELECT COUNT(*) FROM " + table,status);
         return query && query->step() ? query->columnInt64(0) : -1;
     }
-    void raw(const std::string& network, const std::string& day, const std::string& appId, std::uint64_t rx, std::uint64_t tx)
+    void raw(const std::string& networkKey, const std::string& day, const std::string& appId, std::uint64_t rx, std::uint64_t tx)
     {
         bool created=false;
-        WIFIMETER_CHECK(store->networks().observe({network,"WiFi"},"2026-10-01T00:00:00Z",created).ok);
-        WIFIMETER_CHECK(store->usage().addApp({network,day,appId,appId,rx,tx}).ok);
+        WIFIMETER_CHECK(store->networks().observe({networkKey,"WiFi"},"2026-10-01T00:00:00Z",created).ok);
+        WIFIMETER_CHECK(store->usage().addApp({networkKey,day,appId,appId,rx,tx}).ok);
     }
     ipc::BackendService::Response call(const std::string& method, JsonValue params = JsonValue::makeObject(), core::TimePoint at = utcTime(2026,10,1,0,0,0))
     {

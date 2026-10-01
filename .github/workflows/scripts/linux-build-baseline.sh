@@ -4,7 +4,8 @@ arch="$1"
 [[ "$arch" == x64 || "$arch" == arm64 ]]
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl cmake ninja-build g++ make pkg-config python3 clang-14 libelf-dev zlib1g-dev libsqlite3-dev binutils
+apt-get install -y --no-install-recommends ca-certificates tzdata curl cmake ninja-build g++ make pkg-config python3 clang-14 libelf-dev zlib1g-dev libsqlite3-dev binutils
+test -s /usr/share/zoneinfo/Asia/Shanghai
 mkdir -p /opt/wifimeter-deps
 curl --fail --location --retry 3 https://github.com/libbpf/libbpf/archive/refs/tags/v1.3.3.tar.gz -o /opt/wifimeter-deps/libbpf.tar.gz
 echo 'cfb8bcb2aa7d8645c69a093841a4e5ed483855bf7e403c27054da2c15bc7bbde  /opt/wifimeter-deps/libbpf.tar.gz' | sha256sum --check

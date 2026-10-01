@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # 只使用 Ubuntu 官方仓库的固定快照，不加入个人 PPA。
+sudo install -d -m 700 /etc/NetworkManager/system-connections
 sudo apt-get update --snapshot 20261001T000000Z
 sudo apt-get install -y --no-install-recommends --snapshot 20261001T000000Z \
   cmake ninja-build g++ pkg-config libsqlite3-dev clang-18 libbpf-dev libelf-dev zlib1g-dev \

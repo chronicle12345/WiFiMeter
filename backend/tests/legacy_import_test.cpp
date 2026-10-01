@@ -217,6 +217,7 @@ void initialRetentionPreventsHistoryPruning()
 
 void importsNetworkPoliciesAndIndependentLedgers()
 {
+    test::useTimeZone("UTC");
     storage::Status status; JsonValue out; std::string code;
     for (const auto& period:std::vector<std::pair<std::string,std::string>>{{"Day","2026-01-01"},{"Month","2026-01"},{"All","all"}})
     {

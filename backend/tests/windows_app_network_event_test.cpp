@@ -1,6 +1,7 @@
 #include "../platform/windows/app_network_event.h"
 #include "test_support.h"
 
+#include <initializer_list>
 #include <vector>
 
 using namespace wifimeter::platform::windows;
@@ -49,7 +50,7 @@ int main()
         }
     }
     // Connect、Reconnect、Fail、TCPCopy 不应被当作流量，避免重复统计。
-    for (const std::uint8_t opcode : {12, 15, 16, 17, 18, 28, 31, 32, 34})
+    for (const std::uint8_t opcode : std::initializer_list<std::uint8_t>{12, 15, 16, 17, 18, 28, 31, 32, 34})
         WIFIMETER_CHECK(parseAppNetworkEvent(AppNetworkProtocol::tcp, opcode, 2, {}).state == AppNetworkEventState::ignored);
     return WIFIMETER_REPORT();
 }
