@@ -25,6 +25,7 @@ namespace WiFiMeter.Networking
         private const int AfInet6 = 23;
         private const int TcpTableOwnerPidAll = 5;
         private const int MibTcpStateEstablished = 5;
+        private const int MibTcpStateListen = 2;
         private const int ErrorInsufficientBuffer = 122;
         private const int ErrorNoData = 232;
         private const int RowSizeV4 = 24;
@@ -39,13 +40,23 @@ namespace WiFiMeter.Networking
 
         public static TcpConnectionRow[] GetEstablishedConnections()
         {
+            return GetConnectionsByState(MibTcpStateEstablished);
+        }
+
+        public static TcpConnectionRow[] GetListeners()
+        {
+            return GetConnectionsByState(MibTcpStateListen);
+        }
+
+        private static TcpConnectionRow[] GetConnectionsByState(int state)
+        {
             List<TcpConnectionRow> rows = new List<TcpConnectionRow>();
-            AppendFamily(rows, AfInet, RowSizeV4, 0);
-            AppendFamily(rows, AfInet6, RowSizeV6, StateOffsetV6);
+            AppendFamily(rows, AfInet, RowSizeV4, 0, state);
+            AppendFamily(rows, AfInet6, RowSizeV6, StateOffsetV6, state);
             return rows.ToArray();
         }
 
-        private static void AppendFamily(List<TcpConnectionRow> rows, int family, int rowSize, int stateOffset)
+        private static void AppendFamily(List<TcpConnectionRow> rows, int family, int rowSize, int stateOffset, int requestedState)
         {
             int size = 0;
             uint error = GetExtendedTcpTable(IntPtr.Zero, ref size, true, family, TcpTableOwnerPidAll, 0);
@@ -66,7 +77,7 @@ namespace WiFiMeter.Networking
                     int offset = 4 + index * rowSize;
                     if (offset + rowSize > data.Length) break;
                     int state = BitConverter.ToInt32(data, offset + stateOffset);
-                    if (state != MibTcpStateEstablished) continue;
+                    if (state != requestedState) continue;
                     TcpConnectionRow row = new TcpConnectionRow();
                     row.State = state;
                     if (family == AfInet)

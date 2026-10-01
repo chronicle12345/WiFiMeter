@@ -1,4 +1,4 @@
-<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="{DynamicResource WindowTitle}" Width="1240" Height="760" MinWidth="920" MinHeight="650" WindowStartupLocation="CenterScreen" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" UseLayoutRounding="True" SnapsToDevicePixels="True">
+﻿<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="{DynamicResource WindowTitle}" Width="1240" Height="760" MinWidth="920" MinHeight="650" WindowStartupLocation="CenterScreen" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" UseLayoutRounding="True" SnapsToDevicePixels="True">
   <Window.Resources>
     <!-- Design tokens: every surface, text and status color used below has a named
          brush here so the light theme stays consistent across window and dialogs. -->
@@ -40,6 +40,7 @@
     <SolidColorBrush x:Key="TrackOff" Color="#D7DDE8" />
     <Style TargetType="Button">
       <Setter Property="Height" Value="36" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="Padding" Value="15,0" />
       <Setter Property="Background" Value="{StaticResource CardBackground}" />
       <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
@@ -50,7 +51,7 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="Chrome" CornerRadius="8" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -189,14 +190,145 @@
       <Setter Property="HorizontalAlignment" Value="Right" />
       <Setter Property="FontFamily" Value="Segoe UI" />
     </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="{StaticResource Divider}" />
+      <Setter Property="Background" Value="{StaticResource CardBackground}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TextBox">
+            <Border x:Name="InputChrome" CornerRadius="8" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+              <ScrollViewer x:Name="PART_ContentHost" Focusable="False" HorizontalAlignment="Stretch" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="{StaticResource AccentBorder}" /></Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="InputChrome" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="InputChrome" Property="Opacity" Value="0.45" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBoxItem">
+            <Border x:Name="ItemChrome" CornerRadius="5" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" Margin="0,1">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="{StaticResource AccentSoft}" /><Setter Property="Foreground" Value="{StaticResource AccentDeep}" /></Trigger>
+              <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemChrome" Property="Background" Value="{StaticResource AccentHover}" /></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ItemChrome" Property="Opacity" Value="0.45" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="Padding" Value="10,7" />
+      <Setter Property="Background" Value="{StaticResource CardBackground}" />
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Divider}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+      <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid x:Name="ComboRoot">
+              <Border x:Name="ComboChrome" CornerRadius="8" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" />
+              <Grid Margin="{TemplateBinding BorderThickness}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="30" /></Grid.ColumnDefinitions>
+                <ContentPresenter x:Name="Selection" Margin="{TemplateBinding Padding}" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" VerticalAlignment="Center" IsHitTestVisible="False" />
+                <TextBox x:Name="PART_EditableTextBox" Visibility="Hidden" Background="Transparent" BorderThickness="0" MinHeight="0" Padding="{TemplateBinding Padding}" IsReadOnly="{TemplateBinding IsReadOnly}" />
+                <ToggleButton x:Name="DropDownToggle" Grid.ColumnSpan="2" Focusable="False" IsTabStop="False" Background="Transparent" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press">
+                  <ToggleButton.Template>
+                    <ControlTemplate TargetType="ToggleButton">
+                      <Border Background="Transparent" CornerRadius="8"><Path Data="M 0,0 L 4,4 L 8,0" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,11,0" /></Border>
+                    </ControlTemplate>
+                  </ToggleButton.Template>
+                </ToggleButton>
+              </Grid>
+              <Popup x:Name="PART_Popup" Placement="Bottom" PlacementTarget="{Binding ElementName=ComboRoot}" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                <Border x:Name="DropDownChrome" MinWidth="{Binding ActualWidth, ElementName=ComboRoot}" MaxHeight="{TemplateBinding MaxDropDownHeight}" Margin="0,4,0,0" Background="{StaticResource CardBackground}" BorderBrush="{StaticResource AccentBorder}" BorderThickness="1" CornerRadius="8" Padding="4">
+                  <ScrollViewer CanContentScroll="True" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                  </ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="{StaticResource AccentBorder}" /></Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
+              <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="ComboChrome" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
+              <Trigger Property="IsEditable" Value="True">
+                <Setter TargetName="Selection" Property="Visibility" Value="Hidden" />
+                <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+                <Setter TargetName="DropDownToggle" Property="Grid.Column" Value="1" />
+                <Setter TargetName="DropDownToggle" Property="Grid.ColumnSpan" Value="1" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ComboRoot" Property="Opacity" Value="0.45" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="TabControl">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0,16,0,0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabControl">
+            <Grid KeyboardNavigation.TabNavigation="Local">
+              <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+              <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.TabIndex="1" />
+              <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1" ContentSource="SelectedContent" Margin="{TemplateBinding Padding}" />
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+      <Setter Property="Padding" Value="18,10" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="TabChrome" Background="{StaticResource SegmentTrack}" CornerRadius="8" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+              <ContentPresenter ContentSource="Header" VerticalAlignment="Center" HorizontalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="TabChrome" Property="Background" Value="{StaticResource AccentSoft}" />
+                <Setter Property="Foreground" Value="{StaticResource AccentDeep}" />
+                </Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TabChrome" Property="Background" Value="{StaticResource AccentHover}" /></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="TabChrome" Property="BorderBrush" Value="{StaticResource Accent}" /><Setter TargetName="TabChrome" Property="BorderThickness" Value="1" /></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
   </Window.Resources>
   <Grid Background="{StaticResource PageBackground}">
     <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="208" />
+      <ColumnDefinition Width="216" />
       <ColumnDefinition Width="*" />
     </Grid.ColumnDefinitions>
     <Border Background="{StaticResource SidebarBackground}" BorderBrush="{StaticResource DividerSoft}" BorderThickness="0,0,1,0">
-      <Grid Margin="22,28,22,22">
+      <Grid Margin="20,28,20,22">
         <Grid.RowDefinitions>
           <RowDefinition Height="Auto" />
           <RowDefinition Height="Auto" />
@@ -206,22 +338,21 @@
         <StackPanel>
           <StackPanel Orientation="Horizontal">
             <Border Width="34" Height="34" CornerRadius="10" Background="{StaticResource Accent}" Margin="0,0,9,0">
-              <TextBlock FontFamily="Segoe MDL2 Assets" Text="" Foreground="White" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Viewbox Width="23" Height="23" AutomationProperties.Name="WiFiMeter">
+                <Canvas Width="24" Height="24">
+                  <Path Data="M 3,8 Q 12,0 21,8 M 6,12 Q 12,6.5 18,12 M 9,16 Q 12,13 15,16" Stroke="White" StrokeThickness="2.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                  <Ellipse Width="3" Height="3" Fill="White" Canvas.Left="10.5" Canvas.Top="19" />
+                </Canvas>
+              </Viewbox>
             </Border>
             <TextBlock Text="WiFiMeter" FontFamily="Segoe UI" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
           </StackPanel>
-          <TextBlock Text="{DynamicResource Tagline}" Foreground="{StaticResource Muted}" FontSize="11" Margin="1,12,0,0" />
         </StackPanel>
         <StackPanel Grid.Row="1" Margin="0,34,0,0">
-          <TextBlock Text="{DynamicResource Workspace}" Foreground="{StaticResource Faint}" FontSize="10" Margin="10,0,0,12" />
-          <Border Background="{StaticResource AccentSoft}" CornerRadius="8" Padding="12,12">
-            <StackPanel Orientation="Horizontal">
-              <TextBlock FontFamily="Segoe MDL2 Assets" Text="" Foreground="{StaticResource Accent}" Margin="0,1,12,0" />
-              <TextBlock Text="{DynamicResource Overview}" Foreground="{StaticResource AccentDeep}" FontWeight="SemiBold" />
-            </StackPanel>
-          </Border>
-          <Button x:Name="FolderButton" Content="{DynamicResource OpenData}" BorderThickness="0" Margin="0,8,0,0" AutomationProperties.Name="{DynamicResource OpenDataAccessible}" />
-          <Button x:Name="SettingsButton" Content="{DynamicResource Settings}" BorderThickness="0" Margin="0,4,0,0" />
+          <Button x:Name="OverviewNav" Content="{DynamicResource Overview}" Height="42" HorizontalContentAlignment="Left" Padding="16,0" Background="{DynamicResource AccentSoft}" Foreground="{DynamicResource AccentDeep}" FontWeight="SemiBold" BorderThickness="0" />
+          <Button x:Name="ApplicationsNav" Content="{DynamicResource LiveApps}" Height="42" HorizontalContentAlignment="Left" Padding="16,0" BorderThickness="0" Margin="0,4,0,0" />
+          <Button x:Name="FolderButton" HorizontalContentAlignment="Left" Padding="16,0" Content="{DynamicResource OpenData}" BorderThickness="0" Margin="0,8,0,0" AutomationProperties.Name="{DynamicResource OpenDataAccessible}" />
+          <Button x:Name="SettingsButton" HorizontalContentAlignment="Left" Padding="16,0" Content="{DynamicResource Settings}" BorderThickness="0" Margin="0,4,0,0" />
           <Border Background="{StaticResource SegmentTrack}" CornerRadius="10" Padding="13" Margin="0,28,0,0">
             <StackPanel>
               <TextBlock Text="{DynamicResource CurrentConnection}" Foreground="{StaticResource Muted}" FontSize="11" />
@@ -250,7 +381,7 @@
                 <TextBlock Text="{DynamicResource AutoStart}" FontSize="12" />
                 <CheckBox x:Name="AutoStart" Style="{StaticResource StartupSwitch}" HorizontalAlignment="Right" AutomationProperties.Name="{DynamicResource AutoStart}" />
               </Grid>
-              <TextBlock x:Name="StartupDetail" Text="{DynamicResource AutoStartHint}" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,9,0,0" TextWrapping="Wrap" />
+              <TextBlock x:Name="StartupDetail" Visibility="Collapsed" Text="{DynamicResource AutoStartHint}" Foreground="{StaticResource Muted}" FontSize="10" Margin="0,9,0,0" TextWrapping="Wrap" />
               <Button x:Name="StartupSettingsButton" Content="{DynamicResource StartupSettings}" FontSize="10" Padding="6,0" Margin="0,10,0,0" Visibility="Collapsed" />
             </StackPanel>
           </Border>
@@ -262,19 +393,15 @@
             </UniformGrid>
           </Border>
           <Button x:Name="StopAndExitButton" Content="{DynamicResource StopExit}" Margin="0,14,0,0" FontSize="12" />
-          <StackPanel Orientation="Horizontal" Margin="2,19,0,0">
-            <TextBlock FontFamily="Segoe MDL2 Assets" Text="" Foreground="{StaticResource Faint}" FontSize="11" Margin="0,2,6,0" />
-            <TextBlock Text="{DynamicResource LocalOnly}" Foreground="{StaticResource Faint}" FontSize="10" />
-          </StackPanel>
         </StackPanel>
       </Grid>
     </Border>
     <Grid Grid.Column="1" Margin="28,24,28,16">
+      <Grid x:Name="OverviewPage">
       <Grid.RowDefinitions>
-        <RowDefinition Height="76" />
+        <RowDefinition Height="64" />
         <RowDefinition Height="112" />
-        <RowDefinition Height="Auto" />
-        <RowDefinition Height="58" />
+        <RowDefinition Height="54" />
         <RowDefinition Height="*" />
         <RowDefinition Height="40" />
       </Grid.RowDefinitions>
@@ -286,7 +413,7 @@
               <TextBlock x:Name="StatusBadge" Text="{DynamicResource WaitingStart}" Foreground="{StaticResource SuccessText}" FontSize="10" />
             </Border>
           </StackPanel>
-          <TextBlock x:Name="HeaderSubtitle" Text="{DynamicResource Subtitle}" Foreground="{StaticResource Muted}" Margin="1,8,0,0" />
+          <TextBlock x:Name="HeaderSubtitle" Visibility="Collapsed" Text="{DynamicResource Subtitle}" Foreground="{StaticResource Muted}" Margin="1,8,0,0" />
         </StackPanel>
         <Button x:Name="ToggleButton" Content="{DynamicResource Start}" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,0,0" MinWidth="108" AutomationProperties.Name="{DynamicResource ToggleAccessible}" />
       </Grid>
@@ -324,46 +451,7 @@
           </Border>
         </Grid>
       </Grid>
-      <Grid Grid.Row="2">
-        <Border Style="{StaticResource CardShadowHost}" />
-        <Border Style="{StaticResource Card}" Padding="20,12,20,12">
-        <StackPanel>
-          <Grid>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <TextBlock Text="{DynamicResource LiveApps}" FontSize="14" FontWeight="SemiBold" />
-              <TextBlock Text="{DynamicResource LiveAppsNote}" Foreground="{StaticResource Faint}" FontSize="10" Margin="12,4,0,0" />
-            </StackPanel>
-            <Border Background="{StaticResource SegmentTrack}" CornerRadius="8" Padding="2" HorizontalAlignment="Right" VerticalAlignment="Top">
-              <StackPanel Orientation="Horizontal">
-                <RadioButton x:Name="LiveConnections" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveConnections}" Height="24" Padding="10,0" FontSize="11" IsChecked="True" AutomationProperties.Name="{DynamicResource LiveConnectionsAccessible}" />
-                <RadioButton x:Name="LiveUsage" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveAppsToday}" Height="24" Padding="10,0" FontSize="11" AutomationProperties.Name="{DynamicResource LiveAppsTodayAccessible}" />
-              </StackPanel>
-            </Border>
-          </Grid>
-          <TextBlock x:Name="LiveAppsHint" Text="{DynamicResource LiveAppsEmpty}" Foreground="{StaticResource Faint}" FontSize="11" Margin="0,8,0,2" Visibility="Collapsed" TextWrapping="Wrap" />
-          <ItemsControl x:Name="LiveAppsList" Margin="0,9,0,1" IsTabStop="False" AutomationProperties.Name="{DynamicResource LiveAppsAccessible}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Background="{StaticResource ChipBackground}" CornerRadius="6" Padding="10,5" Margin="0,0,8,6" ToolTip="{Binding Detail}">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="{Binding Name}" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                    <Border Background="{StaticResource ChipBadge}" CornerRadius="5" Margin="8,0,0,0" Padding="7,1">
-                      <TextBlock Text="{Binding Value}" FontSize="10" Foreground="{StaticResource AccentDeep}" FontFamily="Segoe UI" VerticalAlignment="Center" />
-                    </Border>
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </StackPanel>
-      </Border>
-      </Grid>
-      <Grid Grid.Row="3">
+      <Grid Grid.Row="2" Margin="0,0,0,16">
         <Border Background="{StaticResource SegmentTrack}" CornerRadius="8" Padding="3" HorizontalAlignment="Left" VerticalAlignment="Top">
           <StackPanel Orientation="Horizontal">
             <RadioButton x:Name="PeriodAll" GroupName="Period" Style="{StaticResource Segment}" Content="{DynamicResource AllTime}" IsChecked="True" Tag="All" />
@@ -374,16 +462,17 @@
         </Border>
         <Button x:Name="ExportButton" Content="{DynamicResource Export}" HorizontalAlignment="Right" VerticalAlignment="Top" AutomationProperties.Name="{DynamicResource ExportAccessible}" />
       </Grid>
-      <Grid Grid.Row="4">
+      <Grid Grid.Row="3">
         <Border Style="{StaticResource CardShadowHost}" />
         <Border Style="{StaticResource Card}" Padding="20,16,20,8">
         <Grid>
           <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
+            <RowDefinition x:Name="NetworkHeaderRow" Height="88" />
             <RowDefinition Height="*" />
             <RowDefinition Height="26" />
           </Grid.RowDefinitions>
           <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="40" /><RowDefinition x:Name="NetworkSearchRow" Height="48" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
               <ColumnDefinition Width="*" />
@@ -393,10 +482,11 @@
               <TextBlock Text="{DynamicResource NetworkUsage}" FontSize="14" FontWeight="SemiBold" />
               <TextBlock x:Name="NetworkCount" Text="{DynamicResource NoNetworks}" Foreground="{StaticResource Faint}" FontSize="11" Margin="12,2,0,0" />
             </StackPanel>
-            <Border Grid.Column="1" Background="{StaticResource SegmentTrack}" CornerRadius="8" MaxWidth="240" Height="30" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="18,2,0,0">
+            <Border x:Name="NetworkSearchBox" Grid.Row="1" Grid.ColumnSpan="3" Background="{StaticResource CardBackground}" BorderBrush="{StaticResource Divider}" BorderThickness="1" CornerRadius="8" Width="240" Height="34" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,4,0,0">
               <Grid>
-                <TextBox x:Name="NetworkSearch" Background="Transparent" BorderThickness="0" Padding="10,5" VerticalAlignment="Center" AutomationProperties.Name="{DynamicResource SearchAccessible}" />
-                <TextBlock x:Name="NetworkSearchHint" Text="{DynamicResource SearchNetworks}" Foreground="{StaticResource Faint}" FontSize="11" Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+                <TextBox x:Name="NetworkSearch" Background="Transparent" BorderThickness="0" Padding="10,0" MinHeight="0" Height="30" FontSize="11" VerticalAlignment="Center" AutomationProperties.Name="{DynamicResource SearchAccessible}" />
+                <TextBlock x:Name="NetworkSearchHint" Text="{DynamicResource SearchNetworks}" Foreground="{StaticResource Faint}" FontSize="{Binding FontSize, ElementName=NetworkSearch}" Margin="10,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False" />
+                <Border BorderBrush="{StaticResource Divider}" BorderThickness="1" CornerRadius="8" IsHitTestVisible="False" Margin="-1" />
               </Grid>
             </Border>
             <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -510,7 +600,7 @@
               </Grid>
             </Grid>
             <StackPanel x:Name="EmptyState" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,25">
-              <TextBlock FontFamily="Segoe MDL2 Assets" Text="" FontSize="35" Foreground="#C7CCEC" HorizontalAlignment="Center" />
+              <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE701;" FontSize="35" Foreground="#C7CCEC" HorizontalAlignment="Center" />
               <TextBlock x:Name="EmptyTitle" Text="{DynamicResource EmptyTitle}" FontSize="16" Margin="0,16,0,8" HorizontalAlignment="Center" />
               <TextBlock x:Name="EmptyDetail" Text="{DynamicResource EmptyDetail}" FontSize="12" Foreground="{StaticResource Faint}" HorizontalAlignment="Center" />
             </StackPanel>
@@ -521,13 +611,101 @@
         </Grid>
       </Border>
       </Grid>
-      <Grid Grid.Row="5" Margin="1,10,0,0">
+      <Grid Grid.Row="4" Margin="1,10,0,0">
         <Grid.ColumnDefinitions>
           <ColumnDefinition />
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <TextBlock x:Name="StatusDetail" Text="{DynamicResource BackgroundHint}" Foreground="{StaticResource Faint}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Top" />
+        <TextBlock x:Name="StatusDetail" Visibility="Collapsed" Text="{DynamicResource BackgroundHint}" Foreground="{StaticResource Faint}" FontSize="10" TextTrimming="CharacterEllipsis" VerticalAlignment="Top" />
         <Button x:Name="RefreshButton" Grid.Column="1" Content="{DynamicResource Refresh}" Height="22" Padding="8,0" FontSize="10" Background="Transparent" BorderThickness="0" Margin="10,-3,0,0" />
+      </Grid>
+      </Grid>
+      <Grid x:Name="ApplicationsPage" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="64" />
+          <RowDefinition Height="*" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Text="{DynamicResource LiveApps}" FontSize="26" FontWeight="SemiBold" />
+        <Border Grid.Row="1" Style="{StaticResource Card}" Padding="20,16">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,20,0">
+                <Label Content="{DynamicResource SearchApplications}" Target="{Binding ElementName=LiveAppSearch}" Foreground="{StaticResource Muted}" FontSize="11" Padding="0,0,0,6" />
+                <TextBox x:Name="LiveAppSearch" Width="320" HorizontalAlignment="Left" ToolTip="{DynamicResource SearchApplications}" AutomationProperties.Name="{DynamicResource SearchApplications}" />
+              </StackPanel>
+              <Border Grid.Column="1" Background="{StaticResource SegmentTrack}" CornerRadius="8" Padding="2" VerticalAlignment="Bottom">
+                <StackPanel Orientation="Horizontal">
+                <RadioButton x:Name="LiveConnections" ToolTip="{DynamicResource LiveAppsNote}" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveConnections}" Height="24" Padding="10,0" FontSize="11" IsChecked="True" AutomationProperties.Name="{DynamicResource LiveConnectionsAccessible}" />
+                <RadioButton x:Name="LiveUsage" ToolTip="{DynamicResource AppUsageSource}" GroupName="LiveApps" Style="{StaticResource Segment}" Content="{DynamicResource LiveAppsToday}" Height="24" Padding="10,0" FontSize="11" AutomationProperties.Name="{DynamicResource LiveAppsTodayAccessible}" />
+                </StackPanel>
+              </Border>
+            </Grid>
+            <TextBlock x:Name="LiveAppsHint" Grid.Row="1" Text="{DynamicResource LiveAppsEmpty}" Foreground="{StaticResource Faint}" FontSize="11" Margin="0,12,0,0" Visibility="Collapsed" TextWrapping="Wrap" />
+            <ListBox x:Name="LiveAppsList" Grid.Row="2" Margin="0,16,0,0" Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="False" AutomationProperties.Name="{DynamicResource LiveAppsAccessible}">
+              <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ListBox.ItemsPanel>
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="Margin" Value="0,0,8,8" />
+                  <Setter Property="Padding" Value="0" />
+                  <Setter Property="Cursor" Value="Hand" />
+                  <Setter Property="Template">
+                    <Setter.Value>
+                      <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Chip" Background="{StaticResource ChipBackground}" BorderBrush="Transparent" BorderThickness="2" CornerRadius="8">
+                          <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chip" Property="Background" Value="{StaticResource AccentHover}" /></Trigger>
+                          <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chip" Property="Background" Value="{StaticResource RowSelected}" />
+                            <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" />
+                          </Trigger>
+                          <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource Accent}" /></Trigger>
+                        </ControlTemplate.Triggers>
+                      </ControlTemplate>
+                    </Setter.Value>
+                  </Setter>
+                </Style>
+              </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Border Background="Transparent" CornerRadius="7" Padding="10,7" ToolTip="{Binding Detail}">
+                  <StackPanel Orientation="Horizontal">
+                    <Grid Width="18" Height="18" Margin="0,0,7,0">
+                      <Border x:Name="AppFallback" Background="{StaticResource AccentSoft}" CornerRadius="4" Visibility="Collapsed">
+                        <Path Data="M 1,1 L 6,1 6,6 1,6 Z M 9,1 L 14,1 14,6 9,6 Z M 1,9 L 6,9 6,14 1,14 Z M 9,9 L 14,9 14,14 9,14 Z" Fill="{StaticResource Accent}" Stretch="Uniform" Margin="3" />
+                      </Border>
+                      <Image Source="{Binding Icon}" RenderOptions.BitmapScalingMode="HighQuality" />
+                    </Grid>
+                    <TextBlock Text="{Binding Name}" FontSize="12" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                    <Border Background="{StaticResource ChipBadge}" CornerRadius="5" Margin="8,0,0,0" Padding="7,1">
+                      <TextBlock Text="{Binding Value}" FontSize="10" Foreground="{StaticResource AccentDeep}" FontFamily="Segoe UI" VerticalAlignment="Center" />
+                    </Border>
+                  </StackPanel>
+                </Border>
+                <DataTemplate.Triggers><DataTrigger Binding="{Binding Icon}" Value="{x:Null}"><Setter TargetName="AppFallback" Property="Visibility" Value="Visible" /></DataTrigger></DataTemplate.Triggers>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+            </ListBox>
+          </Grid>
+        </Border>
+        <Border x:Name="AppControls" Grid.Row="2" Padding="20,16" Margin="0,16,0,0">
+          <Border.Style>
+            <Style TargetType="Border" BasedOn="{StaticResource Card}">
+              <Style.Triggers>
+                <DataTrigger Binding="{Binding Content, ElementName=AppControlHost}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger>
+              </Style.Triggers>
+            </Style>
+          </Border.Style>
+          <ContentControl x:Name="AppControlHost" HorizontalContentAlignment="Stretch" />
+        </Border>
       </Grid>
     </Grid>
   </Grid>

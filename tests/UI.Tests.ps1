@@ -67,6 +67,20 @@ function Test-LiveMeterWindow {
     Assert-Ui ($scroll.VerticalOffset -gt 0) 'The last network must be reachable by scrolling.'
     Write-Host 'PASS all networks are available in virtualized, scrollable chart and table'
 
+    Assert-Ui ($script:OverviewPage.Visibility -eq 'Visible' -and $script:ApplicationsPage.Visibility -eq 'Collapsed') 'The overview must be the default page.'
+    $script:ApplicationsNav.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    $script:window.UpdateLayout()
+    Assert-Ui ($script:OverviewPage.Visibility -eq 'Collapsed' -and $script:ApplicationsPage.Visibility -eq 'Visible') 'Sidebar navigation must open the independent applications page.'
+    $script:LiveAppSearch.Text = 'terminal'
+    Assert-Ui ($script:LiveAppsList.Items.Count -eq 1 -and $script:LiveAppsList.Items[0].Name -eq 'Windows Terminal') 'Application search must filter the application page.'
+    $script:LiveAppSearch.Text = ''
+    Select-MeterControlledProgram -Path (Join-Path $env:SystemRoot 'System32/notepad.exe')
+    Assert-Ui (-not $script:appControl.BlockProgram.IsEnabled -and -not $script:appControl.ThrottleProgram.IsEnabled) 'Preview must not permit privileged network mutations.'
+    Assert-Ui ($script:appControl.ProgramPath.Text -like '*notepad.exe') 'Application control must show the exact executable target.'
+    $script:OverviewNav.RaiseEvent([Windows.RoutedEventArgs]::new([Windows.Controls.Button]::ClickEvent))
+    Assert-Ui ($script:OverviewPage.Visibility -eq 'Visible' -and $script:ApplicationsPage.Visibility -eq 'Collapsed') 'Sidebar navigation must restore the overview.'
+    Write-Host 'PASS sidebar applications page, application search and preview network-control isolation'
+
     Assert-Ui ($script:liveConnections.IsChecked) 'Live connections must be the default panel mode.'
     Assert-Ui ($script:liveAppsList.Items.Count -ge 1) 'Preview must show live per-program connection chips.'
     $chipValues = @($script:liveAppsList.Items | ForEach-Object { [string]$_.Value })
@@ -76,7 +90,8 @@ function Test-LiveMeterWindow {
     Assert-Ui ($tolerant.Count -eq 1 -and [long]$tolerant[0].Connections -eq 7) 'Live app parsing must tolerate incomplete status rows.'
     $script:LiveUsage.IsChecked = $true
     Assert-Ui ($script:liveAppsList.Items.Count -ge 1) 'Usage mode must show today usage chips in preview.'
-    Assert-Ui ($script:liveAppsHint.Text.Length -gt 0 -and $script:liveAppsHint.Visibility -eq 'Visible') 'Usage mode must show its delayed-data caption.'
+    Assert-Ui ($script:LiveUsage.ToolTip -eq (Text-Meter 'AppUsageSource')) 'Usage mode must expose delayed-data guidance in its tooltip.'
+    Assert-Ui ($script:liveAppsHint.Visibility -eq 'Collapsed') 'Successful usage must not repeat guidance below the panel.'
     $usageChip = [string]$script:liveAppsList.Items[0].Detail
     Assert-Ui ($usageChip -match 'GB') 'Usage chips must be labelled as today usage in GB.'
     $script:LiveConnections.IsChecked = $true
@@ -165,7 +180,7 @@ function Test-LiveMeterWindow {
     $notepadIcon = Get-MeterAppIcon -AppId (Join-Path $env:SystemRoot 'System32\notepad.exe') -Name ''
     Assert-Ui ($null -ne $notepadIcon -and $notepadIcon.IsFrozen) 'Identifiable executables must yield a frozen, UI-thread-safe icon.'
     Assert-Ui ([object]::ReferenceEquals($notepadIcon, (Get-MeterAppIcon -AppId (Join-Path $env:SystemRoot 'System32\notepad.exe') -Name ''))) 'Icon lookups must be cached per identifier.'
-    Assert-Ui ($null -eq (Get-MeterAppIcon -AppId 'msedge' -Name 'Microsoft Edge')) 'Unresolvable identifiers must fall back to the placeholder glyph.'
+    Assert-Ui ($null -eq (Get-MeterAppIcon -AppId 'WiFiMeter_missing_72e513' -Name 'WiFiMeter_missing_72e513')) 'Unresolvable identifiers must fall back to the placeholder glyph.'
     for ($i = 0; $i -lt 300; $i++) { $null = Get-MeterAppIcon -AppId ('C:\nonexistent\' + $i + '.exe') -Name '' }
     Assert-Ui ($script:AppIconCache.Count -le 256) 'The icon cache must stay bounded.'
     Write-Host 'PASS application tables render icons from a bounded, worker-filled cache'
@@ -255,6 +270,19 @@ function Test-LiveMeterWindow {
     $script:ChartView.IsChecked = $true
     $script:window.UpdateLayout()
     Assert-Ui ($script:chartList.Visibility -ceq 'Visible' -and $script:TrendHost.Visibility -ceq 'Collapsed') 'Switching back must restore the chart view.'
+    $script:NetworkSearch.Text = 'missing-network-for-trend-test'
+    $script:TrendView.IsChecked = $true
+    $script:window.UpdateLayout()
+    Update-MeterTrend
+    Assert-Ui ($script:NetworkSearchBox.Visibility -eq 'Collapsed' -and $script:NetworkSearchRow.Height.Value -eq 0) 'Trend must hide the network search and reclaim its row.'
+    Assert-Ui ($script:displayRows.Count -gt 0 -and $script:EmptyState.Visibility -eq 'Collapsed') 'A hidden search must not filter trend totals or display an empty overlay.'
+    $hits = @($script:TrendCanvas.Children | Where-Object { $_ -is [Windows.Controls.Border] -and $_.Tag -eq 'TrendDay' })
+    Assert-Ui ($hits.Count -eq $script:trendData.Days.Count) 'Every plotted date must have a hover target.'
+    $firstDay = $script:trendData.Days[0]
+    Assert-Ui ($hits[0].ToolTip.Content.Contains($firstDay.Date) -and $hits[0].ToolTip.Content.Contains(('{0:N0}' -f $firstDay.RxBytes)) -and $hits[0].ToolTip.Content.Contains(('{0:N0}' -f $firstDay.TxBytes))) 'Hover must expose the actual date and both precise byte values.'
+    $script:ChartView.IsChecked = $true
+    Assert-Ui ($script:NetworkSearchBox.Visibility -eq 'Visible' -and $script:displayRows.Count -eq 0) 'Returning to chart must restore the visible search and its filter.'
+    $script:NetworkSearch.Text = ''
     Write-Host 'PASS the trend view degrades on short ranges and draws both daily series'
 
     foreach ($filename in @('state.json', 'usage.csv', 'daily.csv', 'program.ps1')) {

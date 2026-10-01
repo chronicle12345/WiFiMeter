@@ -24,6 +24,23 @@ function Get-MeterTcpConnections {
     return @([WiFiMeter.Networking.TcpTable]::GetEstablishedConnections())
 }
 
+function Get-MeterTcpListeners {
+    # Hook: listening TCP sockets, including idle IPv4 and IPv6 listeners.
+    Add-MeterTcpTableType
+    return @([WiFiMeter.Networking.TcpTable]::GetListeners())
+}
+
+function Get-MeterProxyListenerIds {
+    param([AllowEmptyCollection()][int[]]$Ports)
+    if (@($Ports).Count -eq 0) { return }
+    $portSet = [Collections.Generic.HashSet[int]]::new()
+    foreach ($port in $Ports) { [void]$portSet.Add($port) }
+    Get-MeterTcpListeners |
+        Where-Object { $portSet.Contains([int]$_.LocalPort) } |
+        ForEach-Object { [int]$_.OwningPid } |
+        Select-Object -Unique
+}
+
 function Get-MeterProcessNames {
     param([AllowEmptyCollection()][int[]]$ProcessIds)
     # Hook: maps owner PIDs to process names. Tests override this function.
@@ -56,7 +73,7 @@ function Get-MeterProxyClientSample {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ProcessNames
     )
 
-    # 归属规则：代理进程 = 本地端口在配置端口中，或进程名在配置名单中。
+    # 代理进程由配置端口的监听 PID 或显式进程名识别。
     # 客户端行 = 已建立连接、远端为环回、远端端口为配置端口，且属主不是代理进程。
     $portSet = [Collections.Generic.HashSet[int]]::new()
     foreach ($port in $Ports) { [void]$portSet.Add([int]$port) }
@@ -71,6 +88,8 @@ function Get-MeterProxyClientSample {
         return [pscustomobject]@{ Clients = [object[]]$clients.ToArray() }
     }
 
+    $proxyIds = [Collections.Generic.HashSet[int]]::new()
+    foreach ($ownerId in @(Get-MeterProxyListenerIds -Ports $Ports)) { [void]$proxyIds.Add($ownerId) }
     $rows = @(Get-MeterTcpConnections)
     $ownerIds = @($rows | ForEach-Object { [int]$_.OwningPid } | Select-Object -Unique)
     $owners = Get-MeterProcessNames -ProcessIds $ownerIds
@@ -82,7 +101,7 @@ function Get-MeterProxyClientSample {
             if ($owners.ContainsKey($ownerId)) { $ownerName = [string]$owners[$ownerId] }
             $ownerKey = Get-MeterProcessKey $ownerName
 
-            $isProxy = $false
+            $isProxy = $proxyIds.Contains($ownerId)
             if ($portSet.Contains([int]$row.LocalPort)) { $isProxy = $true }
             if (-not $isProxy -and $ownerKey -and $nameSet.Contains($ownerKey)) { $isProxy = $true }
             if ($isProxy) { continue }
@@ -370,17 +389,10 @@ function Repair-MeterProxyAttribution {
         if ($Result.PSObject.Properties['Days'] -eq $null -or @($Result.Days).Count -eq 0) { return $Result }
         $settings = Read-MeterProxySettings $DataDirectory
         $proxyNames = [Collections.Generic.List[string]]::new($settings.ProcessNames)
-        if ($proxyNames.Count -eq 0 -and $settings.Ports.Count -gt 0) {
-            # 采集端在只配置端口时也会观测客户端连接；这里从当前连接表反查占用这些
-            # 端口的进程作为代理进程，让拆分不依赖进程名配置。代理当前没有活跃的
-            # 客户端连接时反查不到名字，查询结果保持原样。
+        if ($settings.Ports.Count -gt 0) {
+            # 空闲监听也能识别代理；与显式名称合并，兼容多代理配置。
             try {
-                $portSet = [Collections.Generic.HashSet[int]]::new()
-                foreach ($port in $settings.Ports) { [void]$portSet.Add([int]$port) }
-                $ownerIds = @(@(Get-MeterTcpConnections) |
-                    Where-Object { $portSet.Contains([int]$_.LocalPort) } |
-                    ForEach-Object { [int]$_.OwningPid } |
-                    Select-Object -Unique)
+                $ownerIds = @(Get-MeterProxyListenerIds -Ports $settings.Ports)
                 $owners = Get-MeterProcessNames -ProcessIds $ownerIds
                 foreach ($ownerName in $owners.Values) {
                     $key = Get-MeterProcessKey ([string]$ownerName)

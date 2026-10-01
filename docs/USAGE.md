@@ -1,4 +1,4 @@
-# User guide
+﻿# User guide
 
 English | [简体中文](USAGE.zh-CN.md)
 
@@ -28,11 +28,11 @@ Warnings appear through the tray icon at the chosen percentage and at the limit.
 
 ## Application usage
 
-The Applications and By day tabs show records from Windows for the selected network and dates. Queries run in the background; closing the details window cancels pending work. Each program's icon appears next to its name whenever its executable can be identified, and a placeholder glyph appears otherwise. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
+The Applications and By day tabs show records from Windows for the selected network and dates. Name search and Today, This month, or Custom dates filters apply to both application totals and daily rows. Queries run in the background; closing the details window cancels pending work. Each program's icon appears next to its name whenever its executable can be identified, and a placeholder glyph appears otherwise. WiFiMeter uses observed adapter/profile-to-SSID mappings, so an older disconnected profile may need to be connected once while the collector is running.
 
 Windows may report application activity later than the adapter counters, and the two totals can differ. The query covers at most the most recent 60 days, beginning no earlier than WiFiMeter's first tracking date or the configured retention cutoff. Missing Windows records stay unavailable. Application history is queried on demand; it is not a permanent archive. Up to four recent queries are cached for five minutes.
 
-Traffic through a local proxy is attributed by Windows to the proxy process. In Settings you can enter the proxy's TCP ports and process names. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
+Traffic through a local proxy is attributed by Windows to the proxy process. In Settings, enter a TCP port such as `7890` to automatically identify the listening proxy process. Separate multiple ports with commas; process names are optional under Advanced options. The collector then records which programs open connections through the proxy each day, and application queries split those proxy bytes across the client programs by their share of observed connections. Bytes without such observations stay as a "Via proxy · unattributed" estimate. The split is an estimate: connections are sampled every five seconds so short connections can be missed, UDP and QUIC traffic is not visible to this method, and Windows reports bytes with a delay. Connection counts describe activity, not traffic volume.
 
 The collector also counts the connections each program currently holds and keeps the busiest programs in its status data. The dashboard's Live apps card shows these counts for up to twelve programs and refreshes every few seconds; its Today usage view queries Windows on demand for the current network's application usage for today and states that the record may be delayed. These counts are activity hints only: real-time per-application byte rates would need administrator-level Windows counters that this app does not use, so no live rates are shown, a program's connection count can diverge from its actual traffic, and the today view follows the same limitations as the application queries above. When the only connection is wired, the card explains that Windows keeps no application usage for wired networks.
 
@@ -77,3 +77,9 @@ WiFiMeter measures this PC's Wi-Fi and wired Ethernet adapters, including local 
 A first sample, a network change, a counter reset or a long sampling gap establishes a new baseline; for wired adapters this includes plugging the cable in or out. Ambiguous increments are discarded; brief traffic near a transition can be missed. A fast switch away and back between samples can go undetected. Power loss can discard the latest unsaved records.
 
 If no network appears, check the Wi-Fi connection or the wired network cable. For read or save errors, inspect the in-app message and `collector.log`, `ui.log` or `host.log` in the data folder. If application details remain empty, try an earlier date range after Windows has updated its records. Application usage records are not available for wired connections.
+
+The trend view shows daily totals across all networks in the selected date range, independently of network search. Hover over the plot to inspect the date, download, upload, and total usage, including exact download and upload byte counts. Returning to Chart or Details restores the network search.
+
+## Application network control
+
+Open Live apps from the sidebar, search/select a running program or choose its executable. Block direct network access creates WiFiMeter-owned inbound and outbound Windows Firewall rules. Remove network block deletes only these rules. Upload throttling uses Windows QoS in decimal KB/s, not download throttling. Operations request administrator approval and read back configured policies. Unsupported systems and verification failures report errors. Local proxy loopback and proxy-forwarded traffic may bypass application rules. Policies persist after exit/restart and may remain after uninstall; remove blocks and throttles before uninstalling.

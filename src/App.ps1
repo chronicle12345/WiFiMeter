@@ -18,6 +18,7 @@ try {
     Import-Module (Join-Path $PSScriptRoot 'Strings.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'Preferences.psm1') -Force
     . (Join-Path $PSScriptRoot 'Dialogs.ps1')
+    . (Join-Path $PSScriptRoot 'AppControls.ps1')
     if ([string]::IsNullOrWhiteSpace($DataDirectory)) { $DataDirectory = Get-MeterDataDirectory }
     $script:directory = [IO.Path]::GetFullPath($DataDirectory)
     $script:settingsPath = Join-Path $script:directory 'settings.json'
@@ -88,7 +89,7 @@ try {
     }
     $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'MainWindow.xaml'))
     try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
-    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'EmptyTitle', 'EmptyDetail', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TrendView', 'TrendHost', 'TrendCanvas', 'TrendPlaceholder', 'TrendXStart', 'TrendXMid', 'TrendXEnd', 'NetworkSearch', 'NetworkSearchHint', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList')
+    $names = @('ChartList', 'TrafficTable', 'EmptyState', 'EmptyTitle', 'EmptyDetail', 'ToggleButton', 'AutoStart', 'StartupDetail', 'StartupSettingsButton', 'StatusBadge', 'StatusPill', 'StatusDetail', 'ConnectionName', 'DownloadSpeed', 'UploadSpeed', 'TotalValue', 'DownloadValue', 'UploadValue', 'NetworkCount', 'RangeCaption', 'HeaderSubtitle', 'ExportButton', 'FolderButton', 'RefreshButton', 'StopAndExitButton', 'SettingsButton', 'PeriodAll', 'PeriodToday', 'PeriodMonth', 'PeriodRange', 'ChartView', 'TrendView', 'TrendHost', 'TrendCanvas', 'TrendPlaceholder', 'TrendXStart', 'TrendXMid', 'TrendXEnd', 'NetworkSearch', 'NetworkSearchHint', 'NetworkSearchBox', 'NetworkSearchRow', 'NetworkHeaderRow', 'TableView', 'LanguageEnglish', 'LanguageChinese', 'LiveConnections', 'LiveUsage', 'LiveAppsHint', 'LiveAppsList', 'OverviewPage', 'ApplicationsPage', 'OverviewNav', 'ApplicationsNav', 'AppControlHost', 'LiveAppSearch')
     foreach ($name in $names) { Set-Variable -Scope Script -Name $name -Value $window.FindName($name) }
     function Update-MeterLocalizedControls {
         foreach ($key in $script:strings.Keys) { $window.Resources[$key] = $script:strings[$key] }
@@ -277,23 +278,25 @@ try {
         $hint = ''
         $hintVisible = $false
         if ($script:liveMode -ceq 'Usage') {
-            $hintVisible = $true
+            $hintVisible = $script:liveUsageQuery.MessageKey -notin @('AppUsageSource', '')
             $hint = Text-Meter $(if ($script:liveUsageQuery.MessageKey) { $script:liveUsageQuery.MessageKey } else { 'AppUsageLoading' })
             foreach ($row in @($script:liveUsageQuery.Rows)) {
                 $gb = '{0:N3}' -f [double]$row.TotalGB
                 $detail = (Text-Meter 'LiveAppUsageChip') -f [string]$row.Name, $gb
-                $items.Add([pscustomobject]@{ Name = [string]$row.Name; Value = ($gb + ' GB'); Detail = $detail })
+                $items.Add([pscustomobject]@{ Name = [string]$row.Name; Value = ($gb + ' GB'); Detail = $detail; AppId = $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }); Icon = (Get-MeterAppIcon -AppId $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' }) -Name ([string]$row.Name)) })
             }
         } else {
             foreach ($app in @(Get-MeterStatusApps $script:liveAppsStatus)) {
                 $detail = (Text-Meter 'LiveAppChip') -f $app.Name, $app.Connections
-                $items.Add([pscustomobject]@{ Name = $app.Name; Value = [string]$app.Connections; Detail = $detail })
+                $items.Add([pscustomobject]@{ Name = $app.Name; Value = [string]$app.Connections; Detail = $detail; AppId = ''; Icon = (Get-MeterAppIcon -AppId '' -Name ([string]$app.Name)) })
             }
             if ($items.Count -eq 0) { $hintVisible = $true; $hint = Text-Meter 'LiveAppsEmpty' }
         }
+        $search = $LiveAppSearch.Text.Trim()
+        if ($search) { $items = @($items | Where-Object { $_.Name.IndexOf($search, [StringComparison]::OrdinalIgnoreCase) -ge 0 }) }
         # Rebind only when the visible data or language changed; the panel updates every 2s.
         $parts = @(foreach ($item in $items) { $item.Name + '=' + $item.Value })
-        $key = $script:uiLanguage + '|' + $script:liveMode + '|' + ($parts -join ';')
+        $key = $script:uiLanguage + '|' + $script:liveMode + '|' + ($parts -join ';') + '|' + $hint + '|' + $search
         if ($key -ceq $script:liveAppsKey) { return }
         $script:liveAppsKey = $key
         $LiveAppsList.ItemsSource = $items
@@ -397,6 +400,34 @@ try {
             }
             Add-MeterTrendSeries -Points $points -BrushKey $series.BrushKey -FillOpacity $series.Opacity -Bottom $bottom
         }
+        # Each day owns a full-height hover area, including the space between series.
+        for ($index = 0; $index -lt $days.Count; $index++) {
+            $day = $days[$index]
+            $date = [datetime]::ParseExact($day.Date, 'yyyy-MM-dd', [cultureinfo]::InvariantCulture)
+            $x = $left + ($right - $left) * ($date - $spanStart).TotalDays / $spanDays
+            $previousX = if ($index -gt 0) { $left + ($right - $left) * ([datetime]::ParseExact($days[$index - 1].Date, 'yyyy-MM-dd', [cultureinfo]::InvariantCulture) - $spanStart).TotalDays / $spanDays } else { $left }
+            $nextX = if ($index -lt $days.Count - 1) { $left + ($right - $left) * ([datetime]::ParseExact($days[$index + 1].Date, 'yyyy-MM-dd', [cultureinfo]::InvariantCulture) - $spanStart).TotalDays / $spanDays } else { $right }
+            $hitLeft = if ($index -eq 0) { $left } else { ($previousX + $x) / 2 }
+            $hitRight = if ($index -eq $days.Count - 1) { $right } else { ($x + $nextX) / 2 }
+            $hit = [Windows.Controls.Border]::new()
+            $hit.Width = [Math]::Max(1, $hitRight - $hitLeft)
+            $hit.Height = $height
+            $hit.Background = [Windows.Media.Brushes]::Transparent
+            $hit.Tag = 'TrendDay'
+            $tip = [Windows.Controls.ToolTip]::new()
+            $tip.Background = $window.Resources['CardBackground']
+            $tip.Foreground = $window.Resources['TextPrimary']
+            $tip.BorderBrush = $window.Resources['Divider']
+            $tip.Padding = [Windows.Thickness]::new(12)
+            $tip.Content = $day.Date + [Environment]::NewLine + (Text-Meter 'Download') + ': ' + (Format-MeterGigabytes $day.RxBytes) + ' (' + ('{0:N0}' -f $day.RxBytes) + ' B)' + [Environment]::NewLine + (Text-Meter 'Upload') + ': ' + (Format-MeterGigabytes $day.TxBytes) + ' (' + ('{0:N0}' -f $day.TxBytes) + ' B)' + [Environment]::NewLine + (Text-Meter 'TotalUsage') + ': ' + (Format-MeterGigabytes ([double]$day.RxBytes + [double]$day.TxBytes))
+            $hit.ToolTip = $tip
+            [Windows.Controls.ToolTipService]::SetInitialShowDelay($hit, 0)
+            [Windows.Controls.ToolTipService]::SetBetweenShowDelay($hit, 0)
+            [Windows.Controls.ToolTipService]::SetShowDuration($hit, 60000)
+            [Windows.Controls.Canvas]::SetLeft($hit, $hitLeft)
+            [Windows.Controls.Canvas]::SetTop($hit, 0)
+            [void]$TrendCanvas.Children.Add($hit)
+        }
         $TrendXStart.Text = $spanStart.ToString('yyyy-MM-dd')
         $TrendXMid.Text = if ($spanDays -ge 3) { $spanStart.AddDays($spanDays / 2.0).ToString('yyyy-MM-dd') } else { '' }
         $TrendXEnd.Text = $spanEnd.ToString('yyyy-MM-dd')
@@ -406,6 +437,11 @@ try {
         $ChartList.Visibility = if ($Mode -ceq 'Chart') { 'Visible' } else { 'Collapsed' }
         $TrafficTable.Visibility = if ($Mode -ceq 'Table') { 'Visible' } else { 'Collapsed' }
         $TrendHost.Visibility = if ($Mode -ceq 'Trend') { 'Visible' } else { 'Collapsed' }
+        $NetworkSearchBox.Visibility = if ($Mode -ceq 'Trend') { 'Collapsed' } else { 'Visible' }
+        $NetworkSearchRow.Height = [Windows.GridLength]::new($(if ($Mode -ceq 'Trend') { 0 } else { 48 }))
+        $NetworkHeaderRow.Height = [Windows.GridLength]::new($(if ($Mode -ceq 'Trend') { 40 } else { 88 }))
+        $script:renderKey = ''
+        Refresh-MeterView
     }
 
     function Get-CurrentMeterRange {
@@ -434,7 +470,7 @@ try {
                 $script:dataStamp = $stamp
             }
             $range = Get-CurrentMeterRange
-            $searchText = [string]$NetworkSearch.Text
+            $searchText = if ($TrendHost.Visibility -ceq 'Visible') { '' } else { [string]$NetworkSearch.Text }
             $key = $stamp + '|' + $range.Period + '|' + $range.StartDate.Ticks + '|' + $range.EndDate.Ticks + '|' + [DateTime]::Today.Ticks + '|' + $searchText
             if ($script:renderKey -ne $key) {
                 $allRows = @(Get-MeterRows -State $script:cachedState @range)
@@ -490,7 +526,7 @@ try {
                     $EmptyDetail.Text = Text-Meter 'EmptyDetail'
                 }
                 $caption = switch ($range.Period) { 'Today' { Text-Meter 'Today' }; 'Month' { Text-Meter 'Month' }; 'Range' { (Text-Meter 'RangeCaption') -f $range.StartDate.ToString('yyyy-MM-dd'), $range.EndDate.ToString('yyyy-MM-dd') }; default { Text-Meter 'AllTime' } }
-                $RangeCaption.Text = $caption + (Text-Meter 'Sorted')
+                $RangeCaption.Text = $caption + $(if ($TrendHost.Visibility -ceq 'Visible') { '' } else { Text-Meter 'Sorted' })
                 # Trend series: per-day totals of the same range, drawn when the view is visible.
                 $script:trendData = $null
                 $trendDays = @()
@@ -513,6 +549,7 @@ try {
         } catch {
             $script:loadError = $_.Exception.Message
             $StatusBadge.Text = Text-Meter 'ReadFailed'; $StatusPill.Background = $window.Resources['DangerSoft']; $StatusBadge.Foreground = $window.Resources['DangerText']
+            $StatusDetail.Visibility = 'Visible'
             $StatusDetail.Text = Format-MeterError $script:loadError 'Read'
             $StatusDetail.ToolTip = $StatusDetail.Text + [Environment]::NewLine + (Text-Meter 'TechnicalDetails') + ': ' + $script:loadError
         }
@@ -550,12 +587,15 @@ try {
         if ($status.Error) { $detail += ' · ' + (Format-MeterError $status.Error 'Sampling') }
         if ($script:readWarnings.Count -gt 0) { $detail += Text-Meter 'BackupUsed' }
         $detail += ' · ' + (Text-Meter 'BackgroundHint') + (Text-Meter 'UsageNote')
+        $StatusDetail.Visibility = if ($status.Error -or $script:readWarnings.Count -gt 0) { 'Visible' } else { 'Collapsed' }
         $StatusDetail.Text = $detail; $StatusDetail.ToolTip = $detail
         if ($status.Error) { $StatusDetail.ToolTip += [Environment]::NewLine + (Text-Meter 'TechnicalDetails') + ': ' + $status.Error }
         $startup = Get-MeterAutoStartInfo
         $script:updatingSettings = $true
         try { $AutoStart.IsChecked = [bool]$startup.Registered } finally { $script:updatingSettings = $false }
         $StartupDetail.Text = if ($startup.DisabledByWindows) { Text-Meter 'StartupDisabled' } elseif ($startup.Enabled) { Text-Meter 'StartupEnabled' } else { Text-Meter 'StartupOff' }
+        $StartupDetail.Visibility = if ($startup.DisabledByWindows) { 'Visible' } else { 'Collapsed' }
+        $AutoStart.ToolTip = $StartupDetail.Text
         $StartupSettingsButton.Visibility = if ($startup.DisabledByWindows) { 'Visible' } else { 'Collapsed' }
         $script:liveAppsStatus = $status
         Update-MeterLiveAppsPanel
@@ -624,9 +664,20 @@ try {
         Refresh-MeterView
         if (-not $script:isReadOnly) {
             try { $script:preferences = Set-MeterLanguagePreference -DataDirectory $script:directory -Language $Value }
-            catch { $StatusDetail.Text = Format-MeterError $_.Exception.Message 'Settings' }
+            catch { $StatusDetail.Visibility = 'Visible'; $StatusDetail.Text = Format-MeterError $_.Exception.Message 'Settings' }
         }
     }
+    Initialize-MeterAppControls
+    $OverviewNav.Add_Click({ Set-MeterPage 'Overview' })
+    $ApplicationsNav.Add_Click({ Set-MeterPage 'Applications' })
+    $LiveAppSearch.Add_TextChanged({ Update-MeterLiveAppsPanel })
+    $LiveAppsList.Add_SelectionChanged({
+        if ($null -eq $LiveAppsList.SelectedItem -or $script:appControl.Busy) { return }
+        $item = $LiveAppsList.SelectedItem
+        $path = $null
+        try { $path = Resolve-MeterAppIconPath -Candidate ([string]$item.AppId); if (-not $path) { $path = Resolve-MeterAppIconPath -Candidate ([string]$item.Name) } } catch { }
+        Select-MeterControlledProgram -Path ([string]$path)
+    })
     $LanguageEnglish.Add_Checked({ Set-MeterUiLanguage 'en' })
     $LanguageChinese.Add_Checked({ Set-MeterUiLanguage 'zh-CN' })
     $ChartView.Add_Checked({ Set-MeterViewMode 'Chart' })

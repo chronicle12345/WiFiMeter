@@ -305,6 +305,14 @@ try {
         Assert-Equal ($preferences.Proxy.ProcessNames -join ',') 'mihomo,Clash Core'
         Assert-Equal $preferences.RetentionDays 30
     }
+    Test-Case 'port-only proxy settings persist with no process names' {
+        $directory = New-TestDirectory
+        $null = Set-MeterProxyPreference -DataDirectory $directory -Ports @(7890) -ProcessNames @()
+        $null = Set-MeterRetention -DataDirectory $directory -Days 30
+        $preferences = Read-MeterPreferences -DataDirectory $directory
+        Assert-Equal ($preferences.Proxy.Ports -join ',') '7890'
+        Assert-Equal @($preferences.Proxy.ProcessNames).Count 0
+    }
     Test-Case 'invalid proxy settings are rejected before any disk change' {
         $directory = New-TestDirectory
         $null = Set-MeterProxyPreference -DataDirectory $directory -Ports @(7897) -ProcessNames @('mihomo')

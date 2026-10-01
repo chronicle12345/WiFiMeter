@@ -31,8 +31,10 @@ function Invoke-MonitorTest([string]$Name, [scriptblock]$Body) {
     try {
         & $module {
             $script:TestRows = @()
+            $script:TestListeners = @()
             $script:TestOwners = @{}
             function script:Get-MeterTcpConnections { $script:TestRows }
+            function script:Get-MeterTcpListeners { $script:TestListeners }
             function script:Get-MeterProcessNames {
                 param([int[]]$ProcessIds)
                 $map = [Collections.Generic.Dictionary[int, string]]::new()
@@ -81,6 +83,34 @@ try {
         ) @{ 555 = 'UnknownProxy' }
         $sample = Get-MeterProxyClientSample -Ports @(7898) -ProcessNames @('UnknownProxy')
         Assert-Equal @($sample.Clients).Count 0 'Proxy rows must never be counted as clients.'
+    }
+    Invoke-MonitorTest 'Port-only sampling excludes all connections owned by the listener' {
+        param($module, $directory)
+        & $module {
+            $script:TestListeners = @([pscustomobject]@{ State = 2; LocalPort = 7890; OwningPid = 111 })
+            $script:TestOwners = @{ 111 = 'proxy'; 222 = 'chrome' }
+        }
+        & $module { param($rows) $script:TestRows = $rows } @(
+            (New-Row '127.0.0.1' 51000 '127.0.0.1' 7890 111 $true),
+            (New-Row '127.0.0.1' 51001 '127.0.0.1' 7890 222 $true)
+        )
+        $sample = Get-MeterProxyClientSample -Ports @(7890) -ProcessNames @()
+        Assert-Equal @($sample.Clients).Count 1
+        Assert-Equal $sample.Clients[0].Name 'chrome'
+    }
+    Invoke-MonitorTest 'Port-only configuration without a listener leaves usage unchanged' {
+        param($module, $directory)
+        [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Proxy":{"Ports":[7890]}}')
+        & $module { param($rows) $script:TestRows = $rows; $script:TestOwners = @{ 111 = 'ordinary' } } @(
+            (New-Row '192.168.1.5' 7890 '93.184.216.34' 443 111 $false)
+        )
+        $fake = [pscustomobject]@{ Available = $true; Rows = @(); Days = @(
+            [pscustomobject]@{ Date = '2026-10-01'; AppId = ''; Name = 'ordinary'; RxBytes = 300L; TxBytes = 0L; TotalBytes = 300L }
+        ) }
+        $before = $fake | ConvertTo-Json -Depth 6
+        $actual = Repair-MeterProxyAttribution -Result $fake -DataDirectory $directory -UnattributedName 'Via proxy'
+        Assert-Equal ($actual | ConvertTo-Json -Depth 6) $before
+        Assert-Equal @( (Get-MeterProxyClientSample -Ports @(7890) -ProcessNames @()).Clients ).Count 0
     }
     Invoke-MonitorTest 'Repeated observations of one connection count once per day' {
         param($module, $directory)
@@ -192,14 +222,14 @@ try {
         Assert-Equal $unattributed[0].RxBytes 500L 'The remainder must keep the unattributed bytes.'
         Assert-True $unattributed[0].Estimated 'The remainder row must be marked as an estimate.'
     }
-    Invoke-MonitorTest 'Port-only proxy settings are attributed through the live table' {
+    Invoke-MonitorTest 'Port-only proxy settings are attributed with only an idle listener' {
         param($module, $directory)
         & $module {
             param($Rows, $Owners)
-            $script:TestRows = $Rows
+            $script:TestListeners = $Rows
             $script:TestOwners = $Owners
         } @(
-            (New-Row '127.0.0.1' 7890 '127.0.0.1' 51000 111 $true)
+            ([pscustomobject]@{ State = 2; LocalPort = 7890; OwningPid = 111 })
         ) @{ 111 = 'clash' }
         [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Proxy":{"Ports":[7890]}}')
         [IO.File]::WriteAllText((Join-Path $directory 'proxy-clients.json'), '{"SchemaVersion":1,"Days":[{"Date":"2026-10-01","Clients":[{"Name":"chrome","Connections":1}],"Keys":["a"]}]}')
@@ -215,6 +245,22 @@ try {
         $chrome = @($repaired.Days | Where-Object { $_.Name -ieq 'chrome' })[0]
         Assert-Equal $chrome.RxBytes 300L 'The observed client must receive the proxy bytes.'
         Assert-True $chrome.Estimated 'Distributed rows are estimates.'
+    }
+    Invoke-MonitorTest 'Detected listeners supplement explicit process names' {
+        param($module, $directory)
+        & $module {
+            $script:TestListeners = @([pscustomobject]@{ State = 2; LocalPort = 7890; OwningPid = 111 })
+            $script:TestOwners = @{ 111 = 'auto-proxy' }
+        }
+        [IO.File]::WriteAllText((Join-Path $directory 'settings.json'), '{"Proxy":{"Ports":[7890],"ProcessNames":["Manual.EXE"]}}')
+        $fake = [pscustomobject]@{ Available = $true; Rows = @(); Days = @(
+            [pscustomobject]@{ Date = '2026-10-01'; AppId = ''; Name = 'auto-proxy'; RxBytes = 300L; TxBytes = 0L; TotalBytes = 300L },
+            [pscustomobject]@{ Date = '2026-10-01'; AppId = ''; Name = 'manual'; RxBytes = 100L; TxBytes = 0L; TotalBytes = 100L }
+        ) }
+        $actual = Repair-MeterProxyAttribution -Result $fake -DataDirectory $directory -UnattributedName 'Via proxy'
+        Assert-Equal @($actual.Days).Count 1
+        Assert-Equal $actual.Days[0].Name 'Via proxy'
+        Assert-Equal $actual.Days[0].RxBytes 400L
     }
     Invoke-MonitorTest 'Repairs without proxy configuration or availability stay untouched' {
         param($module, $directory)
@@ -268,6 +314,35 @@ try {
             $sample = Get-MeterProxyClientSample -Ports @(1) -ProcessNames @('definitely-not-running-proxy')
             Assert-True ($null -ne $sample.Clients) 'The live table read must return a stable collection.'
             Write-Output ('PASS: Live TCP table rows classified: {0}' -f @($sample.Clients).Count)
+            foreach ($address in @([Net.IPAddress]::Any, [Net.IPAddress]::IPv6Any)) {
+                $listener = [Net.Sockets.TcpListener]::new($address, 0)
+                try {
+                    $listener.Start()
+                    $port = $listener.LocalEndpoint.Port
+                    $listeners = @([WiFiMeter.Networking.TcpTable]::GetListeners() | Where-Object { $_.LocalPort -eq $port -and $_.OwningPid -eq $PID })
+                    Assert-Equal $listeners.Count 1 'Native table must identify an idle listener and its owner.'
+                    Assert-Equal $listeners[0].State 2
+                    Assert-Equal @([WiFiMeter.Networking.TcpTable]::GetEstablishedConnections() | Where-Object { $_.LocalPort -eq $port }).Count 0 'Listening sockets must not inflate established connection counts.'
+                    [IO.File]::WriteAllText((Join-Path $temporary 'settings.json'), ('{"Proxy":{"Ports":[' + $port + ']}}'))
+                    [IO.File]::WriteAllText((Join-Path $temporary 'proxy-clients.json'), '{"SchemaVersion":1,"Days":[{"Date":"2026-10-01","Clients":[{"Name":"browser-client","Connections":1}],"Keys":["a"]}]}')
+                    $process = Get-Process -Id $PID
+                    try { $ownerName = $process.ProcessName } finally { $process.Dispose() }
+                    $fake = [pscustomobject]@{ Available = $true; Rows = @(); Days = @(
+                        [pscustomobject]@{ Date = '2026-10-01'; AppId = ''; Name = $ownerName; RxBytes = 300L; TxBytes = 20L; TotalBytes = 320L }
+                    ) }
+                    $original = $fake | ConvertTo-Json -Depth 6
+                    $actual = Repair-MeterProxyAttribution -Result $fake -DataDirectory $temporary -UnattributedName 'Via proxy'
+                    Assert-Equal $actual.Days[0].Name 'browser-client' 'Port-only settings must resolve the real idle listener owner.'
+                    Assert-Equal $actual.Days[0].TotalBytes 320L
+                    Assert-True $actual.Days[0].Estimated 'Proxy attribution remains an estimate.'
+                    $listener.Stop()
+                    $fake = $original | ConvertFrom-Json
+                    $actual = Repair-MeterProxyAttribution -Result $fake -DataDirectory $temporary -UnattributedName 'Via proxy'
+                    Assert-Equal ($actual | ConvertTo-Json -Depth 6) $original 'A stopped listener must not leave stale process attribution.'
+                    Write-Output ('PASS: Live port-only attribution and stopped listener: ' + $address.AddressFamily)
+                } finally { $listener.Stop() }
+            }
+
         } finally { Remove-Module $module -Force }
     }
     Write-Output ('App monitor tests passed: ' + $script:count)

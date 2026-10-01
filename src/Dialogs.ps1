@@ -24,34 +24,65 @@ function ConvertTo-MeterAppIconFrom {
     } finally { if ($null -ne $drawingIcon) { $drawingIcon.Dispose() } }
 }
 
+function Resolve-MeterAppIconPath {
+    param([string]$Candidate)
+    if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
+    $path = [Environment]::ExpandEnvironmentVariables($Candidate.Trim().Trim('"'))
+    if ($path.StartsWith('\??\') -or $path.StartsWith('\\?\')) { $path = $path.Substring(4) }
+    if ($path.StartsWith('\SystemRoot\', [StringComparison]::OrdinalIgnoreCase)) { $path = Join-Path $env:SystemRoot $path.Substring(12) }
+    if ($path.StartsWith('\Device\', [StringComparison]::OrdinalIgnoreCase)) {
+        if (-not ('WiFiMeter.DialogDevicePaths' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+namespace WiFiMeter {
+    public static class DialogDevicePaths {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        public static extern uint QueryDosDevice(string name, StringBuilder target, int length);
+    }
+}
+'@
+        }
+        foreach ($drive in [IO.DriveInfo]::GetDrives()) {
+            $target = [Text.StringBuilder]::new(1024)
+            if ([WiFiMeter.DialogDevicePaths]::QueryDosDevice($drive.Name.Substring(0, 2), $target, $target.Capacity) -eq 0) { continue }
+            $prefix = $target.ToString() + '\'
+            if ($path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $path = $drive.Name + $path.Substring($prefix.Length); break }
+        }
+    }
+    # Resolve local executables without shell lookup or remote path probes.
+    if ($path -match '^[a-zA-Z]:\\' -and [IO.File]::Exists($path)) { return $path }
+    if ($path -notmatch '[\\/:*?\[\]]') {
+        foreach ($process in @(Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($path)) -ErrorAction SilentlyContinue)) {
+            try { if ($process.Path -and [IO.File]::Exists($process.Path)) { return $process.Path } } catch { }
+            finally { $process.Dispose() }
+        }
+    }
+}
+
 function Get-MeterAppIcon {
     [CmdletBinding()]
     param([AllowEmptyString()][string]$AppId, [AllowEmptyString()][string]$Name)
-    # Only rooted, existing executable paths are worth extracting; everything else
-    # (package identifiers, bare process names) stays on the placeholder glyph.
     if ($script:AppIconCache.Count -ge $script:AppIconCacheLimit) { $script:AppIconCache.Clear() }
     foreach ($candidate in @($AppId, $Name)) {
         if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-        if ($script:AppIconCache.ContainsKey($candidate)) { return $script:AppIconCache[$candidate] }
-    }
-    foreach ($candidate in @($AppId, $Name)) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-        $icon = $null
+        if ($script:AppIconCache.ContainsKey($candidate) -and $null -ne $script:AppIconCache[$candidate]) { return $script:AppIconCache[$candidate] }
         try {
-            if ([IO.Path]::IsPathRooted($candidate) -and [IO.File]::Exists($candidate)) {
-                $icon = ConvertTo-MeterAppIconFrom -Path $candidate
+            $path = Resolve-MeterAppIconPath -Candidate $candidate
+            if ($path) {
+                $icon = ConvertTo-MeterAppIconFrom -Path $path
+                if ($null -ne $icon) { $script:AppIconCache[$candidate] = $icon; return $icon }
             }
-        } catch { $icon = $null }
-        # Misses are cached too so repeated lookups do not probe the file system.
-        $script:AppIconCache[$candidate] = $icon
-        if ($null -ne $icon) { return $icon }
+        } catch { }
+        # A process may start later, so misses must remain retryable.
     }
     return $null
 }
 
 function New-MeterDialog {
     param([string]$TitleKey, [int]$Width, [int]$Height, [string]$Content)
-    $markup = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize"><Border Background="{DynamicResource PageBackground}" Padding="24"><Grid>' + $Content + '</Grid></Border></Window>'
+    $markup = '<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="{DynamicResource PageBackground}" FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="13" Foreground="{DynamicResource TextPrimary}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False" ResizeMode="NoResize" UseLayoutRounding="True" SnapsToDevicePixels="True"><Border Background="{DynamicResource PageBackground}" Padding="24"><Grid>' + $Content + '</Grid></Border></Window>'
     $dialog = [Windows.Markup.XamlReader]::Parse($markup)
     $dialog.Title = Text-Meter $TitleKey
     $dialog.Width = $Width
@@ -175,9 +206,13 @@ function New-MeterSettingsDialog {
     <Border BorderBrush="{DynamicResource DividerSoft}" BorderThickness="0,1,0,0" Margin="0,16,0,0" />
     <TextBlock Text="{DynamicResource ProxyPorts}" FontWeight="SemiBold" FontSize="14" Margin="0,16,0,0" />
     <TextBox x:Name="Ports" Padding="9,7" Margin="0,12,0,0" VerticalContentAlignment="Center" />
-    <TextBlock Text="{DynamicResource ProxyProcesses}" FontWeight="SemiBold" FontSize="14" Margin="0,14,0,0" />
-    <TextBox x:Name="Processes" Padding="9,7" Margin="0,12,0,0" VerticalContentAlignment="Center" />
-    <TextBlock Text="{DynamicResource ProxyHint}" Foreground="{DynamicResource Muted}" FontSize="11" LineHeight="17" TextWrapping="Wrap" Margin="0,10,0,0" />
+    <TextBlock Text="{DynamicResource ProxyAutoDetectHint}" Foreground="{DynamicResource Muted}" FontSize="11" TextWrapping="Wrap" Margin="0,10,0,0" />
+    <Expander Header="{DynamicResource ProxyAdvanced}" Margin="0,14,0,0">
+      <StackPanel Margin="0,10,0,0">
+        <TextBlock Text="{DynamicResource ProxyProcessesOptional}" Foreground="{DynamicResource Muted}" />
+        <TextBox x:Name="Processes" Padding="9,7" Margin="0,8,0,0" VerticalContentAlignment="Center" />
+      </StackPanel>
+    </Expander>
     <TextBlock x:Name="Error" Foreground="{DynamicResource DangerText}" TextWrapping="Wrap" Margin="0,14,0,0" />
   </StackPanel>
 </ScrollViewer>
@@ -257,7 +292,7 @@ function New-MeterUsageGrid {
 <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
     <Grid Width="20" Height="20" VerticalAlignment="Center">
-      <TextBlock FontFamily="Segoe MDL2 Assets" Text="" FontSize="13" Foreground="{DynamicResource Faint}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8A5;" FontSize="13" Foreground="{DynamicResource Faint}" HorizontalAlignment="Center" VerticalAlignment="Center" />
       <Image Source="{Binding Icon}" Width="18" Height="18" RenderOptions.BitmapScalingMode="HighQuality" HorizontalAlignment="Center" VerticalAlignment="Center" />
     </Grid>
     <TextBlock Text="{Binding Name}" VerticalAlignment="Center" Margin="8,0,0,0" TextTrimming="CharacterEllipsis" />
@@ -268,14 +303,15 @@ function New-MeterUsageGrid {
     $fields = @()
     if ($IncludeDate) { $fields += ,@('Date', 'Date', 112) }
     $fields += ,@('Name', 'Application', '*')
-    $fields += ,@('DownloadGB', 'DownloadGB', 110)
-    $fields += ,@('UploadGB', 'UploadGB', 110)
-    $fields += ,@('TotalGB', 'TotalGB', 110)
+    $fields += ,@('DownloadGB', 'DownloadGB', 135)
+    $fields += ,@('UploadGB', 'UploadGB', 125)
+    $fields += ,@('TotalGB', 'TotalGB', 120)
     foreach ($field in $fields) {
         if ($field[0] -ceq 'Name') {
             $column = [Windows.Controls.DataGridTemplateColumn]::new()
             $column.Header = Text-Meter $field[1]
             $column.CellTemplate = $script:AppIconCellTemplate
+            $column.MinWidth = 220
             $column.Width = [Windows.Controls.DataGridLengthConverter]::new().ConvertFromString([string]$field[2])
         } else {
             $column = [Windows.Controls.DataGridTextColumn]::new()
@@ -294,6 +330,7 @@ function ConvertTo-MeterAppRows {
     return @(foreach ($row in $Rows) {
         [pscustomobject]@{
             Name = $row.Name
+            AppId = $(if ($row.PSObject.Properties['AppId']) { [string]$row.AppId } else { '' })
             Date = $(if ($row.PSObject.Properties['Date']) { $row.Date } else { '' })
             DownloadGB = [double]$row.RxBytes / 1e9
             UploadGB = [double]$row.TxBytes / 1e9
@@ -321,16 +358,63 @@ function Get-MeterAppUsageMessageKey {
     return $messageKey
 }
 
+function Update-MeterAppUsageFilter {
+    param($Context)
+    if (-not $Context.ContainsKey('Result') -or $null -eq $Context.Result) { return }
+    $query = if ($Context.ContainsKey('AppSearch')) { $Context.AppSearch.Text.Trim() } else { '' }
+    foreach ($pair in @(@('Apps', 'Rows'), @('Daily', 'Days'))) {
+        $rows = @($Context.Result.($pair[1]) | Where-Object { -not $query -or ([string]$_.Name).IndexOf($query, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        $Context[$pair[0]].ItemsSource = @(ConvertTo-MeterAppRows -Rows $rows)
+    }
+    $messageKey = Get-MeterAppUsageMessageKey -Result $Context.Result
+    $Context.Status.Text = if ($messageKey -eq 'AppUsageSource') { '' } else { Text-Meter $messageKey }
+    if ($query -and $Context.Apps.Items.Count -eq 0 -and $Context.Daily.Items.Count -eq 0 -and $Context.Result.Available) { $Context.Status.Text = Text-Meter 'AppUsageNoMatch' }
+    $Context.Status.ToolTip = $Context.Result.Message
+    $Context.Apps.ToolTip = Text-Meter $messageKey
+    $Context.Daily.ToolTip = $Context.Apps.ToolTip
+}
+
 function Complete-MeterAppUsage {
     param($Context, $Result)
-    $Context.Apps.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Rows))
-    $Context.Daily.ItemsSource = @(ConvertTo-MeterAppRows -Rows @($Result.Days))
-    $Context.Status.Text = Text-Meter (Get-MeterAppUsageMessageKey -Result $Result)
-    $Context.Status.ToolTip = $Result.Message
+    $Context.Result = $Result
+    Update-MeterAppUsageFilter -Context $Context
+}
+
+function Set-MeterAppUsageRange {
+    param($Context)
+    $period = [string]$Context.AppPeriod.SelectedItem.Tag
+    $custom = $period -eq 'Range'
+    $Context.AppFrom.IsEnabled = $custom
+    $Context.AppTo.IsEnabled = $custom
+    if ($custom) {
+        if ($null -eq $Context.AppFrom.SelectedDate -or $null -eq $Context.AppTo.SelectedDate) { $Context.Status.Text = Text-Meter 'MissingDates'; return }
+        $start = ([datetime]$Context.AppFrom.SelectedDate).Date
+        $end = ([datetime]$Context.AppTo.SelectedDate).Date
+        if ($start -gt $end) { $Context.Status.Text = Text-Meter 'ErrorDateOrder'; return }
+    } else {
+        $end = [datetime]::Today
+        $start = switch ($period) { 'Today' { $end }; 'Month' { $end.AddDays(1 - $end.Day) }; default { [datetime]::new(2000, 1, 1) } }
+    }
+    $Context.AppFrom.SelectedDate = $start
+    $Context.AppTo.SelectedDate = $end
+    $Context.Start = $start
+    $Context.End = $end
+    Start-MeterAppUsageRead -Context $Context
 }
 
 function Start-MeterAppUsageRead {
     param($Context)
+    if ($Context.ContainsKey('Closed') -and $Context.Closed) { return }
+    if (-not $Context.ContainsKey('Closed')) { $Context.Closed = $false }
+    if (-not $Context.ContainsKey('Version')) { $Context.Version = 0 }
+    $Context.Version++
+    $Context.Result = $null
+    $Context.Apps.ItemsSource = @()
+    $Context.Daily.ItemsSource = @()
+    $Context.Status.ToolTip = $null
+    $Context.Status.Text = Text-Meter 'AppUsageLoading'
+    # Coalesce range changes and discard stale results before starting the latest query.
+    if ($Context.ContainsKey('Worker') -and $null -ne $Context.Worker) { return }
     # Wired identities have no Wi-Fi profile; Windows keeps no app usage for them.
     if (Test-MeterWiredIdentity $Context.SSID) {
         Complete-MeterAppUsage -Context $Context -Result ([pscustomobject]@{ Available = $false; MessageCode = 'WiredNetwork'; Rows = @(); Days = @(); Message = (Text-Meter 'AppUsageWired') })
@@ -341,6 +425,7 @@ function Start-MeterAppUsageRead {
             [pscustomobject]@{ Name = 'Microsoft Edge'; AppId = 'msedge'; RxBytes = 1850000000; TxBytes = 85000000; TotalBytes = 1935000000; Date = [DateTime]::Today.ToString('yyyy-MM-dd') },
             [pscustomobject]@{ Name = 'Windows Update'; AppId = 'system'; RxBytes = 610000000; TxBytes = 5000000; TotalBytes = 615000000; Date = [DateTime]::Today.ToString('yyyy-MM-dd') }
         )
+        $sample = @($sample | Where-Object { [datetime]$_.Date -ge $Context.Start -and [datetime]$_.Date -le $Context.End })
         foreach ($row in $sample) { $row | Add-Member -NotePropertyName Icon -NotePropertyValue (Get-MeterAppIcon -AppId ([string]$row.AppId) -Name ([string]$row.Name)) -Force }
         Complete-MeterAppUsage -Context $Context -Result ([pscustomobject]@{ Available = $true; Rows = $sample; Days = $sample; Message = Text-Meter 'PreviewDetail' })
         return
@@ -351,28 +436,33 @@ function Start-MeterAppUsageRead {
     # by observed client connections, and Dialogs for icon extraction, before the
     # result reaches the dialog; the UI thread never extracts icons in bulk.
     [void]$Context.Worker.AddScript('param($module, $monitorModule, $dialogModule, $proxyRowName, $ssid, $start, $end, $directory) Import-Module $module -Force -ErrorAction Stop; Import-Module $monitorModule -Force -ErrorAction Stop; Import-Module $dialogModule -Force -ErrorAction Stop; $result = Get-MeterAppUsage -SSID $ssid -StartDate $start -EndDate $end -DataDirectory $directory -ErrorAction Stop; $result = Repair-MeterProxyAttribution -Result $result -DataDirectory $directory -UnattributedName $proxyRowName; foreach ($row in @($result.Rows) + @($result.Days)) { $row | Add-Member -NotePropertyName Icon -NotePropertyValue (Get-MeterAppIcon -AppId ([string]$row.AppId) -Name ([string]$row.Name)) -Force }; return $result').AddArgument((Join-Path $PSScriptRoot 'AppUsage.psm1')).AddArgument((Join-Path $PSScriptRoot 'AppMonitor.psm1')).AddArgument((Join-Path $PSScriptRoot 'Dialogs.ps1')).AddArgument((Text-Meter 'ProxyUnattributedRow')).AddArgument($Context.SSID).AddArgument($Context.Start).AddArgument($Context.End).AddArgument($script:directory)
-    $Context.Pending = $Context.Worker.BeginInvoke()
+    $Context.ActiveVersion = $Context.Version
+    try { $Context.Pending = $Context.Worker.BeginInvoke() }
+    catch { $Context.Worker.Dispose(); $Context.Worker = $null; $Context.Status.Text = Text-Meter 'AppUsageUnavailable'; $Context.Status.ToolTip = $_.Exception.Message; return }
     $Context.Poll = [Windows.Threading.DispatcherTimer]::new()
     $Context.Poll.Interval = [TimeSpan]::FromMilliseconds(200)
     $Context.Poll.Tag = $Context
-    $Context.Poll.Add_Tick({
-        param($sender, $eventArgs)
-        $state = $sender.Tag
-        if (-not $state.Pending.IsCompleted) { return }
-        $sender.Stop()
+    $Context.Poll.Add_Tick({ param($sender, $eventArgs) Receive-MeterAppUsageRead -Context $sender.Tag })
+    $Context.Poll.Start()
+}
+
+function Receive-MeterAppUsageRead {
+    param($Context)
+    $state = $Context
+        if ($null -eq $state -or $state.Closed -or $null -eq $state.Pending -or -not $state.Pending.IsCompleted) { return }
+        $state.Poll.Stop()
         try {
             $results = @($state.Worker.EndInvoke($state.Pending))
             if ($state.Worker.HadErrors -or $results.Count -eq 0) { throw 'Application usage query failed.' }
-            Complete-MeterAppUsage -Context $state -Result $results[-1]
-        } catch { $state.Status.Text = Text-Meter 'AppUsageUnavailable'; $state.Status.ToolTip = $_.Exception.Message }
-        finally { $state.Worker.Dispose(); $state.Worker = $null }
-    })
-    $Context.Poll.Start()
+            if ($state.ActiveVersion -eq $state.Version) { Complete-MeterAppUsage -Context $state -Result $results[-1] }
+        } catch { if ($state.ActiveVersion -eq $state.Version) { $state.Status.Text = Text-Meter 'AppUsageUnavailable'; $state.Status.ToolTip = $_.Exception.Message } }
+        finally { $state.Worker.Dispose(); $state.Worker = $null; $state.Pending = $null; $state.Poll.Tag = $null; $state.Poll = $null }
+        if (-not $state.Closed -and $state.ActiveVersion -ne $state.Version) { Start-MeterAppUsageRead -Context $state }
 }
 
 function New-MeterNetworkDialog {
     param([Parameter(Mandatory)][string]$SSID)
-    $dialog = New-MeterDialog -TitleKey NetworkDetails -Width 820 -Height 625 -Content @'
+    $dialog = New-MeterDialog -TitleKey NetworkDetails -Width 900 -Height 715 -Content @'
 <Grid.RowDefinitions>
   <RowDefinition Height="Auto" />
   <RowDefinition Height="Auto" />
@@ -381,7 +471,27 @@ function New-MeterNetworkDialog {
 </Grid.RowDefinitions>
 <TextBlock x:Name="Name" FontSize="23" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
 <TextBlock x:Name="SSID" Grid.Row="1" Foreground="{DynamicResource Muted}" Margin="0,6,0,20" TextTrimming="CharacterEllipsis" />
-<TabControl Grid.Row="2" x:Name="Tabs" Background="Transparent" BorderThickness="0">
+<Grid Grid.Row="2">
+<Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+<StackPanel Grid.Row="1" x:Name="UsageFilters" Margin="0,16,0,0">
+  <TextBlock Text="{DynamicResource SearchApplications}" Foreground="{DynamicResource Muted}" Margin="0,0,0,6" />
+  <TextBox x:Name="AppSearch" Padding="10,7" AutomationProperties.Name="{DynamicResource SearchApplications}" />
+  <WrapPanel Margin="0,10,0,0">
+    <ComboBox x:Name="AppPeriod" Width="150" Margin="0,0,12,0" AutomationProperties.Name="{DynamicResource CustomRange}">
+      <ComboBoxItem Tag="Today" Content="{DynamicResource Today}" />
+      <ComboBoxItem Tag="Month" Content="{DynamicResource Month}" />
+      <ComboBoxItem Tag="Range" Content="{DynamicResource CustomRange}" />
+      <ComboBoxItem Tag="All" Content="{DynamicResource AllTime}" />
+    </ComboBox>
+    <TextBlock Text="{DynamicResource StartDate}" VerticalAlignment="Center" Margin="0,0,8,0" />
+    <DatePicker x:Name="AppFrom" Width="145" AutomationProperties.Name="{DynamicResource StartDate}" />
+    <TextBlock Text="{DynamicResource EndDate}" VerticalAlignment="Center" Margin="12,0,8,0" />
+    <DatePicker x:Name="AppTo" Width="145" AutomationProperties.Name="{DynamicResource EndDate}" />
+    <Button x:Name="AppApply" Content="{DynamicResource Apply}" Margin="12,0,0,0" MinWidth="70" />
+  </WrapPanel>
+</StackPanel>
+<TabControl Grid.Row="0" x:Name="Tabs" Background="Transparent" BorderThickness="0">
+  <TabControl.Template><ControlTemplate TargetType="TabControl"><StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle" /></ControlTemplate></TabControl.Template>
   <TabItem Header="{DynamicResource NetworkSettings}" Padding="14,8">
     <StackPanel Margin="4,22,4,0">
       <TextBlock Text="{DynamicResource Alias}" FontWeight="SemiBold" />
@@ -413,6 +523,8 @@ function New-MeterNetworkDialog {
   <TabItem Header="{DynamicResource Applications}" Padding="14,8"><Grid x:Name="AppsHost" Margin="0,16,0,0" /></TabItem>
   <TabItem Header="{DynamicResource ByDay}" Padding="14,8"><Grid x:Name="DailyHost" Margin="0,16,0,0" /></TabItem>
 </TabControl>
+<ContentPresenter Grid.Row="2" Content="{Binding SelectedContent, ElementName=Tabs}" />
+</Grid>
 <Grid Grid.Row="3" Margin="0,18,0,0">
   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
   <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="{DynamicResource Muted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,15,0" />
@@ -426,12 +538,13 @@ function New-MeterNetworkDialog {
     $range = Get-CurrentMeterRange
     $start = switch ($range.Period) { 'Today' { [DateTime]::Today }; 'Month' { [DateTime]::Today.AddDays(1 - [DateTime]::Today.Day) }; 'Range' { $range.StartDate }; default { [DateTime]::new(2000, 1, 1) } }
     $end = if ($range.Period -eq 'Range') { $range.EndDate } else { [DateTime]::Today }
-    $context = @{ Window = $dialog; SSID = $SSID; Start = $start; End = $end; Worker = $null; Pending = $null; Poll = $null; Saved = $false }
-    foreach ($name in @('Alias', 'Limit', 'Period', 'Warn', 'Disconnect', 'Error', 'Save', 'Status')) { $context[$name] = $dialog.FindName($name) }
+    $context = @{ Window = $dialog; SSID = $SSID; Start = $start; End = $end; Worker = $null; Pending = $null; Poll = $null; Saved = $false; Closed = $false; Version = 0; Result = $null }
+    foreach ($name in @('Alias', 'Limit', 'Period', 'Warn', 'Disconnect', 'Error', 'Save', 'Status', 'AppSearch', 'AppPeriod', 'AppFrom', 'AppTo', 'AppApply', 'UsageFilters', 'Tabs')) { $context[$name] = $dialog.FindName($name) }
     # Wired identities show the connection name (or alias); the raw identity stays below.
     $display = Resolve-MeterNetworkDisplayName -SSID $SSID -Aliases (Get-MeterNetworkAliasMap) -WiredNames (Get-MeterWiredNameMap)
     $dialog.FindName('Name').Text = $display
     $dialog.FindName('SSID').Text = $SSID
+    if ([string]::IsNullOrWhiteSpace($display) -or $display -eq $SSID) { $dialog.FindName('SSID').Visibility = 'Collapsed'; $dialog.FindName('Name').Margin = '0,0,0,16' }
     $context.Alias.Text = $network.Alias
     $context.Limit.Text = [string]$network.LimitGB
     $context.Warn.Text = [string]$network.WarnPercent
@@ -441,6 +554,28 @@ function New-MeterNetworkDialog {
     $context.Daily = New-MeterUsageGrid -IncludeDate $true
     [void]$dialog.FindName('AppsHost').Children.Add($context.Apps)
     [void]$dialog.FindName('DailyHost').Children.Add($context.Daily)
+    $context.AppFrom.SelectedDate = $start
+    $context.AppTo.SelectedDate = $end
+    $context.AppFrom.DisplayDateEnd = [datetime]::Today
+    $context.AppTo.DisplayDateEnd = [datetime]::Today
+    foreach ($item in $context.AppPeriod.Items) { if ($item.Tag -eq $range.Period) { $context.AppPeriod.SelectedItem = $item } }
+    if ($null -eq $context.AppPeriod.SelectedItem) { $context.AppPeriod.SelectedIndex = 3 }
+    $context.AppFrom.IsEnabled = $context.AppPeriod.SelectedItem.Tag -eq 'Range'
+    $context.AppTo.IsEnabled = $context.AppFrom.IsEnabled
+    $context.AppSearch.Tag = $context
+    $context.AppSearch.Add_TextChanged({ param($sender, $eventArgs) Update-MeterAppUsageFilter -Context $sender.Tag })
+    $context.AppPeriod.Tag = $context
+    $context.AppPeriod.Add_SelectionChanged({ param($sender, $eventArgs) Set-MeterAppUsageRange -Context $sender.Tag })
+    $context.AppApply.Tag = $context
+    $context.AppApply.Add_Click({ param($sender, $eventArgs) Set-MeterAppUsageRange -Context $sender.Tag })
+    $context.UsageFilters.Visibility = 'Collapsed'
+    $context.Tabs.Tag = $context
+    $context.Tabs.Add_SelectionChanged({
+        param($sender, $eventArgs)
+        if ($eventArgs.OriginalSource -ne $sender) { return }
+        $sender.Tag.UsageFilters.Visibility = if ($sender.SelectedIndex -eq 0) { 'Collapsed' } else { 'Visible' }
+        $sender.Tag.Save.Visibility = if ($sender.SelectedIndex -eq 0) { 'Visible' } else { 'Collapsed' }
+    })
     $context.Save.Tag = $context
     $context.Save.Add_Click({
         param($sender, $eventArgs)
@@ -467,12 +602,11 @@ function New-MeterNetworkDialog {
     $dialog.Add_Closed({
         param($sender, $eventArgs)
         $state = $sender.Tag
-        if ($null -ne $state.Poll) { $state.Poll.Stop() }
+        $state.Closed = $true
+        if ($null -ne $state.Poll) { $state.Poll.Stop(); $state.Poll.Tag = $null; $state.Poll = $null }
         if ($null -ne $state.Worker) {
             # The WinRT query has a bounded timeout; cancellation interrupts its wait.
-            $state.Worker.Stop()
-            $state.Worker.Dispose()
-            $state.Worker = $null
+            try { $state.Worker.Stop() } finally { $state.Worker.Dispose(); $state.Worker = $null; $state.Pending = $null }
         }
     })
     $dialog.FindName('Close').Tag = $context

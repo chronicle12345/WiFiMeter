@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -17,8 +17,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("WiFiMeter - Per-user setup and uninstall")]
 [assembly: AssemblyProduct("WiFiMeter")]
 [assembly: AssemblyCompany("WiFiMeter")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 namespace WiFiMeter.Setup
 {
@@ -308,7 +308,7 @@ namespace WiFiMeter.Setup
             using (RegistryKey key = Registry.CurrentUser.CreateSubKey(settings.RegistryPath))
             {
                 key.SetValue("DisplayName", "WiFiMeter");
-                key.SetValue("DisplayVersion", "1.0.0");
+                key.SetValue("DisplayVersion", "1.1.0");
                 key.SetValue("Publisher", "WiFiMeter");
                 key.SetValue("InstallLocation", settings.InstallRoot);
                 key.SetValue("DisplayIcon", executable);
@@ -601,7 +601,7 @@ namespace WiFiMeter.Setup
             close.Text = settings.Text("Cancel", "取消");
             action.Text = finished ? settings.Text("Finish", "完成") : (settings.Uninstall ? settings.Text("Uninstall", "卸载") : settings.Text("Install", "安装"));
             if (finished) status.Text = settings.Uninstall ? settings.Text("Uninstall complete. Usage data has been kept.", "卸载完成，统计数据已保留") : settings.Text("Installation complete", "安装完成");
-            else status.Text = settings.Uninstall ? settings.Text("The collector will save your data before it exits.", "后台统计会先保存数据并退出。") : settings.Text("Version 1.0.0 · Windows 10 / 11", "版本 1.0.0 · Windows 10 / 11");
+            else status.Text = settings.Uninstall ? settings.Text("The collector will save your data before it exits.", "后台统计会先保存数据并退出。") : settings.Text("Version 1.1.0 · Windows 10 / 11", "版本 1.1.0 · Windows 10 / 11");
         }
 
         private void Begin(object sender, EventArgs e)
