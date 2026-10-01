@@ -8,7 +8,7 @@
 ### 在 Windows 10/11 x64 上
 
 1. 安装 Node.js 22.12 或更新的受支持版本（x64，包含 npm）。
-2. 安装 CMake 与支持 C++20 的编译器（Visual Studio 2022 的“使用 C++ 的桌面开发”组件即可）。
+2. 安装 CMake 与支持 C++20 的编译器（Visual Studio 2022 或更新版本的“使用 C++ 的桌面开发”组件即可）。
    后端在 Windows 上使用仓库内置的 SQLite，不需要额外安装 SQLite 开发包。
 3. 在项目根目录打开 PowerShell：
 
@@ -125,3 +125,10 @@ node packaging/windows/acceptance.mjs
 并把缓存改到 `.cross-build/`（`HOME` 只读时也能构建）。`electron-builder.cjs` 覆盖共享配置中的
 产品名称、标识与输出路径，并把 `build/windows/app/wifimeter-backend.exe` 作为 extraResources
 放进 `resources/`，与主进程的查找规则一致。旧 Windows 发布工作流保持独立。
+
+## 多架构入口
+
+新增参数、NSIS/Portable 格式、架构检查和验证限制见 [打包总说明](../README.md)。
+`node packaging/windows/build.cjs --arch arm64 --formats nsis,portable` 需要 Windows Visual Studio ARM64 工具链；ia32 使用 Win32 工具链。上述旧版 x64 验收记录不代表新增架构已通过验收。
+
+当前集成环境已完成 npm ci，Electron 可运行，已有 VS18 与 Ninja/MinGW；build/windows 的 Ninja/MinGW 缓存会原样复用。新构建目录可设置 CMAKE_GENERATOR，只有 Visual Studio 生成器使用 -A。控制模块随包放在 resources/native/windows/AppNetworkControl.psm1，位于 asar 外。

@@ -1,115 +1,146 @@
-name: Windows native build and tests
-
-# 验证 Windows 本机构建路径：MSVC + 本机 CMake + Node，即用户在 Windows 机器上
-# `npm run dist:windows` 会走的那条路。
-#
-# 为什么单独一个工作流：desktop.yml 在 Linux 上跑的是交叉编译（Zig + Wine），验证的是
-# 目标平台的行为；这里验证的是**工具链与构建脚本**，两者覆盖的问题不同——
-# 例如 MSVC 的告警、Zig 未覆盖的编译分支、Windows 上的 npm 脚本与 electron-builder。
-#
-# 也顺带把 desktop.yml 里跳过的界面测试真正跑一遍（Windows 有图形会话）。
+name: Windows native matrix
 
 on:
-  push:
-    branches:
-      - main
-      - cross-platform
-      - 'feature/**'
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  backend:
-    name: Backend (MSVC)
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Configure and build the backend
-        run: |
-          cmake -S backend -B build/windows -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/windows --target wifimeter-backend --config Release
-
-      - name: Build the test targets
-        # 交叉编译脚本在 Linux 上会把测试目标也编出来；Windows 上由这个工作流负责，
-        # 否则 MSVC 下的测试代码永远不会被编译到。
-        run: cmake --build build/windows --config Release
-
-      - name: Run the tests
-        # 用 ctest 而不是逐个跑：测试目标是否被正确注册、名字是否对得上，这里一起验证。
-        # 后端可执行文件、假数据源与临时目录都在这一步真实运行。
-        run: ctest --test-dir build/windows --output-on-failure -C Release
-
-      - name: Verify actual Windows application capture
-        # 必须在 Windows 管理员会话验证真实 ETW；不能由 Wine 或跳过的用例代替。
-        run: python backend/tests/windows_app_capture_smoke.py build/windows/app/wifimeter-app-capture.exe --require-native
-
-      - name: Upload test logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-backend-test-logs
-          path: build/windows/Testing/
-          if-no-files-found: ignore
-
-  desktop:
-    name: Desktop application (Windows)
-    runs-on: windows-latest
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install dependencies
-        run: npm ci --prefix apps/desktop
-
-      - name: Build the backend
-        run: npm run build:backend
-
-      - name: Unit tests
-        run: npm run test:unit
-
-      # Windows 有图形会话，界面测试可以直接跑；它用夹具的网卡数据驱动真实后端，
-      # 不会改动机器的网络状态。
-      - name: Interface tests
-        run: npm run test:ui
-
-      # 打包路径也在这里验证一遍：这是用户在 Windows 上真正会执行的那条命令。
-      # 它同时覆盖 electron-builder 的 NSIS 目标、extraResources 打包后端，
-      # 以及打包产物的确定性检查（后端是 PE、体积合理、安装包存在）。
-      - name: Build the NSIS installer
-        run: npm run dist:windows
-
-      - name: Verify the packaged artifacts
+  native:
+    name: Windows ${{ matrix.arch }} backend, UI and packages
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            arch: x64
+            node_arch: x64
+            python_arch: x64
+            cmake_arch: x64
+          - runner: windows-latest
+            arch: ia32
+            node_arch: x86
+            python_arch: x64
+            cmake_arch: Win32
+          - runner: windows-11-arm
+            arch: arm64
+            node_arch: arm64
+            python_arch: arm64
+            cmake_arch: ARM64
+    defaults:
+      run:
         shell: pwsh
-        run: |
-          $setup = 'dist/windows/WiFiMeter-1.0.0-x64-Setup.exe'
-          $app = 'dist/windows/win-unpacked/WiFiMeter.exe'
-          $backend = 'dist/windows/win-unpacked/resources/wifimeter-backend.exe'
-          $capture = 'dist/windows/win-unpacked/resources/wifimeter-app-capture.exe'
-          foreach ($path in @($setup, $app, $backend, $capture)) {
-            if (-not (Test-Path -LiteralPath $path)) { throw "缺少打包产物：$path" }
-          }
-          if ((Get-Item -LiteralPath $setup).Length -lt 50MB) { throw '安装包体积异常' }
-
-          # 随包的后端必须能独立运行并自报版本（这是它被真正分发出去的证明）。
-          $version = & $backend --version
-          if ($version -notmatch 'wifimeter-backend 1\.0\.0') { throw "后端自报版本异常：$version" }
-          $productVersion = (Get-Item -LiteralPath $app).VersionInfo.ProductVersion
-          if ($productVersion -notmatch '^1\.0\.0($|\.)') { throw "桌面应用版本异常：$productVersion" }
-          Write-Output "打包产物校验通过：$version"
-
-      - name: Upload the installer
-        uses: actions/upload-artifact@v7
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          name: WiFiMeter-Windows-x64
-          path: dist/windows/WiFiMeter-1.0.0-x64-Setup.exe
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.0
+          architecture: ${{ matrix.node_arch }}
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: 3.13.7
+          architecture: ${{ matrix.python_arch }}
+      - name: Resolve architecture and installed Visual Studio generator
+        run: |
+          node .github/workflows/scripts/ci.cjs environment win32 '${{ matrix.arch }}'
+          if ($LASTEXITCODE) { throw '目标 Node.js 架构不匹配' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installed = & $vswhere -latest -products '*' -property installationVersion
+          if ($LASTEXITCODE -or -not $installed) { throw '缺少 Visual Studio C++ 工具链' }
+          $major = ($installed -split '\.')[0]
+          $capabilities = cmake -E capabilities | ConvertFrom-Json
+          if ($LASTEXITCODE) { throw '无法读取 CMake 生成器' }
+          $generator = $capabilities.generators.name | Where-Object { $_ -match "^Visual Studio $major " } | Select-Object -First 1
+          if (-not $generator) { throw 'CMake 不支持当前 Visual Studio 版本' }
+          "CMAKE_GENERATOR=$generator" >> $env:GITHUB_ENV
+      - name: Install locked desktop dependencies
+        run: |
+          if ('${{ matrix.arch }}' -eq 'ia32') {
+            # 只安装锁定依赖；ia32 使用下面显式下载的兼容 runtime。
+            npm ci --prefix apps/desktop --ignore-scripts
+          } else {
+            npm ci --prefix apps/desktop
+          }
+          if ($LASTEXITCODE) { throw 'npm ci 失败' }
+      - name: Download pinned official ia32 runtime with checksum verification
+        if: matrix.arch == 'ia32'
+        id: ia32_runtime
+        run: node .github/workflows/scripts/install-electron-ia32.cjs download
+      - name: Activate Electron 43 compatibility runtime for ia32 fixture tests
+        if: matrix.arch == 'ia32'
+        env:
+          ELECTRON_ARCHIVE: ${{ steps.ia32_runtime.outputs.archive }}
+          ELECTRON_DIRECTORY: ${{ steps.ia32_runtime.outputs.directory }}
+        run: |
+          # 用 runner 的原生 PowerShell 解包，避免 Electron 44 解包器缺少 ia32 native binding。
+          Expand-Archive -LiteralPath $env:ELECTRON_ARCHIVE -DestinationPath $env:ELECTRON_DIRECTORY -Force
+          node .github/workflows/scripts/install-electron-ia32.cjs activate $env:ELECTRON_DIRECTORY
+      - name: Configure, build and run all native backend tests
+        run: |
+          cmake -S backend -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -A '${{ matrix.cmake_arch }}' -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON
+          if ($LASTEXITCODE) { throw 'CMake 配置失败' }
+          cmake --build $env:BUILD_DIR --config Release --parallel 2
+          if ($LASTEXITCODE) { throw '后端构建失败' }
+          ctest --test-dir $env:BUILD_DIR --output-on-failure --no-tests=error -C Release
+          if ($LASTEXITCODE) { throw '后端测试失败' }
+          node .github/workflows/scripts/ci.cjs backend win32 '${{ matrix.arch }}' "$env:BUILD_DIR/app"
+      - name: Require actual native ETW capture
+        # ARM64 与 ia32 也必须执行；非管理员、Wine、runner 能力不足均失败。
+        run: python backend/tests/windows_app_capture_smoke.py "$env:BUILD_DIR/app/wifimeter-app-capture.exe" --require-native
+      - name: Desktop unit tests against the native backend
+        run: npm --prefix apps/desktop run test:unit
+      - name: Full fixture UI tests on the actual runner
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-development.json
+        run: |
+          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
+          if ($LASTEXITCODE) { throw 'UI 无法运行或测试失败；不能跳过当作成功' }
+          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+      - name: Build NSIS and portable packages
+        run: node packaging/windows/build.cjs --arch '${{ matrix.arch }}' --formats nsis,portable
+      - name: Verify packaged architecture, backend version and external control module
+        run: |
+          node .github/workflows/scripts/ci.cjs directory win32 '${{ matrix.arch }}' $env:UNPACKED_DIR
+          if ($LASTEXITCODE) { throw '随包程序或资源验证失败' }
+          node --test apps/desktop/tests/windows-packaging.test.js
+      - name: Packaged Electron fixture smoke test
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-packaging.json
+        run: |
+          $env:WIFIMETER_EXECUTABLE = Join-Path $env:UNPACKED_DIR 'WiFiMeter.exe'
+          $env:WIFIMETER_BACKEND = Join-Path $env:UNPACKED_DIR 'resources/wifimeter-backend.exe'
+          npm --prefix apps/desktop run test:ui -- desktop.spec.js --grep '^四个页面展示真实采集结果' --reporter=list,json --output "$env:RUNNER_TEMP/playwright-packaging"
+          if ($LASTEXITCODE) { throw '打包应用 UI 验证失败' }
+          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+      - name: Verify automatic packaged backend discovery
+        run: node .github/workflows/scripts/smoke-discovery.cjs
+      - name: Stage only fully verified release assets
+        id: stage
+        run: node .github/workflows/scripts/ci.cjs stage win32 '${{ matrix.arch }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: ${{ steps.stage.outputs.directory }}
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload failure diagnostics separately from release assets
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: diagnostics-windows-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/ui-*.json
+            ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+            ${{ runner.temp }}/playwright-*/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -9,6 +9,7 @@
 // 两条路径产出同一个产品：WiFiMeter，64 位，未签名，始终随包分发 wifimeter-backend.exe。
 
 const path = require('node:path');
+const { buildOptions, buildPaths, checkBackend, packagingConfig } = require('../targets.cjs');
 
 const appDir = path.resolve(__dirname, '../../apps/desktop');
 const repositoryRoot = path.resolve(__dirname, '../..');
@@ -21,11 +22,12 @@ function requireFromApp(name) {
 }
 
 async function main() {
+    const options = buildOptions('win32', process.argv.slice(2));
     const isWindows = process.platform === 'win32';
 
     if (isWindows) {
         // Windows 上没有交叉工具链，直接用本机的 CMake 构建后端。
-        require('../build-backend.cjs').buildBackend();
+        require('../build-backend.cjs').buildBackend({ arch: options.arch });
     } else {
         const { buildWindowsBackend } = await import('./build-backend.mjs');
         const { ensureWine } = await import('./wine.mjs');
@@ -38,6 +40,8 @@ async function main() {
         // wine 的默认 prefix 是 ~/.wine，在只读 HOME 下无法创建；固定到仓库内。
         process.env.WINEPREFIX = process.env.WINEPREFIX || path.join(crossBuildDirectory, 'wine-prefix');
     }
+
+    checkBackend(path.join(repositoryRoot, buildPaths('win32', options.arch).backend, 'app'), 'win32', options.arch);
 
     // 未签名的演示版：不查找签名凭据，也不发布。
     process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
@@ -53,8 +57,8 @@ async function main() {
     const { build, Platform, Arch } = requireFromApp('electron-builder');
     await build({
         projectDir: appDir,
-        config: path.join(__dirname, 'electron-builder.cjs'),
-        targets: Platform.WINDOWS.createTarget(['nsis'], Arch.x64),
+        config: packagingConfig(options),
+        targets: Platform.WINDOWS.createTarget(options.formats, Arch[options.arch]),
         publish: 'never'
     });
 }
