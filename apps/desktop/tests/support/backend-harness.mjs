@@ -99,6 +99,7 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
 
     // 用两次采样造出一条真实记录：第一次建立基线，第二次产生增量。
     const session = createSession(backendBinary, databasePath, adapterPath, countersPath);
+    await session.request('updateSettings', { settings: { language: 'zh-CN' } });
     await session.request('collectNow');
     writeFileSync(countersPath, counters(5000000 + rxStep, 900000 + txStep));
     await session.request('collectNow');
@@ -116,6 +117,7 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
         seedRx: rxStep,
         seedTx: txStep,
         env: {
+            WIFIMETER_TEST_ISOLATION: '1',
             WIFIMETER_BACKEND: backendBinary,
             WIFIMETER_USER_DATA: directory,
             WIFIMETER_FAKE_ADAPTER: adapterPath,

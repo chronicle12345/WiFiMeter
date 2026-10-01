@@ -1,10 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage } = require('electron');
 const path = require('node:path');
+const { existsSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createFileActions } = require('./files.cjs');
 const { BackendClient, resolveExecutable } = require('./backend.cjs');
 const { createSystemIntegration } = require('./system.cjs');
 const { applyProductIdentity } = require('./product.cjs');
+const { legacyDirectory, importLegacyDirectory } = require('./legacy.cjs');
+const { createAppControl } = require('./app-control.cjs');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
@@ -12,14 +15,34 @@ let window;
 let backend;
 let system;
 let quitting = false;
+let startup;
+let migrationStatus = { found: false };
+let migrationBusy = false;
+let lastAutoStartPreference = false;
+let preserveUnmatchedLoginItem = false;
 
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
 // 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
 const productName = applyProductIdentity(app, process.platform, app.getPath('appData')).productName;
 // Tests use an isolated profile and never modify the user's demo records.
 if (process.env.WIFIMETER_USER_DATA) app.setPath('userData', process.env.WIFIMETER_USER_DATA);
+// Explicit fixture mode isolates operating-system settings as well as the database.
+if (process.env.WIFIMETER_TEST_ISOLATION === '1') {
+    app.setPath('home', process.env.WIFIMETER_TEST_HOME || app.getPath('userData'));
+    if (process.platform === 'win32') {
+        let loginEnabled = false;
+        app.setLoginItemSettings = options => { loginEnabled = Boolean(options.openAtLogin); };
+        app.getLoginItemSettings = () => ({ openAtLogin: loginEnabled, executableWillLaunchAtLogin: loginEnabled });
+    }
+}
 
-app.whenReady().then(async () => {
+if (process.env.WIFIMETER_SOFTWARE_RENDERING === '1') app.disableHardwareAcceleration();
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on('second-instance', () => {
+    if (window && !window.isDestroyed()) { window.show(); if (window.isMinimized()) window.restore(); window.focus(); }
+});
+if (primaryInstance) app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     window = new BrowserWindow({
         width: 1280, height: 900, minWidth: 900, minHeight: 650,
@@ -27,7 +50,7 @@ app.whenReady().then(async () => {
         icon: path.join(__dirname, '../assets/icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
-            contextIsolation: true, sandbox: true, nodeIntegration: false
+            contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false
         }
     });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -53,9 +76,11 @@ app.whenReady().then(async () => {
     }
 
     // 后端进程由主进程拉起并按需重启；数据库放在用户数据目录，与演示版的存储键区分开。
+    const firstDatabaseUse = !existsSync(path.join(app.getPath('userData'), 'wifimeter.db'));
     backend = new BackendClient({
         executable: resolveExecutable({ repositoryRoot: path.join(__dirname, '../../..'), resourcesPath: process.resourcesPath, platform: process.platform }),
         databasePath: path.join(app.getPath('userData'), 'wifimeter.db'),
+        args: ['--paused'],
         logger: message => console.log(`[backend] ${message}`)
     });
     system = createSystemIntegration({
@@ -64,6 +89,23 @@ app.whenReady().then(async () => {
         iconPath: path.join(__dirname, '../assets/icon.png'),
         logger: message => console.log(`[system] ${message}`)
     });
+
+    // 只读查询当前可执行文件的登录启动状态，不扫描或删除其他路径的旧启动项。
+    async function inheritLegacyLoginItem(result) {
+        if (process.platform !== 'win32' || process.env.WIFIMETER_USER_DATA || !result.found || !result.settingsApplied) return;
+        try {
+            const current = app.getLoginItemSettings({ path: process.execPath });
+            if (current.openAtLogin) {
+                await backend.request('updateSettings', { settings: { autoStart: true } });
+                return;
+            }
+            preserveUnmatchedLoginItem = true;
+            result.warnings = [...(result.warnings || []), '未确认当前路径的登录启动项，原旧启动项保持不变；其他 portable 路径不会自动迁移或删除。'];
+        } catch (error) {
+            preserveUnmatchedLoginItem = true;
+            result.warnings = [...(result.warnings || []), '无法确认旧登录启动项，已保留原项：' + error.message];
+        }
+    }
 
     backend.on('event', message => {
         if (window && !window.isDestroyed()) window.webContents.send('backend:event', message);
@@ -74,8 +116,24 @@ app.whenReady().then(async () => {
     });
     backend.start();
 
+    startup = (async () => {
+        try {
+            migrationStatus = await importLegacyDirectory({ directory: legacyDirectory(), allowInitialSettings: firstDatabaseUse, userData: app.getPath('userData'), request: (method, params) => backend.request(method, params, { timeout: ['backup', 'importLegacy', 'restore'].includes(method) ? 300000 : 15000 }) });
+            await inheritLegacyLoginItem(migrationStatus);
+            await backend.request('setPaused', { paused: false });
+        } catch (error) {
+            migrationStatus = { found: true, error: error.message };
+            preserveUnmatchedLoginItem = process.platform === 'win32';
+            // A failed migration stays paused so new samples cannot overlap the old history.
+        }
+    })();
+
     // 启动时按已保存的偏好同步一次系统状态（开机启动文件、托盘）。
-    backend.request('hello').then(result => system.applySettings(result.settings ?? {})).catch(error => console.log(`[system] 同步设置失败：${error.message}`));
+    startup.then(() => backend.request('hello')).then(result => {
+        lastAutoStartPreference = Boolean(result.settings?.autoStart);
+        if (migrationStatus.error || preserveUnmatchedLoginItem || (process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1')) return;
+        return system.applySettings(result.settings ?? {});
+    }).catch(error => console.log(`[system] 同步设置失败：${error.message}`));
 
     const trusted = event => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
         && event.senderFrame.url.split(/[?#]/)[0] === pageURL;
@@ -87,10 +145,18 @@ app.whenReady().then(async () => {
         const method = typeof payload?.method === 'string' ? payload.method : '';
         if (!method) return { ok: false, error: { code: 'badRequest', message: '缺少方法名。' } };
         try {
-            const result = await backend.request(method, payload.params ?? {});
+            await startup;
+            if (migrationBusy && !['hello', 'snapshot', 'exportUsage', 'backup', 'migrationStatus'].includes(method)) throw Error('Migration is running; changes are temporarily unavailable. / 正在迁移，暂时不能修改数据或恢复采集。');
+            if (migrationStatus.error && method === 'setPaused' && payload.params?.paused === false) throw Error(migrationStatus.error);
+            const result = await backend.request(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
             // 设置改动后立刻作用于系统，并把实际生效的结果回给页面。
             if (method === 'updateSettings' && result?.settings) {
-                result.system = await system.applySettings(result.settings);
+                const explicitAutoStart = Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart') && Boolean(payload.params.settings.autoStart) !== lastAutoStartPreference;
+                lastAutoStartPreference = Boolean(result.settings.autoStart);
+                if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
+                    if (explicitAutoStart) preserveUnmatchedLoginItem = false;
+                    result.system = await system.applySettings(result.settings);
+                }
             }
             return { ok: true, result };
         } catch (error) {
@@ -98,7 +164,32 @@ app.whenReady().then(async () => {
         }
     });
 
+    const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
+    ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.chooseProgram(); });
+    ipcMain.handle('app-control:request', (event, payload) => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.request(payload); });
+    ipcMain.handle('legacy:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); await startup; return migrationStatus; });
+    ipcMain.handle('legacy:import', async event => {
+        if (!trusted(event)) throw Error('Unsupported page.');
+        await startup;
+        if (migrationBusy) return { error: 'An import is already running.' };
+        migrationBusy = true;
+        try {
+            const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Import WiFiMeter 1.x data / 导入旧版数据' });
+            if (choice.canceled || !choice.filePaths.length) return { canceled: true };
+            await backend.request('setPaused', { paused: true });
+            migrationStatus = await importLegacyDirectory({ directory: choice.filePaths[0], userData: app.getPath('userData'), request: (method, params) => backend.request(method, params, { timeout: ['backup', 'importLegacy', 'restore'].includes(method) ? 300000 : 15000 }) });
+            if (!migrationStatus.found) throw Error('No state.json or state.json.bak was found in the selected directory.');
+            await inheritLegacyLoginItem(migrationStatus);
+            return migrationStatus;
+        } catch (error) {
+            await backend.request('setPaused', { paused: true }).catch(pauseError => console.error('[migration] Pause failed:', pauseError.message));
+            migrationStatus = { found: true, error: error.message }; return migrationStatus;
+        }
+        finally { migrationBusy = false; }
+    });
     await window.loadFile(pagePath);
+    await startup;
+    if (migrationStatus.error) dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
 });
 app.on('window-all-closed', () => app.quit());
 

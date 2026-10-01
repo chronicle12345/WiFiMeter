@@ -428,7 +428,7 @@ test('开机启动开关按平台登记并取消', async () => {
         // 用临时目录隔离 Linux 的 ~/.config/autostart。
         await app.close();
         fakeHome = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-home-'));
-        await launch({ HOME: fakeHome });
+        await launch({ HOME: fakeHome, WIFIMETER_TEST_HOME: fakeHome });
     }
 
     await navigate('设置');

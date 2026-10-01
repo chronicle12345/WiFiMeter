@@ -1,3 +1,5 @@
+import { appendCoverageGaps } from './coverage.js';
+import { t } from '../i18n.js';
 // 页面数据客户端：把后端协议包装成 app.js 需要的形状。
 //
 // snapshot 始终是同一个对象引用，客户端就地更新，页面不必重新取引用。
@@ -10,6 +12,7 @@ const emptySnapshot = () => ({
     records: [],
     hourly: [],
     appRecords: [],
+    proxyEstimatedRecords: [],
     appCollection: { enabled: false, available: false, state: 'disabled' },
     appProcesses: [],
     appGaps: [],
@@ -28,12 +31,15 @@ export function createDataClient(handlers = {}) {
     const snapshot = emptySnapshot();
     const state = { storageFailed: false, available: Boolean(window.desktop?.backend), unsubscribe: null, ready: false };
 
+    let rangeVersion = 0;
+    let activeRange = {};
+
     async function request(method, params = {}) {
-        if (!state.available) throw Error('后端不可用，无法读取本机流量。');
+        if (!state.available) throw Error(t('后端不可用，无法读取本机流量。'));
         const response = await window.desktop.backend.request(method, params);
-        if (!response) throw Error('后端没有响应。');
+        if (!response) throw Error(t('后端没有响应。'));
         if (response.ok) return response.result ?? {};
-        const error = Error(response.error?.message || '后端返回失败。');
+        const error = Error(response.error?.message || t('后端返回失败。'));
         error.code = response.error?.code || 'unknown';
         throw error;
     }
@@ -57,11 +63,12 @@ export function createDataClient(handlers = {}) {
             // 后端在新网络的第一个增量里带上网络记录：首次见到某个网络时（新装的应用、
             // 换了新 Wi-Fi）快照里还没有它，只并增量的话用量会算不出来，界面显示成
             // “未识别网络”且一直 0，必须重启应用才恢复。
-            if (item.network && !snapshot.networks.some(candidate => candidate.id === item.network.id))
-                snapshot.networks.push(item.network);
-
             const network = snapshot.networks.find(candidate => candidate.id === item.networkId);
-            if (network?.quotaLedger) {
+            if (item.network) {
+                // The backend includes the already-committed ledger, including period rollover.
+                if (network) Object.assign(network, item.network);
+                else snapshot.networks.push(item.network);
+            } else if (network?.quotaLedger) {
                 const added = BigInt(item.rxBytes ?? '0') + BigInt(item.txBytes ?? '0');
                 network.quotaLedger.usedBytes = (BigInt(network.quotaLedger.usedBytes) + added).toString();
             }
@@ -71,6 +78,7 @@ export function createDataClient(handlers = {}) {
     function subscribe() {
         if (state.unsubscribe || !state.available) return;
         state.unsubscribe = window.desktop.backend.onEvent(message => {
+            if (message.totalQuota) snapshot.totalQuota = message.totalQuota;
             if (message.event === 'live') {
                 snapshot.live = payloadOf(message);
                 snapshot.appCollection = message.appCollection ?? snapshot.appCollection;
@@ -89,7 +97,7 @@ export function createDataClient(handlers = {}) {
                     row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes)).toString();
                     row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes)).toString();
                 }
-                snapshot.appGaps.push(...(message.gaps ?? []));
+                appendCoverageGaps(snapshot.appGaps, message.gaps ?? []);
                 (handlers.onAppUsage ?? handlers.onUsage)?.(message);
                 return;
             }
@@ -117,14 +125,14 @@ export function createDataClient(handlers = {}) {
         },
 
         // 首次加载：问一次后端版本，再取一份快照，然后开始接收事件。
-        async start() {
+        async start(params = {}) {
             if (!state.available) {
                 state.storageFailed = true;
                 return snapshot;
             }
             try {
                 await request('hello');
-                applySnapshot(await request('snapshot'));
+                await this.queryRange(params);
                 state.ready = true;
                 subscribe();
             } catch (error) {
@@ -134,8 +142,17 @@ export function createDataClient(handlers = {}) {
             return snapshot;
         },
 
+        async queryRange(params) {
+            const version = ++rangeVersion;
+            const next = await request('snapshot', params);
+            if (version !== rangeVersion) return false;
+            activeRange = { ...params };
+            applySnapshot(next);
+            return true;
+        },
+
         async reload() {
-            applySnapshot(await request('snapshot'));
+            await this.queryRange(activeRange);
             return snapshot;
         },
 
@@ -144,6 +161,20 @@ export function createDataClient(handlers = {}) {
             snapshot.settings = { ...snapshot.settings, ...result.settings };
             // system 是主进程回填的“实际生效结果”：开机启动可能因权限失败。
             return { settings: snapshot.settings, system: result.system };
+        },
+
+        async updateProxyConfig(patch) {
+            const result = await request('updateProxyConfig', patch);
+            if (!result.proxy) throw Error(t('代理配置更新未返回状态。'));
+            snapshot.proxy = result.proxy;
+            return result.proxy;
+        },
+
+        async updateTotalQuota(patch) {
+            const result = await request('updateTotalQuota', patch);
+            if (!result.totalQuota) throw Error(t('总额度更新未返回状态。'));
+            snapshot.totalQuota = result.totalQuota;
+            return result.totalQuota;
         },
 
         async updateNetwork(id, patch) {
@@ -158,9 +189,11 @@ export function createDataClient(handlers = {}) {
             snapshot.records = [];
             snapshot.hourly = [];
             snapshot.appRecords = [];
+            snapshot.proxyEstimatedRecords = [];
             snapshot.appGaps = [];
             snapshot.appProcesses = [];
             snapshot.gaps = [];
+            if (snapshot.totalQuota) snapshot.totalQuota.usedBytes = '0';
             for (const network of snapshot.networks) {
                 if (network.quotaLedger) network.quotaLedger.usedBytes = '0';
             }
@@ -188,7 +221,13 @@ export function createDataClient(handlers = {}) {
         },
 
         async exportUsage(params) {
-            return request('exportUsage', params);
+            // 与历史页使用同一查询口径，但不替换页面当前快照。
+            const result = await request('snapshot', params);
+            if (!Array.isArray(result.records)) throw Error(t('导出查询未返回流量记录。'));
+            const networks = new Map((result.networks || []).map(network => [network.id, network]));
+            return { from: params.from, to: params.to, records: result.records
+                .filter(row => row.date >= params.from && row.date <= params.to && (!params.networkKey || row.networkId === params.networkKey))
+                .map(row => ({ ...row, ssid: networks.get(row.networkId)?.ssid || '', alias: networks.get(row.networkId)?.alias || '' })) };
         },
 
         async backup() {

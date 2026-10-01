@@ -258,3 +258,56 @@ test('额度提醒按设置转成系统通知', async () => {
 
     rmSync(home, { recursive: true, force: true });
 });
+
+test('相同设置不重写自启动文件，外部修改后仍能恢复', async t => {
+    const { home, integration } = createFakes();
+    t.after(() => rmSync(home, { recursive: true, force: true }));
+    const { utimesSync, statSync, writeFileSync } = await import('node:fs');
+    const file = autostartFile(home);
+    await integration.applySettings({ autoStart: true });
+    const expected = readFileSync(file, 'utf8');
+    const oldTime = new Date('2000-01-01T00:00:00Z');
+    utimesSync(file, oldTime, oldTime);
+    for (let n = 0; n < 20; n++) {
+        const result = await integration.applySettings({ autoStart: true, notifications: n % 2 === 0 });
+        assert.equal(result.autoStart, true);
+    }
+    assert.equal(statSync(file).mtimeMs, oldTime.getTime(), '无关设置变化不应触发重复写入');
+    writeFileSync(file, '[Desktop Entry]\nExec=outdated\n');
+    await integration.applySettings({ autoStart: true });
+    assert.equal(readFileSync(file, 'utf8'), expected);
+    rmSync(file);
+    await integration.applySettings({ autoStart: true });
+    assert.equal(readFileSync(file, 'utf8'), expected);
+});
+
+test('language changes update an existing tray and quota notifications', async t => {
+    const { home, state, integration } = createFakes();
+    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await integration.applySettings({ language: 'en', minimizeToTray: true });
+    assert.equal(state.menu.template[0].label, 'Open WiFiMeter');
+    integration.notify({ kind: 'quotaWarn', ssid: 'Example', percent: 85 });
+    assert.match(state.notifications.at(-1).body, /85% of its quota/);
+    await integration.applySettings({ language: 'zh-CN', minimizeToTray: true });
+    assert.equal(state.menu.template[0].label, '打开 WiFiMeter');
+    assert.equal(state.trayCount, 1);
+});
+
+test('unavailable tray never hides a window that cannot be reopened from the tray', async t => {
+    const { home, state, integration } = createFakes({ trayThrows: true });
+    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await integration.applySettings({ minimizeToTray: true });
+    const event = { prevented: false, preventDefault() { this.prevented = true; } };
+    assert.equal(integration.handleWindowClose(event), false);
+    assert.equal(event.prevented, false);
+    assert.equal(state.hidden, 0);
+});
+
+test('limit notification reports reaching the quota without inventing a failed disconnect', async t => {
+    const { home, state, integration } = createFakes();
+    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await integration.applySettings({ language: 'zh-CN' });
+    integration.notify({ kind: 'quotaLimit', scope: 'total', percent: 100 });
+    assert.equal(state.notifications[0].body, 'Wi-Fi 总额度 已达到额度上限。');
+    assert.doesNotMatch(state.notifications[0].body, /未能断开/);
+});

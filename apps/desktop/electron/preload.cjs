@@ -7,6 +7,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 // （tests/product.test.js 的「preload 暴露的产品名与产品身份一致」）。
 contextBridge.exposeInMainWorld('desktop', {
     appName: 'WiFiMeter',
+    platform: process.platform,
+    appControl: {
+        chooseProgram: () => ipcRenderer.invoke('app-control:choose'),
+        request: payload => ipcRenderer.invoke('app-control:request', payload)
+    },
+    legacy: {
+        status: () => ipcRenderer.invoke('legacy:status'),
+        importDirectory: () => ipcRenderer.invoke('legacy:import')
+    },
     saveFile: payload => ipcRenderer.invoke('files:save', payload),
     openBackup: () => ipcRenderer.invoke('files:open-backup'),
     backend: {

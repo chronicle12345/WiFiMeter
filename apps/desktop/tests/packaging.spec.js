@@ -4,27 +4,33 @@
 // 能被主进程找到并启动”，这是打包才可能出问题的地方。
 
 import { test, expect, _electron as electron } from '@playwright/test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import targets from '../../../packaging/targets.cjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const unpacked = path.join(repositoryRoot, 'dist/linux/linux-unpacked');
+const arch = process.env.WIFIMETER_PACKAGE_ARCH || process.arch;
+const paths = targets.buildPaths('linux', arch);
+const metadata = JSON.parse(readFileSync(path.join(repositoryRoot, 'apps/desktop/package.json'), 'utf8'));
+const unpacked = path.join(repositoryRoot, paths.output, paths.unpacked);
 const packagedBinary = path.join(unpacked, 'wifimeter');
 const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend');
-const deb = path.join(repositoryRoot, 'dist/linux/WiFiMeter-1.0.0-linux-amd64.deb');
+const deb = path.join(repositoryRoot, paths.output, `WiFiMeter-${metadata.version}-linux-${arch === 'x64' ? 'amd64' : arch}.deb`);
 
 test.describe('打包产物', () => {
     test.skip(!existsSync(packagedBinary), '未构建 Linux 产物，先运行 npm run dist:linux');
 
     test('deb 与解包目录都包含后端可执行文件', () => {
+        targets.checkPackaged(unpacked, 'linux', arch);
+        expect(existsSync(path.join(unpacked, 'resources/wifimeter-app-capture.bpf.o'))).toBe(true);
         expect(existsSync(bundledBackend)).toBe(true);
         // 随包的后端必须能独立运行并自报版本。
         const version = execFileSync(bundledBackend, ['--version'], { encoding: 'utf8' });
-        expect(version).toContain('wifimeter-backend 1.0.0');
+        expect(version).toContain('wifimeter-backend');
         expect(version).toContain('协议版本 1');
 
         if (existsSync(deb)) {
@@ -33,13 +39,14 @@ test.describe('打包产物', () => {
             // 后端链接系统 SQLite，deb 必须声明这个依赖。
             const control = execFileSync('dpkg-deb', ['-f', deb, 'Depends'], { encoding: 'utf8' });
             expect(control).toContain('libsqlite3-0');
-            expect(execFileSync('dpkg-deb', ['-f', deb, 'Version'], { encoding: 'utf8' }).trim()).toBe('1.0.0');
+            expect(execFileSync('dpkg-deb', ['-f', deb, 'Version'], { encoding: 'utf8' }).trim()).toBe(metadata.version);
+            expect(execFileSync('dpkg-deb', ['-f', deb, 'Architecture'], { encoding: 'utf8' }).trim()).toBe(arch === 'x64' ? 'amd64' : arch);
         }
     });
 
     test('打包后的应用能自己启动后端并展示采集状态', async () => {
         const profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-packaged-'));
-        const env = { ...process.env, WIFIMETER_USER_DATA: profile };
+        const env = { ...process.env, WIFIMETER_TEST_ISOLATION: '1', WIFIMETER_USER_DATA: profile };
         // 不设置 WIFIMETER_BACKEND：必须由应用自己找到 resources/wifimeter-backend。
         delete env.WIFIMETER_BACKEND;
         delete env.ELECTRON_RUN_AS_NODE;

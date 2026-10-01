@@ -56,3 +56,17 @@ svg.icon{width:19px;height:19px;stroke:currentColor;stroke-width:1.65;fill:none;
 .app-status{margin:16px 0}.app-description>.small-btn{margin-top:8px;padding:4px 8px}
 
 .app-filters{display:flex;align-items:center;gap:12px;margin:20px 0 14px;flex-wrap:wrap}.app-filters .search-box{flex:1;min-width:150px}.app-list{list-style:none;margin:0;padding:0}.app-description{flex:1;min-width:0}.app-row .app-name{overflow-wrap:anywhere}.app-row .app-source{line-height:1.7}.app-row .progress{max-width:none}.app-row .app-value{flex-shrink:0}.app-row .app-value strong{font-weight:500}
+
+/* 应用历史选中状态沿用现有强调色。 */
+tr.selected-row td{background:var(--accent-soft)}
+#appControlRegion dd{margin:6px 0 14px;overflow-wrap:anywhere}
+#appControlRegion .settings-actions{flex-wrap:wrap;margin-bottom:14px}
+#legacyRegion .btn{margin:6px 8px 0 0}
+
+.total-quota-card{margin-bottom:20px;padding-bottom:18px}
+.total-quota-values{display:flex;gap:24px;flex-wrap:wrap;padding:0 22px 14px}
+.total-quota-card>.progress{margin:0 22px}
+.quota-form{padding:0 22px 22px}
+.quota-check{display:block;margin:12px 0}
+
+#legacyRegion [role="status"]{white-space:pre-line;overflow-wrap:anywhere}

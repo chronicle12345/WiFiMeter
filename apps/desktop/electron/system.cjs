@@ -23,7 +23,7 @@ function autostartFile(home) {
 
 function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, getWindow, iconPath, logger = () => {}, platform = process.platform }) {
     let tray = null;
-    let settings = { autoStart: false, minimizeToTray: false, notifications: true };
+    let settings = { language: 'zh-CN', autoStart: false, minimizeToTray: false, notifications: true };
     let quitting = false;
 
     // Windows：登记或取消登录启动项。开发态（未打包）execPath 指向 electron 本体，
@@ -47,15 +47,22 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
         }
         // 打包后 execPath 就是 /opt/WiFiMeter/wifimeter；开发态是 electron 本体。
         const command = process.env.APPIMAGE ?? process.execPath;
-        await fs.mkdir(path.dirname(file), { recursive: true });
-        await fs.writeFile(file, `[Desktop Entry]
+        const content = `[Desktop Entry]
 Type=Application
 Name=WiFiMeter
 Comment=Wi-Fi 流量管理
 Exec=${command}
 Terminal=false
 X-GNOME-Autostart-enabled=true
-`);
+`;
+        // 每次读取实际文件，既避免重复写入，也能恢复被外部工具修改的启动项。
+        try {
+            if (await fs.readFile(file, 'utf8') === content) return true;
+        } catch (error) {
+            if (error.code !== 'ENOENT') throw error;
+        }
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, content);
         return true;
     }
 
@@ -72,8 +79,23 @@ X-GNOME-Autostart-enabled=true
         window.focus();
     }
 
+    function updateTrayMenu() {
+        tray.setContextMenu(Menu.buildFromTemplate([
+            { label: settings.language === 'en' ? 'Open WiFiMeter' : '打开 WiFiMeter', click: showWindow },
+            { type: 'separator' },
+            {
+                label: settings.language === 'en' ? 'Quit' : '退出',
+                click: () => {
+                    quitting = true;
+                    app.quit();
+                }
+            }
+        ]));
+    }
+
     function ensureTray() {
-        if (tray || !Tray) return;
+        if (tray) { updateTrayMenu(); return; }
+        if (!Tray) return;
         try {
             tray = new Tray(nativeImage.createFromPath(iconPath));
         } catch (error) {
@@ -83,17 +105,7 @@ X-GNOME-Autostart-enabled=true
             return;
         }
         tray.setToolTip('WiFiMeter');
-        tray.setContextMenu(Menu.buildFromTemplate([
-            { label: '打开 WiFiMeter', click: showWindow },
-            { type: 'separator' },
-            {
-                label: '退出',
-                click: () => {
-                    quitting = true;
-                    app.quit();
-                }
-            }
-        ]));
+        updateTrayMenu();
         tray.on('click', showWindow);
     }
 
@@ -126,10 +138,11 @@ X-GNOME-Autostart-enabled=true
         // 窗口关闭时按设置决定隐藏还是退出。
         handleWindowClose(event) {
             if (quitting || !settings.minimizeToTray) return false;
+            ensureTray();
+            if (!tray) return false;
             event.preventDefault();
             const window = getWindow();
             if (window && !window.isDestroyed()) window.hide();
-            ensureTray();
             return true;
         },
 
@@ -137,15 +150,21 @@ X-GNOME-Autostart-enabled=true
         notify(alert) {
             if (!settings.notifications || !Notification) return false;
             if (!Notification.isSupported()) return false;
-            const name = alert.alias || alert.ssid || '当前网络';
+            const name = alert.scope === 'total' ? (settings.language === 'en' ? 'Total Wi-Fi' : 'Wi-Fi 总额度') : alert.alias || alert.ssid || (settings.language === 'en' ? 'Current network' : '当前网络');
             const percent = Number(alert.percent ?? 0).toFixed(0);
             const body = alert.kind === 'quotaWarn'
                 ? `${name} 已使用额度的 ${percent}%。`
+                : alert.kind === 'quotaLimit' ? `${name} 已达到额度上限。`
                 : alert.outcome === 0
                     ? `${name} 已达到额度上限，连接已断开。`
                     : `${name} 已达到额度上限，但未能断开：${alert.detail || '请检查系统状态'}`;
+            const localizedBody = settings.language !== 'en' ? body : alert.kind === 'quotaWarn'
+                ? `${name} has used ${percent}% of its quota.`
+                : alert.kind === 'quotaLimit' ? `${name} has reached its quota.`
+                : alert.outcome === 0 ? `${name} reached its quota and was disconnected.`
+                : `${name} reached its quota but could not be disconnected: ${alert.detail || 'Check the system status.'}`;
             try {
-                new Notification({ title: 'WiFiMeter', body, icon: iconPath }).show();
+                new Notification({ title: 'WiFiMeter', body: localizedBody, icon: iconPath }).show();
                 return true;
             } catch (error) {
                 logger(`发送通知失败：${error.message}`);
