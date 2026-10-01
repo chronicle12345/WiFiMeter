@@ -240,7 +240,7 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
             return { settings };
         }
     }
-    const app = { isPackaged: true, getPath: () => 'isolated', setPath() {}, setName() {}, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => true,
+    const app = { isPackaged: true, getVersion: () => '1.2.0', getPath: () => 'isolated', setPath() {}, setName() {}, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => true,
         whenReady: () => ({ then(fn) { ready = fn(); return ready; } }), on() {}, quit() {},
         getLoginItemSettings(options) { loginReads.push(options); return { openAtLogin: login }; } };
     const dialog = { showOpenDialog: async () => ({ filePaths: ['fictional-legacy'] }), showErrorBox() {} };
@@ -252,7 +252,14 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
         './system.cjs': { createSystemIntegration: () => ({ applySettings: async value => { systemCalls.push(value); return {}; }, handleWindowClose() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'Fixture' }) },
         './legacy.cjs': { legacyDirectory: () => 'fictional-legacy', importLegacyDirectory: legacy || (async () => ({ found: false })) },
-        './app-control.cjs': { createAppControl: () => ({ chooseProgram() {}, request() {} }) }
+        './app-control.cjs': { createAppControl: () => ({ chooseProgram() {}, request() {} }) },
+        './updates.cjs': { createUpdateService: () => ({
+            settings: async () => ({ checkOnStartup: false }),
+            check: async () => ({ state: 'unchecked', checkOnStartup: false }),
+            setCheckOnStartup: async checkOnStartup => ({ checkOnStartup }),
+            install: async () => { throw Error('Migration tests must not install updates.'); }
+        }) },
+        'node:child_process': { spawn: () => { throw Error('Migration tests must not launch installers.'); } }
     };
     runInNewContext(await readFile(filename, 'utf8'), { require(name) { assert.ok(name in imports, name); return imports[name]; }, __dirname: path.dirname(filename), console,
         process: { platform: 'win32', env, execPath: 'C:/fictional/WiFiMeter.exe', resourcesPath: 'fictional' } }, { filename });
