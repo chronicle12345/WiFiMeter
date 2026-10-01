@@ -85,6 +85,8 @@ jobs:
         run: bash .github/workflows/scripts/linux-deps.sh
       - name: Install locked desktop dependencies
         run: npm ci --prefix apps/desktop
+      - name: Validate real Linux package metadata and artifact naming
+        run: node --test .github/workflows/scripts/linux-package-contract.test.cjs
       - name: Build and test with the Ubuntu 22.04 compatibility baseline
         run: |
           docker run --rm --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" --workdir "$GITHUB_WORKSPACE" ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02 bash .github/workflows/scripts/linux-build-baseline.sh "${{ matrix.arch }}"
@@ -104,7 +106,7 @@ jobs:
           node -e "const fs=require('node:fs'); const path=require('node:path'); const exe=require('./apps/desktop/node_modules/electron'); if (!fs.existsSync(exe)) throw Error('Electron runtime is missing'); if (!fs.existsSync(path.join(path.dirname(exe),'chrome-sandbox'))) throw Error('Electron sandbox helper is missing');"
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
+          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Build deb, rpm and AppImage
         run: node packaging/linux/build.cjs --arch "${{ matrix.arch }}" --formats deb,rpm,AppImage --skip-rebuild

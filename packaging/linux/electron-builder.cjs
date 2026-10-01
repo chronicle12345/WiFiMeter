@@ -13,11 +13,8 @@ module.exports = {
         { from: '../../backend/platform/linux/COPYING.BPF', to: 'licenses/wifimeter-app-capture.GPL-2.0' }
     ],
     rpm: { depends: ['gtk3', 'nss', 'libXScrnSaver', 'libXtst', 'mesa-libgbm', 'alsa-lib', 'at-spi2-core', 'libuuid', 'libsecret', 'sqlite-libs', 'elfutils-libelf', 'zlib', 'polkit', 'xdg-utils'] },
-    rpm: {
-        depends: ['gtk3', 'nss', 'libXScrnSaver', 'libXtst', 'mesa-libgbm', 'alsa-lib',
-            'at-spi2-core', 'libuuid', 'libsecret', 'sqlite-libs', 'xdg-utils', 'elfutils-libelf', 'polkit']
-    },
     linux: {
+        maintainer: 'WiFiMeter contributors <chronicle12345@users.noreply.github.com>',
         artifactName: 'WiFiMeter-${version}-linux-${arch}.${ext}',
         target: ['dir'], executableName: 'wifimeter', category: 'Network',
         icon: 'assets/icon.png', syncDesktopName: true,

@@ -114,7 +114,7 @@ jobs:
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-development.json
         run: |
-          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
+          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
           if ($LASTEXITCODE) { throw 'UI 无法运行或测试失败；不能跳过当作成功' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
       - name: Build NSIS and portable packages

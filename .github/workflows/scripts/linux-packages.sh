@@ -7,7 +7,10 @@ deb_arch="$arch"
 rpm_arch="$arch"
 if [[ "$arch" == x64 ]]; then deb_arch=amd64; rpm_arch=x86_64; else rpm_arch=aarch64; fi
 for format in deb rpm AppImage; do
-  name="WiFiMeter-${version}-linux-${arch}.${format}"
+  artifact_arch="$arch"
+  if [[ "$format" == rpm ]]; then artifact_arch="$rpm_arch"; fi
+  if [[ "$format" == AppImage && "$arch" == x64 ]]; then artifact_arch=x86_64; fi
+  name="WiFiMeter-${version}-linux-${artifact_arch}.${format}"
   if [[ "$format" == deb ]]; then name="WiFiMeter-${version}-linux-${deb_arch}.deb"; fi
   artifact="$root/$OUTPUT_DIR/$name"
   test -s "$artifact"
