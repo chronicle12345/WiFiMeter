@@ -72,7 +72,8 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
     await page.locator('[data-action="app-history-sort"][data-key="total"]').click();
     await page.locator('[data-action="select-app-row"]').first().click();
-    await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
+    if(process.platform==='win32')await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
+    else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
     await page.evaluate(()=>{window.savedAppRow=document.querySelector('#appListRegion tbody tr');});
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     await expect.poll(()=>page.evaluate(()=>window.savedAppRow===document.querySelector('#appListRegion tbody tr'))).toBe(true);
@@ -84,7 +85,15 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
 });
 
 test('应用控制展示失败回读，上传 KB/s 原样传桥且无后台轮询',async()=>{
-    await allHistory();await apps();await page.locator('[data-action="choose-program"]').click();
+    await allHistory();await apps();
+    if(process.platform!=='win32'){
+        await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+        await expect(page.locator('[data-action="choose-program"]')).toHaveCount(0);
+        await expect(page.locator('#appThrottleForm')).toHaveCount(0);
+        expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'))).toEqual([]);
+        return;
+    }
+    await page.locator('[data-action="choose-program"]').click();
     await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
     await page.locator('#uploadKBps').fill('0.125');await page.getByRole('button',{name:'设置上传限速',exact:true}).click();
     await expect(page.locator('#appControlRegion')).toContainText('partial failure');await expect(page.locator('#appControlRegion')).toContainText('readback failed');
