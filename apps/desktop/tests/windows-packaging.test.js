@@ -160,12 +160,32 @@ test('Windows 控制模块固定放在 asar 外，所有架构使用同一资源
 
 test('Windows 编译复用缓存生成器，新目录选择已安装的 Visual Studio', () => {
     const { windowsGeneratorOptions } = require('../../../packaging/build-backend.cjs');
-    assert.deepEqual(windowsGeneratorOptions({ arch: 'x64', cache: 'CMAKE_GENERATOR:INTERNAL=Ninja\n' }), []);
-    assert.deepEqual(windowsGeneratorOptions({ arch: 'arm64', generators: ['Visual Studio 17 2022', 'Visual Studio 18 2026'] }), ['-G', 'Visual Studio 18 2026', '-A', 'ARM64']);
-    assert.deepEqual(windowsGeneratorOptions({ arch: 'ia32', generator: 'Visual Studio 18 2026' }), ['-G', 'Visual Studio 18 2026', '-A', 'Win32']);
+    assert.deepEqual(windowsGeneratorOptions({ arch: 'x64', hostArch: 'x64', cachedArch: 'x64', cache: 'CMAKE_GENERATOR:INTERNAL=Ninja\n' }), []);
+    assert.deepEqual(windowsGeneratorOptions({ arch: 'arm64', hostArch: 'x64', generators: ['Visual Studio 17 2022', 'Visual Studio 18 2026'] }), ['-G', 'Visual Studio 18 2026', '-A', 'ARM64']);
+    assert.deepEqual(windowsGeneratorOptions({ arch: 'ia32', hostArch: 'x64', generator: 'Visual Studio 18 2026' }), ['-G', 'Visual Studio 18 2026', '-A', 'Win32']);
     assert.deepEqual(windowsGeneratorOptions({ arch: 'x64', hostArch: 'x64', generator: 'Ninja' }), ['-G', 'Ninja']);
     assert.throws(() => windowsGeneratorOptions({ arch: 'arm64', hostArch: 'x64', generator: 'Ninja' }), /跨架构/);
     assert.deepEqual(windowsGeneratorOptions({ arch: 'arm64', hostArch: 'x64', generator: 'Ninja', toolchain: 'arm64.cmake' }), ['-G', 'Ninja', '-DCMAKE_TOOLCHAIN_FILE=arm64.cmake']);
     assert.throws(() => windowsGeneratorOptions({ arch: 'arm64', hostArch: 'x64', generators: ['Ninja'] }), /Visual Studio/);
-    assert.throws(() => windowsGeneratorOptions({ arch: 'arm64', cache: 'CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026\nCMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n' }), /不匹配/);
+    assert.throws(() => windowsGeneratorOptions({ arch: 'arm64', hostArch: 'x64', cachedArch: 'x64', cache: 'CMAKE_GENERATOR:INTERNAL=Visual Studio 18 2026\nCMAKE_GENERATOR_PLATFORM:INTERNAL=x64\n' }), /不匹配/);
+});
+
+
+test('Windows Ninja 缓存架构与宿主架构分别校验，默认值跟随当前 Node 宿主', () => {
+    const { windowsGeneratorOptions } = require('../../../packaging/build-backend.cjs');
+    const cache = 'CMAKE_GENERATOR:INTERNAL=Ninja\n';
+    for (const hostArch of ['x64', 'ia32', 'arm64']) {
+        assert.deepEqual(windowsGeneratorOptions({ arch: hostArch, hostArch, generator: 'Ninja' }), ['-G', 'Ninja']);
+        assert.deepEqual(windowsGeneratorOptions({ arch: hostArch, hostArch, cache }), []);
+        for (const arch of ['x64', 'ia32', 'arm64']) {
+            assert.deepEqual(windowsGeneratorOptions({ arch, hostArch, cachedArch: arch, cache }), []);
+            if (arch === hostArch) continue;
+            assert.throws(() => windowsGeneratorOptions({ arch, hostArch, cachedArch: hostArch, cache }), /跨架构/);
+            assert.throws(() => windowsGeneratorOptions({ arch, hostArch, generator: 'Ninja' }), /跨架构/);
+            assert.deepEqual(windowsGeneratorOptions({ arch, hostArch, cachedArch: hostArch, cache, toolchain: 'cross.cmake' }), []);
+            assert.deepEqual(windowsGeneratorOptions({ arch, hostArch, cachedArch: hostArch, cache: cache + 'CMAKE_TOOLCHAIN_FILE:FILEPATH=cross.cmake\n' }), []);
+        }
+    }
+    assert.deepEqual(windowsGeneratorOptions({ arch: process.arch, cache }), []);
+    assert.deepEqual(windowsGeneratorOptions({ arch: process.arch, generator: 'Ninja' }), ['-G', 'Ninja']);
 });

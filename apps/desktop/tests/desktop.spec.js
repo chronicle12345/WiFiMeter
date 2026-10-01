@@ -77,7 +77,7 @@ test.afterEach(async () => {
     expect(errors).toEqual([]);
 });
 
-test('四个页面展示真实采集结果，筛选、详情与键盘操作可用', async () => {
+test('四个页面展示真实采集结果，筛选、详情与键盘操作可用 @packaged-smoke', async () => {
     // 总览显示夹具注入的网络与用量。
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');

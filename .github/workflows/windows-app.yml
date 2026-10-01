@@ -46,9 +46,21 @@ jobs:
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        if: matrix.arch != 'arm64'
         with:
           python-version: 3.13.7
           architecture: ${{ matrix.python_arch }}
+      - name: Use the official portable ARM64 Python runtime
+        if: matrix.arch == 'arm64'
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'python-arm64.zip'
+          Invoke-WebRequest 'https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-arm64.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '2DDCF25E71F7205E652EBB57439F22FD2BAB37D7F5C9152DBE32867BF2C77A50') { throw 'Python archive checksum mismatch' }
+          $directory = Join-Path $env:RUNNER_TEMP 'python-arm64'
+          Expand-Archive -LiteralPath $archive -DestinationPath $directory
+          & "$directory/python.exe" -c "import platform, struct; assert platform.machine().lower() == 'arm64'; assert struct.calcsize('P') == 8; import multiprocessing, ctypes, socket"
+          if ($LASTEXITCODE) { throw 'ARM64 Python runtime verification failed' }
+          $directory >> $env:GITHUB_PATH
       - name: Resolve architecture and installed Visual Studio generator
         run: |
           node .github/workflows/scripts/ci.cjs environment win32 '${{ matrix.arch }}'
@@ -118,7 +130,7 @@ jobs:
         run: |
           $env:WIFIMETER_EXECUTABLE = Join-Path $env:UNPACKED_DIR 'WiFiMeter.exe'
           $env:WIFIMETER_BACKEND = Join-Path $env:UNPACKED_DIR 'resources/wifimeter-backend.exe'
-          npm --prefix apps/desktop run test:ui -- desktop.spec.js --grep '^四个页面展示真实采集结果' --reporter=list,json --output "$env:RUNNER_TEMP/playwright-packaging"
+          npm --prefix apps/desktop run test:ui -- desktop.spec.js --grep '@packaged-smoke' --reporter=list,json --output "$env:RUNNER_TEMP/playwright-packaging"
           if ($LASTEXITCODE) { throw '打包应用 UI 验证失败' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
       - name: Verify automatic packaged backend discovery

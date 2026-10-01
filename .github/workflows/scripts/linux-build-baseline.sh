@@ -9,7 +9,7 @@ mkdir -p /opt/wifimeter-deps
 curl --fail --location --retry 3 https://github.com/libbpf/libbpf/archive/refs/tags/v1.3.3.tar.gz -o /opt/wifimeter-deps/libbpf.tar.gz
 echo 'cfb8bcb2aa7d8645c69a093841a4e5ed483855bf7e403c27054da2c15bc7bbde  /opt/wifimeter-deps/libbpf.tar.gz' | sha256sum --check
 tar -xzf /opt/wifimeter-deps/libbpf.tar.gz -C /opt/wifimeter-deps
-make -C /opt/wifimeter-deps/libbpf-1.3.3/src -j2 BUILD_STATIC_ONLY=1 OBJDIR=/opt/wifimeter-deps/obj DESTDIR=/opt/wifimeter-deps/install prefix=/usr libdir=/usr/lib install
+make -C /opt/wifimeter-deps/libbpf-1.3.3/src -j2 BUILD_STATIC_ONLY=1 OBJDIR=/opt/wifimeter-deps/obj DESTDIR=/opt/wifimeter-deps/install PREFIX=/usr LIBDIR=/usr/lib install
 build_dir=build
 [[ "$arch" == x64 ]] || build_dir="build/linux-$arch"
 cmake -S backend -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON -DWIFIMETER_LINUX_APP_CAPTURE=ON \

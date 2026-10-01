@@ -38,6 +38,6 @@ for format in deb rpm AppImage; do
   export WIFIMETER_BACKEND="$(dirname "$binary")/resources/wifimeter-backend"
   export PLAYWRIGHT_JSON_OUTPUT_NAME="$RUNNER_TEMP/ui-package-${format}.json"
   dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- \
-    desktop.spec.js --grep '^四个页面展示真实采集结果' --reporter=list,json --output "$RUNNER_TEMP/playwright-package-${format}"
+    desktop.spec.js --grep '@packaged-smoke' --reporter=list,json --output "$RUNNER_TEMP/playwright-package-${format}"
   node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
 done

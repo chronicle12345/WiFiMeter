@@ -141,25 +141,68 @@ test('concurrent saves expose only complete backups and commit after sync and cl
 test('a Windows-locked destination is preserved and the failed save leaves no temporary file', { skip: process.platform !== 'win32' }, async t => {
     const fs = await import('node:fs/promises');
     const { spawn } = await import('node:child_process');
-    const { once } = await import('node:events');
     const dir = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-locked-'));
     const file = path.join(dir, 'backup.json');
     const original = '{"recovery":"keep me"}';
     await writeFile(file, original);
     const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-    const script = `$ErrorActionPreference='Stop'; $file=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(file).toString('base64')}')); $h=[IO.File]::Open($file,'Open','Read','Read'); try { [Console]::Out.WriteLine('locked'); [Console]::In.ReadLine()|Out-Null } finally { $h.Dispose() }`;
+    const script = `$ErrorActionPreference='Stop'; $file=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(file).toString('base64')}')); $h=[IO.File]::Open($file,'Open','Read','Read'); try { [Console]::Out.WriteLine('locked'); [Console]::Out.Flush(); if ([Console]::In.ReadLine() -ne 'release') { throw 'Missing lock release command' } } finally { $h.Dispose() }`;
     const child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-    const exited = once(child, 'exit');
-    t.after(async () => { if (child.exitCode === null) child.kill(); await exited; await rm(dir, { recursive: true, force: true }); });
-    await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(Error('Isolated file-lock startup timeout')), 5000);
-        child.stdout.once('data', chunk => { clearTimeout(timeout); assert.match(chunk.toString(), /locked/); resolve(); });
-        child.once('error', error => { clearTimeout(timeout); reject(error); });
+    let stdout = '', stderr = '', processError, closed = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    // Keep spawn/stdin failures available to every wait, including cleanup.
+    child.on('error', error => { processError = error; });
+    child.stdin.on('error', error => { processError = error; });
+    const exited = new Promise(resolve => child.once('close', (code, signal) => {
+        closed = true;
+        resolve({ code, signal });
+    }));
+    const diagnostic = message => Error(`${message}; exit=${child.exitCode}; signal=${child.signalCode}; error=${processError?.message ?? 'none'}; stderr=${stderr || '(empty)'}; stdout=${stdout || '(empty)'}`);
+    const ready = new Promise(resolve => child.stdout.on('data', chunk => {
+        stdout += chunk;
+        // Pipe data can split a line across chunks. Only acknowledge a complete line.
+        if (stdout.split(/\r?\n/).slice(0, -1).includes('locked')) resolve();
+    }));
+    async function bounded(promise, milliseconds, message) {
+        let timer;
+        try {
+            return await Promise.race([
+                promise,
+                new Promise((_, reject) => { timer = setTimeout(() => reject(diagnostic(message)), milliseconds); })
+            ]);
+        } finally { clearTimeout(timer); }
+    }
+    t.after(async () => {
+        try {
+            if (!closed) child.kill();
+            await bounded(exited, 10000, 'File-lock process did not close after termination');
+        } finally { await rm(dir, { recursive: true, force: true }); }
     });
+    // CI runs test files concurrently, including other PowerShell processes.
+    // Allow cold startup, but fail immediately if the helper closes before its handshake.
+    await bounded(Promise.race([
+        ready,
+        exited.then(() => { throw diagnostic('File-lock process closed before handshake'); })
+    ]), 30000, 'File-lock startup timeout');
+    assert.equal(closed, false, diagnostic('File-lock process closed after handshake').message);
+    // Verify the real sharing lock independently of saveFile's error handling.
+    await assert.rejects(async () => {
+        const handle = await open(file, 'r+');
+        await handle.close();
+    }, { code: /^(EPERM|EACCES|EBUSY)$/ });
     const actions = createFileActions({ showSaveDialog: async () => ({ filePath: file }) }, () => null);
     assert.match((await actions.saveFile({ filename: 'backup.json', body: '{"replacement":true}' })).error, /EPERM|EACCES|EBUSY/);
     assert.equal(await readFile(file, 'utf8'), original);
     assert.deepEqual(await fs.readdir(dir), ['backup.json']);
-    child.stdin.end('\n');
-    assert.equal((await exited)[0], 0);
+    assert.equal(closed, false, diagnostic('File-lock process closed before release').message);
+    child.stdin.end('release\n');
+    const result = await bounded(exited, 10000, 'File-lock release timeout');
+    assert.equal(result.code, 0, diagnostic('File-lock process failed').message);
+    assert.equal(processError, undefined, diagnostic('File-lock communication failed').message);
+    // Confirm release permits the same save that failed while the handle was open.
+    assert.deepEqual(await actions.saveFile({ filename: 'backup.json', body: '{"replacement":true}' }), { canceled: false });
+    assert.equal(await readFile(file, 'utf8'), '{"replacement":true}');
+    assert.deepEqual(await fs.readdir(dir), ['backup.json']);
 });
