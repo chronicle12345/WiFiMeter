@@ -281,3 +281,31 @@ test('数据库确实由后端写入', async t => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('分段 JSON、连续消息和 CRLF 均完整交付', () => {
+    const client = new BackendClient({ executable: process.execPath, databasePath: ':memory:' });
+    const events = [];
+    client.on('event', message => events.push(message));
+    const large = { event: 'snapshot', text: '网络😀'.repeat(100000) };
+    const wire = JSON.stringify(large) + '\r\n\n' + JSON.stringify({ event: 'live', n: 2 }) + '\n';
+    for (let offset = 0; offset < wire.length; offset += 4096) client.consume(wire.slice(offset, offset + 4096));
+    assert.deepEqual(events, [large, { event: 'live', n: 2 }]);
+});
+
+test('进程退出后释放未完成消息，重启后请求仍可正常响应', async t => {
+    const directory = temporaryDirectory('backend-partial');
+    const dying = path.join(directory, 'partial.cjs');
+    fs.writeFileSync(dying, `process.stdout.write('{"event":"' + 'x'.repeat(1024 * 1024), () => process.exit(0));`);
+    const client = clientFor(dying, directory);
+    t.after(async () => {
+        await client.stop();
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
+    const exited = new Promise(resolve => client.once('exit', resolve));
+    client.start();
+    await exited;
+    assert.equal(client.fragments.length, 0, '退出后不应保留残缺消息');
+    // 使用同一个客户端，验证上一次进程的残缺输出不会污染新进程。
+    client.args = [fakeBackendPath(directory)];
+    assert.equal((await client.request('hello', {}, { timeout: 1000 })).protocol, 1);
+});

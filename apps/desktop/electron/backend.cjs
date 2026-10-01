@@ -54,7 +54,7 @@ class BackendClient extends EventEmitter {
         this.child = null;
         this.nextId = 1;
         this.pending = new Map();
-        this.buffer = '';
+        this.fragments = [];
         this.stopping = false;
     }
 
@@ -65,6 +65,7 @@ class BackendClient extends EventEmitter {
     start() {
         if (this.running) return;
         this.stopping = false;
+        this.fragments = [];
         const args = [...this.args, '--db', this.databasePath];
         this.logger(`启动后端：${this.executable} ${args.join(' ')}`);
         this.child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -80,20 +81,31 @@ class BackendClient extends EventEmitter {
         this.child.on('exit', (code, signal) => {
             const unexpected = !this.stopping;
             this.child = null;
+            this.fragments = [];
             this.failAll(new Error(`后端进程已退出（code=${code}, signal=${signal}）。`));
             this.emit('exit', { code, signal, unexpected });
         });
     }
 
     consume(chunk) {
-        this.buffer += chunk;
-        let newline = this.buffer.indexOf('\n');
+        // 只扫描新到达的分段，避免大响应分段到达时反复复制、扫描整行。
+        let start = 0;
+        let newline = chunk.indexOf('\n');
         while (newline !== -1) {
-            const line = this.buffer.slice(0, newline).trim();
-            this.buffer = this.buffer.slice(newline + 1);
+            const part = chunk.slice(start, newline);
+            let line;
+            if (this.fragments.length) {
+                this.fragments.push(part);
+                line = this.fragments.join('').trim();
+                this.fragments = [];
+            } else {
+                line = part.trim();
+            }
             if (line) this.dispatch(line);
-            newline = this.buffer.indexOf('\n');
+            start = newline + 1;
+            newline = chunk.indexOf('\n', start);
         }
+        if (start < chunk.length) this.fragments.push(chunk.slice(start));
     }
 
     dispatch(line) {
