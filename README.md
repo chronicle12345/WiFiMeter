@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0_candidate-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0 candidate" /></a>
+  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/platforms-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>

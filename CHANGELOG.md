@@ -4,11 +4,11 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
-## 1.2.0 — release candidate
+## 1.2.0
 
-Cross-platform integration, legacy JSON migration, complete backups, application controls and history, Ethernet accounting, total Wi-Fi quotas, bilingual UI and multi-architecture packaging. See [release notes](docs/releases/v1.2.0.md). Publication is gated by the complete CI matrix.
+Cross-platform integration, legacy JSON migration, complete backups, application controls and history, Ethernet accounting, total Wi-Fi quotas, bilingual UI and multi-architecture packaging. See [release notes](docs/releases/v1.2.0.md).
 
-跨平台整合、旧 JSON 迁移、完整备份、应用控制与历史、有线统计、总 Wi-Fi 额度、中英界面和多架构打包。详见[发布说明](docs/releases/v1.2.0.md)，完整 CI 矩阵通过后发布。
+跨平台整合、旧 JSON 迁移、完整备份、应用控制与历史、有线统计、总 Wi-Fi 额度、中英界面和多架构打包。详见[发布说明](docs/releases/v1.2.0.md)。
 
 ## [1.1.1] - 2026-10-01
 
