@@ -309,3 +309,21 @@ test('进程退出后释放未完成消息，重启后请求仍可正常响应',
     client.args = [fakeBackendPath(directory)];
     assert.equal((await client.request('hello', {}, { timeout: 1000 })).protocol, 1);
 });
+
+test('update shutdown waits for a clean exit and never force-kills an unresponsive collector', async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-graceful-'));
+    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const file = fakeBackendPath(directory);
+    const client = clientFor(file, directory);
+    await client.request('hello');
+    await client.stopGracefully({ timeout: 3000 });
+    assert.equal(client.running, false);
+    fs.writeFileSync(file, FAKE_BACKEND.replace("process.exit(0);", '/* deliberately keep running after shutdown acknowledgement */'));
+    const stuck = clientFor(file, directory);
+    try {
+        await stuck.request('hello');
+        await assert.rejects(stuck.stopGracefully({ timeout: 100 }), /not finished saving/);
+        assert.equal(stuck.running, true);
+        assert.equal(stuck.child.killed, false);
+    } finally { await stuck.stop({ timeout: 100 }); }
+});

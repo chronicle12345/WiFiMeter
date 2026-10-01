@@ -1,5 +1,24 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+尚未检查更新。|Updates have not been checked yet.
+已取消更新。|Update cancelled.
+已打开官方发布页。|The official release page has been opened.
+正在退出并启动安装程序…|Exiting and starting the installer…
+软件更新|Software updates
+仅查询 GitHub 正式版本，不上传网络记录。安装前会再次确认。|Checks official GitHub releases only. Network records are not uploaded. Installation requires confirmation.
+启动时检查更新|Check for updates on startup
+当前版本：|Current version:
+最新版本：|Latest version:
+当前已是最新版本。|You are up to date.
+发现新版本。|An update is available.
+更新检查失败。|Update check failed.
+正在检查更新…|Checking for updates…
+检查更新|Check for updates
+更新说明|Release notes
+下载并安装|Download and install
+打开版本下载页|Open release downloads
+发现新版本，请在设置中查看更新。|An update is available. Open Settings to review it.
+
 刷新|Refresh
  已达到额度上限。| has reached its quota.
 请先保存或取消当前更改。|Save or cancel the current changes first.

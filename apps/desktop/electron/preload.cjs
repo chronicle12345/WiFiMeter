@@ -8,6 +8,22 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('desktop', {
     appName: 'WiFiMeter',
     platform: process.platform,
+    onVisibility: handler => {
+        const listener = (_event, visible) => handler(visible);
+        ipcRenderer.on('window:visibility', listener);
+        return () => ipcRenderer.removeListener('window:visibility', listener);
+    },
+    updates: {
+        status: () => ipcRenderer.invoke('updates:status'),
+        setCheckOnStartup: value => ipcRenderer.invoke('updates:setting', value),
+        check: () => ipcRenderer.invoke('updates:check'),
+        install: () => ipcRenderer.invoke('updates:install'),
+        onStatus: handler => {
+            const listener = (_event, value) => handler(value);
+            ipcRenderer.on('updates:status', listener);
+            return () => ipcRenderer.removeListener('updates:status', listener);
+        }
+    },
     appControl: {
         chooseProgram: () => ipcRenderer.invoke('app-control:choose'),
         request: payload => ipcRenderer.invoke('app-control:request', payload)

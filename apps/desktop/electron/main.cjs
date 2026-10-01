@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage, shell } = require('electron');
 const path = require('node:path');
 const { existsSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -8,6 +8,8 @@ const { createSystemIntegration } = require('./system.cjs');
 const { applyProductIdentity } = require('./product.cjs');
 const { legacyDirectory, importLegacyDirectory } = require('./legacy.cjs');
 const { createAppControl } = require('./app-control.cjs');
+const { createUpdateService } = require('./updates.cjs');
+const { spawn } = require('node:child_process');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
@@ -15,6 +17,7 @@ let window;
 let backend;
 let system;
 let quitting = false;
+let installingUpdate = false;
 let startup;
 let migrationStatus = { found: false };
 let migrationBusy = false;
@@ -53,6 +56,9 @@ if (primaryInstance) app.whenReady().then(async () => {
             contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false
         }
     });
+    const sendVisibility = () => window.webContents.send('window:visibility', window.isVisible() && !window.isMinimized());
+    for (const event of ['hide', 'show', 'minimize', 'restore']) window.on(event, sendVisibility);
+    window.webContents.on('did-finish-load', sendVisibility);
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     // 开启“关闭窗口时最小化到托盘”后，关闭窗口只隐藏，采集继续。
     window.on('close', event => system?.handleWindowClose(event));
@@ -146,6 +152,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         if (!method) return { ok: false, error: { code: 'badRequest', message: '缺少方法名。' } };
         try {
             await startup;
+            if (installingUpdate) throw Error('The application is stopping for an update.');
             if (migrationBusy && !['hello', 'snapshot', 'exportUsage', 'backup', 'migrationStatus'].includes(method)) throw Error('Migration is running; changes are temporarily unavailable. / 正在迁移，暂时不能修改数据或恢复采集。');
             if (migrationStatus.error && method === 'setPaused' && payload.params?.paused === false) throw Error(migrationStatus.error);
             const result = await backend.request(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
@@ -187,14 +194,63 @@ if (primaryInstance) app.whenReady().then(async () => {
         }
         finally { migrationBusy = false; }
     });
+    let updateState = { currentVersion: app.getVersion(), checkOnStartup: true };
+    const updateService = createUpdateService({
+        currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
+        userData: app.getPath('userData'),
+        openExternal: url => shell.openExternal(url),
+        confirm: async details => {
+            const choice = await dialog.showMessageBox(window, {
+                type: 'question', title: 'WiFiMeter update / 软件更新',
+                message: `WiFiMeter ${details.latestVersion}`,
+                detail: details.canInstall ? 'Download, verify and install this update? The application will save and exit.\n是否下载、校验并安装更新？程序将先保存并退出。'
+                    : 'Open the official release page to choose a package?\n是否打开官方发布页选择更新包？',
+                buttons: ['Continue / 继续', 'Cancel / 取消'], defaultId: 1, cancelId: 1
+            });
+            return choice.response === 0;
+        },
+        beforeInstall: async () => {
+            if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
+            installingUpdate = true;
+            try {
+                await backend.request('setPaused', { paused: true });
+                await backend.stopGracefully({ timeout: 30000 });
+                if (backend.running) throw Error('The collector has not exited.');
+            } catch (error) { installingUpdate = false; throw error; }
+        },
+        launchInstaller: async file => {
+            // The verified installer starts only after this exact process has exited.
+            const encodedPath = Buffer.from(file, 'utf8').toString('base64');
+            const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $p=Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue; if($p){if(-not $p.WaitForExit(60000)){exit 1}}; Start-Process -FilePath $target -WindowStyle Hidden`;
+            const helper = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+                ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+                { detached: true, windowsHide: true, stdio: 'ignore' });
+            await new Promise((resolve, reject) => { helper.once('spawn', resolve); helper.once('error', reject); });
+            helper.unref();
+            backend = null; quitting = true; system?.beginQuit(); app.quit();
+        }
+    });
+    const updateResult = value => {
+        updateState = { ...updateState, ...value };
+        if (window && !window.isDestroyed()) window.webContents.send('updates:status', updateState);
+        return updateState;
+    };
+    ipcMain.handle('updates:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.settings()); });
+    ipcMain.handle('updates:setting', async (event, value) => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.setCheckOnStartup(value)); });
+    ipcMain.handle('updates:check', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.check()); });
+    ipcMain.handle('updates:install', async event => { if (!trusted(event)) throw Error('Unsupported page.'); const result = await updateService.install(); if(result.state !== 'installing' && result.state !== 'busy') installingUpdate = false; return updateResult(result); });
     await window.loadFile(pagePath);
     await startup;
+    if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
+        updateService.check({ automatic: true }).then(updateResult).catch(error => updateResult({ state: 'error', error: error.message }));
+    }
     if (migrationStatus.error) dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
 });
 app.on('window-all-closed', () => app.quit());
 
 // 退出前先让后端收尾（提交数据库、结束未完成的空档），避免计数差丢在退出瞬间。
 app.on('before-quit', event => {
+    if (installingUpdate && !quitting) { event.preventDefault(); return; }
     system?.beginQuit();
     if (quitting || !backend) return;
     event.preventDefault();

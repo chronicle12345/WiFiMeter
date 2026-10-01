@@ -172,6 +172,25 @@ class BackendClient extends EventEmitter {
         });
     }
 
+    async stopGracefully({ timeout = 30000 } = {}) {
+        const child = this.child;
+        if (!child || child.exitCode !== null) return;
+        this.stopping = true;
+        let cleanup = () => {};
+        const exited = new Promise((resolve, reject) => {
+            const onExit = (code, signal) => { clearTimeout(timer); code === 0 ? resolve() : reject(Error(`Collector exited with ${code ?? signal}`)); };
+            const timer = setTimeout(() => { child.removeListener('exit', onExit); reject(Error('Collector has not finished saving; update canceled.')); }, timeout);
+            child.once('exit', onExit);
+            cleanup = () => { clearTimeout(timer); child.removeListener('exit', onExit); };
+        });
+        // Attach rejection handling before waiting for the shutdown response.
+        const completion = exited.catch(error => { throw error; });
+        completion.catch(() => {});
+        try { await this.request('shutdown', {}, { timeout }); await completion; }
+        catch (error) { this.stopping = false; throw error; }
+        finally { cleanup(); }
+    }
+
     async stop({ timeout = 3000 } = {}) {
         if (!this.child) return;
         this.stopping = true;

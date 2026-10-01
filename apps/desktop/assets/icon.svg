@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title description">
   <title id="title">WiFiMeter logo</title>
-  <desc id="description">A white Wi-Fi symbol on a rounded blue square.</desc>
+  <desc id="description">A white Wi-Fi symbol on a rounded indigo square.</desc>
   <defs>
     <linearGradient id="background" x1="28" y1="16" x2="240" y2="256" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#4c82dc" />
-      <stop offset="0.52" stop-color="#2f66c9" />
-      <stop offset="1" stop-color="#234e9a" />
+      <stop stop-color="#787FF3" />
+      <stop offset="0.52" stop-color="#5A63E8" />
+      <stop offset="1" stop-color="#434BCD" />
     </linearGradient>
     <radialGradient id="highlight" cx="0" cy="0" r="1" gradientTransform="translate(210 4) rotate(132) scale(268)" gradientUnits="userSpaceOnUse">
       <stop stop-color="#B2DFFF" stop-opacity="0.3" />
