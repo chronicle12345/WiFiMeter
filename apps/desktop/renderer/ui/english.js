@@ -2,6 +2,8 @@
 export const english = Object.fromEntries(`
 尚未检查更新。|Updates have not been checked yet.
 已取消更新。|Update cancelled.
+恢复采集|Resume collection
+已恢复原采集状态。|Previous collection state restored.
 已打开官方发布页。|The official release page has been opened.
 正在退出并启动安装程序…|Exiting and starting the installer…
 软件更新|Software updates

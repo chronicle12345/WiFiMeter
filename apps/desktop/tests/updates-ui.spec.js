@@ -51,3 +51,25 @@ test('hidden windows do not redraw for backend events and catch up when shown', 
     await expect.poll(() => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
     await expect.poll(() => page.evaluate(() => globalThis.mutations)).toBeGreaterThan(0);
 });
+test('failed update offers recovery through the install action and removes it after success', async () => {
+    await app.evaluate(({ ipcMain }) => {
+        globalThis.recoveryRequests = 0;
+        ipcMain.removeHandler('updates:check');
+        ipcMain.handle('updates:check', () => ({ state: 'error', recoveryRequired: true, error: '恢复失败，请重试。' }));
+        ipcMain.removeHandler('updates:install');
+        ipcMain.handle('updates:install', () => {
+            globalThis.recoveryRequests++;
+            return { state: 'recovered', recoveryRequired: false, error: '' };
+        });
+    });
+    await page.locator('[data-page="settings"]').click();
+    await page.locator('[data-action="check-updates"]').click();
+    const recover = page.locator('#updatesPanel [data-action="install-update"]');
+    await expect(recover).toHaveText('恢复采集');
+    await expect(recover).toBeEnabled();
+    await recover.click();
+    await expect.poll(() => app.evaluate(() => globalThis.recoveryRequests)).toBe(1);
+    await expect(page.locator('#updatesPanel')).toContainText('已恢复原采集状态。');
+    await expect(recover).toHaveCount(0);
+    await expect(page.locator('#updatesPanel')).not.toContainText('恢复失败');
+});

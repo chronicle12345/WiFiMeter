@@ -56,13 +56,17 @@ class BackendClient extends EventEmitter {
         this.pending = new Map();
         this.fragments = [];
         this.stopping = false;
+        this.shutdownChild = null;
     }
 
     get running() {
         return this.child !== null && this.child.exitCode === null && !this.child.killed;
     }
 
+    get shutdownPending() { return this.shutdownChild !== null; }
+
     start() {
+        if (this.shutdownPending) throw Error('Collector shutdown is pending; 等待原采集进程实际退出。');
         if (this.running) return;
         this.stopping = false;
         this.fragments = [];
@@ -78,7 +82,9 @@ class BackendClient extends EventEmitter {
             this.logger(`后端进程错误：${error.message}`);
             this.failAll(new Error(`后端进程启动失败：${error.message}`));
         });
+        const child = this.child;
         this.child.on('exit', (code, signal) => {
+            if (this.shutdownChild === child) this.shutdownChild = null;
             const unexpected = !this.stopping;
             this.child = null;
             this.fragments = [];
@@ -147,6 +153,9 @@ class BackendClient extends EventEmitter {
     }
 
     request(method, params = {}, { timeout = this.requestTimeout } = {}) {
+        if (this.shutdownPending && (method !== 'shutdown' || !this.running)) {
+            return Promise.reject(Error('Collector shutdown is pending; 等待原采集进程实际退出。'));
+        }
         if (!this.running) {
             // 进程不在时自动拉起一次，避免界面因为一次崩溃就永久失联。
             this.start();
@@ -172,10 +181,25 @@ class BackendClient extends EventEmitter {
         });
     }
 
+    // 超时只停止等待，不代表旧进程已退出；收到 exit 前禁止重新启动。
+    async waitForShutdown({ timeout = 30000 } = {}) {
+        const child = this.shutdownChild;
+        if (!child) return;
+        await new Promise((resolve, reject) => {
+            const onExit = () => { clearTimeout(timer); resolve(); };
+            const timer = setTimeout(() => {
+                child.removeListener('exit', onExit);
+                reject(Error('原采集进程尚未退出，无法恢复采集；请稍后重试恢复。'));
+            }, timeout);
+            child.once('exit', onExit);
+        });
+    }
+
     async stopGracefully({ timeout = 30000 } = {}) {
         const child = this.child;
         if (!child || child.exitCode !== null) return;
         this.stopping = true;
+        this.shutdownChild = child;
         let cleanup = () => {};
         const exited = new Promise((resolve, reject) => {
             const onExit = (code, signal) => { clearTimeout(timer); code === 0 ? resolve() : reject(Error(`Collector exited with ${code ?? signal}`)); };
@@ -187,7 +211,7 @@ class BackendClient extends EventEmitter {
         const completion = exited.catch(error => { throw error; });
         completion.catch(() => {});
         try { await this.request('shutdown', {}, { timeout }); await completion; }
-        catch (error) { this.stopping = false; throw error; }
+        catch (error) { this.stopping = this.shutdownPending; throw error; }
         finally { cleanup(); }
     }
 

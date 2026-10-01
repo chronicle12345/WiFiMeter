@@ -60,7 +60,7 @@ function redirectAllowed(value, original) {
  * install() additionally returns state=cancelled/manual/installing/busy.
  * status always mirrors state. confirm({...snapshot, title, message, detail})
  * must return strictly true; missing confirm fails closed.
- * beforeInstall() is awaited after verification, before launchInstaller(file, []).
+ * beforeInstall() is awaited after verification, before launchInstaller(file, [], { digest }).
  * launchInstaller(file, argv) resolves once a helper reliably accepts the task.
  * The main process then quits; the helper waits for the app to exit before
  * launching the installer via hidden spawn, using argv and no shell.
@@ -258,7 +258,7 @@ function createUpdateService({ currentVersion, platform, arch, userData,
                 if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
                 file = await download(target.asset);
                 await beforeInstall();
-                await launchInstaller(file, []);
+                await launchInstaller(file, [], { digest: target.asset.digest });
                 file = null; // 成功启动后保留安装包，避免安装器尚未读取时被删除。
                 return { ...status, state: 'installing', status: 'installing' };
             } catch {

@@ -9,7 +9,7 @@ const { applyProductIdentity } = require('./product.cjs');
 const { legacyDirectory, importLegacyDirectory } = require('./legacy.cjs');
 const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
-const { spawn } = require('node:child_process');
+const { launchUpdateHandoff } = require('./update-handoff.cjs');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
@@ -178,6 +178,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     ipcMain.handle('legacy:import', async event => {
         if (!trusted(event)) throw Error('Unsupported page.');
         await startup;
+        if (installingUpdate) return { error: '正在更新或恢复采集，暂时不能导入数据。' };
         if (migrationBusy) return { error: 'An import is already running.' };
         migrationBusy = true;
         try {
@@ -195,6 +196,25 @@ if (primaryInstance) app.whenReady().then(async () => {
         finally { migrationBusy = false; }
     });
     let updateState = { currentVersion: app.getVersion(), checkOnStartup: true };
+    let updateRecovery = null;
+    let updateRequestBusy = false;
+    async function recoverAfterUpdateFailure(result) {
+        if (!updateRecovery) return result;
+        try {
+            await backend.waitForShutdown({ timeout: 30000 });
+            if (updateRecovery.pauseRequested) {
+                if (updateRecovery.appsEnabled) await backend.request('setAppCollection', { enabled: true });
+                await backend.request('setPaused', { paused: updateRecovery.paused });
+            }
+            updateRecovery = null;
+            installingUpdate = false;
+            return { ...result, recoveryRequired: false };
+        } catch (error) {
+            // 保留保护状态和原偏好；稍后重试更新时先重新尝试恢复。
+            return { ...result, state: 'error', status: 'error', recoveryRequired: true,
+                error: `更新取消，恢复失败：${error.message} 数据操作保持暂停，请稍后点击恢复采集重试。` };
+        }
+    }
     const updateService = createUpdateService({
         currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
         userData: app.getPath('userData'),
@@ -210,23 +230,21 @@ if (primaryInstance) app.whenReady().then(async () => {
             return choice.response === 0;
         },
         beforeInstall: async () => {
+            await startup;
             if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
             installingUpdate = true;
-            try {
-                await backend.request('setPaused', { paused: true });
-                await backend.stopGracefully({ timeout: 30000 });
-                if (backend.running) throw Error('The collector has not exited.');
-            } catch (error) { installingUpdate = false; throw error; }
+            updateRecovery = { paused: null, pauseRequested: false };
+            const original = await backend.request('hello');
+            if (typeof original.paused !== 'boolean') throw Error('无法确认原采集状态，更新取消。');
+            updateRecovery.paused = original.paused;
+            updateRecovery.appsEnabled = original.appCollection?.enabled === true;
+            updateRecovery.pauseRequested = true;
+            await backend.request('setPaused', { paused: true });
+            await backend.stopGracefully({ timeout: 30000 });
+            if (backend.running) throw Error('The collector has not exited.');
         },
-        launchInstaller: async file => {
-            // The verified installer starts only after this exact process has exited.
-            const encodedPath = Buffer.from(file, 'utf8').toString('base64');
-            const script = `$ErrorActionPreference='Stop'; $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}')); $p=Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue; if($p){if(-not $p.WaitForExit(60000)){exit 1}}; Start-Process -FilePath $target -WindowStyle Hidden`;
-            const helper = spawn(path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-                ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-                { detached: true, windowsHide: true, stdio: 'ignore' });
-            await new Promise((resolve, reject) => { helper.once('spawn', resolve); helper.once('error', reject); });
-            helper.unref();
+        launchInstaller: async (file, _argv, { digest }) => {
+            await launchUpdateHandoff(file, { digest, userData: app.getPath('userData') });
             backend = null; quitting = true; system?.beginQuit(); app.quit();
         }
     });
@@ -238,7 +256,17 @@ if (primaryInstance) app.whenReady().then(async () => {
     ipcMain.handle('updates:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.settings()); });
     ipcMain.handle('updates:setting', async (event, value) => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.setCheckOnStartup(value)); });
     ipcMain.handle('updates:check', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.check()); });
-    ipcMain.handle('updates:install', async event => { if (!trusted(event)) throw Error('Unsupported page.'); const result = await updateService.install(); if(result.state !== 'installing' && result.state !== 'busy') installingUpdate = false; return updateResult(result); });
+    ipcMain.handle('updates:install', async event => {
+        if (!trusted(event)) throw Error('Unsupported page.');
+        if (updateRequestBusy) return { ...updateState, state: 'busy', status: 'busy' };
+        updateRequestBusy = true;
+        try {
+            if (updateRecovery) return updateResult(await recoverAfterUpdateFailure({ state: 'recovered', status: 'recovered', error: '' }));
+            const result = await updateService.install();
+            return updateResult(result.state === 'installing' || result.state === 'busy'
+                ? result : await recoverAfterUpdateFailure(result));
+        } finally { updateRequestBusy = false; }
+    });
     await window.loadFile(pagePath);
     await startup;
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {

@@ -259,7 +259,7 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
             setCheckOnStartup: async checkOnStartup => ({ checkOnStartup }),
             install: async () => { throw Error('Migration tests must not install updates.'); }
         }) },
-        'node:child_process': { spawn: () => { throw Error('Migration tests must not launch installers.'); } }
+        './update-handoff.cjs': { launchUpdateHandoff: () => { throw Error('Migration tests must not launch installers.'); } }
     };
     runInNewContext(await readFile(filename, 'utf8'), { require(name) { assert.ok(name in imports, name); return imports[name]; }, __dirname: path.dirname(filename), console,
         process: { platform: 'win32', env, execPath: 'C:/fictional/WiFiMeter.exe', resourcesPath: 'fictional' } }, { filename });
