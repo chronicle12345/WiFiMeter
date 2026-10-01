@@ -24,3 +24,10 @@
 *.db-shm
 *.sqlite
 *.sqlite3
+
+# Personal editor and agent configuration.
+.agent/
+.agents/
+.vscode/
+.idea/
+*.code-workspace
