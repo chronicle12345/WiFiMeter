@@ -19,3 +19,5 @@ pkg-config；把合并源码纳入版本控制后，Windows 构建与 Linux 开�
 
 Linux 构建默认仍使用系统库；需要随包分发 SQLite 时用 `-DWIFIMETER_BUNDLED_SQLITE=ON`
 改用这里的合并源码。
+
+The Linux eBPF program in [app_capture.bpf.c](../platform/linux/app_capture.bpf.c) is licensed under GPL-2.0-only. Its license text is in [COPYING.BPF](../platform/linux/COPYING.BPF) and is included with the distributed BPF object. The desktop application and the userspace loader retain their own licenses; libbpf is distributed under its BSD-2-Clause option.

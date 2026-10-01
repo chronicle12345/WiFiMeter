@@ -199,7 +199,11 @@ inline void useTimeZone(const char* name)
         else
         {
             long offsetSeconds = 0;
+#if defined(__MINGW32__) && !defined(_UCRT)
+            offsetSeconds = _timezone;
+#else
             ::_get_timezone(&offsetSeconds);
+#endif
             hours = static_cast<int>(-offsetSeconds / 3600);
         }
         if (hours != 0)

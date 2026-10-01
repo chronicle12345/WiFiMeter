@@ -24,7 +24,7 @@ struct NetworkRecord
     std::string alias;
     std::string type = "wifi";
     double capGb = 0.0;
-    int warnPercent = 80;
+    double warnPercent = 80;
     core::QuotaPeriod quotaPeriod = core::QuotaPeriod::month;
     bool notify = false;
     bool autoDisconnect = false;
@@ -54,7 +54,7 @@ public:
     std::optional<NetworkRecord> find(const std::string& key, Status& status) const;
 
     // 用户可改的部分。alias 允许为空（回退到 ssid 显示）。
-    Status updateUserSettings(const std::string& key, const std::string& alias, double capGb, int warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect);
+    Status updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect);
 
     Status remove(const std::string& key);
 

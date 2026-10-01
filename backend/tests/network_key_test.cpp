@@ -78,6 +78,21 @@ void derivesStableDistinctKeysFromSsids()
     WIFIMETER_CHECK(fallbackKeyForSsid("").empty());
 }
 
+void preservesNetworkType()
+{
+    WIFIMETER_CHECK_EQ(NetworkRef{}.type, std::string("wifi"));
+    WIFIMETER_CHECK_EQ(networkRefOf(identity("", "Home", "Home")).type, std::string("wifi"));
+    const auto wired = platform::ethernetIdentity("00112233-4455-6677-8899-aabbccddeeff", "Office cable", true);
+    const auto reference = networkRefOf(wired);
+    WIFIMETER_CHECK_EQ(reference.type, std::string("ethernet"));
+    WIFIMETER_CHECK(isValidNetworkKey(reference.key));
+    WIFIMETER_CHECK(reference.key != networkRefOf(identity("", "", *wired.ssid)).key);
+    WIFIMETER_CHECK_EQ(networkRefOf(platform::ethernetIdentity("00112233-4455-6677-8899-aabbccddeeff", "Renamed", true)).key, reference.key);
+    const auto linuxWired = networkRefOf(platform::ethernetIdentity("linux-device:/sys/devices/pci0000:00/0000:00:01.0", "enp1s0", true));
+    WIFIMETER_CHECK_EQ(linuxWired.type, std::string("ethernet"));
+    WIFIMETER_CHECK(isValidNetworkKey(linuxWired.key));
+}
+
 void reportsUnknownIdentity()
 {
     const NetworkRef reference = networkRefOf(identity("", "", ""));
@@ -96,5 +111,6 @@ int main()
     rejectsIllegalProfileUuids();
     derivesStableDistinctKeysFromSsids();
     reportsUnknownIdentity();
+    preservesNetworkType();
     return WIFIMETER_REPORT();
 }

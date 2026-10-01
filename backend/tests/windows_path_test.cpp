@@ -34,8 +34,8 @@ std::string joined(const std::vector<std::string>& values)
 void skipsDriveLetter()
 {
     // 真机形态：绝不能把 "C:" 当成要创建的目录。
-    const std::vector<std::string> prefixes = directoryPrefixesToCreate("C:\\Users\\Shi\\AppData\\Roaming\\WiFiMeter Demo\\wifimeter.db");
-    WIFIMETER_CHECK_EQ(joined(prefixes), std::string("C:\\Users|C:\\Users\\Shi|C:\\Users\\Shi\\AppData|C:\\Users\\Shi\\AppData\\Roaming|C:\\Users\\Shi\\AppData\\Roaming\\WiFiMeter Demo"));
+    const std::vector<std::string> prefixes = directoryPrefixesToCreate("C:\\Users\\dev\\AppData\\Roaming\\WiFiMeter Demo\\wifimeter.db");
+    WIFIMETER_CHECK_EQ(joined(prefixes), std::string("C:\\Users|C:\\Users\\dev|C:\\Users\\dev\\AppData|C:\\Users\\dev\\AppData\\Roaming|C:\\Users\\dev\\AppData\\Roaming\\WiFiMeter Demo"));
     for (const std::string& prefix : prefixes)
         WIFIMETER_CHECK(prefix.size() > 2 && prefix[1] == ':');
 }

@@ -146,6 +146,9 @@ LinkReadResult LinuxNetworkPlatform::readLinks()
     const LinkReport report = readStatuses();
     result.links = report.links;
     result.failures = report.failures;
+    // 有线直接读取内核信息，即使 NetworkManager 不可用也继续采样。
+    const auto wired = listEthernetLinks(options_.sysClassNet);
+    result.links.insert(result.links.end(), wired.begin(), wired.end());
     return result;
 }
 

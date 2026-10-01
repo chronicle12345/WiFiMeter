@@ -126,6 +126,57 @@ struct Harness
 
 const std::string kUuid = "21f995e7-fe3b-41a1-ae3a-6468c6918397";
 
+void fractionalQuotaRoundTrip()
+{
+    Harness source(true);
+    if (!source.service) { WIFIMETER_CHECK(false); return; }
+    const auto now = utcTime(2026, 10, 1);
+    NetworkRecord record;
+    record.key = "fractional";
+    record.ssid = "Fractional";
+    WIFIMETER_CHECK(source.store->networks().replace(record).ok);
+    auto patch = JsonValue::makeObject();
+    patch.set("key", JsonValue::makeString(record.key));
+    patch.set("warnPercent", JsonValue::makeNumber(85.5));
+    patch.set("capGb", JsonValue::makeNumber(1));
+    const auto updated = source.call(method::kUpdateNetwork, patch, now);
+    WIFIMETER_CHECK(updated.ok());
+    const auto* network = updated.result.find("network");
+    WIFIMETER_CHECK(network != nullptr);
+    if (network) WIFIMETER_CHECK_EQ(network->doubleOr("warnPercent"), 85.5);
+    const auto total = source.call("updateTotalQuota", patch, now);
+    WIFIMETER_CHECK(total.ok());
+    if (const auto* value = total.result.find("totalQuota")) WIFIMETER_CHECK_EQ(value->doubleOr("warnPercent"), 85.5);
+    else WIFIMETER_CHECK(false);
+    const auto saved = source.call(method::kBackup, now);
+    WIFIMETER_CHECK(saved.ok());
+    const auto* backup = saved.result.find("backup");
+    WIFIMETER_CHECK(backup != nullptr);
+    if (!backup) return;
+    WIFIMETER_CHECK_EQ(backup->find("networks")->at(0).doubleOr("warnPercent"), 85.5);
+    WIFIMETER_CHECK_EQ(backup->find("totalQuota")->find("settings")->doubleOr("warnPercent"), 85.5);
+    Harness target(true);
+    auto restore = JsonValue::makeObject();
+    restore.set("backup", *backup);
+    WIFIMETER_CHECK(target.call(method::kRestore, restore, now).ok());
+    const auto roundTrip = target.call(method::kBackup, now);
+    WIFIMETER_CHECK_EQ(roundTrip.result.find("backup")->dump(), backup->dump());
+    for (const auto invalid : {JsonValue::makeNumber(0.9), JsonValue::makeNumber(100.1), JsonValue::makeString("85.5")})
+    {
+        patch.set("warnPercent", invalid);
+        WIFIMETER_CHECK(!source.call(method::kUpdateNetwork, patch, now).ok());
+        WIFIMETER_CHECK(!source.call("updateTotalQuota", patch, now).ok());
+        auto broken = *backup;
+        auto networks = *broken.find("networks");
+        auto entry = networks.at(0);
+        entry.set("warnPercent", invalid);
+        auto replacements = JsonValue::makeArray(); replacements.push(entry);
+        broken.set("networks", replacements);
+        restore.set("backup", broken);
+        WIFIMETER_CHECK(!target.call(method::kRestore, restore, now).ok());
+    }
+}
+
 void reportsHello()
 {
     Harness harness;
@@ -824,10 +875,91 @@ void applicationStorageFailureRollsBackOnlyApplications()
     WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("1000"));
 }
 
+
+
+void wiredLiveAndDisconnectProtection()
+{
+    Harness harness;
+    const auto now=utcTime(2026,1,1);
+    auto sample=makeSample("eth0","wired-fixture","Ethernet:fixture",0,0);
+    sample.identity.type="ethernet";
+    auto link=makeLink("eth0","wired-fixture","Ethernet:fixture");
+    link.identity.type="ethernet";
+    harness.network.sampleReport.samples.push_back(sample);
+    harness.network.sampleReport.links.push_back(link);
+    harness.network.sampleReport.failures.push_back({platform::FailureKind::unavailable,"","WLAN unavailable"});
+    harness.service->collectOnce(now);
+    const auto snapshot=harness.call(method::kSnapshot,now);
+    const auto* live=snapshot.result.find("live");
+    WIFIMETER_CHECK(live && live->stringOr("state")=="connected");
+    if (live) WIFIMETER_CHECK_EQ(live->find("connections")->at(0).stringOr("type"),std::string("ethernet"));
+    auto params=JsonValue::makeObject(); params.set("interfaceId",JsonValue::makeString("eth0")); params.set("ssid",JsonValue::makeString("Ethernet:fixture"));
+    WIFIMETER_CHECK(!harness.call(method::kDisconnect,params,now).ok());
+    WIFIMETER_CHECK_EQ(harness.network.disconnectCount,0);
+}
+
+void completeBackupRoundTrip()
+{
+    Harness source;
+    const auto now = utcTime(2026, 1, 2);
+    NetworkRecord network; network.key = "fixture"; network.ssid = "Fixture";
+    network.quotaPeriod = QuotaPeriod::all; network.alias="Preserved"; network.capGb=12.5; network.warnPercent=73; network.notify=true; network.autoDisconnect=true;
+    WIFIMETER_CHECK(source.store->networks().replace(network));
+    WIFIMETER_CHECK(source.store->networks().saveLedger({network.key,"all",9223372036854775807ULL}));
+    WIFIMETER_CHECK(source.store->usage().setDaily("fixture", "2020-01-01", 9007199254740993ULL, 1));
+    WIFIMETER_CHECK(source.store->usage().setHourly("fixture", "2020-01-01", 7, 9007199254740993ULL, 1));
+    CoverageGap gap; gap.networkKey = "fixture"; gap.reason = CoverageReason::paused;
+    gap.startedAt = now; gap.reasonDetail = "fictional gap";
+    WIFIMETER_CHECK(source.store->usage().addGap(gap));
+    gap.application = true; gap.endedAt = now + std::chrono::seconds(7); gap.span = std::chrono::seconds(7);
+    WIFIMETER_CHECK(source.store->usage().addGap(gap));
+    WIFIMETER_CHECK(source.store->database().exec("INSERT INTO legacy_imports(source_id,state_json,settings_json,app_usage_json,imported_at,network_count,daily_count) VALUES('fixture','{\"SchemaVersion\":1}',NULL,NULL,'2026-01-02T00:00:00Z',1,1); INSERT INTO legacy_network_keys VALUES('Fixture','fixture');"));
+    SettingsRecord settings; settings.language = "zh-CN"; settings.retentionDays = 1234;
+    WIFIMETER_CHECK(source.store->settings().save(settings));
+    const auto backup = source.call(method::kBackup, now);
+    WIFIMETER_CHECK(backup.ok());
+    const auto* document = backup.result.find("backup");
+    for (const auto* field : {"hourlyRecords", "gaps", "appGaps", "legacyImports", "legacyNetworkMappings"})
+        WIFIMETER_CHECK(document && document->find(field) && document->find(field)->size() == 1);
+    if (!document) return;
+    Harness target;
+    auto params = JsonValue::makeObject(); params.set("backup", *document);
+    WIFIMETER_CHECK(target.call(method::kRestore, params, now).ok());
+    const auto again = target.call(method::kBackup, now);
+    WIFIMETER_CHECK_EQ(again.result.find("backup")->dump(), document->dump());
+    auto malformed = *document;
+    malformed.set("hourlyRecords", JsonValue::makeString("invalid"));
+    params.set("backup", malformed);
+    WIFIMETER_CHECK(!target.call(method::kRestore, params, now).ok());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup, now).result.find("backup")->dump(), document->dump());
+    for (const auto* field : {"gaps","appGaps","legacyImports","legacyNetworkMappings","records","ledgers"})
+    {
+        malformed=*document; malformed.set(field,JsonValue::makeString("invalid")); params.set("backup",malformed);
+        WIFIMETER_CHECK(!target.call(method::kRestore,params,now).ok());
+        WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),document->dump());
+    }
+    WIFIMETER_CHECK(target.store->database().exec("CREATE TRIGGER restore_failure BEFORE INSERT ON legacy_imports BEGIN SELECT RAISE(ABORT,'fictional restore failure'); END"));
+    params.set("backup",*document);
+    WIFIMETER_CHECK(!target.call(method::kRestore,params,now).ok());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),document->dump());
+    WIFIMETER_CHECK(target.store->database().exec("DROP TRIGGER restore_failure"));
+    auto old = JsonValue::makeObject();
+    for (const auto& field : document->fields())
+        if (field.first != "hourlyRecords" && field.first != "gaps" && field.first != "appGaps" && field.first != "legacyImports" && field.first != "legacyNetworkMappings") old.set(field.first, field.second);
+    params.set("backup", old);
+    WIFIMETER_CHECK(target.call(method::kRestore, params, now).ok());
+    const auto oldRestored = target.call(method::kBackup, now);
+    const auto* oldHours = oldRestored.result.find("backup")->find("hourlyRecords");
+    WIFIMETER_CHECK(oldHours && oldHours->size() == 0);
+}
+
 }  // namespace
 
 int main()
 {
+    fractionalQuotaRoundTrip();
+    wiredLiveAndDisconnectProtection();
+    completeBackupRoundTrip();
     reportsHello();
     rejectsUnknownMethods();
     collectsUsageAndEmitsEvents();

@@ -117,12 +117,25 @@ int StdioServer::run(core::TimePoint startAt)
                 return 1;
             }
 
+            // Earlier buffered bytes have already been scanned and contain no newline.
+            const auto scanned = buffer.size();
             buffer.append(chunk, static_cast<std::size_t>(count));
-            std::size_t newline = buffer.find('\n');
+            std::size_t newline = buffer.find('\n', scanned);
             while (newline != std::string::npos)
             {
-                std::string line = buffer.substr(0, newline);
-                buffer.erase(0, newline + 1);
+                std::string line;
+                if (newline > 64 * 1024 && newline + 1 == buffer.size())
+                {
+                    line.swap(buffer);
+                    line.resize(newline);
+                }
+                else
+                {
+                    line = buffer.substr(0, newline);
+                    buffer.erase(0, newline + 1);
+                    // Do not retain a large import frame for the rest of the session.
+                    if (buffer.capacity() > 64 * 1024) std::string(buffer).swap(buffer);
+                }
                 if (!line.empty() && line.back() == '\r')
                     line.pop_back();
                 if (!handleLine(line, std::chrono::system_clock::now()))
@@ -134,7 +147,7 @@ int StdioServer::run(core::TimePoint startAt)
             }
             if (!running)
                 break;
-            continue;
+            // Service due samples even when input remains continuously readable.
         }
 
         // 超时：到点就采一次。

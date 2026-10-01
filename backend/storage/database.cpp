@@ -464,7 +464,38 @@ Status Database::migrate()
         if (const Status committed = transaction.commit(); !committed)
             return committed;
     }
-    return Status::success();
+    if (version < 4)
+    {
+        Transaction transaction(*this);
+        if (!transaction.active()) return Status::failure(lastError());
+        const Status changed = exec(R"SQL(
+ALTER TABLE settings ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK(language IN ('en', 'zh-CN'));
+CREATE TRIGGER settings_retention_insert BEFORE INSERT ON settings
+WHEN NEW.retention_days NOT BETWEEN 0 AND 36500 BEGIN SELECT RAISE(ABORT, 'Invalid retention'); END;
+CREATE TRIGGER settings_retention_update BEFORE UPDATE OF retention_days ON settings
+WHEN NEW.retention_days NOT BETWEEN 0 AND 36500 BEGIN SELECT RAISE(ABORT, 'Invalid retention'); END;
+CREATE TABLE legacy_imports (
+ source_id TEXT PRIMARY KEY, state_json TEXT NOT NULL, settings_json TEXT,
+ app_usage_json TEXT, imported_at TEXT NOT NULL, network_count INTEGER NOT NULL,
+ daily_count INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE legacy_network_keys (
+ ssid TEXT PRIMARY KEY COLLATE BINARY, network_key TEXT NOT NULL UNIQUE
+) WITHOUT ROWID;
+)SQL");
+        if (!changed) return changed;
+        if (const Status stamped = setSchemaVersion(4); !stamped) return stamped;
+        if (const Status committed = transaction.commit(); !committed) return committed;
+    }
+    if (version < 5)
+    {
+        Transaction transaction(*this);
+        if (!transaction.active()) return Status::failure(lastError());
+        if (const auto changed = exec("ALTER TABLE legacy_imports ADD COLUMN report_json TEXT NOT NULL DEFAULT '{}';"); !changed) return changed;
+        if (const auto stamped = setSchemaVersion(5); !stamped) return stamped;
+        if (const auto committed = transaction.commit(); !committed) return committed;
+    }
+    return exec("CREATE INDEX IF NOT EXISTS coverage_gaps_by_interval ON coverage_gaps(scope,network_key,reason,ended_at);");
 }
 
 Status Database::backupTo(const std::string& path) const

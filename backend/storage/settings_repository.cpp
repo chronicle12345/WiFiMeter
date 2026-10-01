@@ -22,18 +22,19 @@ const char* kSpeedUnitName(SpeedUnit unit)
 SettingsRecord SettingsRepository::sanitize(SettingsRecord settings)
 {
     // 与 apps/desktop/renderer/data/model.js 的校验范围保持一致：
-    // 采样间隔只允许 2/5/10 秒，保留期只允许 0/30/90/365 天。
+    // 采样间隔只允许 2/5/10 秒，保留期允许 0..36500 天。
     if (settings.intervalSeconds != 2 && settings.intervalSeconds != 5 && settings.intervalSeconds != 10)
         settings.intervalSeconds = 5;
-    if (settings.retentionDays != 0 && settings.retentionDays != 30 && settings.retentionDays != 90 && settings.retentionDays != 365)
+    if (settings.retentionDays < 0 || settings.retentionDays > 36500)
         settings.retentionDays = 90;
+    if (settings.language != "en" && settings.language != "zh-CN") settings.language = "en";
     return settings;
 }
 
 SettingsRecord SettingsRepository::load(Status& status)
 {
     SettingsRecord settings;
-    auto statement = database_.prepare("SELECT unit, speed_unit, interval_seconds, retention_days, auto_start, minimize_to_tray, notifications FROM settings WHERE id = 1;", status);
+    auto statement = database_.prepare("SELECT unit, speed_unit, interval_seconds, retention_days, auto_start, minimize_to_tray, notifications, language FROM settings WHERE id = 1;", status);
     if (!statement)
         return settings;
 
@@ -46,6 +47,7 @@ SettingsRecord SettingsRepository::load(Status& status)
         settings.autoStart = statement->columnInt64(4) != 0;
         settings.minimizeToTray = statement->columnInt64(5) != 0;
         settings.notifications = statement->columnInt64(6) != 0;
+        settings.language = statement->columnText(7);
         status = Status::success();
         return sanitize(settings);
     }
@@ -66,16 +68,17 @@ Status SettingsRepository::save(const SettingsRecord& settings)
     const SettingsRecord clean = sanitize(settings);
     Status status;
     auto statement = database_.prepare(
-        "INSERT INTO settings(id, unit, speed_unit, interval_seconds, retention_days, auto_start, minimize_to_tray, notifications) "
-        "VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7) "
+        "INSERT INTO settings(id, unit, speed_unit, interval_seconds, retention_days, auto_start, minimize_to_tray, notifications, language) "
+        "VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) "
         "ON CONFLICT(id) DO UPDATE SET unit = excluded.unit, speed_unit = excluded.speed_unit, interval_seconds = excluded.interval_seconds, "
-        "retention_days = excluded.retention_days, auto_start = excluded.auto_start, minimize_to_tray = excluded.minimize_to_tray, notifications = excluded.notifications;",
+        "retention_days = excluded.retention_days, auto_start = excluded.auto_start, minimize_to_tray = excluded.minimize_to_tray, notifications = excluded.notifications, language = excluded.language;",
         status);
     if (!statement)
         return status;
     if (!statement->bind(1, std::string(kUnitName(clean.unit))) || !statement->bind(2, std::string(kSpeedUnitName(clean.speedUnit))) || !statement->bind(3, static_cast<std::int64_t>(clean.intervalSeconds)) || !statement->bind(4, static_cast<std::int64_t>(clean.retentionDays)) ||
         !statement->bind(5, static_cast<std::int64_t>(clean.autoStart ? 1 : 0)) || !statement->bind(6, static_cast<std::int64_t>(clean.minimizeToTray ? 1 : 0)) || !statement->bind(7, static_cast<std::int64_t>(clean.notifications ? 1 : 0)))
         return Status::failure(statement->error());
+    if (!statement->bind(8, clean.language)) return Status::failure(statement->error());
     return statement->run();
 }
 

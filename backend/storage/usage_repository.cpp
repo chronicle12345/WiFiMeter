@@ -220,7 +220,13 @@ Status UsageRepository::pruneBefore(const std::string& day, std::size_t& removed
         return status;
     if (!apps->bind(1, day))
         return Status::failure(apps->error());
-    return apps->run();
+    if (const auto pruned = apps->run(); !pruned) return pruned;
+    // UTC timestamps are compared by their local calendar day, matching retention.
+    // Keep open intervals and intervals which cross the retained boundary.
+    auto gaps = database_.prepare("DELETE FROM coverage_gaps WHERE ended_at != '' AND date(ended_at,'localtime') < ?1;", status);
+    if (!gaps) return status;
+    if (!gaps->bind(1, day)) return Status::failure(gaps->error());
+    return gaps->run();
 }
 
 Status UsageRepository::writeApp(const AppUsageRow& row, bool accumulate)
@@ -276,6 +282,20 @@ std::vector<AppUsageRow> UsageRepository::appRange(const std::string& networkKey
 Status UsageRepository::addGap(const CoverageGap& gap)
 {
     Status status;
+    if (gap.span.count() > 0)
+    {
+        auto previous = database_.prepare(
+            "UPDATE coverage_gaps SET ended_at=?5, span_seconds=span_seconds+?6 WHERE id=("
+            "SELECT id FROM coverage_gaps WHERE network_key=?1 AND reason=?2 AND reason_detail=?3 "
+            "AND ended_at=?4 AND scope=?7 AND span_seconds<=9223372036854775807-?6 ORDER BY id DESC LIMIT 1);", status);
+        if (!previous) return status;
+        if (!previous->bind(1, gap.networkKey) || !previous->bind(2, std::string(coverageReasonName(gap.reason))) ||
+            !previous->bind(3, gap.reasonDetail) || !previous->bind(4, core::isoUtcOf(gap.startedAt)) ||
+            !previous->bind(5, core::isoUtcOf(gap.endedAt)) || !previous->bind(6, static_cast<std::int64_t>(gap.span.count())) ||
+            !previous->bind(7, std::string(gap.application ? "apps" : "network"))) return Status::failure(previous->error());
+        if (const auto merged = previous->run(); !merged) return merged;
+        if (sqlite3_changes(database_.handle()) > 0) return Status::success();
+    }
     auto statement = database_.prepare("INSERT INTO coverage_gaps(network_key, reason, reason_detail, started_at, ended_at, span_seconds, scope) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);", status);
     if (!statement)
         return status;

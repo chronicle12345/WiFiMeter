@@ -25,7 +25,8 @@ Store::Store(std::unique_ptr<Database> database)
     : database_(std::move(database)),
       usage_(*database_),
       networks_(*database_),
-      settings_(*database_)
+      settings_(*database_),
+      totalQuota_(*database_)
 {}
 
 std::unique_ptr<Store> Store::open(const std::string& path, Status& status)
@@ -39,6 +40,8 @@ std::unique_ptr<Store> Store::open(const std::string& path, Status& status)
     store->settings().load(status);
     if (!status)
         return nullptr;
+    status = store->totalQuota().ensureSchema();
+    if (!status) return nullptr;
     return store;
 }
 
@@ -50,12 +53,16 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
 
     const std::string seenAt = core::isoUtcOf(now);
     Transaction transaction(database());
+    if (!transaction.active()) return Status::failure(database().lastError());
 
     for (const core::UsageDelta& delta : result.deltas)
     {
         bool created = false;
         if (const Status observed = networks_.observe(delta.network, seenAt, created); !observed)
             return observed;
+
+        if (const Status total = totalQuota_.addUsage(delta); !total)
+            return total;
 
         if (const Status added = usage_.add(delta.network, core::localStampOf(delta.at), delta.rxBytes, delta.txBytes); !added)
             return added;
@@ -138,6 +145,9 @@ Status Store::pruneByRetention(core::TimePoint now, std::size_t& removedDaily, s
 Status Store::clearUsage()
 {
     Transaction transaction(database());
+    if (!transaction.active()) return Status::failure(database().lastError());
+    if (const Status cleared = totalQuota_.clearUsage(); !cleared)
+        return cleared;
     if (const Status cleared = usage_.clearUsage(); !cleared)
         return cleared;
     return transaction.commit();

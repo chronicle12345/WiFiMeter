@@ -6,6 +6,7 @@
 // 这里不调用任何 Windows API，因此在 Linux 开发机上就能跑完整的采样与断开流程。
 
 #include "../platform/windows/windows_network_platform.h"
+#include "../platform/fake_source.h"
 
 #include <chrono>
 #include <cstdint>
@@ -76,6 +77,18 @@ public:
     std::optional<Failure> countersFailure;
     DisconnectCommand disconnectResult;
 
+    std::vector<std::vector<WifiLink>> ethernetRounds;
+    std::vector<std::vector<RawInterfaceRow>> ethernetRowRounds;
+    int ethernetCalls = 0;
+
+    QueryResult<std::vector<WifiLink>> ethernetLinks() override
+    {
+        const auto index = ethernetCalls++;
+        if (!ethernetRowRounds.empty())
+            return QueryResult<std::vector<WifiLink>>::success(ethernetLinksFromRows(ethernetRowRounds[std::min<std::size_t>(index, ethernetRowRounds.size() - 1)]));
+        return QueryResult<std::vector<WifiLink>>::success(ethernetRounds.empty() ? std::vector<WifiLink>{} : ethernetRounds[std::min<std::size_t>(index, ethernetRounds.size() - 1)]);
+    }
+
     int statusCalls = 0;
     int counterCalls = 0;
     std::vector<std::string> disconnectedInterfaces;
@@ -133,6 +146,143 @@ std::unique_ptr<WindowsNetworkPlatform> makePlatform(FakeSystem& system, FakeWai
     options.disconnectPollInterval = std::chrono::milliseconds(100);
     options.wait = wait.function();
     return std::make_unique<WindowsNetworkPlatform>(options);
+}
+
+void samplesEthernetAlongsideWifi()
+{
+    FakeSystem system;
+    system.statusRounds = {{connectedStatus("WLAN", "Home", "Home")}};
+    WifiLink wired;
+    wired.interfaceId = "Ethernet";
+    wired.identity.type = "ethernet";
+    wired.identity.profileUuid = "ethernet_00112233-4455-6677-8899-aabbccddeeff";
+    wired.identity.ssid = "Ethernet:00112233-4455-6677-8899-aabbccddeeff";
+    system.ethernetRounds = {{wired}};
+    system.countersValue = {counters("WLAN", 100, 200), counters("Ethernet", 300, 400)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+    const auto report = platform->sampleWifi();
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(2));
+}
+
+RawInterfaceRow physicalEthernet()
+{
+    RawInterfaceRow row;
+    row.alias = u"Ethernet";
+    row.description = u"Intel Ethernet I219";
+    row.index = 5;
+    row.type = 6;
+    row.guid = "{00112233-4455-6677-8899-AABBCCDDEEFF}";
+    row.hardware = true;
+    row.up = true;
+    return row;
+}
+
+void excludesVirtualEthernetAndKeepsStableIdentity()
+{
+    auto wired = physicalEthernet();
+    std::vector<RawInterfaceRow> rows{wired};
+    for (const auto& name : {u"vEthernet (WSL)", u"Virtual Adapter", u"VMware", u"Hyper-V"})
+    {
+        auto row = wired;
+        row.alias = name;
+        row.guid = "11112233-4455-6677-8899-aabbccddeeff";
+        rows.push_back(row);
+    }
+    auto software = wired;
+    software.hardware = false;
+    software.guid = "22112233-4455-6677-8899-aabbccddeeff";
+    rows.push_back(software);
+    auto wireless = wired;
+    wireless.type = 71;
+    rows.push_back(wireless);
+    rows.push_back(wired); // 相同 GUID 重复枚举只保留一次。
+    auto missingId = wired;
+    missingId.guid.clear();
+    rows.push_back(missingId);
+    const auto links = ethernetLinksFromRows(rows);
+    WIFIMETER_CHECK_EQ(links.size(), std::size_t(1));
+    if (links.empty()) return;
+    WIFIMETER_CHECK_EQ(links[0].identity.type, std::string("ethernet"));
+    WIFIMETER_CHECK_EQ(links[0].identity.ssid.value_or(""), std::string("Ethernet:00112233-4455-6677-8899-aabbccddeeff"));
+    WIFIMETER_CHECK(!links[0].signalPercent && !links[0].frequencyMhz);
+    wired.alias = u"Office cable";
+    wired.index = 90;
+    wired.guid = "00112233-4455-6677-8899-aabbccddeeff";
+    const auto renamed = ethernetLinksFromRows({wired});
+    WIFIMETER_CHECK(renamed[0].identity.profileUuid == links[0].identity.profileUuid);
+    WIFIMETER_CHECK(renamed[0].identity.ssid == links[0].identity.ssid);
+    WIFIMETER_CHECK_EQ(renamed[0].identity.profileName, std::string("Office cable"));
+    auto virtualDescription = wired;
+    virtualDescription.description = u"Microsoft Hyper-V Network Adapter";
+    WIFIMETER_CHECK(ethernetLinksFromRows({virtualDescription}).empty());
+}
+
+void samplesEthernetWithoutWlanAndRefusesDisconnect()
+{
+    FakeSystem system;
+    system.statusesFailure = Failure{FailureKind::unavailable, {}, "WLAN disabled"};
+    system.ethernetRowRounds = {{physicalEthernet()}};
+    system.countersValue = {counters("Ethernet", 300, 400)};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+    const auto report = platform->sampleWifi();
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(1));
+    if (report.samples.empty()) return;
+    WIFIMETER_CHECK_EQ(report.samples[0].identity.type, std::string("ethernet"));
+    WIFIMETER_CHECK_EQ(report.samples[0].rxBytes, std::uint64_t(300));
+    WIFIMETER_CHECK_EQ(report.samples[0].txBytes, std::uint64_t(400));
+    WIFIMETER_CHECK_EQ(system.ethernetCalls, 2);
+    const auto refused = platform->disconnectIfAssociated("Ethernet", *report.samples[0].identity.ssid);
+    WIFIMETER_CHECK(refused.outcome == DisconnectOutcome::notAssociated);
+    WIFIMETER_CHECK(system.disconnectedInterfaces.empty());
+    WIFIMETER_CHECK(platform->wirelessLinks().links.empty());
+}
+
+void discardsEthernetWhenItDisappearsOrDisconnects()
+{
+    for (bool disappears : {false, true})
+    {
+        FakeSystem system;
+        auto down = physicalEthernet();
+        down.up = false;
+        system.ethernetRowRounds = {{physicalEthernet()}, disappears ? std::vector<RawInterfaceRow>{} : std::vector<RawInterfaceRow>{down}};
+        system.countersValue = {counters("Ethernet", 300, 400)};
+        FakeWait wait;
+        auto platform = makePlatform(system, wait);
+        const auto report = platform->sampleWifi();
+        WIFIMETER_CHECK(report.samples.empty());
+        WIFIMETER_CHECK(hasFailure(report.failures, FailureKind::inconsistent, "Ethernet"));
+        const auto idle = platform->sampleWifi();
+        WIFIMETER_CHECK(idle.samples.empty());
+        WIFIMETER_CHECK(idle.complete());
+        WIFIMETER_CHECK_EQ(system.counterCalls, 1);
+    }
+    FakeSystem system;
+    system.ethernetRowRounds = {{physicalEthernet()}};
+    FakeWait wait;
+    auto platform = makePlatform(system, wait);
+    const auto missing = platform->sampleWifi();
+    WIFIMETER_CHECK(missing.samples.empty());
+    WIFIMETER_CHECK(hasFailure(missing.failures, FailureKind::countersMissing, "Ethernet"));
+}
+
+void fakeAdapterDataPreservesEthernetType()
+{
+    const auto parsed = fake::parseAdapters(R"({"adapters":[
+        {"name":"cable","type":"ethernet","stableId":"00112233-4455-6677-8899-aabbccddeeff","connected":true},
+        {"name":"WLAN","ssid":"Home","connected":true},
+        {"name":"missing-id","type":"ethernet","connected":true}]})");
+    WIFIMETER_CHECK(parsed.has_value());
+    if (!parsed) return;
+    const auto links = fake::linksFromAdapters(*parsed);
+    WIFIMETER_CHECK_EQ(links.size(), std::size_t(3));
+    WIFIMETER_CHECK_EQ(links[0].identity.type, std::string("ethernet"));
+    WIFIMETER_CHECK(links[0].identity.associated());
+    WIFIMETER_CHECK(ssidOfLink(links, "cable").empty());
+    WIFIMETER_CHECK_EQ(links[1].identity.type, std::string("wifi"));
+    WIFIMETER_CHECK_EQ(ssidOfLink(links, "WLAN"), std::string("Home"));
+    WIFIMETER_CHECK(!links[2].identity.associated());
 }
 
 void reportsLinksWithIdentity()
@@ -510,6 +660,11 @@ void disconnectReportsCommandFailedWhenStatusUnreadable()
 
 int main()
 {
+    fakeAdapterDataPreservesEthernetType();
+    samplesEthernetAlongsideWifi();
+    excludesVirtualEthernetAndKeepsStableIdentity();
+    samplesEthernetWithoutWlanAndRefusesDisconnect();
+    discardsEthernetWhenItDisappearsOrDisconnects();
     reportsLinksWithIdentity();
     reportsGlobalFailureWhenWlanUnavailable();
     samplesAssociatedInterfacesWithCounters();

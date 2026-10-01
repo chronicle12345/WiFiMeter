@@ -126,3 +126,13 @@ if(NOT WIFIMETER_CROSS_COMPILING OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_dependencies(backend_process_test wifimeter-backend)
     add_test(NAME backend_process_test COMMAND backend_process_test)
 endif()
+
+wifimeter_add_test(legacy_import_test wifimeter-ipc)
+
+wifimeter_add_test(total_quota_test wifimeter-storage)
+
+wifimeter_add_test(proxy_attribution_test wifimeter-platform)
+
+wifimeter_add_test(proxy_service_test wifimeter-ipc)
+
+wifimeter_add_test(server_sampling_test wifimeter-ipc)

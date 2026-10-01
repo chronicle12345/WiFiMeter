@@ -98,6 +98,12 @@ public:
     // 读取所有无线网卡的状态。
     virtual QueryResult<std::vector<WlanStatus>> wlanStatuses() = 0;
 
+    // 物理有线链路独立于 WLAN 服务。旧测试实现缺省没有有线网卡。
+    virtual QueryResult<std::vector<WifiLink>> ethernetLinks()
+    {
+        return QueryResult<std::vector<WifiLink>>::success({});
+    }
+
     // 请求断开指定网卡；不做守卫也不复核。
     virtual DisconnectCommand requestDisconnect(const std::string& interfaceId) = 0;
 

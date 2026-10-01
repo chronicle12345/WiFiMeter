@@ -121,6 +121,15 @@ void reportsExhaustedQuota()
     WIFIMETER_CHECK_EQ(exceeded.percent(), 200.0);
 }
 
+void fractionalWarningBoundary()
+{
+    const QuotaSettings settings{0.000001, 85.5, QuotaPeriod::all};
+    const auto now = utcTime(2026, 10, 1);
+    WIFIMETER_CHECK(!quotaStateOf(settings, 854, now).reachedWarn(settings.warnPercent));
+    WIFIMETER_CHECK(quotaStateOf(settings, 855, now).reachedWarn(settings.warnPercent));
+    WIFIMETER_CHECK(quotaStateOf(settings, 856, now).reachedWarn(settings.warnPercent));
+}
+
 void clampsTheWarnThreshold()
 {
     QuotaSettings settings;
@@ -147,6 +156,7 @@ int main()
     reportsUnlimitedQuota();
     reportsLimitedQuota();
     reportsExhaustedQuota();
+    fractionalWarningBoundary();
     clampsTheWarnThreshold();
     return WIFIMETER_REPORT();
 }

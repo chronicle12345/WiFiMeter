@@ -38,6 +38,9 @@ case "$*" in
   *"dev show"*)
     step=$(( $(step_now) + 1 ))
     printf '%s' "$step" > "$dir/step"
+    if [ "$step" -eq 2 ] && [ -f "$dir/remove-ethernet" ]; then
+      rm -f "$dir/class-net/enp2s0/type"
+    fi
     state=$(cat "$dir/state.txt" 2>/dev/null || echo 100)
     if [ -f "$dir/disconnected" ] && [ ! -f "$dir/sticky.txt" ]; then
       state=30
@@ -155,6 +158,49 @@ bool hasFailure(const std::vector<Failure>& failures, FailureKind kind, const st
             return true;
     }
     return false;
+}
+
+void samplesPhysicalEthernetAndRefusesWirelessDisconnect()
+{
+    FakeSystem system;
+    const auto wired = fs::path(system.sysClassNet) / "enp2s0";
+    fs::create_directories(wired / "device");
+    wifimeter::test::writeFile((wired / "type").string(), "1\n");
+    wifimeter::test::writeFile((wired / "operstate").string(), "up\n");
+    wifimeter::test::writeFile((wired / "carrier").string(), "1\n");
+    wifimeter::test::writeFile((wired / "address").string(), "00:11:22:33:44:55\n");
+    wifimeter::test::writeFile((wired / "addr_assign_type").string(), "0\n");
+    const auto proc = wifimeter::test::readFile(system.procNetDev);
+    wifimeter::test::writeFile(system.procNetDev, proc + "enp2s0: 300 0 0 0 0 0 0 0 400 0 0 0 0 0 0 0\n");
+    LinuxNetworkPlatform platform(system.options());
+    const auto report = platform.sampleWifi();
+    WIFIMETER_CHECK_EQ(report.samples.size(), std::size_t(2));
+    const auto found = std::find_if(report.samples.begin(), report.samples.end(), [](const auto& sample) { return sample.interfaceId == "enp2s0"; });
+    WIFIMETER_CHECK(found != report.samples.end());
+    if (found == report.samples.end()) return;
+    WIFIMETER_CHECK_EQ(found->identity.type, std::string("ethernet"));
+    WIFIMETER_CHECK_EQ(found->rxBytes, std::uint64_t(300));
+    WIFIMETER_CHECK_EQ(found->txBytes, std::uint64_t(400));
+    const auto key = found->identity.profileUuid;
+    const auto rejected = platform.disconnectIfAssociated("enp2s0", *found->identity.ssid);
+    WIFIMETER_CHECK(rejected.outcome == DisconnectOutcome::notAssociated);
+    WIFIMETER_CHECK(!fs::exists(system.file("disconnect.log")));
+
+    // NetworkManager 不可用时仍然采样物理有线。
+    auto options = system.options();
+    options.nmcliExecutable = system.file("missing-nmcli");
+    LinuxNetworkPlatform unmanaged(options);
+    const auto unmanagedReport = unmanaged.sampleWifi();
+    WIFIMETER_CHECK_EQ(unmanagedReport.samples.size(), std::size_t(1));
+    if (!unmanagedReport.samples.empty())
+        WIFIMETER_CHECK(unmanagedReport.samples[0].identity.profileUuid == key);
+
+    // 第二次查询时内核不再报告该网卡，丢弃读取期间的计数。
+    wifimeter::test::writeFile(system.file("step"), "0");
+    wifimeter::test::writeFile(system.file("remove-ethernet"), "");
+    const auto removed = platform.sampleWifi();
+    WIFIMETER_CHECK(hasFailure(removed.failures, FailureKind::inconsistent, "enp2s0"));
+    WIFIMETER_CHECK_EQ(removed.samples.size(), std::size_t(1));
 }
 
 void reportsAssociatedAndUnassociatedInterfaces()
@@ -368,6 +414,7 @@ void readsTheRealSystemWithoutSideEffects()
 
 int main()
 {
+    samplesPhysicalEthernetAndRefusesWirelessDisconnect();
     reportsAssociatedAndUnassociatedInterfaces();
     samplesOnlyAssociatedInterfaces();
     reportsNothingWhenNoInterfaceIsAssociated();

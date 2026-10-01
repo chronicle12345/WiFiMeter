@@ -1,6 +1,7 @@
 #include "wlanapi_query.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 
 #include <netioapi.h>
@@ -264,6 +265,36 @@ DisconnectCommand Win32System::requestDisconnect(const std::string& interfaceId)
     command.failureKind = isUnavailable(result) ? FailureKind::unavailable : FailureKind::commandFailed;
     command.detail = errorDetail("WlanDisconnect", result);
     return command;
+}
+
+QueryResult<std::vector<WifiLink>> Win32System::ethernetLinks()
+{
+    PMIB_IF_TABLE2 table = nullptr;
+    const NETIO_STATUS status = GetIfTable2(&table);
+    if (status != NO_ERROR || table == nullptr)
+        return QueryResult<std::vector<WifiLink>>::failed(FailureKind::commandFailed, errorDetail("GetIfTable2", status));
+    std::vector<RawInterfaceRow> rows;
+    for (ULONG index = 0; index < table->NumEntries; ++index)
+    {
+        const auto& row = table->Table[index];
+        RawInterfaceRow converted;
+        converted.alias = fromWideBuffer(row.Alias, IF_MAX_STRING_SIZE + 1);
+        converted.description = fromWideBuffer(row.Description, IF_MAX_STRING_SIZE + 1);
+        converted.index = row.InterfaceIndex;
+        converted.type = row.Type;
+        converted.hardware = row.InterfaceAndOperStatusFlags.HardwareInterface;
+        converted.up = row.OperStatus == IfOperStatusUp && row.MediaConnectState == MediaConnectStateConnected;
+        const auto& g = row.InterfaceGuid;
+        char guid[37]{};
+        std::snprintf(guid, sizeof(guid), "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+            static_cast<unsigned long>(g.Data1), g.Data2, g.Data3,
+            g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
+        if (row.InterfaceGuid != GUID{})
+            converted.guid = guid;
+        rows.push_back(std::move(converted));
+    }
+    FreeMibTable(table);
+    return QueryResult<std::vector<WifiLink>>::success(ethernetLinksFromRows(rows));
 }
 
 QueryResult<std::vector<InterfaceCounters>> Win32System::interfaceCounters()

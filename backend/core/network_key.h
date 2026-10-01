@@ -21,6 +21,7 @@ struct NetworkRef
 {
     std::string key;   // 稳定键，符合快照对 network.id 的字符集约束
     std::string ssid;  // 用户可见的网络名，可为空
+    std::string type = "wifi";  // wifi / ethernet，随采样传播到用量和存储
 
     bool valid() const
     {

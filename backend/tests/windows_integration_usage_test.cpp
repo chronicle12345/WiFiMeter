@@ -139,6 +139,40 @@ void keysAreStableAndSnapshotSafe()
     WIFIMETER_CHECK(first != wifimeter::core::networkRefOf(WindowsDriver::identityOf("Office")).key);
 }
 
+void ethernetKeysStaySeparateFromWifiNames()
+{
+    auto row = win::RawInterfaceRow{};
+    row.alias = u"Ethernet";
+    row.type = 6;
+    row.hardware = true;
+    row.up = true;
+    row.guid = "00112233-4455-6677-8899-aabbccddeeff";
+    const auto first = win::ethernetLinksFromRows({row})[0].identity;
+    row.alias = u"Renamed cable";
+    row.index = 42;
+    const auto second = win::ethernetLinksFromRows({row})[0].identity;
+    const auto key = wifimeter::core::networkRefOf(first).key;
+    WIFIMETER_CHECK(wifimeter::core::isValidNetworkKey(key));
+    WIFIMETER_CHECK_EQ(wifimeter::core::networkRefOf(second).key, key);
+    WIFIMETER_CHECK(key != wifimeter::core::networkRefOf(WindowsDriver::identityOf(*first.ssid)).key);
+
+    wifimeter::core::UsageAccumulator accumulator;
+    wifimeter::platform::SampleReport report;
+    report.samples.push_back({"Ethernet", first, 100, 200});
+    accumulator.accumulate(report, wifimeter::test::utcTime(2026, 10, 1, 0, 0, 0));
+    report.samples[0].identity = second;
+    report.samples[0].rxBytes = 140;
+    report.samples[0].txBytes = 260;
+    const auto result = accumulator.accumulate(report, wifimeter::test::utcTime(2026, 10, 1, 0, 0, 5));
+    WIFIMETER_CHECK_EQ(result.deltas.size(), std::size_t(1));
+    if (!result.deltas.empty())
+    {
+        WIFIMETER_CHECK_EQ(result.deltas[0].network.key, key);
+        WIFIMETER_CHECK_EQ(result.deltas[0].network.type, std::string("ethernet"));
+        WIFIMETER_CHECK_EQ(result.deltas[0].rxBytes + result.deltas[0].txBytes, std::uint64_t(100));
+    }
+}
+
 }  // namespace
 
 int main()
@@ -146,5 +180,6 @@ int main()
     accumulatesSamplesIntoPerNetworkLedgers();
     rollsTheLedgerOverAtTheMonthBoundary();
     keysAreStableAndSnapshotSafe();
+    ethernetKeysStaySeparateFromWifiNames();
     return WIFIMETER_REPORT();
 }

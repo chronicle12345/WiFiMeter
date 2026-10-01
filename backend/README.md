@@ -207,3 +207,48 @@ Windows 的系统调用本身无法在 Linux 上执行，只能交叉编译 + Wi
 - Windows 的频段报告为未知：Win32 不通过 WLAN API 暴露当前信道，需要额外的
   原生 Wi-Fi 调用（`wlan_intf_opcode_channel_number` 在部分驱动上才可用）才有数据。
 - Windows 侧尚未在真实无线网卡上验证过断开与自动重连的复核行为。
+
+## 旧版 JSON 迁移与完整备份
+
+`importLegacy` 的参数为 `{ sourceId, stateJson, settingsJson?, appUsageJson?, allowInitialSettings? }`。
+JSON 字段传文件原文字符串，允许 UTF-8 BOM；不要先经过 JavaScript 的 JSON 数字解析。
+`sourceId` 标识同一个逻辑数据集。再次调用时原文必须完全相同，否则返回 `LegacySourceChanged`。
+
+只有主进程确认 SQLite 在启动前不存在时，才传 `allowInitialSettings: true`。
+后端进一步要求当前数据库没有网络或用量历史，且现有设置仍是启动时的默认值。
+条件不满足返回 `LegacyInitialSettingsConflict`，整个导入回滚。
+缺省情况下保留已有设置，旧偏好原文仍保存到档案；`settingsApplied` 明确表示是否实际应用了旧 language、retention。
+旧网络策略和独立额度账本按下述规则转换，所有输入及未映射设置保留在 `legacy_imports` 原文中。
+
+`migrationStatus({ sourceId })` 返回 `status: "notImported" | "completed"`。
+成功导入和查询完成状态都包含 `networkCount`、`dailyCount`、`importedAt`；新导入还包含持久化报告：
+`settingsApplied`、`appRecordCount`、`appArchivedOnlyCount` 和 `warnings`。
+`importLegacy` 另外返回 `alreadyImported`。重复导入返回原报告，不重复写入流量。
+结构版本 5 为旧档案增加 `report_json`，升级前的已完成档案没有这些新报告字段。
+
+应用缓存只读取 `Records[].Result.Days`，区间汇总 `Rows` 不进入计数。
+仅转换能确认覆盖完整日期、查询完成、字节合计一致、SSID 唯一对应且适合当前应用身份字段的记录。
+相同网络、日期、AppId 的相同缓存记录去重；存在不同值时该项全部仅归档。
+已有 SQLite 应用日记录保留。部分日期、无效字段、无法映射或冲突记录不转换，在 `warnings` 中说明。
+`appArchivedOnlyCount` 是不能直接转换的记录或缓存项数量，不是丢失的字节数；所有缓存原文始终保存。
+
+`backup` 继续返回 `{ backup: document }`，文档在已有字段外增加：
+
+- `hourlyRecords`：网络、日期、小时和精确字节数。
+- `gaps`、`appGaps`：原始空档 id、网络、原因、说明、起止时间和跨度。
+- `legacyImports`：sourceId、所有原始 JSON、导入时间、数量和原始 reportJson。
+- `legacyNetworkMappings`：大小写敏感的原始 SSID 和 networkKey。
+
+扩展字段中的整数均写成十进制字符串，包括小时和空档 id，保证经过 JavaScript 后精度不变。
+`restore({ backup: document })` 在同一事务中替换记录，任一校验或 SQL 写入失败都会回滚。
+旧备份缺少扩展字段时仍可恢复；缺少的历史为空，不根据每日记录生成小时或应用记录。
+旧备份缺少 settings 时保留当前偏好。新备份保存并恢复 language。
+
+
+网络偏好迁移只修改本次新建的网络。`Alias`、`LimitGB`、整数 `WarnPercent`、`DisconnectAtLimit` 分别映射备注、GB 额度、提醒阈值和自动断开；启用额度时开启提醒。
+`Day/Month/All` 对应 `day/month/all`。无法直接表示的偏好（例如小数提醒百分比）仅归档并报告 warning，不静默截断。
+网络账本使用独立的 `QuotaLedger.Networks`，不从保留期内的 Days 重算。
+`Day:YYYY-MM-DD`、`Month:YYYY-MM`、`All` 分别转换为日期、月份、`all`。
+`UsedBytes` 的数值 token 或字符串按十进制精确转换，支持整数值的小数和指数表示；超过 int64、含非零小数或未知周期的条目只归档并报告 warning，不写入零值。
+已有 SQLite 网络的设置和账本均保留。迁移报告增加 `networkPolicyCount` 与 `ledgerCount`。
+新库传 `allowInitialSettings: true` 且缺少 settingsJson 时使用旧版默认 `language=en, retention=0`；参数缺省或 false 时保留已存在的默认设置行。

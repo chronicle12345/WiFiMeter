@@ -5,6 +5,8 @@
 // 这里不做任何输入输出，时间也由调用方传入，因此可以用假的平台实现直接测每一条分支；
 // 真正的读写循环在 server.h。
 
+#include <functional>
+#include <optional>
 #include <map>
 #include <set>
 #include <string>
@@ -14,6 +16,7 @@
 #include "../core/usage_accumulator.h"
 #include "../core/app_usage_accumulator.h"
 #include "../platform/network_platform.h"
+#include "../platform/proxy_attribution.h"
 #include "../storage/store.h"
 #include "../support/json.h"
 #include "messages.h"
@@ -29,6 +32,7 @@ public:
         storage::Store& store;
         platform::NetworkPlatform& network;
         platform::AppTrafficSource* applications = nullptr;
+        std::function<platform::ProxyClientReport(const platform::ProxyOptions&)> proxySampler = {};
     };
 
     explicit BackendService(Deps deps, bool paused = false);
@@ -77,6 +81,7 @@ public:
     int intervalSeconds() const;
 
 private:
+    Response legacyRequest(const support::JsonValue& params, core::TimePoint now, bool query);
     Response buildHello() const;
     Response buildSnapshot(const support::JsonValue& params, core::TimePoint now);
     Response updateSettings(const support::JsonValue& params);
@@ -86,6 +91,19 @@ private:
     Response restore(const support::JsonValue& params);
     Response disconnect(const support::JsonValue& params);
     Response pruneUsage(core::TimePoint now);
+    storage::Status initializeProxyStorage() const;
+    platform::ProxyOptions proxyOptions(storage::Status& status) const;
+    Response updateProxyConfig(const support::JsonValue& params);
+    support::JsonValue proxyJson(storage::Status& status) const;
+    support::JsonValue proxyEstimatedRecords(const std::vector<storage::AppUsageRow>& rows, storage::Status& status) const;
+    void collectProxyClients(core::TimePoint now);
+    storage::Status pruneProxyObservations(core::TimePoint now) const;
+    storage::Status clearProxyObservations() const;
+    Response updateTotalQuota(const support::JsonValue& params, core::TimePoint now);
+    support::JsonValue totalQuotaJson(core::TimePoint now, storage::Status& status);
+    support::JsonValue totalQuotaBackup(storage::Status& status) const;
+    storage::Status restoreTotalQuota(const support::JsonValue& document);
+    void evaluateTotalQuota(core::TimePoint now, Events& events);
 
     support::JsonValue buildLive() const;
     support::JsonValue networkToJson(const storage::NetworkRecord& record, core::ByteCount usedBytes, const std::string& periodKey) const;
@@ -100,6 +118,10 @@ private:
     core::UsageAccumulator accumulator_;
     core::AppUsageAccumulator appAccumulator_;
     bool appEnabled_ = false;
+    mutable bool proxyStorageReady_ = false;
+    std::optional<core::TimePoint> proxySampleAt_;
+    platform::ProxyClientReport proxyReport_;
+    bool proxyReportCurrent_ = false;
     platform::AppCollectorState appState_ = platform::AppCollectorState::disabled;
     std::string appDetail_;
     core::TimePoint appLastAt_{};
@@ -118,6 +140,7 @@ private:
     std::string liveMessage_;
     int skippedIntervals_ = 0;
     std::set<std::string> notified_;
+    std::map<std::string, core::TimePoint> totalDisconnectAttempts_;
     std::vector<std::pair<std::string, support::JsonValue>> pending_;
 };
 

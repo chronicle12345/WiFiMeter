@@ -6,7 +6,7 @@
 // 就能在 Linux 上原样编译并测试，而不必等到真机上才发现问题——事实上正是这里的一个
 // 错误让打包后的应用在真机上完全采不到数据：
 //
-//   C:\Users\Shi\AppData\Roaming\WiFiMeter Demo\wifimeter.db
+//   C:\Users\dev\AppData\Roaming\WiFiMeter Demo\wifimeter.db
 //
 // 逐段创建目录时把盘符 "C:" 也当成一个目录去 CreateDirectory。正常情况下它返回
 // ERROR_ALREADY_EXISTS 被忽略；但当进程的当前目录不可用时（Electron 拉起子进程时

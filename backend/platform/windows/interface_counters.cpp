@@ -1,6 +1,8 @@
 #include "interface_counters.h"
 
 #include <algorithm>
+#include <cctype>
+#include <set>
 
 #include "text_convert.h"
 
@@ -46,6 +48,36 @@ std::vector<InterfaceCounters> wifiCountersFromRows(const std::vector<RawInterfa
         counters.push_back(std::move(entry));
     }
     return counters;
+}
+
+std::vector<WifiLink> ethernetLinksFromRows(const std::vector<RawInterfaceRow>& rows)
+{
+    std::vector<WifiLink> links;
+    std::set<std::string> seen;
+    for (const auto& row : rows)
+    {
+        if (row.type != 6 || !row.hardware || row.guid.empty())
+            continue;
+        std::string description = toUtf8(row.alias) + " " + toUtf8(row.description);
+        std::transform(description.begin(), description.end(), description.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (description.find("vethernet") != std::string::npos || description.find("virtual") != std::string::npos ||
+            description.find("vmware") != std::string::npos || description.find("hyper-v") != std::string::npos)
+            continue;
+        std::string guid = row.guid;
+        if (guid.size() == 38 && guid.front() == '{' && guid.back() == '}')
+            guid = guid.substr(1, 36);
+        std::transform(guid.begin(), guid.end(), guid.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        if (!seen.insert(guid).second)
+            continue;
+        WifiLink link;
+        link.interfaceId = toInterfaceId(row.alias, row.index);
+        link.adapterAlias = toUtf8(row.alias);
+        if (link.adapterAlias.empty())
+            link.adapterAlias = link.interfaceId;
+        link.identity = ethernetIdentity(guid, link.adapterAlias, row.up);
+        links.push_back(std::move(link));
+    }
+    return links;
 }
 
 std::optional<InterfaceCounters> findInterfaceCounters(const std::vector<InterfaceCounters>& counters, std::string_view interfaceId)

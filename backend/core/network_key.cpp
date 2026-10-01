@@ -54,6 +54,7 @@ std::string fallbackKeyForSsid(std::string_view ssid)
 NetworkRef networkRefOf(const platform::NetworkIdentity& identity)
 {
     NetworkRef reference;
+    reference.type = identity.type;
     if (identity.ssid)
         reference.ssid = *identity.ssid;
 

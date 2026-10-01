@@ -42,7 +42,7 @@ if(WIFIMETER_LINUX_APP_CAPTURE)
     set(WIFIMETER_BPF_OBJECT "${CMAKE_BINARY_DIR}/app/wifimeter-app-capture.bpf.o")
     add_custom_command(OUTPUT "${WIFIMETER_BPF_OBJECT}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/app"
-        COMMAND ${WIFIMETER_BPF_CLANG} -O2 -g -target bpf
+        COMMAND ${WIFIMETER_BPF_CLANG} -O2 -g -target bpf "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=backend"
             -I${WIFIMETER_LIBBPF_INCLUDE_DIR} -I/usr/include/${CMAKE_LIBRARY_ARCHITECTURE}
             -c "${CMAKE_CURRENT_SOURCE_DIR}/app_capture.bpf.c" -o "${WIFIMETER_BPF_OBJECT}"
         DEPENDS app_capture.bpf.c app_capture_types.h

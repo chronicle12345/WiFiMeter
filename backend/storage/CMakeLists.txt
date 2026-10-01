@@ -26,6 +26,7 @@ add_library(wifimeter-storage STATIC
     network_repository.cpp
     settings_repository.cpp
     store.cpp
+    total_quota.cpp
 )
 
 target_include_directories(wifimeter-storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

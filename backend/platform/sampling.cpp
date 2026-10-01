@@ -9,7 +9,7 @@ std::string ssidOfLink(const std::vector<WifiLink>& links, const std::string& in
 {
     for (const WifiLink& link : links)
     {
-        if (link.interfaceId != interfaceId)
+        if (link.interfaceId != interfaceId || link.identity.type != "wifi")
             continue;
         if (!link.identity.ssid)
             return {};
@@ -29,7 +29,8 @@ bool isAssociated(const WifiLink& link)
 // 两次身份是否指向同一个网络：配置键与网络名任一变化都算换了网络。
 bool sameIdentity(const NetworkIdentity& before, const NetworkIdentity& after)
 {
-    return before.profileUuid == after.profileUuid && before.profileName == after.profileName && before.ssid == after.ssid;
+    return before.type == after.type && before.profileUuid == after.profileUuid &&
+        (before.type == "ethernet" || before.profileName == after.profileName) && before.ssid == after.ssid;
 }
 
 const WifiLink* findLink(const std::vector<WifiLink>& links, const std::string& interfaceId)

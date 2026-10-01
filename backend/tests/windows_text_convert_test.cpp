@@ -142,8 +142,8 @@ void roundTripsMixedText()
 // toUtf16：Windows 的宽字符 API 需要它；含中文的用户名与路径必须能正确转换。
 void convertsUtf8ToWide()
 {
-    // "C:\Users\Shi\meter.db" 共 21 个字符。
-    const std::wstring ascii = toUtf16("C:\\Users\\Shi\\meter.db");
+    // "C:\Users\dev\meter.db" 共 21 个字符。
+    const std::wstring ascii = toUtf16("C:\\Users\\dev\\meter.db");
     WIFIMETER_CHECK_EQ(ascii.size(), std::size_t(21));
 
     // 中文路径：库里要求每个字符都保留，不能按代码页降级。

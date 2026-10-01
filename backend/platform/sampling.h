@@ -43,7 +43,7 @@ public:
     LinkSource(const LinkSource&) = delete;
     LinkSource& operator=(const LinkSource&) = delete;
 
-    // 所有无线网卡的当前状态（含未关联的）。
+    // WiFi 与物理有线网卡的当前状态（含未连接的），类型在 identity.type 中。
     virtual LinkReadResult readLinks() = 0;
 
     // 所有网卡的累计字节数。
@@ -59,7 +59,7 @@ protected:
 // 已关联时返回网络名，未关联或身份缺失时返回空字符串。
 std::string ssidOfLink(const std::vector<WifiLink>& links, const std::string& interfaceId);
 
-// 读取无线网卡状态。
+// 读取数据源的网卡状态。
 LinkReport linksFrom(LinkSource& source);
 
 // 按上面的时序采样一次。

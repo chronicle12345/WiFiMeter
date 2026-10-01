@@ -12,6 +12,9 @@ endif()
 add_library(wifimeter-ipc STATIC
     messages.cpp
     service.cpp
+    quota_service.cpp
+    legacy_import.cpp
+    backup_archive.cpp
     ${WIFIMETER_SERVER_SOURCE}
 )
 
@@ -23,3 +26,5 @@ target_link_libraries(wifimeter-ipc PRIVATE wifimeter-warnings)
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     add_compile_options("$<$<NOT:$<BOOL:$<TARGET_PROPERTY:COMPILE_DEFINITIONS>>>:-D_WIN32_WINNT=0x0A00>")
 endif()
+
+target_sources(wifimeter-ipc PRIVATE proxy_service.cpp proxy_config.cpp)

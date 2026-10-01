@@ -55,6 +55,8 @@ std::optional<std::vector<FakeAdapter>> parseAdapters(std::string_view text)
         adapter.signalPercent = readOptionalInt(item, "signal");
         adapter.frequencyMhz = readOptionalInt(item, "frequency");
         adapter.channel = readOptionalInt(item, "channel");
+        adapter.type = item.stringOr("type", "wifi");
+        adapter.stableId = item.stringOr("stableId");
 
         if (const JsonValue* ssid = item.find("ssid"); ssid != nullptr && ssid->isString() && !ssid->asString().empty())
             adapter.ssid = ssid->asString();
@@ -72,6 +74,14 @@ std::vector<WifiLink> linksFromAdapters(const std::vector<FakeAdapter>& adapters
         WifiLink link;
         link.interfaceId = adapter.name;
         link.adapterAlias = adapter.description.empty() ? adapter.name : adapter.description;
+        if (adapter.type == "ethernet")
+        {
+            link.identity = ethernetIdentity(adapter.stableId, adapter.name, adapter.connected);
+            links.push_back(std::move(link));
+            continue;
+        }
+        if (adapter.type != "wifi")
+            continue;
         link.identity.profileName = adapter.profileName;
         // 测试数据里的网卡没有配置 UUID：与 Windows 侧一致，由 SSID 派生网络键。
         // 只有“已连接且有 SSID”才算关联，与两端的关联判定保持一致。

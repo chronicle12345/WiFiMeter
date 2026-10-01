@@ -91,6 +91,10 @@ LinkReadResult WindowsNetworkPlatform::readLinks()
     result.failures = statuses.failures;
     if (statuses.ok())
         result.links = linkReportFrom(*statuses.value).links;
+    const auto wired = options_.system->ethernetLinks();
+    result.failures.insert(result.failures.end(), wired.failures.begin(), wired.failures.end());
+    if (wired.ok())
+        result.links.insert(result.links.end(), wired.value->begin(), wired.value->end());
     return result;
 }
 

@@ -1,6 +1,7 @@
 #include "network_repository.h"
 
 #include <sqlite3.h>
+#include <cmath>
 
 namespace wifimeter::storage
 {
@@ -9,12 +10,12 @@ namespace
 
 const char* kPeriodName(core::QuotaPeriod period)
 {
-    return period == core::QuotaPeriod::day ? "day" : "month";
+    return period == core::QuotaPeriod::all ? "all" : period == core::QuotaPeriod::day ? "day" : "month";
 }
 
 core::QuotaPeriod parsePeriod(const std::string& name)
 {
-    return name == "day" ? core::QuotaPeriod::day : core::QuotaPeriod::month;
+    return name == "all" ? core::QuotaPeriod::all : name == "day" ? core::QuotaPeriod::day : core::QuotaPeriod::month;
 }
 
 NetworkRecord readRow(const Statement& statement)
@@ -25,7 +26,7 @@ NetworkRecord readRow(const Statement& statement)
     record.alias = statement.columnText(2);
     record.type = statement.columnText(3);
     record.capGb = statement.columnDouble(4);
-    record.warnPercent = static_cast<int>(statement.columnInt64(5));
+    record.warnPercent = statement.columnDouble(5);
     record.quotaPeriod = parsePeriod(statement.columnText(6));
     record.notify = statement.columnInt64(7) != 0;
     record.autoDisconnect = statement.columnInt64(8) != 0;
@@ -58,11 +59,11 @@ Status NetworkRepository::observe(const core::NetworkRef& network, const std::st
     {
         auto insert = database_.prepare(
             "INSERT INTO networks(key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at) "
-            "VALUES(?1, ?2, '', 'wifi', 0, 80, 'month', 0, 0, ?3, ?3);",
+            "VALUES(?1, ?2, '', ?4, 0, 80, 'month', 0, 0, ?3, ?3);",
             status);
         if (!insert)
             return status;
-        if (!insert->bind(1, network.key) || !insert->bind(2, network.ssid) || !insert->bind(3, seenAtIso))
+        if (!insert->bind(1, network.key) || !insert->bind(2, network.ssid) || !insert->bind(3, seenAtIso) || !insert->bind(4, network.type))
             return Status::failure(insert->error());
         if (const Status ran = insert->run(); !ran)
             return ran;
@@ -71,10 +72,10 @@ Status NetworkRepository::observe(const core::NetworkRef& network, const std::st
     }
 
     // 已存在时只刷新 ssid 与最近出现时间：备注、额度与首次出现时间属于用户数据。
-    auto update = database_.prepare("UPDATE networks SET ssid = ?2, last_seen_at = ?3 WHERE key = ?1;", status);
+    auto update = database_.prepare("UPDATE networks SET ssid = ?2, last_seen_at = ?3, type = ?4 WHERE key = ?1;", status);
     if (!update)
         return status;
-    if (!update->bind(1, network.key) || !update->bind(2, network.ssid) || !update->bind(3, seenAtIso))
+    if (!update->bind(1, network.key) || !update->bind(2, network.ssid) || !update->bind(3, seenAtIso) || !update->bind(4, network.type))
         return Status::failure(update->error());
     return update->run();
 }
@@ -120,13 +121,15 @@ std::optional<NetworkRecord> NetworkRepository::find(const std::string& key, Sta
     return readRow(*statement);
 }
 
-Status NetworkRepository::updateUserSettings(const std::string& key, const std::string& alias, double capGb, int warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect)
+Status NetworkRepository::updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect)
 {
+    if (!std::isfinite(capGb) || capGb < 0 || capGb > 9000000000.0 || (capGb > 0 && capGb < 1e-9)) return Status::failure("Invalid quota size.");
+    if (!std::isfinite(warnPercent) || warnPercent < 1 || warnPercent > 100) return Status::failure("Invalid warning threshold.");
     Status status;
     auto statement = database_.prepare("UPDATE networks SET alias = ?2, cap_gb = ?3, warn_percent = ?4, quota_period = ?5, notify = ?6, auto_disconnect = ?7 WHERE key = ?1;", status);
     if (!statement)
         return status;
-    if (!statement->bind(1, key) || !statement->bind(2, alias) || !statement->bind(3, capGb) || !statement->bind(4, static_cast<std::int64_t>(warnPercent)) || !statement->bind(5, std::string(kPeriodName(period))) || !statement->bind(6, static_cast<std::int64_t>(notify ? 1 : 0)) ||
+    if (!statement->bind(1, key) || !statement->bind(2, alias) || !statement->bind(3, capGb) || !statement->bind(4, warnPercent) || !statement->bind(5, std::string(kPeriodName(period))) || !statement->bind(6, static_cast<std::int64_t>(notify ? 1 : 0)) ||
         !statement->bind(7, static_cast<std::int64_t>(autoDisconnect ? 1 : 0)))
         return Status::failure(statement->error());
     if (const Status ran = statement->run(); !ran)
@@ -158,6 +161,8 @@ Status NetworkRepository::remove(const std::string& key)
 
 Status NetworkRepository::replace(const NetworkRecord& record)
 {
+    if (!std::isfinite(record.capGb) || record.capGb < 0 || record.capGb > 9000000000.0 || (record.capGb > 0 && record.capGb < 1e-9)) return Status::failure("Invalid quota size.");
+    if (!std::isfinite(record.warnPercent) || record.warnPercent < 1 || record.warnPercent > 100) return Status::failure("Invalid warning threshold.");
     Status status;
     auto statement = database_.prepare(
         "INSERT INTO networks(key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at) "
@@ -168,7 +173,7 @@ Status NetworkRepository::replace(const NetworkRecord& record)
         status);
     if (!statement)
         return status;
-    if (!statement->bind(1, record.key) || !statement->bind(2, record.ssid) || !statement->bind(3, record.alias) || !statement->bind(4, record.type) || !statement->bind(5, record.capGb) || !statement->bind(6, static_cast<std::int64_t>(record.warnPercent)) ||
+    if (!statement->bind(1, record.key) || !statement->bind(2, record.ssid) || !statement->bind(3, record.alias) || !statement->bind(4, record.type) || !statement->bind(5, record.capGb) || !statement->bind(6, record.warnPercent) ||
         !statement->bind(7, std::string(kPeriodName(record.quotaPeriod))) || !statement->bind(8, static_cast<std::int64_t>(record.notify ? 1 : 0)) || !statement->bind(9, static_cast<std::int64_t>(record.autoDisconnect ? 1 : 0)) || !statement->bind(10, record.firstSeenAt) ||
         !statement->bind(11, record.lastSeenAt))
         return Status::failure(statement->error());

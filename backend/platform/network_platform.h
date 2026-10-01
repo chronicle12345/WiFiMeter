@@ -64,13 +64,19 @@ struct NetworkIdentity
     std::string profileName;                 // 连接配置名称
     std::optional<std::string> ssid;         // 当前关联的网络名
 
+    // 有线使用保留身份作为 ssid，展示名称保存在 profileName。
+    std::string type = "wifi";
+
     bool associated() const
     {
         return ssid.has_value();
     }
 };
 
-// 一张无线网卡的当前状态。
+// 物理有线身份：稳定设备标识决定键，名称变化不改变归属。
+NetworkIdentity ethernetIdentity(std::string_view stableId, const std::string& name, bool connected);
+
+// 一张网卡的当前状态；类型由 identity.type 指明。
 struct WifiLink
 {
     std::string interfaceId;   // 内核接口名，稳定且唯一
@@ -142,7 +148,7 @@ public:
     // 读取所有无线网卡的当前状态，不改变系统状态。
     virtual LinkReport wirelessLinks() = 0;
 
-    // 采样所有已关联无线网卡的累计字节数。
+    // 兼容旧入口名称，采样 WiFi 和物理有线网卡；调用方必须传播 identity.type。
     virtual SampleReport sampleWifi() = 0;
 
     // 只在 interfaceId 当前关联到 expectedSsid 时断开，并在断开后复核。

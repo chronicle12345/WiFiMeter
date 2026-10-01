@@ -41,6 +41,7 @@ public:
     Win32System& operator=(const Win32System&) = delete;
 
     QueryResult<std::vector<WlanStatus>> wlanStatuses() override;
+    QueryResult<std::vector<WifiLink>> ethernetLinks() override;
     DisconnectCommand requestDisconnect(const std::string& interfaceId) override;
     QueryResult<std::vector<InterfaceCounters>> interfaceCounters() override;
 

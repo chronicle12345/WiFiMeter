@@ -17,6 +17,8 @@
 #include <string_view>
 #include <vector>
 
+#include "../network_platform.h"
+
 namespace wifimeter::platform::windows
 {
 
@@ -36,6 +38,9 @@ struct RawInterfaceRow
     std::uint32_t type = 0;  // IANA 接口类型：71 为 IEEE 802.11 无线
     std::uint64_t rxBytes = 0;
     std::uint64_t txBytes = 0;
+    std::string guid;       // 规范化 GUID，不随别名或接口索引改变
+    bool hardware = false;
+    bool up = false;
 };
 
 // IF_TYPE_IEEE80211：无线网卡的 IANA 类型编号。
@@ -49,6 +54,9 @@ std::vector<InterfaceCounters> countersFromRows(const std::vector<RawInterfaceRo
 
 // 只保留无线网卡，再转成计数列表。
 std::vector<InterfaceCounters> wifiCountersFromRows(const std::vector<RawInterfaceRow>& rows);
+
+// 排除虚拟接口，只保留物理 Ethernet（含未连接状态）。
+std::vector<WifiLink> ethernetLinksFromRows(const std::vector<RawInterfaceRow>& rows);
 
 // 按接口标识查找累计字节数，找不到返回空值。
 std::optional<InterfaceCounters> findInterfaceCounters(const std::vector<InterfaceCounters>& counters, std::string_view interfaceId);

@@ -8,25 +8,26 @@ namespace wifimeter::core
 namespace
 {
 
-// 十进制 GB。上限 100000 GB 时仍远小于 2^53，llround 不会丢精度。
+// 十进制 GB。合法上限 9e9 GB 转换后为 9e18 字节，仍在 int64 范围内。
 constexpr double kBytesPerGigabyte = 1e9;
 
-int clampWarnPercent(int warnPercent)
+double clampWarnPercent(double warnPercent)
 {
-    return std::clamp(warnPercent, 1, 100);
+    return std::clamp(warnPercent, 1.0, 100.0);
 }
 
 }  // namespace
 
 ByteCount bytesOfGigabytes(double gigabytes)
 {
-    if (!(gigabytes > 0.0))
+    if (!(gigabytes > 0.0) || !std::isfinite(gigabytes))
         return 0;
-    return static_cast<ByteCount>(std::llround(gigabytes * kBytesPerGigabyte));
+    return std::max<ByteCount>(1, static_cast<ByteCount>(std::llround(gigabytes * kBytesPerGigabyte)));
 }
 
 std::string periodKeyFor(QuotaPeriod period, TimePoint now)
 {
+    if (period == QuotaPeriod::all) return "all";
     const LocalStamp stamp = localStampOf(now);
     return period == QuotaPeriod::day ? dayKeyOf(stamp) : monthKeyOf(stamp);
 }
@@ -56,7 +57,7 @@ double QuotaState::percent() const
     return static_cast<double>(usedBytes) * 100.0 / static_cast<double>(capBytes);
 }
 
-bool QuotaState::reachedWarn(int warnPercent) const
+bool QuotaState::reachedWarn(double warnPercent) const
 {
     return limited && percent() >= static_cast<double>(clampWarnPercent(warnPercent));
 }

@@ -174,6 +174,6 @@ private:
 };
 
 // 当前程序使用的结构版本。
-inline constexpr int kSchemaVersion = 3;
+inline constexpr int kSchemaVersion = 5;
 
 }  // namespace wifimeter::storage

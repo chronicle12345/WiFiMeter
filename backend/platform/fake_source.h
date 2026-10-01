@@ -7,6 +7,7 @@
 //                              "signal":82,"frequency":5180,"channel":36}]}
 //   WIFIMETER_FAKE_COUNTERS → {"interfaces":[{"name":"wlan0","rx":5000000,"tx":900000}]}
 //
+// 有线测试数据使用 type=ethernet 和 stableId（GUID 或 Linux 设备身份），不需要 ssid。
 // 两个文件每次调用都重新读取，因此测试可以在两次采样之间改内容（制造增量、切换网络）。
 // 只有显式设置环境变量时才生效：正式运行完全走系统数据源。
 //
@@ -37,6 +38,8 @@ struct FakeAdapter
     std::optional<int> signalPercent;
     std::optional<int> frequencyMhz;
     std::optional<int> channel;
+    std::string type = "wifi";
+    std::string stableId;
 };
 
 // 解析网卡 JSON；无法解析时返回空值。

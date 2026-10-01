@@ -408,10 +408,23 @@ void persistsSettingsAcrossReopen()
     // 非法取值回退到默认，坏数据不应传到界面。
     SettingsRecord broken;
     broken.intervalSeconds = 7;
-    broken.retentionDays = 12;
+    broken.retentionDays = -1;
     const SettingsRecord clean = SettingsRepository::sanitize(broken);
     WIFIMETER_CHECK_EQ(clean.intervalSeconds, 5);
     WIFIMETER_CHECK_EQ(clean.retentionDays, 90);
+    for (const int days : {0, 12, 1234, 36500})
+    {
+        SettingsRecord valid;
+        valid.retentionDays = days;
+        valid.language = "zh-CN";
+        WIFIMETER_CHECK(reopened->settings().save(valid).ok);
+        const auto saved = reopened->settings().load(status);
+        WIFIMETER_CHECK_EQ(saved.retentionDays, days);
+        WIFIMETER_CHECK_EQ(saved.language, std::string("zh-CN"));
+    }
+    broken.retentionDays = 36501;
+    WIFIMETER_CHECK_EQ(SettingsRepository::sanitize(broken).retentionDays, 90);
+
 }
 
 void survivesReopenWithData()
@@ -437,6 +450,52 @@ void survivesReopenWithData()
         WIFIMETER_CHECK_EQ(daily[0].rxBytes, ByteCount{500});
 }
 
+void coalescesContinuousGapsAndPrunesOnlyExpiredIntervals()
+{
+    wifimeter::test::useTimeZone("UTC");
+    TempDirectory directory("gap-retention");
+    Status status;
+    auto store = openStore(directory, status);
+    if (!store) return;
+    CoverageGap gap;
+    gap.application = true;
+    gap.networkKey = "example";
+    gap.reason = CoverageReason::offline;
+    gap.reasonDetail = "permission";
+    gap.span = std::chrono::seconds(5);
+    const auto base = utcTime(2026, 1, 1, 10, 0, 0);
+    for (int i = 0; i < 100; ++i) {
+        gap.startedAt = base + std::chrono::seconds(i * 5);
+        gap.endedAt = gap.startedAt + gap.span;
+        WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    }
+    auto apps = store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status, true);
+    WIFIMETER_CHECK_EQ(apps.size(), std::size_t{1});
+    if (!apps.empty()) WIFIMETER_CHECK_EQ(apps[0].span.count(), 500);
+    gap.startedAt = base + std::chrono::seconds(500); gap.endedAt = gap.startedAt + gap.span;
+    gap.reasonDetail = "different reason";
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    gap.application = false;
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status, true).size(), std::size_t{2});
+    WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status).size(), std::size_t{1});
+    wifimeter::test::useTimeZone("Asia/Shanghai");
+    gap.networkKey = "retained"; gap.reasonDetail = "local day";
+    gap.startedAt = utcTime(2026, 1, 1, 16, 1, 0); gap.endedAt = gap.startedAt + gap.span;
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    gap.reasonDetail = "crosses cutoff";
+    gap.startedAt = utcTime(2026, 1, 1, 15, 0, 0); gap.endedAt = utcTime(2026, 1, 1, 16, 10, 0);
+    gap.span = std::chrono::duration_cast<std::chrono::seconds>(gap.endedAt - gap.startedAt);
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    gap.reasonDetail = "still open"; gap.span = std::chrono::seconds(0);
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    std::size_t daily = 0, hourly = 0;
+    WIFIMETER_CHECK(store->usage().pruneBefore("2026-01-02", daily, hourly).ok);
+    WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status, true).size(), std::size_t{0});
+    WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status).size(), std::size_t{3});
+    wifimeter::test::useTimeZone("UTC");
+}
+
 }  // namespace
 
 int main()
@@ -444,6 +503,7 @@ int main()
     accumulatesDailyAndHourlyUsage();
     filtersByNetworkAndRange();
     recordsCoverageGaps();
+    coalescesContinuousGapsAndPrunesOnlyExpiredIntervals();
     appliesAccumulatorOutputAtomically();
     rollsTheQuotaLedgerAtThePeriodBoundary();
     prunesByRetention();

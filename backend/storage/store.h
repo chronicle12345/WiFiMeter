@@ -18,6 +18,7 @@
 #include "network_repository.h"
 #include "settings_repository.h"
 #include "usage_repository.h"
+#include "total_quota.h"
 
 namespace wifimeter::storage
 {
@@ -55,6 +56,11 @@ public:
         return settings_;
     }
 
+    TotalQuotaRepository& totalQuota()
+    {
+        return totalQuota_;
+    }
+
     // 把一次采样的累计结果写入数据库。
     Status applyUsage(const core::AccumulateResult& result, core::TimePoint now, ApplySummary& summary);
 
@@ -77,6 +83,7 @@ private:
     UsageRepository usage_;
     NetworkRepository networks_;
     SettingsRepository settings_;
+    TotalQuotaRepository totalQuota_;
 };
 
 // 把累计事件映射为覆盖空档的原因。

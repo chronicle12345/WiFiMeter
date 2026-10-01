@@ -23,6 +23,7 @@ enum class SpeedUnit
 
 struct SettingsRecord
 {
+    std::string language = "en";
     DisplayUnit unit = DisplayUnit::gb;
     SpeedUnit speedUnit = SpeedUnit::megabytesPerSecond;
     int intervalSeconds = 5;

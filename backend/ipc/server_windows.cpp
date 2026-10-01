@@ -160,12 +160,25 @@ int StdioServer::run(core::TimePoint startAt)
             if (count == 0)
                 break;  // 输入结束：正常退出
 
+            // Earlier buffered bytes have already been scanned and contain no newline.
+            const auto scanned = buffer.size();
             buffer.append(chunk, static_cast<std::size_t>(count));
-            std::size_t newline = buffer.find('\n');
+            std::size_t newline = buffer.find('\n', scanned);
             while (newline != std::string::npos)
             {
-                std::string line = buffer.substr(0, newline);
-                buffer.erase(0, newline + 1);
+                std::string line;
+                if (newline > 64 * 1024 && newline + 1 == buffer.size())
+                {
+                    line.swap(buffer);
+                    line.resize(newline);
+                }
+                else
+                {
+                    line = buffer.substr(0, newline);
+                    buffer.erase(0, newline + 1);
+                    // Do not retain a large import frame for the rest of the session.
+                    if (buffer.capacity() > 64 * 1024) std::string(buffer).swap(buffer);
+                }
                 if (!line.empty() && line.back() == '\r')
                     line.pop_back();
                 if (!handleLine(line, std::chrono::system_clock::now()))

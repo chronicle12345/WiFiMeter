@@ -1,7 +1,39 @@
 #include "network_platform.h"
 
+#include <cstdio>
+
 namespace wifimeter::platform
 {
+
+NetworkIdentity ethernetIdentity(std::string_view stableId, const std::string& name, bool connected)
+{
+    NetworkIdentity identity;
+    identity.type = "ethernet";
+    identity.profileName = name;
+    if (stableId.empty())
+        return identity;
+    // GUID 可直接保留；MAC 和设备路径散列后仍满足 network.id 的字符与长度约束。
+    bool safe = stableId.size() <= 55;
+    for (const char ch : stableId)
+        safe = safe && ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-');
+    std::string key(stableId);
+    if (!safe)
+    {
+        std::uint64_t hash = 14695981039346656037ULL;
+        for (const unsigned char ch : stableId)
+        {
+            hash ^= ch;
+            hash *= 1099511628211ULL;
+        }
+        char buffer[17]{};
+        std::snprintf(buffer, sizeof(buffer), "%016llx", static_cast<unsigned long long>(hash));
+        key = buffer;
+    }
+    identity.profileUuid = "ethernet_" + key;
+    if (connected)
+        identity.ssid = "Ethernet:" + std::string(stableId);
+    return identity;
+}
 
 Band classifyBand(int frequencyMhz)
 {

@@ -90,7 +90,7 @@ platform::AppTrafficReport waitFor(windows::WindowsAppTrafficSource& source, pla
     return result;
 }
 
-int main()
+int main() try
 {
     int count = 0;
     auto** arguments = ::CommandLineToArgvW(::GetCommandLineW(), &count);
@@ -103,9 +103,10 @@ int main()
         return helper(pipeName);
     wifimeter::test::TempDirectory directory("windows-app-helper");
     const auto makeHelper = [&](const std::string& name) {
-        const auto path = directory.file(name + " 带空格.exe");
-        std::filesystem::copy_file(std::filesystem::path(executable()), std::filesystem::path(windows::toUtf16(path)));
-        return path;
+        // 文件系统路径使用 UTF-16；后端 helperPath 接收 UTF-8，避免经过本地代码页。
+        const auto path = directory.path() / windows::toUtf16(name + " 带空格.exe");
+        std::filesystem::copy_file(std::filesystem::path(executable()), path);
+        return utf8(path.native());
     };
     windows::WindowsAppTrafficSource source({makeHelper("normal"), false});
     WIFIMETER_CHECK(source.read().state == platform::AppCollectorState::disabled);
@@ -132,7 +133,7 @@ int main()
     invalid.start();
     WIFIMETER_CHECK(waitFor(invalid, platform::AppCollectorState::unavailable).state == platform::AppCollectorState::unavailable);
     invalid.stop();
-    windows::WindowsAppTrafficSource missing({directory.file("missing.exe"), false});
+    windows::WindowsAppTrafficSource missing({utf8((directory.path() / L"missing.exe").native()), false});
     missing.start();
     WIFIMETER_CHECK(waitFor(missing, platform::AppCollectorState::unavailable).state == platform::AppCollectorState::unavailable);
     missing.stop();
@@ -148,4 +149,10 @@ int main()
     WIFIMETER_CHECK(waitFor(stalled, platform::AppCollectorState::unavailable).state == platform::AppCollectorState::unavailable);
     stalled.stop();
     return WIFIMETER_REPORT();
+}
+
+catch (const std::exception& error)
+{
+    std::fprintf(stderr, "windows_app_traffic_test: %s\n", error.what());
+    return 1;
 }
