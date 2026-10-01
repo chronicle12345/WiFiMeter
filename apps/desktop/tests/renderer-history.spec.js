@@ -208,7 +208,11 @@ test('有线名称与身份分开显示，无频段信号或无线自动断开',
 test('生成 v1.2 合成数据验收截图',async()=>{
  const directory=path.resolve('../..',process.env.WIFIMETER_CAPTURE_README==='1'?'docs/assets':'artifacts');
  await mkdir(directory,{recursive:true});
+ // Screenshot records use a fixed local calendar date; the runner's timezone must not shift it.
+ const clockSession=await page.context().newCDPSession(page);
+ await clockSession.send('Emulation.setTimezoneOverride',{timezoneId:'Asia/Shanghai'});
  await page.clock.setFixedTime(new Date('2026-09-18T12:00:00+08:00'));
+ expect(await page.evaluate(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;})).toBe('2026-09-18');
  await app.evaluate(({BrowserWindow})=>{
   BrowserWindow.getAllWindows()[0].setContentSize(1440,1000);
   const s=globalThis.rendererFixture.snapshot,today='2026-09-18';
@@ -244,6 +248,8 @@ test('生成 v1.2 合成数据验收截图',async()=>{
   await page.reload();
   await page.locator('[data-page="overview"]').click();
   await page.locator('[data-action="period"][data-value="month"]').click();
+  await expect(page.locator('#content')).not.toHaveAttribute('aria-busy','true');
+  await expect(page.locator('.date-text')).toContainText('09 / 18');
   await expect(page.locator('h1')).toHaveText(english?'Usage overview':'流量总览');
   await expect(page.locator('.connection-title')).toContainText(english?'Demo Wi-Fi':'演示无线网络');
   await expect(page.locator('#brandMark img')).toHaveAttribute('src','../assets/icon.png');
