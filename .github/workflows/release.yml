@@ -55,4 +55,5 @@ jobs:
           )
           Copy-Item 'dist/WiFiMeter-Setup.exe' $assets[0]
           Copy-Item 'dist/WiFiMeter-Portable.zip' $assets[1]
-          gh release create "${{ github.ref_name }}" @assets --title "WiFiMeter $version" --generate-notes
+          $notesPath = "docs/releases/v$version.md"
+          gh release create "${{ github.ref_name }}" @assets --title "WiFiMeter $version" --notes-file $notesPath
