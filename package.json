@@ -1,0 +1,16 @@
+{
+  "name": "wifimeter-repository",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix apps/desktop start",
+    "test": "npm --prefix apps/desktop test",
+    "test:unit": "npm --prefix apps/desktop run test:unit",
+    "test:ui": "npm --prefix apps/desktop run test:ui",
+    "test:backend": "cmake -S backend -B build && cmake --build build && ctest --test-dir build --output-on-failure",
+    "test:windows": "node packaging/windows/build-backend.mjs --tests --run",
+    "dist:linux": "npm --prefix apps/desktop run dist:linux",
+    "dist:windows": "node packaging/windows/build.cjs",
+    "build:backend": "npm --prefix apps/desktop run build:backend",
+    "build:backend:windows": "node packaging/windows/build-backend.mjs"
+  }
+}

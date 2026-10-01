@@ -1,8 +1,12 @@
 /data/
 /dist/
-/artifacts/
 
 .workbuddy-ai/
 
 .vs/
 *.user
+
+/build/
+/node_modules/
+/.cross-build/
+/artifacts/
