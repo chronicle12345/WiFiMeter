@@ -12,22 +12,46 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
 const helper = path.join(root, 'packaging/windows/stop-legacy.ps1');
 
-test('upgrade helper waits for the legacy collector to save without killing it', { skip: process.platform !== 'win32' }, async t => {
+test('upgrade helper waits for the legacy collector to save without killing it', { skip: process.platform !== 'win32', timeout: 90000 }, async t => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-upgrade-'));
-    let child;
-    t.after(async () => { if (child && child.exitCode === null) child.kill(); await rm(directory, { recursive: true, force: true }); });
-    const run = () => execute(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-DataDirectory', directory, '-TimeoutSeconds', '5'], { windowsHide: true });
+    let child, exited;
+    let output = '', errors = '';
+    t.after(async () => {
+        if (child && child.exitCode === null) child.kill();
+        if (exited) await exited;
+        await rm(directory, { recursive: true, force: true });
+    });
+    const run = () => execute(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-DataDirectory', directory, '-TimeoutSeconds', '30'], { windowsHide: true, timeout: 60000 });
     await run();
     await assert.rejects(access(path.join(directory, 'stop.request')));
-    const script = `$ErrorActionPreference='Stop'; $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(directory).toString('base64')}')); $lock=[IO.File]::Open((Join-Path $d 'collector.lock'),'OpenOrCreate','ReadWrite','None'); try { [IO.File]::WriteAllText((Join-Path $d 'status.json'),' {"LaunchId":"11111111111111111111111111111111"}'); $deadline=[DateTime]::UtcNow.AddSeconds(15); do { if(Test-Path (Join-Path $d 'stop.request')) { try {$r=[IO.File]::ReadAllText((Join-Path $d 'stop.request'))|ConvertFrom-Json; if($r.LaunchId -eq '11111111111111111111111111111111'){break}}catch{} }; Start-Sleep -Milliseconds 50 }while([DateTime]::UtcNow -lt $deadline); [IO.File]::WriteAllText((Join-Path $d 'state.json'),'saved-final-sample') }finally{$lock.Dispose()}`;
-    child = spawn(powershell, ['-NoProfile', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: 'ignore' });
-    const exited = once(child, 'exit');
-    const deadline = Date.now() + 5000;
-    while (true) { try { await access(path.join(directory, 'status.json')); break; } catch { if (Date.now() >= deadline) throw Error('Fixture startup timeout'); await new Promise(resolve => setTimeout(resolve, 25)); } }
     await writeFile(path.join(directory, 'stop.request'), '{"LaunchId":"stale"}');
-    await run();
-    const [exitCode] = await exited;
-    assert.equal(exitCode, 0);
+    // The fixture only saves after seeing its own launch token, never because a timer expires.
+    // Its lifetime is controlled by the test, so runner startup delays cannot make it exit early.
+    const script = `$ErrorActionPreference='Stop'; $d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(directory).toString('base64')}')); $lock=[IO.File]::Open((Join-Path $d 'collector.lock'),'OpenOrCreate','ReadWrite','None'); try { [IO.File]::WriteAllText((Join-Path $d 'status.json'),' {"LaunchId":"11111111111111111111111111111111"}'); $stale=[IO.File]::ReadAllText((Join-Path $d 'stop.request'))|ConvertFrom-Json; if($stale.LaunchId -ne 'stale'){throw 'Expected stale fixture request'}; [Console]::Out.WriteLine('STALE_IGNORED'); [Console]::Out.WriteLine('READY'); [Console]::Out.Flush(); while($true) { if(Test-Path (Join-Path $d 'stop.request')) { $r=$null; try {$r=[IO.File]::ReadAllText((Join-Path $d 'stop.request'))|ConvertFrom-Json}catch{}; if($null -ne $r -and $r.LaunchId -eq '11111111111111111111111111111111'){break} }; Start-Sleep -Milliseconds 50 }; [Console]::Out.WriteLine('STOP_RECEIVED'); [Console]::Out.Flush(); [IO.File]::WriteAllText((Join-Path $d 'state.json'),'saved-final-sample'); [Console]::Out.WriteLine('SAVED'); [Console]::Out.Flush() }finally{$lock.Dispose()}`;
+    child = spawn(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    exited = new Promise((resolve, reject) => { child.once('close', code => resolve(code)); child.once('error', reject); });
+    exited.catch(() => {});
+    child.stdout.on('data', chunk => { output += chunk.toString(); });
+    child.stderr.on('data', chunk => { errors += chunk.toString(); });
+    const ready = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { cleanup(); reject(Error(`Fixture readiness timeout; stdout=${output}; stderr=${errors}`)); }, 30000);
+        const check = () => { if (/^READY\r?$/m.test(output)) { cleanup(); resolve(); } };
+        const earlyExit = code => { cleanup(); reject(Error(`Fixture exited before readiness: ${code}; ${errors}`)); };
+        const failed = error => { cleanup(); reject(error); };
+        const cleanup = () => { clearTimeout(timer); child.stdout.removeListener('data', check); child.removeListener('exit', earlyExit); child.removeListener('error', failed); };
+        child.stdout.on('data', check); child.once('exit', earlyExit); child.once('error', failed); check();
+    });
+    await ready;
+    assert.match(output, /STALE_IGNORED/);
+    try { await run(); } catch (error) { throw Error(`${error.message}\nFixture stdout: ${output}\nFixture stderr: ${errors}`); }
+    let timer;
+    const exitCode = await Promise.race([exited, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Error(`Fixture exit timeout; stdout=${output}; stderr=${errors}`)), 10000);
+    })]).finally(() => clearTimeout(timer));
+    assert.equal(exitCode, 0, errors);
+    assert.equal(child.killed, false);
+    assert.match(output, /STOP_RECEIVED[\s\S]*SAVED/);
+    assert.equal(JSON.parse((await readFile(path.join(directory, 'stop.request'), 'utf8')).replace(/^\uFEFF/, '')).LaunchId, '11111111111111111111111111111111');
     assert.equal(await readFile(path.join(directory, 'state.json'), 'utf8'), 'saved-final-sample');
 });
 
