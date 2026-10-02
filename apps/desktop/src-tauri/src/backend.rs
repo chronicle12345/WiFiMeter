@@ -21,7 +21,7 @@ pub struct BackendError {
 }
 
 impl BackendError {
-    fn new(code: &str, message: impl ToString) -> Self {
+    pub fn new(code: &str, message: impl ToString) -> Self {
         Self {
             code: code.into(),
             message: message.to_string(),

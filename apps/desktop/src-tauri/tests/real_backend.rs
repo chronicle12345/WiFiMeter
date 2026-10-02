@@ -51,3 +51,58 @@ fn real_collector_settings_survive_shutdown_and_reopen() {
     assert_eq!(hello["settings"]["retention"], 30);
     reopened.stop_gracefully(timeout).unwrap();
 }
+
+#[test]
+#[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
+fn legacy_import_preserves_u64_and_is_idempotent_after_reopen() {
+    use wifimeter_desktop::legacy::import_directory;
+    let executable =
+        PathBuf::from(std::env::var_os("WIFIMETER_BACKEND").expect("set WIFIMETER_BACKEND"));
+    let profile = tempfile::tempdir().unwrap();
+    let source = tempfile::tempdir().unwrap();
+    let raw = r#"{"SchemaVersion":1,"StartedAt":"2026-01-01T00:00:00Z","UpdatedAt":"2026-01-02T00:00:00Z","Networks":[{"SSID":"Sample","RxBytes":9007199254740993,"TxBytes":7,"FirstSeen":"2026-01-01T00:00:00Z","LastSeen":"2026-01-02T00:00:00Z","Days":[{"Date":"2026-01-01","RxBytes":9007199254740993,"TxBytes":7}]}]}"#;
+    std::fs::write(source.path().join("state.json"), raw).unwrap();
+    std::fs::write(
+        source.path().join("settings.json"),
+        r#"{"Language":"zh-CN","RetentionDays":0}"#,
+    )
+    .unwrap();
+    let timeout = Duration::from_secs(30);
+    for reopened in [false, true] {
+        let backend = Backend::new(
+            executable.clone(),
+            profile.path().join("wifimeter.db"),
+            vec!["--paused".into()],
+            Arc::new(|_| {}),
+        );
+        let result = import_directory(
+            Some(source.path()),
+            profile.path(),
+            !reopened,
+            "reject",
+            &mut |method, params| backend.request(method, params, timeout),
+        )
+        .unwrap();
+        assert_eq!(result["imported"], !reopened);
+        if reopened {
+            assert_eq!(result["alreadyImported"], true);
+        }
+        let backup = backend.request("backup", json!({}), timeout).unwrap();
+        assert_eq!(
+            backup["backup"]["records"][0]["rxBytes"],
+            "9007199254740993"
+        );
+        assert_eq!(backup["backup"]["legacyImports"][0]["stateJson"], raw);
+        assert_eq!(
+            backend.request("hello", json!({}), timeout).unwrap()["settings"]["language"],
+            "zh-CN"
+        );
+        backend.stop_gracefully(timeout).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_dir(profile.path().join("migration-backups"))
+            .unwrap()
+            .count(),
+        1
+    );
+}

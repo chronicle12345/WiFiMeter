@@ -15,6 +15,7 @@ custom-protocol = ["desktop-shell", "tauri/custom-protocol"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 tauri = { version = "2", optional = true, features = ["tray-icon", "image-png"] }
