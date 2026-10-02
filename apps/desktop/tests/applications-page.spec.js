@@ -17,7 +17,7 @@ test.beforeEach(async({},testInfo)=>{
     const {result:snapshot}=await page.evaluate(()=>window.desktop.backend.request('snapshot'));
     const id=snapshot.networks[0].id;
     snapshot.settings.language='zh-CN';
-    snapshot.proxy={ports:[],processNames:[],available:true,status:'ready',detail:''};snapshot.proxyEstimatedRecords=[];
+    snapshot.proxy={ports:[],processNames:[],available:true,status:'ready',detail:''};snapshot.live.proxy=snapshot.proxy;snapshot.proxyEstimatedRecords=[];
     snapshot.totalQuota={capGb:2,warnPercent:80,period:'all',notify:true,autoDisconnect:false,usedBytes:'1500000000',periodKey:'all'};
     snapshot.appCollection={available:true,enabled:false,state:'disabled'};
     snapshot.records=[{networkId:id,date:'2020-01-01',rxBytes:'520000',txBytes:'1'},{networkId:id,date:'2020-02-01',rxBytes:'1048576',txBytes:'1024'}];
@@ -262,6 +262,6 @@ test('live estimates refresh displayed clients while preserving upload and downl
  await expect.poll(()=>originalSource.evaluate(element=>element.isConnected)).toBe(false);
  await expect(page.locator('#appDataSource')).toHaveValue('estimated');
  await expect(page.locator('.app-row')).toContainText('Proxy');
- await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});
+ await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});
  await expect(page.locator('.app-row')).toHaveCount(2);await expect(page.locator('.app-row').filter({hasText:'Browser'})).toContainText('2.4 KB');await expect(page.locator('.app-row').filter({hasText:'Chat'})).toContainText('1.6 KB');await expect(page.locator('#appTotal')).toHaveText('4KB');
 });
