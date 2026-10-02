@@ -8,6 +8,7 @@
   "author": "WiFiMeter contributors",
   "license": "MIT",
   "scripts": {
+    "build:frontend": "node tauri/build-frontend.mjs",
     "start": "electron .",
     "test": "node --test tests/*.test.js && playwright test",
     "test:unit": "node --test tests/*.test.js",
