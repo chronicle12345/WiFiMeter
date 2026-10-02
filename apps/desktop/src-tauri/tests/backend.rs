@@ -13,8 +13,21 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 fn fixture() -> (Arc<Backend>, mpsc::Receiver<Value>, TempDir) {
     let directory = tempfile::tempdir().unwrap();
     let (sender, receiver) = mpsc::channel();
+    let compiled = std::path::PathBuf::from(env!("CARGO_BIN_EXE_protocol-fixture"));
+    // 交叉编译后在 Windows 执行时，Cargo 写入的构建机绝对路径不可用。
+    let executable = if compiled.is_file() {
+        compiled
+    } else {
+        std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("protocol-fixture{}", std::env::consts::EXE_SUFFIX))
+    };
     let backend = Backend::new(
-        env!("CARGO_BIN_EXE_protocol-fixture").into(),
+        executable,
         directory.path().join("无线 网络.db"),
         vec!["--paused".into()],
         Arc::new(move |event| {

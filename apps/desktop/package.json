@@ -9,6 +9,8 @@
   "license": "MIT",
   "scripts": {
     "build:frontend": "node tauri/build-frontend.mjs",
+    "tauri": "tauri",
+    "dev:windows": "tauri dev",
     "start": "electron .",
     "test": "node --test tests/*.test.js && playwright test",
     "test:unit": "node --test tests/*.test.js",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "@tauri-apps/cli": "2.12.1",
     "electron": "44.4.5",
     "electron-builder": "26.15.3"
   },

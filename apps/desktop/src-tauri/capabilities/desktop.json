@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Local main and mini windows receive collector and preference events.",
+  "windows": ["main", "mini"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}
