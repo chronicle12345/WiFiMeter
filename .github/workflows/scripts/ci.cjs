@@ -38,7 +38,7 @@ function assertUiReport(report) {
 
 function expectedFiles(platform, arch, version) {
     assert.ok(matrices.some(([p, a]) => p === platform && a === arch), '不支持的发布矩阵');
-    if (platform === 'win32') return [`WiFiMeter-${version}-${arch}-Setup.exe`, `WiFiMeter-${version}-${arch}-Portable.exe`];
+    if (platform === 'win32') return [`WiFiMeter-${version}-windows-${arch}-Setup.exe`, `WiFiMeter-${version}-windows-${arch}-Portable.exe`];
     return [`WiFiMeter-${version}-linux-${arch === 'x64' ? 'amd64' : arch}.deb`, `WiFiMeter-${version}-linux-${arch === 'x64' ? 'x86_64' : 'aarch64'}.rpm`, `WiFiMeter-${version}-linux-${arch === 'x64' ? 'x86_64' : 'arm64'}.AppImage`];
 }
 

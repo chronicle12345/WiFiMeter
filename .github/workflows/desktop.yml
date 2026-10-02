@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: 22.22.0
       - name: Validate workflow helpers
-        run: node --test .github/workflows/scripts/ci.test.cjs
+        run: node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs
       - name: Check workflow syntax with pinned actionlint
         shell: bash
         run: |
@@ -106,7 +106,7 @@ jobs:
           node -e "const fs=require('node:fs'); const path=require('node:path'); const exe=require('./apps/desktop/node_modules/electron'); if (!fs.existsSync(exe)) throw Error('Electron runtime is missing'); if (!fs.existsSync(path.join(path.dirname(exe),'chrome-sandbox'))) throw Error('Electron sandbox helper is missing');"
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
+          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Build deb, rpm and AppImage
         run: node packaging/linux/build.cjs --arch "${{ matrix.arch }}" --formats deb,rpm,AppImage --skip-rebuild
@@ -139,10 +139,17 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  legacy-powershell:
+    name: Original 1.1.1 PowerShell attachment
+    needs: metadata
+    uses: ./.github/workflows/legacy-powershell.yml
+    permissions:
+      contents: read
+
   required:
     name: Required integration checks
     if: ${{ always() }}
-    needs: [metadata, windows, linux]
+    needs: [metadata, windows, linux, legacy-powershell]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -151,14 +158,16 @@ jobs:
           METADATA_RESULT: ${{ needs.metadata.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           LINUX_RESULT: ${{ needs.linux.result }}
+          LEGACY_RESULT: ${{ needs.legacy-powershell.result }}
         run: |
           test "$METADATA_RESULT" = success
           test "$WINDOWS_RESULT" = success
           test "$LINUX_RESULT" = success
+          test "$LEGACY_RESULT" = success
 
   publish:
     name: Publish verified v1.2 release
-    needs: [metadata, windows, linux, required]
+    needs: [metadata, windows, linux, legacy-powershell, required]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.2.') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -179,6 +188,14 @@ jobs:
       - name: Require all five matrices, twelve assets and matching SHA-256
         id: assets
         run: node .github/workflows/scripts/ci.cjs release-files "$RUNNER_TEMP/release-artifacts"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: legacy-powershell-1.1.1
+          path: ${{ runner.temp }}/legacy-powershell
+      - name: Verify fixed 1.1.1 PowerShell attachment and append to upload list
+        env:
+          ASSETS_FILE: ${{ steps.assets.outputs.assets_file }}
+        run: node .github/workflows/scripts/legacy-powershell.cjs "$RUNNER_TEMP/legacy-powershell" "$ASSETS_FILE"
       - name: Publish using only this workflow's GITHUB_TOKEN
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,7 +206,11 @@ jobs:
           set -euo pipefail
           notes_file="docs/releases/${RELEASE_TAG}.md"
           test -s "$notes_file"
+          combined_notes="$RUNNER_TEMP/release-notes.md"
+          cat "$notes_file" > "$combined_notes"
+          printf '\n\n' >> "$combined_notes"
+          cat docs/releases/powershell-1.1.1-attachment.md >> "$combined_notes"
           mapfile -t assets < "$ASSETS_FILE"
           # 先完整上传草稿，再公开；失败时不公开部分产物，也不覆盖已有 release。
-          gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$notes_file" "${assets[@]}"
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$combined_notes" "${assets[@]}"
           gh release edit "$RELEASE_TAG" --draft=false

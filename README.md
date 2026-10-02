@@ -35,7 +35,7 @@ The following overview and application history use synthetic data.
 ## Features
 
 - Wi-Fi and physical Ethernet traffic, live download/upload rates, network aliases, and searchable history. Virtual adapters are excluded from physical Ethernet accounting.
-- Native per-application capture through Windows ETW or Linux eBPF, with explicit permission and coverage states. Application history can be grouped by day or month and exported with its current filters.
+- Native per-application capture through Windows ETW for non-loopback traffic, Windows TCP EStats for live loopback/proxy-client bytes, or Linux eBPF, with explicit permission and coverage states. Application history can be grouped by day or month and exported with its current filters.
 - Per-network quotas and a separate combined Wi-Fi quota, with daily, monthly or cumulative periods. Ethernet does not consume the combined Wi-Fi quota. Warnings and optional Wi-Fi disconnection are configurable.
 - Windows application blocking and upload limits, shown after selecting an application or executable. Upload limits do not limit downloads. These controls are unavailable on Linux.
 - Optional Windows proxy attribution estimates, clearly separated from native records. Estimates use observed TCP connections and retain unattributed traffic when evidence is missing.

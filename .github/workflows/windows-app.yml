@@ -108,13 +108,17 @@ jobs:
       - name: Require actual native ETW capture
         # ARM64 与 ia32 也必须执行；非管理员、Wine、runner 能力不足均失败。
         run: python backend/tests/windows_app_capture_smoke.py "$env:BUILD_DIR/app/wifimeter-app-capture.exe" --require-native
+      - name: Require actual native TCP EStats capture
+        run: |
+          & "$env:BUILD_DIR/tests/windows_estats_smoke_test.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'TCP EStats must pass with native administrator permissions; a skip is not a pass.' }
       - name: Desktop unit tests against the native backend
         run: npm --prefix apps/desktop run test:unit
       - name: Full fixture UI tests on the actual runner
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-development.json
         run: |
-          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
+          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
           if ($LASTEXITCODE) { throw 'UI 无法运行或测试失败；不能跳过当作成功' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
       - name: Build NSIS and portable packages

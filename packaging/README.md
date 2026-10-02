@@ -64,3 +64,18 @@ npx playwright test tests/packaging.spec.js
 ### Live application history updates
 
 `node --expose-gc packaging/benchmark-renderer.mjs 926cefc` compares the previous and current renderer data client with 50,000 synthetic history rows, 100 active applications, and 100 event batches. In one local Node.js run, warmed update processing changed from 11,727.7 ms to 13.2 ms. The improvement comes from looking up only currently active rows instead of scanning the full history for every event. This is a synthetic CPU-time measurement, not an application-wide speedup or memory-reduction claim. The lookup references existing row objects and is cleared on snapshot replacement, data clearing, subscription stop and a change of live day. Historical data is not deleted by this optimization.
+
+## 图标来源与核对
+
+正式 logo 为 `docs/assets/logo.svg`，桌面 SVG、512 px PNG 和 Windows ICO 均由 `node packaging/generate-icons.cjs` 生成。ICO 包含 16、24、32、48、64、128、256 px 七种尺寸，各尺寸保留透明圆角。窗口、托盘与应用内品牌使用同一 PNG；Windows 应用、Portable 启动器、Setup 与卸载程序使用同一 ICO。Portable 的图标由 electron-builder 继承 `win.icon`。
+
+早期提交 c0c2614 中的桌面图标使用蓝色渐变；73f5c96 恢复的文档正式 logo 使用靛紫色渐变，95832eb 已将桌面资源同步为正式 logo。旧安装包的蓝色图标与新包的紫色图标来自这一资源变更；无需另外设计图标或修改正式 logo 的颜色。
+
+图标专用检查读取实际 ICO 目录及全部图像帧，对照正式 SVG 渲染结果检查尺寸、像素与透明角，同时检查安装和卸载图标配置：
+
+```powershell
+$env:PLAYWRIGHT_CHANNEL = 'msedge'
+node --test packaging/icons.test.cjs
+```
+
+已安装 Playwright Chromium 时可以省略环境变量。此检查验证仓库资源与配置；发布时仍应检查最终 PE 文件的图标资源。

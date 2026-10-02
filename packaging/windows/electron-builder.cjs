@@ -20,8 +20,10 @@ module.exports = {
         icon: 'assets/icon.ico',
         requestedExecutionLevel: 'asInvoker'
     },
-    portable: { artifactName: 'WiFiMeter-${version}-${arch}-Portable.${ext}' },
+    portable: { artifactName: 'WiFiMeter-${version}-windows-${arch}-Portable.${ext}' },
     nsis: {
+        installerIcon: 'assets/icon.ico',
+        uninstallerIcon: 'assets/icon.ico',
         include: '../../packaging/windows/installer.nsh',
         oneClick: false,
         perMachine: false,
@@ -34,6 +36,6 @@ module.exports = {
         uninstallDisplayName: 'WiFiMeter',
         runAfterFinish: true,
         installerLanguages: ['zh_CN', 'en_US'],
-        artifactName: 'WiFiMeter-${version}-${arch}-Setup.${ext}'
+        artifactName: 'WiFiMeter-${version}-windows-${arch}-Setup.${ext}'
     }
 };

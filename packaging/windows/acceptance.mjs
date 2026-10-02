@@ -28,7 +28,7 @@ const devBackend = path.join(repositoryRoot, 'build/windows/app/wifimeter-backen
 const smokeTest = path.join(repositoryRoot, 'build/windows/tests/windows_smoke_test.exe');
 const processTest = path.join(repositoryRoot, 'build/windows/tests/backend_process_test.exe');
 const version = JSON.parse(readFileSync(path.join(repositoryRoot, 'apps/desktop/package.json'), 'utf8')).version;
-const installer = path.join(repositoryRoot, `dist/windows/WiFiMeter-${version}-x64-Setup.exe`);
+const installer = path.join(repositoryRoot, `dist/windows/WiFiMeter-${version}-windows-x64-Setup.exe`);
 
 const results = [];
 const record = (status, name, detail = '') => {

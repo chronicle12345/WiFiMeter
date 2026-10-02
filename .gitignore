@@ -31,3 +31,7 @@
 .vscode/
 .idea/
 *.code-workspace
+
+# Python test caches.
+__pycache__/
+*.pyc
