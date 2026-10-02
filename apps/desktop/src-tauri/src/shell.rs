@@ -3,7 +3,7 @@ use crate::{
     close_check::CloseCheck,
     collector::Collector,
     dialog_requests::DialogRequests,
-    files, identity, ipc_policy, native_dialog,
+    files, identity, ipc_policy, mini, native_dialog,
     preferences::Preferences,
     tray,
 };
@@ -31,6 +31,7 @@ struct Desktop {
     dialogs: DialogRequests,
     settings: Mutex<Value>,
     tray_lock: Mutex<()>,
+    mini: mini::Controller,
 }
 
 pub(crate) fn localized<'a>(app: &tauri::AppHandle, chinese: &'a str, english: &'a str) -> &'a str {
@@ -186,6 +187,7 @@ fn desktop_dialog_reply(
 fn publish_preferences(app: &tauri::AppHandle) -> Result<Value, String> {
     let state = app.state::<Desktop>();
     let value = state.preferences.read();
+    state.mini.sync(app, &value)?;
     app.emit("window-preferences:changed", &value)
         .map_err(|error| error.to_string())?;
     Ok(value)
@@ -317,9 +319,6 @@ async fn desktop_request(
                     .preferences
                     .update(json!({"miniWindow":false}))
                     .map_err(|error| error.to_string())?;
-                if let Some(mini) = app.get_webview_window("mini") {
-                    mini.destroy().map_err(|error| error.to_string())?;
-                }
                 publish_preferences(&app)
             }
             _ => Err(format!("尚未迁移的桌面操作：{channel}")),
@@ -342,6 +341,7 @@ fn desktop_ready(window: WebviewWindow) -> Result<(), String> {
             .emit("window:visibility", window.is_visible().unwrap_or(false))
             .map_err(|error| error.to_string())?;
     } else {
+        state.mini.ready();
         window
             .emit("mini:state", json!({"collapsed":false,"edge":null}))
             .map_err(|error| error.to_string())?;
@@ -402,10 +402,15 @@ pub fn run() {
                     }
                     if message["event"] == "live" {
                         if let Some(state) = handle.try_state::<Desktop>() {
-                            *state.last_live.lock().unwrap() = Some(message.clone());
-                        }
-                        if let Some(mini) = handle.get_webview_window("mini") {
-                            let _ = mini.emit("mini:live", &message);
+                            let mut live = message.clone();
+                            live["speedUnit"] = state.settings.lock().unwrap()["speedUnit"]
+                                .as_str()
+                                .unwrap_or("auto")
+                                .into();
+                            *state.last_live.lock().unwrap() = Some(live.clone());
+                            if let Some(mini) = handle.get_webview_window("mini") {
+                                let _ = mini.emit("mini:live", &live);
+                            }
                         }
                     }
                 }),
@@ -422,6 +427,7 @@ pub fn run() {
                 dialogs: DialogRequests::default(),
                 settings: Mutex::new(json!({"language":"zh-CN"})),
                 tray_lock: Mutex::new(()),
+                mini: mini::Controller::new(profile.clone()),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)
@@ -446,6 +452,9 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let state = handle.state::<Desktop>();
+                if let Err(error) = state.mini.sync(&handle, &state.preferences.read()) {
+                    eprintln!("[mini] {error}");
+                }
                 let migration = state.collector.migration_status();
                 if let Ok(hello) = state.collector.request("hello", json!({}), || false) {
                     apply_runtime_settings(&handle, &hello["settings"]);
@@ -475,6 +484,20 @@ pub fn run() {
                 if !window.state::<Desktop>().quitting.load(Ordering::SeqCst) {
                     api.prevent_close();
                     let state = window.state::<Desktop>();
+                    if window.label() == "mini" {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn_blocking(move || {
+                            let state = app.state::<Desktop>();
+                            if let Err(error) = state
+                                .preferences
+                                .update(json!({"miniWindow":false}))
+                                .map_err(|error| error.to_string())
+                                .and_then(|_| publish_preferences(&app))
+                            {
+                                eprintln!("[mini] {error}");
+                            }
+                        });
+                    }
                     if window.label() == "main" && !state.close_prompt.swap(true, Ordering::SeqCst)
                     {
                         if let Some(window) = window.app_handle().get_webview_window("main") {
@@ -526,6 +549,7 @@ pub fn run() {
                     match state.collector.stop_gracefully(Duration::from_secs(30)) {
                         Ok(()) => {
                             state.quitting.store(true, Ordering::SeqCst);
+                            state.mini.stop();
                             app.exit(0);
                         }
                         Err(error) => {

@@ -72,7 +72,58 @@ try {
         return event;
     });
     assert.equal(changed.theme, 'dark');
-    console.log('Pages and backend passed; checking themed close choices');
+    console.log('Pages and backend passed; checking floating window');
+    await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true, miniAutoHide: false }));
+    await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
+    const mini = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
+    mini.on('pageerror', error => errors.push(error.message));
+    await mini.waitForFunction(() => Boolean(window.miniDesktop));
+    await expect(mini.locator('#download .rate-number')).not.toHaveText('—');
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { speedUnit: 'MB/s' } }));
+    await expect(mini.locator('#download .rate-unit')).toHaveText(' MB/s');
+    await expect(mini.locator('body')).toHaveAttribute('data-shape', 'bar');
+    const initial = await native('bounds', '-Target', 'mini');
+    assert.equal(initial.topmost, true);
+    assert.equal(initial.noActivate, true);
+    assert.equal(initial.visible, true);
+    assert.equal(initial.width, Math.round(224 * initial.scale));
+    assert.equal(initial.height, Math.round(92 * initial.scale));
+    for (const [shape, palette, size] of [['square', 'light', 152], ['circle', 'indigo', 168], ['bar', 'dark', 224]]) {
+        await page.evaluate(patch => window.desktop.windowPreferences.update(patch), { miniShape: shape, miniPalette: palette });
+        await expect(mini.locator('body')).toHaveAttribute('data-shape', shape);
+        await expect(mini.locator('body')).toHaveAttribute('data-palette', palette);
+        await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(size);
+        if (process.env.WIFIMETER_SCREENSHOT) await mini.screenshot({ path: process.env.WIFIMETER_SCREENSHOT.replace('.png', `-mini-${shape}.png`) });
+    }
+    // Exercise the real native drag path, then verify snapping/collapse/hover in physical coordinates.
+    const x = initial.area.x + Math.round(8 * initial.scale), y = initial.area.y + Math.round(200 * initial.scale);
+    await native('drag', '-Target', 'mini', '-X', String(x), '-Y', String(y));
+    await expect.poll(async () => (await native('bounds', '-Target', 'mini')).x).toBe(initial.area.x);
+    const savedCursor = await native('cursor', '-X', String(initial.area.x + initial.area.width / 2 | 0), '-Y', String(initial.area.y + initial.area.height / 2 | 0));
+    try {
+        await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: true }));
+        await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'true');
+        const strip = await native('bounds', '-Target', 'mini');
+        assert.equal(strip.width, Math.round(6 * strip.scale));
+        await native('cursor', '-X', String(strip.x + 2), '-Y', String(strip.y + 20));
+        await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'false');
+        await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(224);
+        await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: false }));
+    } finally { await native('cursor', '-X', String(savedCursor.x), '-Y', String(savedCursor.y)); }
+    // Mini IPC stays restricted; its own close button persists the preference without exiting the app.
+    await assert.rejects(() => mini.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'backend:request', payload: { method: 'shutdown' } })));
+    await mini.locator('#close').click();
+    await expect.poll(() => page.evaluate(async () => (await window.desktop.windowPreferences.read()).miniWindow)).toBe(false);
+    await expect.poll(() => mini.isClosed()).toBe(true);
+    await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true }));
+    await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
+    const reopened = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
+    await reopened.waitForFunction(() => Boolean(window.miniDesktop));
+    await reopened.locator('#open').click();
+    await native('close', '-Target', 'mini');
+    await expect.poll(() => page.evaluate(async () => (await window.desktop.windowPreferences.read()).miniWindow)).toBe(false);
+    await expect.poll(() => reopened.isClosed()).toBe(true);
+    console.log('Floating window passed; checking themed close choices');
     await page.evaluate(() => {
         window.testVisibility = [];
         window.desktop.onVisibility(value => window.testVisibility.push(value));
@@ -154,7 +205,7 @@ try {
     await page.evaluate(() => window.removeTestDialogs());
     assert.deepEqual(errors, []);
     if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT });
-    console.log('PASS: Windows WebView2 pages, backend, preferences, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
+    console.log('PASS: Windows WebView2 pages, backend, preferences, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
 } catch (error) {
     console.error('Smoke test failed:', error);
     throw error;

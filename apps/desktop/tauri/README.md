@@ -7,8 +7,8 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: floating-window placement,
-autostart/notifications, application icons/control and updates still need
+the intermediate Tauri host: autostart/notifications, application icons/control
+and updates still need
 integration. Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
@@ -17,6 +17,9 @@ Tray activation, close preferences, remembered choices and the renderer's existi
 unsaved-change checks are connected to the native window lifecycle. Close, exit,
 resume and import confirmations use the existing UI tokens and follow its theme
 and language. Native dialogs remain available before the page is ready.
+The floating window reuses the original renderer and supports all shapes/palettes,
+physical-pixel placement with monitor DPI, edge snapping, idle collapse/hover
+expansion, live speed units, reopening the main window and independent close.
 
 ## Development on Windows
 
@@ -55,7 +58,9 @@ Windows before switching the release entry point.
 
 The Windows WebView2 smoke test uses the existing C++ network fixtures and a
 temporary profile. It checks navigation, collection controls, exact counters and
-preference events, themed close choices in light/dark mode, keyboard focus,
+preference events, floating-window shapes/palettes, real native dragging,
+edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
+themed close choices in light/dark mode, keyboard focus,
 import/resume localization, tray hiding, single-instance activation and canceling
 an exit with unsaved changes. It then closes the native window and
 waits for a clean exit:

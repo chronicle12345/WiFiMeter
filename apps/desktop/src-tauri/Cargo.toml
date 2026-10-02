@@ -21,7 +21,7 @@ sha2 = "0.10"
 tauri = { version = "2", optional = true, features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
-windows-sys = { version = "0.61", optional = true, features = ["Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", optional = true, features = ["Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 tauri-build = "2"
