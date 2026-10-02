@@ -8,7 +8,7 @@ default-run = "WiFiMeter"
 
 [features]
 test-fixture = []
-desktop-shell = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-single-instance"]
+desktop-shell = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-single-instance", "dep:windows-sys"]
 custom-protocol = ["desktop-shell", "tauri/custom-protocol"]
 
 [dependencies]
@@ -21,6 +21,7 @@ sha2 = "0.10"
 tauri = { version = "2", optional = true, features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
+windows-sys = { version = "0.61", optional = true, features = ["Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 tauri-build = "2"

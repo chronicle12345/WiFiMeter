@@ -1,4 +1,9 @@
-use crate::{backend::Backend, files, identity, ipc_policy, preferences::Preferences};
+use crate::{
+    backend::{Backend, BackendError},
+    collector::Collector,
+    files, identity, ipc_policy, native_dialog,
+    preferences::Preferences,
+};
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -12,7 +17,7 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 
 struct Desktop {
-    backend: Arc<Backend>,
+    collector: Collector,
     preferences: Preferences,
     last_live: Mutex<Option<Value>>,
     quitting: AtomicBool,
@@ -62,20 +67,41 @@ async fn desktop_request(
         match channel.as_str() {
             "backend:request" => {
                 let method = payload["method"].as_str().unwrap_or("");
-                if method == "shutdown" {
-                    return Err("请通过桌面退出操作关闭采集器。".into());
-                }
-                let timeout = Duration::from_secs(if matches!(method, "backup" | "restore") {
-                    300
-                } else {
-                    15
-                });
                 let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
-                Ok(match state.backend.request(method, params, timeout) {
-                    Ok(result) => json!({"ok":true,"result":result}),
-                    Err(error) => json!({"ok":false,"error":error}),
-                })
+                Ok(
+                    match state
+                        .collector
+                        .request(method, params, || native_dialog::confirm_resume(&window))
+                    {
+                        Ok(result) => json!({"ok":true,"result":result}),
+                        Err(error) => json!({"ok":false,"error":error}),
+                    },
+                )
             }
+            "legacy:status" => Ok(state.collector.migration_status()),
+            "legacy:import" => Ok(state.collector.import_selected(
+                || {
+                    let mut dialog = app
+                        .dialog()
+                        .file()
+                        .set_parent(&window)
+                        .set_title("Import WiFiMeter 1.x data / 导入旧版数据");
+                    if let Some(directory) =
+                        legacy_directory().or_else(|| app.path().document_dir().ok())
+                    {
+                        dialog = dialog.set_directory(directory);
+                    }
+                    dialog
+                        .blocking_pick_folder()
+                        .map(|selected| {
+                            selected
+                                .into_path()
+                                .map_err(|error| BackendError::new("unavailable", error))
+                        })
+                        .transpose()
+                },
+                || native_dialog::confirm_overlap(&window),
+            )),
             "window-preferences:read" => Ok(state.preferences.read()),
             "window-preferences:update" => {
                 state
@@ -175,6 +201,18 @@ fn desktop_ready(window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
+fn legacy_directory() -> Option<PathBuf> {
+    identity::legacy_directory(
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .as_deref(),
+        std::env::var_os("WIFIMETER_USER_DATA").is_some(),
+        std::env::var_os("WIFIMETER_LEGACY_DIRECTORY")
+            .map(PathBuf::from)
+            .as_deref(),
+    )
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -215,7 +253,7 @@ pub fn run() {
                 }),
             ));
             app.manage(Desktop {
-                backend,
+                collector: Collector::new(backend, profile.clone(), legacy_directory()),
                 preferences: Preferences::load(profile.clone()),
                 last_live: Mutex::new(None),
                 quitting: AtomicBool::new(false),
@@ -231,6 +269,15 @@ pub fn run() {
                         && url.path() == "/renderer/index.html"
                 })
                 .build()?;
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let state = handle.state::<Desktop>();
+                let migration = state.collector.migration_status();
+                if let Some(error) = migration["error"].as_str().filter(|error| !error.is_empty()) {
+                    handle.dialog().message(format!("{error}\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。"))
+                        .title("WiFiMeter data import / 数据导入").blocking_show();
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -256,7 +303,7 @@ pub fn run() {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<Desktop>();
-                    match state.backend.stop_gracefully(Duration::from_secs(30)) {
+                    match state.collector.stop_gracefully(Duration::from_secs(30)) {
                         Ok(()) => {
                             state.quitting.store(true, Ordering::SeqCst);
                             app.exit(0);

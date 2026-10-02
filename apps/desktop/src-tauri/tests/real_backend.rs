@@ -106,3 +106,26 @@ fn legacy_import_preserves_u64_and_is_idempotent_after_reopen() {
         1
     );
 }
+
+#[test]
+#[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
+fn desktop_lifecycle_resumes_collection_and_closes_the_real_process() {
+    use wifimeter_desktop::collector::Collector;
+    let executable =
+        PathBuf::from(std::env::var_os("WIFIMETER_BACKEND").expect("set WIFIMETER_BACKEND"));
+    let profile = tempfile::tempdir().unwrap();
+    let backend = Arc::new(Backend::new(
+        executable,
+        profile.path().join("wifimeter.db"),
+        vec!["--paused".into()],
+        Arc::new(|_| {}),
+    ));
+    let collector = Collector::new(backend, profile.path().into(), None);
+    assert_eq!(
+        collector.request("hello", json!({}), || false).unwrap()["paused"],
+        false
+    );
+    assert_eq!(collector.migration_status(), json!({"found":false}));
+    collector.stop_gracefully(Duration::from_secs(30)).unwrap();
+    assert!(collector.request("hello", json!({}), || false).is_err());
+}
