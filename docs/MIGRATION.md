@@ -2,9 +2,9 @@
 
 ## Importing the file-based Windows version
 
-Close the previous collector, then start the new application. The default source is `%LOCALAPPDATA%\WiFiMeter\data`. For a portable or custom source directory, use the legacy-directory import action in Settings. The source must contain `state.json` or its recoverable `state.json.bak`.
+Close the previous collector, then start the new application. The default source is `%LOCALAPPDATA%\WiFiMeter\data`. For a portable or custom source directory, open Settings > Data & migration and use the legacy-directory import action. The source must contain `state.json` or its recoverable `state.json.bak`.
 
-The importer reads source files without modifying them. It saves the original documents and a pre-import database backup under the new profile's `migration-backups` directory before committing imported records. A locked old collector, invalid data or overlapping network/day records stops the import. The database transaction prevents a half-imported dataset.
+The importer reads source files without modifying them. It saves the original documents and a pre-import database backup under the new profile's `migration-backups` directory before committing imported records. A locked old collector or invalid data stops the import. Overlapping network/day records are rejected by default. When automatic import encounters overlapping dates in an existing SQLite database, current traffic collection continues and the conflict remains available under Settings > Data & migration for manual resolution. During a manual import, you can explicitly choose to retain existing dates and import only non-conflicting dates. The report lists skipped dates; neither their bytes nor their quota counters are added again. The database transaction prevents a half-imported dataset.
 
 Bytes are parsed by C++ as exact decimal integers rather than JavaScript floating-point numbers. Repeating the same source import is idempotent. A source that changed after its successful import is reported for reconciliation instead of being added a second time. An existing SQLite profile is not replaced by a legacy import.
 

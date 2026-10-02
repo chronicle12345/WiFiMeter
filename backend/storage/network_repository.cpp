@@ -1,4 +1,6 @@
 #include "network_repository.h"
+#include "quota_schema.h"
+#include "../support/quota_thresholds.h"
 
 #include <sqlite3.h>
 #include <cmath>
@@ -32,12 +34,21 @@ NetworkRecord readRow(const Statement& statement)
     record.autoDisconnect = statement.columnInt64(8) != 0;
     record.firstSeenAt = statement.columnText(9);
     record.lastSeenAt = statement.columnText(10);
+    record.warnPercents = support::storedThresholds(statement.columnText(11));
+    core::normalizeWarnPercents(record.warnPercents, record.warnPercent);
+    record.warnPercent = record.warnPercents.front();
     return record;
 }
 
-const char* kSelectColumns = "SELECT key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at FROM networks";
+const char* kSelectColumns = "SELECT key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at, warn_percents FROM networks";
 
 }  // namespace
+
+Status NetworkRepository::ensureSchema()
+{
+    if (auto status = ensureQuotaColumn(database_, "networks", "warn_percents"); !status) return status;
+    return ensureQuotaColumn(database_, "quota_ledgers", "notified_warn_percents");
+}
 
 Status NetworkRepository::observe(const core::NetworkRef& network, const std::string& seenAtIso, bool& created)
 {
@@ -121,16 +132,19 @@ std::optional<NetworkRecord> NetworkRepository::find(const std::string& key, Sta
     return readRow(*statement);
 }
 
-Status NetworkRepository::updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect)
+Status NetworkRepository::updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect, const std::vector<double>& warnPercents)
 {
+    auto thresholds = warnPercents;
+    if (!core::normalizeWarnPercents(thresholds, warnPercent)) return Status::failure("Invalid warning thresholds.");
+    warnPercent = thresholds.front();
     if (!std::isfinite(capGb) || capGb < 0 || capGb > 9000000000.0 || (capGb > 0 && capGb < 1e-9)) return Status::failure("Invalid quota size.");
     if (!std::isfinite(warnPercent) || warnPercent < 1 || warnPercent > 100) return Status::failure("Invalid warning threshold.");
     Status status;
-    auto statement = database_.prepare("UPDATE networks SET alias = ?2, cap_gb = ?3, warn_percent = ?4, quota_period = ?5, notify = ?6, auto_disconnect = ?7 WHERE key = ?1;", status);
+    auto statement = database_.prepare("UPDATE networks SET alias = ?2, cap_gb = ?3, warn_percent = ?4, quota_period = ?5, notify = ?6, auto_disconnect = ?7, warn_percents = ?8 WHERE key = ?1;", status);
     if (!statement)
         return status;
     if (!statement->bind(1, key) || !statement->bind(2, alias) || !statement->bind(3, capGb) || !statement->bind(4, warnPercent) || !statement->bind(5, std::string(kPeriodName(period))) || !statement->bind(6, static_cast<std::int64_t>(notify ? 1 : 0)) ||
-        !statement->bind(7, static_cast<std::int64_t>(autoDisconnect ? 1 : 0)))
+        !statement->bind(7, static_cast<std::int64_t>(autoDisconnect ? 1 : 0)) || !statement->bind(8, support::thresholdArray(thresholds).dump()))
         return Status::failure(statement->error());
     if (const Status ran = statement->run(); !ran)
         return ran;
@@ -159,23 +173,26 @@ Status NetworkRepository::remove(const std::string& key)
     return ledger->run();
 }
 
-Status NetworkRepository::replace(const NetworkRecord& record)
+Status NetworkRepository::replace(const NetworkRecord& input)
 {
+    auto record = input;
+    if (!core::normalizeWarnPercents(record.warnPercents, record.warnPercent)) return Status::failure("Invalid warning thresholds.");
+    record.warnPercent = record.warnPercents.front();
     if (!std::isfinite(record.capGb) || record.capGb < 0 || record.capGb > 9000000000.0 || (record.capGb > 0 && record.capGb < 1e-9)) return Status::failure("Invalid quota size.");
     if (!std::isfinite(record.warnPercent) || record.warnPercent < 1 || record.warnPercent > 100) return Status::failure("Invalid warning threshold.");
     Status status;
     auto statement = database_.prepare(
-        "INSERT INTO networks(key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at) "
-        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) "
+        "INSERT INTO networks(key, ssid, alias, type, cap_gb, warn_percent, quota_period, notify, auto_disconnect, first_seen_at, last_seen_at, warn_percents) "
+        "VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) "
         "ON CONFLICT(key) DO UPDATE SET ssid = excluded.ssid, alias = excluded.alias, type = excluded.type, cap_gb = excluded.cap_gb, "
-        "warn_percent = excluded.warn_percent, quota_period = excluded.quota_period, notify = excluded.notify, "
+        "warn_percent = excluded.warn_percent, warn_percents = excluded.warn_percents, quota_period = excluded.quota_period, notify = excluded.notify, "
         "auto_disconnect = excluded.auto_disconnect, first_seen_at = excluded.first_seen_at, last_seen_at = excluded.last_seen_at;",
         status);
     if (!statement)
         return status;
     if (!statement->bind(1, record.key) || !statement->bind(2, record.ssid) || !statement->bind(3, record.alias) || !statement->bind(4, record.type) || !statement->bind(5, record.capGb) || !statement->bind(6, record.warnPercent) ||
         !statement->bind(7, std::string(kPeriodName(record.quotaPeriod))) || !statement->bind(8, static_cast<std::int64_t>(record.notify ? 1 : 0)) || !statement->bind(9, static_cast<std::int64_t>(record.autoDisconnect ? 1 : 0)) || !statement->bind(10, record.firstSeenAt) ||
-        !statement->bind(11, record.lastSeenAt))
+        !statement->bind(11, record.lastSeenAt) || !statement->bind(12, support::thresholdArray(record.warnPercents).dump()))
         return Status::failure(statement->error());
     return statement->run();
 }
@@ -196,7 +213,7 @@ Status NetworkRepository::removeAll()
 
 std::optional<QuotaLedgerRecord> NetworkRepository::ledger(const std::string& key, Status& status) const
 {
-    auto statement = database_.prepare("SELECT network_key, period_key, used_bytes FROM quota_ledgers WHERE network_key = ?1;", status);
+    auto statement = database_.prepare("SELECT network_key, period_key, used_bytes, notified_warn_percents FROM quota_ledgers WHERE network_key = ?1;", status);
     if (!statement)
         return std::nullopt;
     if (!statement->bind(1, key))
@@ -218,6 +235,7 @@ std::optional<QuotaLedgerRecord> NetworkRepository::ledger(const std::string& ke
     record.networkKey = statement->columnText(0);
     record.periodKey = statement->columnText(1);
     record.usedBytes = fromStoredBytes(statement->columnInt64(2));
+    record.notifiedWarnPercents = support::storedThresholds(statement->columnText(3));
     status = Status::success();
     return record;
 }
@@ -225,7 +243,7 @@ std::optional<QuotaLedgerRecord> NetworkRepository::ledger(const std::string& ke
 std::vector<QuotaLedgerRecord> NetworkRepository::allLedgers(Status& status) const
 {
     std::vector<QuotaLedgerRecord> records;
-    auto statement = database_.prepare("SELECT network_key, period_key, used_bytes FROM quota_ledgers ORDER BY network_key ASC;", status);
+    auto statement = database_.prepare("SELECT network_key, period_key, used_bytes, notified_warn_percents FROM quota_ledgers ORDER BY network_key ASC;", status);
     if (!statement)
         return records;
     while (statement->step())
@@ -234,6 +252,7 @@ std::vector<QuotaLedgerRecord> NetworkRepository::allLedgers(Status& status) con
         record.networkKey = statement->columnText(0);
         record.periodKey = statement->columnText(1);
         record.usedBytes = fromStoredBytes(statement->columnInt64(2));
+        record.notifiedWarnPercents = support::storedThresholds(statement->columnText(3));
         records.push_back(std::move(record));
     }
     if (statement->failed())
@@ -245,20 +264,23 @@ std::vector<QuotaLedgerRecord> NetworkRepository::allLedgers(Status& status) con
     return records;
 }
 
-Status NetworkRepository::saveLedger(const QuotaLedgerRecord& record)
+Status NetworkRepository::saveLedger(const QuotaLedgerRecord& input)
 {
+    auto record = input;
+    if (!record.notifiedWarnPercents.empty() && !core::normalizeWarnPercents(record.notifiedWarnPercents))
+        return Status::failure("Invalid warning notification state.");
     const auto used = toStoredBytes(record.usedBytes);
     if (!used)
         return Status::failure("额度用量超出可存储范围。");
 
     Status status;
     auto statement = database_.prepare(
-        "INSERT INTO quota_ledgers(network_key, period_key, used_bytes) VALUES(?1, ?2, ?3) "
-        "ON CONFLICT(network_key) DO UPDATE SET period_key = excluded.period_key, used_bytes = excluded.used_bytes;",
+        "INSERT INTO quota_ledgers(network_key, period_key, used_bytes, notified_warn_percents) VALUES(?1, ?2, ?3, ?4) "
+        "ON CONFLICT(network_key) DO UPDATE SET period_key = excluded.period_key, used_bytes = excluded.used_bytes, notified_warn_percents = excluded.notified_warn_percents;",
         status);
     if (!statement)
         return status;
-    if (!statement->bind(1, record.networkKey) || !statement->bind(2, record.periodKey) || !statement->bind(3, *used))
+    if (!statement->bind(1, record.networkKey) || !statement->bind(2, record.periodKey) || !statement->bind(3, *used) || !statement->bind(4, support::thresholdArray(record.notifiedWarnPercents).dump()))
         return Status::failure(statement->error());
     return statement->run();
 }

@@ -197,7 +197,7 @@ Status importCachedDays(storage::Store& store, const JsonValue& cache, JsonValue
     using Identity = std::tuple<std::string,std::string,std::string>;
     std::map<Identity,storage::AppUsageRow> candidates;
     std::set<Identity> ambiguous;
-    auto warnings = JsonValue::makeArray();
+    auto warnings = report.find("warnings") ? *report.find("warnings") : JsonValue::makeArray();
     std::int64_t archived=0, imported=0;
     const auto warn = [&](const std::string& reason) { ++archived; warnings.push(JsonValue::makeString(reason)); };
     storage::Status status;
@@ -332,6 +332,7 @@ bool parseLegacyQuotaPolicy(const JsonValue& policy,storage::TotalQuotaSettings&
         (policy.has("DisconnectAtLimit") && !policy.find("DisconnectAtLimit")->isBool())) return false;
     result.capGb=cap;
     result.warnPercent=percent;
+    result.warnPercents={percent};
     result.period=period=="All" ? core::QuotaPeriod::all : period=="Day" ? core::QuotaPeriod::day : core::QuotaPeriod::month;
     result.notify=cap>0;
     result.autoDisconnect=policy.boolOr("DisconnectAtLimit");
@@ -420,7 +421,7 @@ Status importNetworkPolicies(storage::Store& store,const JsonValue* settings,con
             storage::TotalQuotaSettings converted;
             if ((policy.has("Alias") && !policy.find("Alias")->isString()) || alias.size()>320 || !parseLegacyQuotaPolicy(policy,converted))
             { warn("网络偏好无法精确映射，保留默认设置及原文："+ssid); continue; }
-            if (const auto saved=store.networks().updateUserSettings(key->second,alias,converted.capGb,converted.warnPercent,converted.period,converted.notify,converted.autoDisconnect); !saved) return saved;
+            if (const auto saved=store.networks().updateUserSettings(key->second,alias,converted.capGb,converted.warnPercent,converted.period,converted.notify,converted.autoDisconnect,converted.warnPercents); !saved) return saved;
             ++policyCount;
         }
     }
@@ -471,7 +472,7 @@ Status canInitializeSettings(storage::Database& db,bool& eligible)
 {
     if (const auto initialized=ensureProxySchema(db); !initialized) return initialized;
     Status status;
-    auto occupied=db.prepare("SELECT 1 FROM networks UNION ALL SELECT 1 FROM daily_usage UNION ALL SELECT 1 FROM hourly_usage UNION ALL SELECT 1 FROM app_usage UNION ALL SELECT 1 FROM legacy_imports UNION ALL SELECT 1 FROM total_quota_settings WHERE cap_gb!=0 OR warn_percent!=80 OR period!='month' OR notify!=0 OR auto_disconnect!=0 UNION ALL SELECT 1 FROM total_quota_ledgers WHERE used_bytes!=0 OR warning_notified!=0 OR limit_notified!=0 UNION ALL SELECT 1 FROM settings WHERE language!='en' OR unit!='GB' OR speed_unit!='MB/s' OR interval_seconds!=5 OR retention_days!=90 OR auto_start!=0 OR minimize_to_tray!=0 OR notifications!=1 UNION ALL SELECT 1 FROM proxy_config LIMIT 1",status);
+    auto occupied=db.prepare("SELECT 1 FROM networks UNION ALL SELECT 1 FROM daily_usage UNION ALL SELECT 1 FROM hourly_usage UNION ALL SELECT 1 FROM app_usage UNION ALL SELECT 1 FROM legacy_imports UNION ALL SELECT 1 FROM total_quota_settings WHERE cap_gb!=0 OR warn_percent!=80 OR warn_percents NOT IN ('[]','[80]') OR period!='month' OR notify!=0 OR auto_disconnect!=0 UNION ALL SELECT 1 FROM total_quota_ledgers WHERE used_bytes!=0 OR warning_notified!=0 OR limit_notified!=0 UNION ALL SELECT 1 FROM settings WHERE language!='en' OR unit!='GB' OR speed_unit NOT IN ('MB/s','auto') OR interval_seconds!=5 OR retention_days!=90 OR auto_start!=0 OR minimize_to_tray!=0 OR notifications!=1 UNION ALL SELECT 1 FROM proxy_config LIMIT 1",status);
     if (!occupied) return status;
     eligible=!occupied->step();
     return occupied->failed() ? Status::failure(occupied->error()) : Status::success();
@@ -516,6 +517,10 @@ Status importLegacy(storage::Store& store, const JsonValue& params, core::TimePo
     for (const char* key : {"settingsJson", "appUsageJson"})
         if (params.has(key) && !params.find(key)->isString()) return invalid(code, std::string(key) + " 必须是原始 JSON 字符串。");
     if (params.has("allowInitialSettings") && !params.find("allowInitialSettings")->isBool()) return invalid(code,"allowInitialSettings 必须为布尔值。");
+    const auto* policy=params.find("overlapPolicy");
+    if (policy && (!policy->isString() || (policy->asString()!="reject" && policy->asString()!="keep-existing")))
+        return invalid(code,"overlapPolicy 必须是 reject 或 keep-existing。");
+    const bool keepExisting=policy && policy->asString()=="keep-existing";
     const auto text = raw->asString();
     const auto settingsText = params.stringOr("settingsJson");
     const auto appsText = params.stringOr("appUsageJson");
@@ -550,6 +555,7 @@ Status importLegacy(storage::Store& store, const JsonValue& params, core::TimePo
         if (!eligible) { code="LegacyInitialSettingsConflict"; return Status::failure("数据库已有历史或非默认设置，拒绝首次设置迁移。"); }
     }
     auto report=JsonValue::makeObject();
+    report.set("skippedDayCount",JsonValue::makeInt(0));
     report.set("settingsApplied",JsonValue::makeBool(false));
     report.set("proxySettingsApplied",JsonValue::makeBool(false));
     report.set("appRecordCount",JsonValue::makeInt(0));
@@ -636,7 +642,14 @@ Status importLegacy(storage::Store& store, const JsonValue& params, core::TimePo
             auto overlap = db.prepare("SELECT 1 FROM daily_usage WHERE network_key=?1 AND day=?2 UNION ALL SELECT 1 FROM hourly_usage WHERE network_key=?1 AND day=?2 LIMIT 1", status);
             if (!overlap) return status;
             if (!overlap->bind(1,key) || !overlap->bind(2,date)) return Status::failure(overlap->error());
-            if (overlap->step()) { code = "LegacyOverlap"; return Status::failure("已有相同网络日期的数据，无法无损分辨，已取消整个导入：" + ssid + " " + date); }
+            if (overlap->step())
+            {
+                if (!keepExisting) { code = "LegacyOverlap"; return Status::failure("已有相同网络日期的数据，无法无损分辨，已取消整个导入：" + ssid + " " + date); }
+                report.set("skippedDayCount",JsonValue::makeInt(report.intOr("skippedDayCount")+1));
+                migrationWarning(report,"已有 SQLite 网络日期记录，保留现有每日及小时数据，跳过旧日记录并保留原文："+ssid+" "+date);
+                // 上方已累计旧日记录；跳过写入仍须通过整份旧网络累计校验。
+                continue;
+            }
             if (overlap->failed()) return Status::failure(overlap->error());
             auto insert = db.prepare("INSERT INTO daily_usage(network_key,day,rx_bytes,tx_bytes) VALUES(?1,?2,?3,?4)", status);
             if (!insert) return status;

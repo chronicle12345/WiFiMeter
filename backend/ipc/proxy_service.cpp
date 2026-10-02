@@ -99,7 +99,14 @@ BackendService::Response BackendService::updateProxyConfig(const JsonValue& para
     if (!status) { response.error = Error{errorCode::kStorageFailure,status.message}; return response; }
     status = saveProxyOptions(deps_.store.database(), options);
     if (!status) { response.error = Error{errorCode::kStorageFailure,status.message}; return response; }
+    // 显式保存配置时只读发现一次连接，不启动应用字节采集，也不保存流量或连接权重。
+    proxyReport_ = {};
     proxyReportCurrent_ = false;
+    if (!options.ports.empty())
+    {
+        proxyReport_ = deps_.proxySampler ? deps_.proxySampler(options) : platform::sampleProxyClients(options);
+        proxyReportCurrent_ = true;
+    }
     response.result = JsonValue::makeObject();
     response.result.set("proxy", proxyJson(status));
     if (!status) response.error = Error{errorCode::kStorageFailure,status.message};
@@ -115,12 +122,12 @@ JsonValue BackendService::proxyJson(Status& status) const
     supported = static_cast<bool>(deps_.proxySampler);
 #endif
     bool available = supported;
-    std::string state = "disabled", detail;
+    std::string state = "disabled", detail = proxyReportCurrent_ ? proxyReport_.detail : std::string{};
     if (!supported) { state = "unsupported"; detail = "Proxy TCP observation is unsupported on this platform."; }
     else if (appEnabled_ && !options.ports.empty())
     {
-        if (paused_) state = "paused";
-        else if (!proxyReportCurrent_) state = "starting";
+        if (paused_) { state = "paused"; detail = "采集已暂停，代理连接观测也已暂停。"; }
+        else if (!proxyReportCurrent_) { state = "starting"; detail = "等待下一次代理连接采样。"; }
         else
         {
             available = proxyReport_.available;
@@ -134,6 +141,48 @@ JsonValue BackendService::proxyJson(Status& status) const
             }
         }
     }
+    if (supported && !options.ports.empty() && !appEnabled_)
+    {
+        if (!detail.empty()) detail += " ";
+        detail += "代理端口已保存；客户端列表仅显示最近一次发现的连接，不代表实测流量。请启用应用采集以测量字节并持续观测连接。";
+    }
+    if (supported && !options.ports.empty() && appEnabled_ && !paused_ &&
+        (appState_ == platform::AppCollectorState::permission || appState_ == platform::AppCollectorState::unavailable))
+    {
+        if (!detail.empty()) detail += " ";
+        detail += appState_ == platform::AppCollectorState::permission
+            ? "应用流量采集尚未获得所需权限；代理连接观测不能代替应用字节采集。"
+            : "应用流量采集不可用；代理连接观测不能代替应用字节采集。";
+    }
+    auto clients = JsonValue::makeArray();
+    if (!options.ports.empty() && proxyReportCurrent_ && proxyReport_.available)
+    {
+        for (const auto& observation : proxyReport_.observations)
+        {
+            auto client = JsonValue::makeObject();
+            client.set("appId", JsonValue::makeString(observation.appId));
+            client.set("name", JsonValue::makeString(observation.name));
+            client.set("proxyName", JsonValue::makeString(observation.proxyName));
+            client.set("connections", JsonValue::makeInt(static_cast<std::int64_t>(observation.connections)));
+            client.set("pathAvailable", JsonValue::makeBool(true));
+            if (appEnabled_ && !paused_) addProxyMeasurement(client, appProcesses_, observation.connectionKeys);
+            else addProxyMeasurement(client, JsonValue::makeArray(), {});
+            clients.push(std::move(client));
+        }
+        for (const auto& detected : proxyReport_.detectedClients)
+        {
+            auto client = JsonValue::makeObject();
+            client.set("appId", JsonValue::makeString(detected.appId));
+            client.set("name", JsonValue::makeString(detected.name));
+            client.set("proxyName", JsonValue::makeString(detected.proxyName));
+            client.set("connections", JsonValue::makeInt(static_cast<std::int64_t>(detected.connections)));
+            client.set("pathAvailable", JsonValue::makeBool(false));
+            if (appEnabled_ && !paused_) addProxyMeasurement(client, appProcesses_, detected.connectionKeys);
+            else addProxyMeasurement(client, JsonValue::makeArray(), {});
+            clients.push(std::move(client));
+        }
+    }
+    value.set("clients", std::move(clients));
     value.set("available",JsonValue::makeBool(available));
     value.set("status",JsonValue::makeString(state));
     value.set("detail",JsonValue::makeString(detail));

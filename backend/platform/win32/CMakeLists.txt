@@ -5,6 +5,7 @@
 add_library(wifimeter-platform-win32 STATIC
     wlanapi_query.cpp
     etw_app_capture.cpp
+    tcp_estats_capture.cpp
     windows_app_traffic.cpp
 )
 

@@ -51,3 +51,21 @@ Windows 原生源也默认不采集，通过专用管道连接授权辅助进程
 - 覆盖空档：数据库用 `reason` 记录 `paused` / `offline` / `counter_reset` / `reattributed` / `detached` / `identity_unknown`，这些取值会进入协议，属于对外约定，改动需要兼容处理。
 - `live.connections[].since`：Linux 侧目前没有可靠的“本次连接开始时间”来源，可由上层根据身份变化的时间自行记录。
 - `live.connections[].adapterAlias`：Linux 侧当前取网卡的厂商与产品名（如 `AICSemi AIC8800DC`），是否再加工成更短的名称待定。
+
+## 多档额度提醒
+
+网络设置和总 WiFi 额度设置同时返回 `warnPercents` 与兼容字段 `warnPercent`。
+`warnPercents` 为非空数字数组，每项为有限数字且在 1..100 之间，允许小数；后端去重、升序保存。
+项数不另设限制，受现有 IPC 请求大小限制。`warnPercent` 返回排序后的首项。
+更新同时提供两个字段时使用数组，仅提供旧标量时升级为单元素数组；两者都省略时保留当前设置。
+传入的旧标量若存在也必须合法。网络使用 `quotaPeriod`，总额度使用 `period`。
+
+例如 `{ "warnPercents": [90, 50, 75.5, 50] }` 保存后返回
+`{ "warnPercents": [50, 75.5, 90], "warnPercent": 50 }`。
+网络及总额度每档在同一周期只提醒一次，跨多档时各发一条 `quotaWarn`，事件 `warnPercent` 标识触发档位。
+通知档位写入账本 `notifiedWarnPercents`，重启、备份恢复后继续去重，跨周期或清空用量后重新计数。
+总额度达到 100% 仍发出原有 `quotaLimit`；100% 提醒档位与额度上限事件是两个独立事件。
+新增或删除提醒档位不会清空其他档位的通知记录；总额度上限变化沿用原有通知重置行为。
+
+完整备份保存两种设置字段与账本的 `notifiedWarnPercents`。旧备份及旧版导入的标量自动升级；
+旧总额度 `warningNotified: true` 升级为对应单档的通知记录，避免恢复后再次提示同一档。

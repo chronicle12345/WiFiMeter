@@ -30,7 +30,7 @@ add_library(wifimeter-storage STATIC
 )
 
 target_include_directories(wifimeter-storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(wifimeter-storage PUBLIC wifimeter-core)
+target_link_libraries(wifimeter-storage PUBLIC wifimeter-core wifimeter-support)
 target_link_libraries(wifimeter-storage PRIVATE wifimeter-warnings)
 
 if(WIFIMETER_USE_BUNDLED_SQLITE)

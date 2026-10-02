@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS quota_ledgers (
 CREATE TABLE IF NOT EXISTS settings (
     id               INTEGER PRIMARY KEY CHECK (id = 1),
     unit             TEXT    NOT NULL DEFAULT 'GB',
-    speed_unit       TEXT    NOT NULL DEFAULT 'MB/s',
+    speed_unit       TEXT    NOT NULL DEFAULT 'auto',
     interval_seconds INTEGER NOT NULL DEFAULT 5,
     retention_days   INTEGER NOT NULL DEFAULT 90,
     auto_start       INTEGER NOT NULL DEFAULT 0,

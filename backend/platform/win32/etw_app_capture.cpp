@@ -1,4 +1,5 @@
 #include "etw_app_capture.h"
+#include "tcp_estats_capture.h"
 
 #include <winsock2.h>
 #include <ws2ipdef.h>
@@ -97,7 +98,7 @@ public:
         if (started != ERROR_SUCCESS)
         {
             session_ = 0;
-            return failed(started, "启动应用流量 ETW 会话失败");
+            return fallback(started, "启动应用流量 ETW 会话失败");
         }
         EVENT_TRACE_LOGFILEW logfile{};
         logfile.LoggerName = name_.data();
@@ -109,7 +110,7 @@ public:
         {
             const auto error = ::GetLastError();
             stop();
-            return failed(error, "打开应用流量 ETW 消费者失败");
+            return fallback(error, "打开应用流量 ETW 消费者失败");
         }
         stopping_ = false;
         consumerCode_ = ERROR_SUCCESS;
@@ -119,12 +120,15 @@ public:
             consumerCode_ = code;
             finished_ = true;
         });
+        loopback_ = std::make_unique<TcpEStatsCapture>();
         return {AppCollectorState::running, generation_, {}, {}};
     }
 
     void stop()
     {
         stopping_ = true;
+        loopback_.reset();
+        etwFailure_.clear();
         if (session_)
         {
             auto properties = configuration();
@@ -149,7 +153,13 @@ public:
     AppTrafficReport read()
     {
         if (!session_)
-            return {};
+        {
+            if (!loopback_) return {};
+            auto local=loopback_->read();
+            local.detail=etwFailure_+" "+local.detail;
+            if (local.state==AppCollectorState::running) local.state=AppCollectorState::partial;
+            return local;
+        }
         if (finished_)
             return failed(consumerCode_ == ERROR_SUCCESS ? ERROR_GEN_FAILURE : consumerCode_.load(), "应用流量 ETW 消费者已结束");
         refreshAddresses();
@@ -160,13 +170,15 @@ public:
         const std::uint64_t lost = std::uint64_t(properties.value.EventsLost) + properties.value.LogBuffersLost + properties.value.RealTimeBuffersLost;
         std::lock_guard lock(mutex_);
         AppTrafficReport report{AppCollectorState::running, generation_, {}, {}};
+        report.sampledAtMs = static_cast<std::int64_t>(::GetTickCount64());
         report.samples.reserve(counters_.size());
         for (const auto& [key, value] : counters_)
         {
             auto sample = value;
             const auto process = processes_.find(sample.processId);
             sample.active = process != processes_.end() && process->second->handle &&
-                ::WaitForSingleObject(process->second->handle, 0) == WAIT_TIMEOUT;
+                ::WaitForSingleObject(process->second->handle, 0) == WAIT_TIMEOUT &&
+                sample.instanceId == std::to_string(sample.processId) + ":" + std::to_string(process->second->started);
             if (!sample.active || sample.appId == "unknown")
                 sample.processId = 0;
             report.samples.push_back(std::move(sample));
@@ -176,12 +188,32 @@ public:
             report.state = AppCollectorState::partial;
             report.detail = "部分事件的进程、接口或格式不可读，或 ETW 丢失了事件。";
         }
+        if (loopback_)
+        {
+            auto local = loopback_->read();
+            report.loopbackSampledAtMs = local.loopbackSampledAtMs;
+            report.samples.insert(report.samples.end(), local.samples.begin(), local.samples.end());
+            if (local.state != AppCollectorState::running) report.state = AppCollectorState::partial;
+            if (!report.detail.empty()) report.detail += " ";
+            report.detail += local.detail;
+        }
         lastMissing_ = missing_;
         lastLost_ = lost;
         return report;
     }
 
 private:
+    AppTrafficReport fallback(ULONG code, const std::string& context)
+    {
+        auto unavailable=failed(code,context);
+        loopback_=std::make_unique<TcpEStatsCapture>();
+        const auto local=loopback_->read();
+        if (local.state==AppCollectorState::permission || local.state==AppCollectorState::unavailable)
+        { loopback_.reset(); return unavailable; }
+        etwFailure_=unavailable.detail;
+        return {AppCollectorState::running,local.generation,etwFailure_+" "+local.detail,{}};
+    }
+
     Properties configuration() const
     {
         Properties result;
@@ -259,7 +291,11 @@ private:
     {
         const auto found = processes_.find(pid);
         if (found != processes_.end())
-            return *found->second;
+        {
+            if (found->second->handle && ::WaitForSingleObject(found->second->handle, 0) == WAIT_TIMEOUT)
+                return *found->second;
+            processes_.erase(found);
+        }
         auto identity = std::make_unique<Process>();
         identity->handle = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
         if (identity->handle)
@@ -287,6 +323,8 @@ private:
 
     void count(const AppNetworkPacket& packet, std::uint64_t timestamp)
     {
+        // 回环 TCP/UDP 不混入物理接口；TCP 由 EStats 提供独立实时数据。
+        if (isLoopbackAddress(packet.sourceAddress, packet.ipv6) || isLoopbackAddress(packet.destinationAddress, packet.ipv6)) return;
         if (!packet.bytes)
             return;
         // 用系统实际本机地址确认接口，不假定 ETW 连接端点的排列等同于包的收发方向。
@@ -315,6 +353,7 @@ private:
             found = counters_.emplace(key, AppTrafficSample{networkInterface->second, identified ? owner.appId : "unknown",
                 identified ? owner.name : "未识别应用", instance, identified ? packet.processId : 0, 0, 0, identified}).first;
         }
+        found->second.source = "WindowsEtw";
         auto& bytes = packet.receive ? found->second.rxBytes : found->second.txBytes;
         if ((std::numeric_limits<std::uint64_t>::max)() - bytes < packet.bytes)
         {
@@ -326,6 +365,8 @@ private:
             ++missing_;
     }
 
+    std::string etwFailure_;
+    std::unique_ptr<TcpEStatsCapture> loopback_;
     GUID guid_{};
     std::wstring name_;
     std::string generation_;

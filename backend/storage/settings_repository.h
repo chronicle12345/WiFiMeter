@@ -19,13 +19,14 @@ enum class SpeedUnit
 {
     megabytesPerSecond,  // MB/s，字节速率
     megabitsPerSecond,   // Mbps，比特速率
+    automatic,          // 根据实时速度自动选择字节速率单位
 };
 
 struct SettingsRecord
 {
     std::string language = "en";
     DisplayUnit unit = DisplayUnit::gb;
-    SpeedUnit speedUnit = SpeedUnit::megabytesPerSecond;
+    SpeedUnit speedUnit = SpeedUnit::automatic;
     int intervalSeconds = 5;
     int retentionDays = 90;  // 0 表示长期保留
     bool autoStart = false;

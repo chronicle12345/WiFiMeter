@@ -177,6 +177,97 @@ void fractionalQuotaRoundTrip()
     }
 }
 
+void multipleQuotaThresholdsRoundTripAndNotify()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness source;
+    const auto now = utcTime(2026, 10, 1);
+    NetworkRecord network;
+    network.key = kUuid;
+    network.ssid = "Multiple";
+    WIFIMETER_CHECK(source.store->networks().replace(network).ok);
+    auto patch = JsonValue::makeObject();
+    patch.set("key", JsonValue::makeString(kUuid));
+    patch.set("capGb", JsonValue::makeNumber(0.000001));
+    patch.set("notify", JsonValue::makeBool(true));
+    patch.set("quotaPeriod", JsonValue::makeString("day"));
+    patch.set("period", JsonValue::makeString("day"));
+    patch.set("warnPercent", JsonValue::makeNumber(80));
+    auto thresholds = JsonValue::makeArray();
+    for (double value : {100.0, 75.5, 50.0, 75.5}) thresholds.push(JsonValue::makeNumber(value));
+    patch.set("warnPercents", thresholds);
+    auto updated = source.call(method::kUpdateNetwork, patch, now);
+    WIFIMETER_CHECK(updated.ok());
+    WIFIMETER_CHECK(source.call("updateTotalQuota", patch, now).ok());
+    if (!updated.ok()) return;
+    const auto* result = updated.result.find("network");
+    WIFIMETER_CHECK(result && result->find("warnPercents") && result->find("warnPercents")->size() == 3);
+    WIFIMETER_CHECK(result && result->doubleOr("warnPercent") == 50);
+    const auto add = [&](Harness& harness, TimePoint at, ByteCount bytes) {
+        AccumulateResult delta;
+        delta.deltas.push_back({NetworkRef{kUuid, "Multiple", "wifi"}, "adapter", bytes, 0, at, std::chrono::seconds(5)});
+        ApplySummary summary;
+        WIFIMETER_CHECK(harness.store->applyUsage(delta, at, summary).ok);
+    };
+    const auto count = [](const BackendService::Events& events, const std::string& scope) {
+        int result = 0;
+        for (const auto& value : events.items)
+            if (value.stringOr("kind") == "quotaWarn" && value.stringOr("scope") == scope) ++result;
+        return result;
+    };
+    add(source, now, 800);
+    const auto first = source.service->collectOnce(now);
+    WIFIMETER_CHECK_EQ(count(first, ""), 2);
+    WIFIMETER_CHECK_EQ(count(first, "total"), 2);
+    const auto saved = source.call(method::kBackup, now);
+    WIFIMETER_CHECK(saved.ok());
+    if (!saved.ok()) return;
+    Harness restored;
+    auto restore = JsonValue::makeObject();
+    restore.set("backup", *saved.result.find("backup"));
+    WIFIMETER_CHECK(restored.call(method::kRestore, restore, now).ok());
+    restored.service = std::make_unique<BackendService>(BackendService::Deps{*restored.store, restored.network}, false);
+    const auto repeated = restored.service->collectOnce(now);
+    WIFIMETER_CHECK_EQ(count(repeated, ""), 0);
+    WIFIMETER_CHECK_EQ(count(repeated, "total"), 0);
+    add(restored, now, 200);
+    const auto limit = restored.service->collectOnce(now + std::chrono::seconds(5));
+    WIFIMETER_CHECK_EQ(count(limit, ""), 1);
+    WIFIMETER_CHECK_EQ(count(limit, "total"), 1);
+    const auto tomorrow = now + std::chrono::hours(24);
+    add(restored, tomorrow, 600);
+    const auto next = restored.service->collectOnce(tomorrow);
+    WIFIMETER_CHECK_EQ(count(next, ""), 1);
+    WIFIMETER_CHECK_EQ(count(next, "total"), 1);
+    for (const auto& invalid : {JsonValue::makeArray(), JsonValue::makeString("50,75")}) {
+        patch.set("warnPercents", invalid);
+        WIFIMETER_CHECK(!source.call(method::kUpdateNetwork, patch, now).ok());
+        WIFIMETER_CHECK(!source.call("updateTotalQuota", patch, now).ok());
+    }
+    for (const auto& invalid : {JsonValue::makeNumber(0), JsonValue::makeNumber(101), JsonValue::makeString("50"), JsonValue::makeNull()}) {
+        auto array = JsonValue::makeArray(); array.push(invalid);
+        patch.set("warnPercents", array);
+        WIFIMETER_CHECK(!source.call(method::kUpdateNetwork, patch, now).ok());
+        WIFIMETER_CHECK(!source.call("updateTotalQuota", patch, now).ok());
+        auto document = *saved.result.find("backup");
+        auto networks = JsonValue::makeArray();
+        auto entry = document.find("networks")->at(0);
+        entry.set("warnPercents", array); networks.push(entry); document.set("networks", networks);
+        restore.set("backup", document);
+        WIFIMETER_CHECK(!restored.call(method::kRestore, restore, tomorrow).ok());
+    }
+    // A legacy scalar patch replaces all configured stages.
+    auto legacy = JsonValue::makeObject();
+    legacy.set("key", JsonValue::makeString(kUuid));
+    legacy.set("warnPercent", JsonValue::makeNumber(85.5));
+    const auto single = source.call(method::kUpdateNetwork, legacy, now);
+    WIFIMETER_CHECK(single.ok());
+    if (single.ok()) WIFIMETER_CHECK_EQ(single.result.find("network")->find("warnPercents")->size(), std::size_t{1});
+    const auto singleTotal = source.call("updateTotalQuota", legacy, now);
+    WIFIMETER_CHECK(singleTotal.ok());
+    if (singleTotal.ok()) WIFIMETER_CHECK_EQ(singleTotal.result.find("totalQuota")->find("warnPercents")->size(), std::size_t{1});
+}
+
 void reportsHello()
 {
     Harness harness;
@@ -384,6 +475,103 @@ void pauseStopsCollectionAndRecordsAGap()
         WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("reason"), std::string("paused"));
         WIFIMETER_CHECK_EQ(gaps->at(0).intOr("spanSeconds"), std::int64_t{25});
     }
+}
+
+void pausedRequestsRefreshWithoutRecordingUsage()
+{
+    Harness harness;
+    const auto at = utcTime(2026, 9, 29, 10);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 100, 100)};
+    harness.service->collectOnce(at);
+    harness.network.sampleReport.samples[0].rxBytes = 200;
+    harness.service->collectOnce(at + std::chrono::seconds(5));
+    harness.service->setPaused(true, at + std::chrono::seconds(6));
+    const auto before = harness.call(method::kBackup, at).result.dump();
+    harness.network.sampleReport.samples[0].rxBytes = 10000;
+    harness.network.sampleReport.links[0].signalPercent = 42;
+    const auto snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(10));
+    WIFIMETER_CHECK(snapshot.ok());
+    const auto* live = snapshot.result.find("live");
+    WIFIMETER_CHECK(live != nullptr);
+    if (live)
+    {
+        WIFIMETER_CHECK_EQ(live->stringOr("collector"), std::string("paused"));
+        WIFIMETER_CHECK_EQ(live->stringOr("state"), std::string("connected"));
+        WIFIMETER_CHECK_EQ(live->stringOr("updatedAt"), isoUtcOf(at + std::chrono::seconds(10)));
+        WIFIMETER_CHECK_EQ(live->find("connections")->at(0).intOr("signal"), std::int64_t{42});
+        WIFIMETER_CHECK_EQ(live->find("connections")->at(0).stringOr("rxPerSecond"), std::string("0"));
+    }
+    WIFIMETER_CHECK_EQ(harness.network.sampleCount, 3);
+    harness.network.sampleReport = {};
+    WIFIMETER_CHECK(harness.call(method::kCollectNow, at + std::chrono::seconds(15)).ok());
+    const auto pending = harness.service->takePendingEvents();
+    WIFIMETER_CHECK_EQ(pending.size(), std::size_t{1});
+    if (!pending.empty())
+    {
+        WIFIMETER_CHECK_EQ(pending[0].first, std::string(event::kLive));
+        WIFIMETER_CHECK_EQ(pending[0].second.stringOr("state"), std::string("disconnected"));
+        WIFIMETER_CHECK_EQ(pending[0].second.stringOr("collector"), std::string("paused"));
+        WIFIMETER_CHECK_EQ(pending[0].second.find("connections")->size(), std::size_t{0});
+    }
+    WIFIMETER_CHECK_EQ(harness.call(method::kBackup, at).result.dump(), before);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 20000, 100)};
+    harness.service->setPaused(false, at + std::chrono::seconds(20));
+    const auto resumed = harness.service->collectOnce(at + std::chrono::seconds(20));
+    WIFIMETER_CHECK_EQ(resumed.names.size(), std::size_t{1});
+    const auto first = harness.call(method::kSnapshot, at + std::chrono::seconds(20));
+    WIFIMETER_CHECK_EQ(first.result.find("records")->at(0).stringOr("rxBytes"), std::string("100"));
+    harness.network.sampleReport.samples[0].rxBytes = 20050;
+    harness.service->collectOnce(at + std::chrono::seconds(25));
+    const auto second = harness.call(method::kSnapshot, at + std::chrono::seconds(25));
+    WIFIMETER_CHECK_EQ(second.result.find("records")->at(0).stringOr("rxBytes"), std::string("150"));
+}
+
+void pausedRefreshPreservesLegacyNetworkIdentity()
+{
+    Harness harness;
+    const auto at = utcTime(2026, 9, 29, 10);
+    NetworkRecord record;
+    record.key = "legacy-home";
+    record.ssid = "Home";
+    WIFIMETER_CHECK(harness.store->networks().replace(record));
+    WIFIMETER_CHECK(harness.store->database().exec(
+        "INSERT INTO legacy_network_keys(ssid,network_key) VALUES('Home','legacy-home')"));
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 100, 100)};
+    harness.service->collectOnce(at);
+    const auto running = harness.call(method::kSnapshot, at);
+    const auto expected = running.result.find("live")->find("connections")->at(0).stringOr("networkId");
+    WIFIMETER_CHECK_EQ(expected, record.key);
+    harness.service->setPaused(true, at + std::chrono::seconds(1));
+    const auto before = harness.call(method::kBackup, at).result.dump();
+    const auto paused = harness.call(method::kSnapshot, at + std::chrono::seconds(2));
+    WIFIMETER_CHECK(paused.ok());
+    WIFIMETER_CHECK_EQ(paused.result.find("live")->find("connections")->at(0).stringOr("networkId"), expected);
+    WIFIMETER_CHECK(harness.call(method::kCollectNow, at + std::chrono::seconds(3)).ok());
+    const auto events = harness.service->takePendingEvents();
+    WIFIMETER_CHECK_EQ(events.size(), std::size_t{1});
+    if (!events.empty())
+        WIFIMETER_CHECK_EQ(events[0].second.find("connections")->at(0).stringOr("networkId"), expected);
+    WIFIMETER_CHECK_EQ(harness.call(method::kBackup, at).result.dump(), before);
+}
+
+void pausedStartupAndQueryFailureAreVisible()
+{
+    Harness harness(true);
+    const auto at = utcTime(2026, 9, 29, 10);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    auto snapshot = harness.call(method::kSnapshot, at);
+    WIFIMETER_CHECK_EQ(snapshot.result.find("live")->stringOr("state"), std::string("connected"));
+    harness.network.sampleReport.links.clear();
+    harness.network.sampleReport.failures = {{platform::FailureKind::commandFailed, "wlan0", "WLAN access denied: location permission (error 5)"}};
+    snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(5));
+    const auto* live = snapshot.result.find("live");
+    WIFIMETER_CHECK_EQ(live->stringOr("state"), std::string("unreadable"));
+    WIFIMETER_CHECK_EQ(live->stringOr("collector"), std::string("paused"));
+    WIFIMETER_CHECK_EQ(live->stringOr("message"), harness.network.sampleReport.failures[0].detail);
+    WIFIMETER_CHECK_EQ(live->find("connections")->size(), std::size_t{0});
 }
 
 void updatesSettings()
@@ -761,6 +949,34 @@ void applicationHistorySurvivesSnapshotsAndBackups()
     WIFIMETER_CHECK(snapshot.result.find("appRecords")->size() == 0);
 }
 
+void applicationSnapshotsKeepTheirSamplingClock()
+{
+    Harness h;
+    FakeApps apps;
+    h.service = std::make_unique<BackendService>(BackendService::Deps{*h.store, h.network, &apps});
+    const auto at = utcTime(2026, 9, 30, 10, 0, 0);
+    h.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 2000));
+    auto enabled = JsonValue::makeObject(); enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(h.call(method::kSetAppCollection, enabled, at).ok());
+    apps.report = {platform::AppCollectorState::running, "timed", {},
+        {{"wlan0", "browser", "Browser", "42:1", 42, 0, 0}}};
+    apps.report.sampledAtMs = 10000;
+    h.service->collectOnce(at);
+    apps.report.sampledAtMs = 11250; apps.report.samples[0].rxBytes = 1000;
+    h.service->collectOnce(at + std::chrono::seconds(2));
+    auto rate = [&] { return h.call(method::kSnapshot, at).result.find("appProcesses")->at(0).stringOr("rxPerSecond"); };
+    WIFIMETER_CHECK_EQ(rate(), std::string("800"));
+    h.service->collectOnce(at + std::chrono::milliseconds(2100));
+    WIFIMETER_CHECK_EQ(rate(), std::string("800"));
+    apps.report.sampledAtMs = 12500; apps.report.samples[0].rxBytes = 2000;
+    h.service->collectOnce(at + std::chrono::seconds(3));
+    WIFIMETER_CHECK_EQ(rate(), std::string("800"));
+    WIFIMETER_CHECK_EQ(h.call(method::kSnapshot, at).result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("2000"));
+    apps.report.sampledAtMs = 13750;
+    h.service->collectOnce(at + std::chrono::seconds(4));
+    WIFIMETER_CHECK_EQ(rate(), std::string("0"));
+}
+
 void applicationCollectionIsIndependentAndOptIn()
 {
     wifimeter::test::useTimeZone("UTC");
@@ -1019,7 +1235,11 @@ void completeBackupRoundTrip()
 
 int main()
 {
+    pausedRefreshPreservesLegacyNetworkIdentity();
+    pausedRequestsRefreshWithoutRecordingUsage();
+    pausedStartupAndQueryFailureAreVisible();
     fractionalQuotaRoundTrip();
+    multipleQuotaThresholdsRoundTripAndNotify();
     wiredLiveAndDisconnectProtection();
     completeBackupRoundTrip();
     reportsHello();
@@ -1038,6 +1258,7 @@ int main()
     mapsDisconnectOutcomes();
     prunesUsage();
     applicationHistorySurvivesSnapshotsAndBackups();
+    applicationSnapshotsKeepTheirSamplingClock();
     applicationCollectionIsIndependentAndOptIn();
     applicationFailureDetailsSurviveEventsAndStorage();
     applicationStorageFailureRollsBackOnlyApplications();

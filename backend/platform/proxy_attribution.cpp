@@ -19,6 +19,13 @@
 
 namespace wifimeter::platform
 {
+std::string proxyConnectionKey(const ProxyTcpConnection& row)
+{
+    // 地址带长度，IPv6 的冒号不会与端口分隔符产生歧义。
+    return std::to_string(row.localAddress.size()) + ":" + row.localAddress + ":" + std::to_string(row.localPort) + ">" +
+        std::to_string(row.remoteAddress.size()) + ":" + row.remoteAddress + ":" + std::to_string(row.remotePort);
+}
+
 namespace
 {
 std::string pathKey(std::string value)
@@ -49,12 +56,6 @@ bool knownApp(const std::string& appId)
     return !appId.empty() && appId != "unknown" && appId != "proxy/unattributed";
 }
 
-std::string connectionKey(const ProxyTcpConnection& row)
-{
-    // 地址带长度，IPv6 的冒号不会与端口分隔符产生歧义。
-    return std::to_string(row.localAddress.size()) + ":" + row.localAddress + ":" + std::to_string(row.localPort) + ">" +
-        std::to_string(row.remoteAddress.size()) + ":" + row.remoteAddress + ":" + std::to_string(row.remotePort);
-}
 
 bool listenerMatches(const ProxyTcpConnection& listener, const ProxyTcpConnection& client)
 {
@@ -244,12 +245,17 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
     for (const auto& row : connections)
         if (row.state == ProxyTcpState::listen && ports.count(row.localPort)) proxies.insert(row.processId);
 
+    bool missingIdentity = false;
     for (const auto pid : proxies)
     {
         const auto owner = owners.find(pid);
+        if (owner == owners.end() || !knownApp(owner->second->appId)) missingIdentity = true;
         report.proxies.push_back(owner == owners.end() ? ProxyProcess{pid, {}, {}} : *owner->second);
     }
 
+    using DetectionKey = std::tuple<std::uint32_t, std::uint16_t, std::string>;
+    std::map<DetectionKey, ProxyDetectedClient> detected;
+    std::map<DetectionKey, std::set<std::string>> detectedKeys;
     std::map<std::pair<std::string, std::string>, ProxyClientObservation> grouped;
     std::map<std::pair<std::string, std::string>, std::set<std::string>> seen;
     for (const auto& row : connections)
@@ -259,7 +265,11 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
             row.processId == selfProcessId || proxies.count(row.processId))
             continue;
         const auto client = owners.find(row.processId);
-        if (client == owners.end() || !knownApp(client->second->appId)) continue;
+        if (client == owners.end() || !knownApp(client->second->appId))
+        {
+            missingIdentity = true;
+            continue;
+        }
         std::set<std::uint32_t> candidates;
         for (const auto& server : connections)
         {
@@ -271,13 +281,39 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
         if (candidates.empty())
             for (const auto& listener : connections)
                 if (listener.state == ProxyTcpState::listen && listenerMatches(listener, row)) candidates.insert(listener.processId);
+        // 单一 TCP 属主足以展示客户端，但代理路径不可读时不能创建字节分配权重。
+        if (candidates.size() == 1 && *candidates.begin() != row.processId)
+        {
+            const auto pid = *candidates.begin();
+            const auto owner = owners.find(pid);
+            if (owner == owners.end() || !knownApp(owner->second->appId))
+            {
+                missingIdentity = true;
+                const DetectionKey key{pid, row.remotePort, pathKey(client->second->appId)};
+                if (detectedKeys[key].insert(proxyConnectionKey(row)).second)
+                {
+                    auto& found = detected[key];
+                    found.appId = client->second->appId;
+                    found.name = client->second->name.empty() ? fileName(found.appId) : client->second->name;
+                    found.proxyName = "端口 " + std::to_string(row.remotePort) + "（路径不可读）";
+                    ++found.connections;
+                    found.connectionKeys.push_back(proxyConnectionKey(row));
+                }
+                continue;
+            }
+        }
         const ProxyProcess* proxy = nullptr;
         bool ambiguous = false;
         for (const auto pid : candidates)
         {
             const auto candidate = owners.find(pid);
-            if (candidate == owners.end() || !knownApp(candidate->second->appId) ||
-                (proxy && pathKey(proxy->appId) != pathKey(candidate->second->appId)))
+            if (candidate == owners.end() || !knownApp(candidate->second->appId))
+            {
+                missingIdentity = true;
+                ambiguous = true;
+                break;
+            }
+            if (proxy && pathKey(proxy->appId) != pathKey(candidate->second->appId))
             {
                 ambiguous = true;
                 break;
@@ -286,7 +322,7 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
         }
         if (ambiguous || !proxy || pathKey(proxy->appId) == pathKey(client->second->appId)) continue;
         const auto group = std::make_pair(pathKey(proxy->appId), pathKey(client->second->appId));
-        const auto key = connectionKey(row);
+        const auto key = proxyConnectionKey(row);
         if (!seen[group].insert(key).second) continue;
         auto& observation = grouped[group];
         observation.proxyAppId = proxy->appId;
@@ -301,6 +337,13 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
         std::sort(observation.connectionKeys.begin(), observation.connectionKeys.end());
         report.observations.push_back(std::move(observation));
     }
+    for (auto& [key, client] : detected)
+        report.detectedClients.push_back(std::move(client));
+    // ready 表示 TCP 表读取成功；身份不可读和没有可归属连接仍需解释，不能暗示检测完整。
+    if (missingIdentity)
+        report.detail = "部分代理或客户端的进程路径不可读，可能受权限限制或进程已退出；这些连接未参与归属。";
+    else if (report.observations.empty())
+        report.detail = "未确认可归属的 TCP loopback 客户端连接；请检查端口和监听进程。仅有 TUN 流量时无法通过代理端口识别客户端。";
     return report;
 }
 

@@ -55,8 +55,8 @@ private:
     // GUID → 接口别名（与 IP Helper 的 Alias 一致）；失败返回空串。
     std::string aliasOf(const GUID& interfaceGuid) const;
 
-    // 读取单张网卡的当前连接属性；未连接或读取失败时返回空值。
-    bool connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const;
+    // 读取当前连接属性，返回 Win32 错误码；成功但数据不完整时返回 ERROR_INVALID_DATA。
+    std::uint32_t connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const;
 
     // 当前信道对应的频率；驱动不支持该查询时返回空值。
     std::optional<int> channelFrequency(const GUID& interfaceGuid) const;

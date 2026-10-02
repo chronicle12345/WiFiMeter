@@ -57,6 +57,8 @@ AppTrafficReport parseAppTrafficReport(std::string_view text)
         return report;
     report.generation = document->stringOr("generation");
     report.detail = document->stringOr("detail");
+    report.sampledAtMs = document->intOr("sampledAtMs");
+    report.loopbackSampledAtMs = document->intOr("loopbackSampledAtMs");
     if (report.state != AppCollectorState::running && report.state != AppCollectorState::partial)
         return report;
     const auto* samples = document->find("samples");
@@ -81,6 +83,10 @@ AppTrafficReport parseAppTrafficReport(std::string_view text)
             return {AppCollectorState::unavailable, {}, "Invalid application traffic sample", {}};
         sample.processId = static_cast<std::uint32_t>(processId);
         sample.active = entry.boolOr("active", true);
+        sample.connectionKey = entry.stringOr("connectionKey");
+        sample.source = entry.stringOr("source");
+        if (sample.connectionKey.size() > 256 || sample.source.size() > 64)
+            return {AppCollectorState::unavailable, {}, "Invalid connection key", {}};
         report.samples.push_back(std::move(sample));
     }
     return report;
@@ -92,6 +98,8 @@ std::string serializeAppTrafficReport(const AppTrafficReport& report)
     document.set("state", support::JsonValue::makeString(std::string(appCollectorStateName(report.state))));
     document.set("generation", support::JsonValue::makeString(report.generation));
     document.set("detail", support::JsonValue::makeString(report.detail));
+    document.set("sampledAtMs", support::JsonValue::makeInt(report.sampledAtMs));
+    document.set("loopbackSampledAtMs", support::JsonValue::makeInt(report.loopbackSampledAtMs));
     auto samples = support::JsonValue::makeArray();
     for (const auto& sample : report.samples)
     {
@@ -103,6 +111,8 @@ std::string serializeAppTrafficReport(const AppTrafficReport& report)
         value.set("processId", support::JsonValue::makeInt(sample.processId));
         value.set("rxBytes", support::JsonValue::makeString(std::to_string(sample.rxBytes)));
         value.set("txBytes", support::JsonValue::makeString(std::to_string(sample.txBytes)));
+        value.set("source", support::JsonValue::makeString(sample.source));
+        value.set("connectionKey", support::JsonValue::makeString(sample.connectionKey));
         value.set("active", support::JsonValue::makeBool(sample.active));
         samples.push(std::move(value));
     }

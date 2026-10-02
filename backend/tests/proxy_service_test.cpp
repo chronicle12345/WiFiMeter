@@ -24,9 +24,11 @@ public:
 class FakeApps : public platform::AppTrafficSource
 {
 public:
-    void start() override {}
+    platform::AppTrafficReport report{platform::AppCollectorState::running, "generation", {}, {}};
+    int starts = 0;
+    void start() override { ++starts; }
     void stop() override {}
-    platform::AppTrafficReport read() override { return {platform::AppCollectorState::running, "generation", {}, {}}; }
+    platform::AppTrafficReport read() override { return report; }
 };
 struct Harness
 {
@@ -116,6 +118,41 @@ void enable(Harness& harness, bool value=true)
 {
     WIFIMETER_CHECK(harness.call("setAppCollection",json(value ? R"({"enabled":true})" : R"({"enabled":false})")).ok());
 }
+void loopbackBytesAreLiveButNotWifiUsage()
+{
+    Harness h;
+    h.proxyReport=observed();
+    configure(h); enable(h);
+    const auto start=utcTime(2026,10,1,0,0,0);
+    h.apps.report.samples={{"loopback", "a.exe", "Client A", "12:100", 12, 1000, 2000, true, "a-key"}};
+    h.service->collectOnce(start);
+    h.apps.report.samples[0].rxBytes += 600;
+    h.apps.report.samples[0].txBytes += 200;
+    h.service->collectOnce(start+std::chrono::seconds(2));
+    const auto snapshot=h.call("snapshot").result;
+    const auto* live=snapshot.find("appProcesses");
+    WIFIMETER_CHECK(live && live->size()==1);
+    if (live && live->size())
+    {
+        WIFIMETER_CHECK_EQ(live->at(0).stringOr("rxPerSecond"),std::string("300"));
+        WIFIMETER_CHECK_EQ(live->at(0).stringOr("txPerSecond"),std::string("100"));
+        WIFIMETER_CHECK_EQ(live->at(0).stringOr("networkId"),std::string{});
+    }
+    const auto* clients=snapshot.find("proxy")->find("clients");
+    WIFIMETER_CHECK(clients && clients->at(0).boolOr("measurementAvailable"));
+    if (clients) WIFIMETER_CHECK_EQ(clients->at(0).stringOr("rxBytes"),std::string("600"));
+    h.proxyReport.observations.clear();
+    h.proxyReport.detectedClients={{"a.exe","Client A","Port 7897",1,{"a-key"}}};
+    configure(h);
+    const auto detected=h.call("snapshot").result.find("proxy")->find("clients")->at(0);
+    WIFIMETER_CHECK(!detected.boolOr("pathAvailable"));
+    WIFIMETER_CHECK_EQ(detected.stringOr("rxPerSecond"),std::string("300"));
+    const auto liveEvent=h.service->collectOnce(start+std::chrono::seconds(4));
+    bool carriesProxy=false;
+    for (const auto& item:liveEvent.items) if (item.has("proxy")) carriesProxy=true;
+    WIFIMETER_CHECK(carriesProxy);
+    WIFIMETER_CHECK_EQ(h.count("app_usage"),std::int64_t(0));
+}
 void samplesAtMostEveryFiveSecondsAndDeduplicatesAcrossRestarts()
 {
     Harness harness;
@@ -123,33 +160,136 @@ void samplesAtMostEveryFiveSecondsAndDeduplicatesAcrossRestarts()
     const auto start=utcTime(2026,10,1,0,0,0);
     configure(harness);
     harness.service->collectOnce(start);
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,0);
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,1);
     enable(harness);
     harness.service->collectOnce(start);
     harness.service->collectOnce(start+std::chrono::seconds(1));
     harness.service->collectOnce(start+std::chrono::seconds(4));
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,1);
-    harness.call("snapshot");
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,1);
-    harness.service->collectOnce(start+std::chrono::seconds(5));
     WIFIMETER_CHECK_EQ(harness.proxyCalls,2);
+    harness.call("snapshot");
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,2);
+    harness.service->collectOnce(start+std::chrono::seconds(5));
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,3);
     WIFIMETER_CHECK_EQ(harness.count("proxy_observations"),std::int64_t(3));
     WIFIMETER_CHECK_EQ(harness.count("proxy_apps"),std::int64_t(2));
     configure(harness);
     harness.service->collectOnce(start+std::chrono::seconds(6));
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,2);
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,4);
     harness.restart();
     enable(harness);
     harness.service->collectOnce(start+std::chrono::seconds(10));
     WIFIMETER_CHECK_EQ(harness.count("proxy_observations"),std::int64_t(3));
     enable(harness,false);
     harness.service->collectOnce(start+std::chrono::seconds(15));
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,3);
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,5);
     enable(harness);
     WIFIMETER_CHECK(harness.call("updateProxyConfig",json(R"({"ports":[],"processNames":[]})")).ok());
     harness.service->collectOnce(start+std::chrono::seconds(20));
-    WIFIMETER_CHECK_EQ(harness.proxyCalls,3);
+    WIFIMETER_CHECK_EQ(harness.proxyCalls,5);
 }
+void discoversClientsOnSaveWithoutStartingByteCollection()
+{
+    Harness harness;
+    harness.proxyReport = observed();
+    auto response = harness.call("updateProxyConfig", json(R"({"ports":[7890],"processNames":[]})"));
+    WIFIMETER_CHECK(response.ok());
+    WIFIMETER_CHECK_EQ(harness.proxyCalls, 1);
+    WIFIMETER_CHECK_EQ(harness.apps.starts, 0);
+    const auto* proxy = response.result.find("proxy");
+    WIFIMETER_CHECK(proxy != nullptr);
+    if (!proxy) return;
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("disabled"));
+    const auto* clients = proxy->find("clients");
+    WIFIMETER_CHECK(clients && clients->isArray() && clients->size() == 2);
+    if (!clients || clients->size() != 2) return;
+    const auto& client = clients->at(0);
+    WIFIMETER_CHECK_EQ(client.stringOr("appId"), std::string("a.exe"));
+    WIFIMETER_CHECK_EQ(client.stringOr("name"), std::string("Client A"));
+    WIFIMETER_CHECK_EQ(client.stringOr("proxyName"), std::string("Proxy"));
+    WIFIMETER_CHECK_EQ(client.intOr("connections"), std::int64_t(1));
+    WIFIMETER_CHECK_EQ(client.fields().size(), std::size_t(14));
+    WIFIMETER_CHECK(client.boolOr("pathAvailable"));
+    WIFIMETER_CHECK(client.find("rxBytes")->isNull() && client.find("txBytes")->isNull());
+    WIFIMETER_CHECK(!client.boolOr("measurementAvailable"));
+    WIFIMETER_CHECK_EQ(harness.count("proxy_observations"), std::int64_t(0));
+    WIFIMETER_CHECK_EQ(harness.count("proxy_apps"), std::int64_t(0));
+    const auto snapshot = harness.call("snapshot");
+    WIFIMETER_CHECK(!snapshot.result.find("appCollection")->boolOr("enabled"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("proxy")->find("clients")->dump(), clients->dump());
+    harness.service->collectOnce(utcTime(2026,10,1,0,0,5));
+    WIFIMETER_CHECK_EQ(harness.proxyCalls, 1);
+
+    // 失败快照不能继续显示上次的客户端，也不能把不完整失败报告当成证据。
+    harness.proxyReport.available = false;
+    harness.proxyReport.status = platform::ProxySampleStatus::failed;
+    harness.proxyReport.detail = "test TCP discovery failed";
+    response = harness.call("updateProxyConfig", json(R"({"ports":[1080]})"));
+    WIFIMETER_CHECK(response.ok());
+    proxy = response.result.find("proxy");
+    WIFIMETER_CHECK_EQ(proxy->find("clients")->size(), std::size_t(0));
+    WIFIMETER_CHECK(proxy->stringOr("detail").find("test TCP discovery failed") != std::string::npos);
+    WIFIMETER_CHECK_EQ(harness.proxyCalls, 2);
+    harness.proxyReport = observed();
+    configure(harness);
+    response = harness.call("updateProxyConfig", json(R"({"ports":[]})"));
+    WIFIMETER_CHECK(response.ok());
+    WIFIMETER_CHECK_EQ(response.result.find("proxy")->find("clients")->size(), std::size_t(0));
+    WIFIMETER_CHECK_EQ(harness.proxyCalls, 3);
+    WIFIMETER_CHECK_EQ(harness.apps.starts, 0);
+}
+
+void detectedClientsNeverBecomeByteWeights()
+{
+    Harness harness;
+    harness.proxyReport = observed();
+    harness.proxyReport.detectedClients = {{"detected.exe", "Detected", "端口 7897（路径不可读）", 3}};
+    const auto response = harness.call("updateProxyConfig", json(R"({"ports":[7897]})"));
+    WIFIMETER_CHECK(response.ok());
+    const auto* clients = response.result.find("proxy")->find("clients");
+    WIFIMETER_CHECK(clients && clients->size() == 3);
+    if (!clients || clients->size() != 3) return;
+    const auto& detected = clients->at(2);
+    WIFIMETER_CHECK_EQ(detected.stringOr("appId"), std::string("detected.exe"));
+    WIFIMETER_CHECK_EQ(detected.intOr("connections"), std::int64_t(3));
+    WIFIMETER_CHECK(!detected.boolOr("pathAvailable", true));
+    WIFIMETER_CHECK(detected.find("rxBytes")->isNull() && detected.find("txBytes")->isNull());
+    WIFIMETER_CHECK(!detected.boolOr("measurementAvailable"));
+    enable(harness);
+    harness.service->collectOnce(utcTime(2026,10,1,0,0,0));
+    WIFIMETER_CHECK_EQ(harness.count("proxy_observations"), std::int64_t(3));
+    harness.proxyReport.observations.clear();
+    harness.proxyReport.proxies.clear();
+    harness.service->collectOnce(utcTime(2026,10,1,0,0,5));
+    WIFIMETER_CHECK_EQ(harness.count("proxy_observations"), std::int64_t(3));
+    const auto snapshot = harness.call("snapshot");
+    WIFIMETER_CHECK_EQ(snapshot.result.find("proxy")->find("clients")->size(), std::size_t(1));
+}
+
+void explainsCollectionAndPermissionState()
+{
+    Harness harness;
+    configure(harness);
+    auto snapshot = harness.call("snapshot");
+    const auto* proxy = snapshot.result.find("proxy");
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("disabled"));
+    WIFIMETER_CHECK(proxy->stringOr("detail").find("应用采集") != std::string::npos);
+    enable(harness);
+    harness.proxyReport = observed();
+    harness.apps.report = {platform::AppCollectorState::permission, {}, "test permission denied", {}};
+    harness.service->collectOnce(utcTime(2026,10,1,0,0,0));
+    snapshot = harness.call("snapshot");
+    proxy = snapshot.result.find("proxy");
+    WIFIMETER_CHECK(proxy->boolOr("available"));
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("ready"));
+    WIFIMETER_CHECK(proxy->stringOr("detail").find("权限") != std::string::npos);
+    WIFIMETER_CHECK_EQ(harness.count("proxy_observations"), std::int64_t(3));
+    harness.service->setPaused(true, utcTime(2026,10,1,0,0,1));
+    snapshot = harness.call("snapshot");
+    proxy = snapshot.result.find("proxy");
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("paused"));
+    WIFIMETER_CHECK(!proxy->stringOr("detail").empty());
+}
+
 void keepsRawRecordsAndSelectsTheRequestedNetworkAndDay()
 {
     Harness harness;
@@ -428,8 +568,12 @@ void migratesOnlyInitialProxySettingsInTheImportTransaction()
 int main()
 {
     test::useTimeZone("UTC");
+    loopbackBytesAreLiveButNotWifiUsage();
     persistsProxyConfig();
     samplesAtMostEveryFiveSecondsAndDeduplicatesAcrossRestarts();
+    discoversClientsOnSaveWithoutStartingByteCollection();
+    detectedClientsNeverBecomeByteWeights();
+    explainsCollectionAndPermissionState();
     keepsRawRecordsAndSelectsTheRequestedNetworkAndDay();
     validatesConfigWithoutOverwritingTheSavedValue();
     retentionAndClearFollowTheUserSettings();

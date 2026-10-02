@@ -14,6 +14,7 @@ const char* kUnitName(DisplayUnit unit)
 
 const char* kSpeedUnitName(SpeedUnit unit)
 {
+    if (unit == SpeedUnit::automatic) return "auto";
     return unit == SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s";
 }
 
@@ -41,7 +42,9 @@ SettingsRecord SettingsRepository::load(Status& status)
     if (statement->step())
     {
         settings.unit = statement->columnText(0) == "GiB" ? DisplayUnit::gib : DisplayUnit::gb;
-        settings.speedUnit = statement->columnText(1) == "Mbps" ? SpeedUnit::megabitsPerSecond : SpeedUnit::megabytesPerSecond;
+        const auto speedUnit = statement->columnText(1);
+        settings.speedUnit = speedUnit == "auto" ? SpeedUnit::automatic :
+            speedUnit == "Mbps" ? SpeedUnit::megabitsPerSecond : SpeedUnit::megabytesPerSecond;
         settings.intervalSeconds = static_cast<int>(statement->columnInt64(2));
         settings.retentionDays = static_cast<int>(statement->columnInt64(3));
         settings.autoStart = statement->columnInt64(4) != 0;

@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <string>
+#include <vector>
 
 #include "byte_count.h"
 #include "local_time.h"
@@ -27,6 +28,7 @@ struct QuotaSettings
     double capGb = 0.0;  // 十进制 GB；0 表示不限量
     double warnPercent = 80;
     QuotaPeriod period = QuotaPeriod::month;
+    std::vector<double> warnPercents = {};
 };
 
 // 当前周期的累计用量。
@@ -49,6 +51,9 @@ struct QuotaState
     bool reachedWarn(double warnPercent) const;
     bool reachedLimit() const;
 };
+
+// Empty input upgrades the legacy scalar. Nonempty input is authoritative.
+bool normalizeWarnPercents(std::vector<double>& values, double legacy = 80);
 
 // GB（十进制，1 GB = 10^9 字节）转字节；非正或非有限值按 0，合法正值至少为 1 字节。
 ByteCount bytesOfGigabytes(double gigabytes);

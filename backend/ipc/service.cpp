@@ -1,4 +1,5 @@
 #include "service.h"
+#include "../support/quota_thresholds.h"
 #include "legacy_import.h"
 #include "backup_archive.h"
 
@@ -113,6 +114,7 @@ void BackendService::onStart(TimePoint now)
     deps_.store.closeOpenGaps(now, closed);
     deps_.store.usage().closeOpenGaps(now, closed, true);
     lastSampleAt_ = now;
+    liveUpdatedAt_ = now;
     nextSampleAt_ = now;
     collectorState_ = paused_ ? "paused" : "running";
 }
@@ -130,6 +132,9 @@ void BackendService::setPaused(bool paused, TimePoint now)
         return;
     paused_ = paused;
     collectorState_ = paused ? "paused" : "running";
+    linkRates_.clear();
+    accumulator_.clear();
+    hasSampled_ = false;
 
     // 暂停期间没有采集，恢复时把这段区间补成覆盖空档，而不是让那几天看起来是 0。
     if (paused)
@@ -145,6 +150,8 @@ void BackendService::setPaused(bool paused, TimePoint now)
             if (deps_.applications)
                 deps_.applications->stop();
             appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+            loopbackLive_.clear();
             appProcesses_ = JsonValue::makeArray();
             appState_ = platform::AppCollectorState::paused;
         }
@@ -168,7 +175,8 @@ JsonValue BackendService::settingsToJson(const storage::SettingsRecord& settings
 {
     JsonValue value = JsonValue::makeObject();
     value.set("unit", JsonValue::makeString(settings.unit == storage::DisplayUnit::gib ? "GiB" : "GB"));
-    value.set("speedUnit", JsonValue::makeString(settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s"));
+    value.set("speedUnit", JsonValue::makeString(settings.speedUnit == storage::SpeedUnit::automatic ? "auto" :
+        settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s"));
     value.set("interval", JsonValue::makeInt(settings.intervalSeconds));
     value.set("language", JsonValue::makeString(settings.language));
     value.set("retention", JsonValue::makeInt(settings.retentionDays));
@@ -187,6 +195,7 @@ JsonValue BackendService::networkToJson(const storage::NetworkRecord& record, By
     value.set("type", JsonValue::makeString(record.type));
     value.set("capGb", JsonValue::makeNumber(record.capGb));
     value.set("warnPercent", JsonValue::makeNumber(record.warnPercent));
+    value.set("warnPercents", support::thresholdArray(record.warnPercents));
     value.set("quotaPeriod", JsonValue::makeString(periodName(record.quotaPeriod)));
     value.set("notify", JsonValue::makeBool(record.notify));
     value.set("autoDisconnect", JsonValue::makeBool(record.autoDisconnect));
@@ -207,7 +216,7 @@ JsonValue BackendService::buildLive() const
     JsonValue live = JsonValue::makeObject();
     live.set("state", JsonValue::makeString(liveState_));
     live.set("collector", JsonValue::makeString(collectorState_));
-    live.set("updatedAt", JsonValue::makeString(core::isoUtcOf(lastSampleAt_)));
+    live.set("updatedAt", JsonValue::makeString(core::isoUtcOf(liveUpdatedAt_)));
     live.set("skippedIntervals", JsonValue::makeInt(skippedIntervals_));
     if (!liveMessage_.empty())
         live.set("message", JsonValue::makeString(liveMessage_));
@@ -234,12 +243,14 @@ JsonValue BackendService::buildLive() const
         connection.set("txPerSecond", bytes(txPerSecond));
 
         const auto since = linkSince_.find(link.interfaceId);
-        connection.set("since", JsonValue::makeString(since != linkSince_.end() ? core::isoUtcOf(since->second) : core::isoUtcOf(lastSampleAt_)));
+        connection.set("since", JsonValue::makeString(since != linkSince_.end() ? core::isoUtcOf(since->second) : core::isoUtcOf(liveUpdatedAt_)));
         connections.push(std::move(connection));
     }
     live.set("connections", std::move(connections));
     live.set("appCollection", appCollectionToJson());
     live.set("appProcesses", appProcesses_);
+    Status proxyStatus;
+    live.set("proxy", proxyJson(proxyStatus));
     return live;
 }
 
@@ -275,6 +286,8 @@ BackendService::Response BackendService::setAppCollection(const JsonValue& param
             deps_.applications->start();
     }
     appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+    loopbackLive_.clear();
     appProcesses_ = JsonValue::makeArray();
     appLastAt_ = now;
     appDetail_.clear();
@@ -295,8 +308,35 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
     const auto report = deps_.applications->read();
     appState_ = report.state;
     appDetail_ = report.detail;
+    const auto staleAfter = std::chrono::seconds(std::max(5, intervalSeconds() * 2));
+    auto loopback = loopbackLive_.update(report, now, staleAfter);
+    const bool sameGeneration = appSampleGeneration_ == report.generation;
+    const bool valid = report.state == platform::AppCollectorState::running || report.state == platform::AppCollectorState::partial;
+    if (valid && sameGeneration && report.sampledAtMs > 0 && appSampledAtMs_ > 0 && report.sampledAtMs <= appSampledAtMs_)
+    {
+        // 同一辅助进程快照不推进累计基线，也不生成虚假的零速采样。
+        for (auto row : appProcesses_.items())
+        {
+            if (row.stringOr("scope") == "loopback") continue;
+            if (now - appSampleReceivedAt_ > staleAfter)
+            {
+                row.set("measurementAvailable", JsonValue::makeBool(false));
+                row.set("rxPerSecond", JsonValue{});
+                row.set("txPerSecond", JsonValue{});
+            }
+            loopback.push(std::move(row));
+        }
+        appProcesses_ = std::move(loopback);
+        return;
+    }
+    const double appElapsed = sameGeneration && report.sampledAtMs > 0 && appSampledAtMs_ > 0 ?
+        static_cast<double>(report.sampledAtMs - appSampledAtMs_) / 1000.0 :
+        std::chrono::duration<double>(now - appLastAt_).count();
     const auto accumulated = appAccumulator_.accumulate(report, wifi, now);
-    appProcesses_ = JsonValue::makeArray();
+    appProcesses_ = std::move(loopback);
+    appSampledAtMs_ = report.sampledAtMs;
+    appSampleGeneration_ = report.generation;
+    appSampleReceivedAt_ = now;
     Status status;
     storage::Transaction transaction(deps_.store.database());
     if (!transaction.active())
@@ -304,6 +344,8 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         appState_ = platform::AppCollectorState::unavailable;
         appDetail_ = deps_.store.database().lastError();
         appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+        loopbackLive_.clear();
         appLastAt_ = now;
         return;
     }
@@ -318,6 +360,8 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
             appState_ = platform::AppCollectorState::unavailable;
             appDetail_ = written.message;
             appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+            loopbackLive_.clear();
             appLastAt_ = now;
             return;
         }
@@ -373,6 +417,8 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         appState_ = platform::AppCollectorState::unavailable;
         appDetail_ = status.message;
         appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+        loopbackLive_.clear();
         appLastAt_ = now;
         return;
     }
@@ -388,14 +434,17 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         const auto delta = std::find_if(accumulated.deltas.begin(), accumulated.deltas.end(), [&](const auto& item) {
             return item.process.interfaceId == process.interfaceId && item.process.instanceId == process.instanceId && item.process.appId == process.appId;
         });
-        const auto seconds = delta != accumulated.deltas.end() && delta->span.count() > 0 ? static_cast<ByteCount>(delta->span.count()) : ByteCount{1};
+        const double seconds = appElapsed > 0 ? appElapsed : 1.0;
         JsonValue value = JsonValue::makeObject();
         value.set("networkId", JsonValue::makeString(core::networkRefOf(link->identity).key));
+        value.set("name", JsonValue::makeString(process.name));
+        value.set("source", JsonValue::makeString("native"));
+        value.set("scope", JsonValue::makeString("wifi"));
         value.set("appId", JsonValue::makeString(process.appId));
         value.set("processId", JsonValue::makeInt(process.processId));
         value.set("instanceId", JsonValue::makeString(process.instanceId));
-        value.set("rxPerSecond", bytes(delta != accumulated.deltas.end() ? delta->rxBytes / seconds : 0));
-        value.set("txPerSecond", bytes(delta != accumulated.deltas.end() ? delta->txBytes / seconds : 0));
+        value.set("rxPerSecond", bytes(delta != accumulated.deltas.end() ? static_cast<ByteCount>(delta->rxBytes / seconds) : 0));
+        value.set("txPerSecond", bytes(delta != accumulated.deltas.end() ? static_cast<ByteCount>(delta->txBytes / seconds) : 0));
         appProcesses_.push(std::move(value));
     }
     appLastAt_ = now;
@@ -429,6 +478,14 @@ BackendService::Response BackendService::buildHello() const
 BackendService::Response BackendService::buildSnapshot(const JsonValue& params, TimePoint now)
 {
     Response response;
+    if (paused_)
+    {
+        if (const Status refreshed = refreshPausedLive(now); !refreshed)
+        {
+            response.error = Error{errorCode::kStorageFailure, refreshed.message};
+            return response;
+        }
+    }
     Status status;
 
     // 默认给足界面可能选择的范围（最多 366 天），界面切换时间范围时不必再往返一次。
@@ -585,7 +642,10 @@ BackendService::Response BackendService::updateSettings(const JsonValue& params)
 
     settings.language = patch->stringOr("language", settings.language);
     settings.unit = patch->stringOr("unit", settings.unit == storage::DisplayUnit::gib ? "GiB" : "GB") == "GiB" ? storage::DisplayUnit::gib : storage::DisplayUnit::gb;
-    settings.speedUnit = patch->stringOr("speedUnit", settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s") == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
+    const auto speedUnit = patch->stringOr("speedUnit", settings.speedUnit == storage::SpeedUnit::automatic ? "auto" :
+        settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s");
+    settings.speedUnit = speedUnit == "auto" ? storage::SpeedUnit::automatic :
+        speedUnit == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
     settings.intervalSeconds = static_cast<int>(patch->intOr("interval", settings.intervalSeconds));
     settings.retentionDays = static_cast<int>(patch->intOr("retention", settings.retentionDays));
     settings.autoStart = patch->boolOr("autoStart", settings.autoStart);
@@ -629,12 +689,14 @@ BackendService::Response BackendService::updateNetwork(const JsonValue& params, 
 
     const std::string alias = params.stringOr("alias", record->alias);
     const double capGb = params.find("capGb") != nullptr ? params.doubleOr("capGb", record->capGb) : record->capGb;
-    const double warnPercent = params.doubleOr("warnPercent", record->warnPercent);
+    double warnPercent = record->warnPercent;
+    auto warnPercents = record->warnPercents;
+    const bool validThresholds = support::parseWarnPercents(params, warnPercent, warnPercents);
     const core::QuotaPeriod period = params.find("quotaPeriod") != nullptr ? parsePeriod(params.stringOr("quotaPeriod")) : record->quotaPeriod;
     const bool notify = params.boolOr("notify", record->notify);
     const bool autoDisconnect = params.boolOr("autoDisconnect", record->autoDisconnect);
 
-    if ((params.has("warnPercent") && !params.find("warnPercent")->isNumber()) || !std::isfinite(warnPercent) || warnPercent < 1 || warnPercent > 100 || !std::isfinite(capGb) || capGb < 0 || capGb > 9000000000.0 || (capGb > 0 && capGb < 1e-9))
+    if (!validThresholds || !std::isfinite(capGb) || capGb < 0 || capGb > 9000000000.0 || (capGb > 0 && capGb < 1e-9))
     {
         response.error = Error{errorCode::kInvalidParams, "额度或提醒阈值超出范围。"};
         return response;
@@ -644,7 +706,7 @@ BackendService::Response BackendService::updateNetwork(const JsonValue& params, 
     { response.error = Error{errorCode::kInvalidParams, "Invalid quota period."}; return response; }
     storage::Transaction networkUpdate(deps_.store.database());
     if (!networkUpdate.active()) { response.error = Error{errorCode::kStorageFailure, deps_.store.database().lastError()}; return response; }
-    if (const Status updated = deps_.store.networks().updateUserSettings(key, alias, capGb, warnPercent, period, notify, autoDisconnect); !updated)
+    if (const Status updated = deps_.store.networks().updateUserSettings(key, alias, capGb, warnPercent, period, notify, autoDisconnect, warnPercents); !updated)
     {
         response.error = Error{errorCode::kStorageFailure, updated.message};
         return response;
@@ -744,6 +806,7 @@ BackendService::Response BackendService::backup() const
         entry.set("type", JsonValue::makeString(record.type));
         entry.set("capGb", JsonValue::makeNumber(record.capGb));
         entry.set("warnPercent", JsonValue::makeNumber(record.warnPercent));
+        entry.set("warnPercents", support::thresholdArray(record.warnPercents));
         entry.set("quotaPeriod", JsonValue::makeString(periodName(record.quotaPeriod)));
         entry.set("notify", JsonValue::makeBool(record.notify));
         entry.set("autoDisconnect", JsonValue::makeBool(record.autoDisconnect));
@@ -784,6 +847,7 @@ BackendService::Response BackendService::backup() const
         entry.set("networkId", JsonValue::makeString(ledger.networkKey));
         entry.set("periodKey", JsonValue::makeString(ledger.periodKey));
         entry.set("usedBytes", bytes(ledger.usedBytes));
+        entry.set("notifiedWarnPercents", support::thresholdArray(ledger.notifiedWarnPercents));
         ledgers.push(std::move(entry));
     }
     if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
@@ -854,7 +918,7 @@ BackendService::Response BackendService::restore(const JsonValue& params)
             record.type = entry.stringOr("type", "wifi");
             record.capGb = entry.doubleOr("capGb", 0);
             record.warnPercent = entry.doubleOr("warnPercent", 80);
-            if ((entry.has("warnPercent") && !entry.find("warnPercent")->isNumber()) || !std::isfinite(record.warnPercent) || record.warnPercent < 1 || record.warnPercent > 100)
+            if (!support::parseWarnPercents(entry, record.warnPercent, record.warnPercents))
             {
                 response.error = Error{errorCode::kInvalidParams, "Invalid warning threshold in backup."};
                 return response;
@@ -931,7 +995,11 @@ BackendService::Response BackendService::restore(const JsonValue& params)
         for (std::size_t index = 0; index < ledgers->size(); ++index)
         {
             const JsonValue& entry = ledgers->at(index);
-            if (const Status saved = deps_.store.networks().saveLedger(storage::QuotaLedgerRecord{entry.stringOr("networkId"), entry.stringOr("periodKey"), parseBytes(entry, "usedBytes")}); !saved)
+            storage::QuotaLedgerRecord restored{entry.stringOr("networkId"), entry.stringOr("periodKey"), parseBytes(entry, "usedBytes")};
+            if (const auto* notified = entry.find("notifiedWarnPercents"); notified && !support::readThresholdArray(*notified, restored.notifiedWarnPercents, true)) {
+                response.error = Error{errorCode::kInvalidParams, "Invalid warning notification state."}; return response;
+            }
+            if (const Status saved = deps_.store.networks().saveLedger(restored); !saved)
             {
                 response.error = Error{errorCode::kStorageFailure, saved.message};
                 return response;
@@ -944,7 +1012,9 @@ BackendService::Response BackendService::restore(const JsonValue& params)
         storage::SettingsRecord record = deps_.store.settings().load(status);
         record.language = settings->stringOr("language", "en");
         record.unit = settings->stringOr("unit", "GB") == "GiB" ? storage::DisplayUnit::gib : storage::DisplayUnit::gb;
-        record.speedUnit = settings->stringOr("speedUnit", "MB/s") == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
+        const auto speedUnit = settings->stringOr("speedUnit", "auto");
+        record.speedUnit = speedUnit == "auto" ? storage::SpeedUnit::automatic :
+            speedUnit == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
         record.intervalSeconds = static_cast<int>(settings->intOr("interval", record.intervalSeconds));
         record.retentionDays = static_cast<int>(settings->intOr("retention", record.retentionDays));
         record.autoStart = settings->boolOr("autoStart", record.autoStart);
@@ -975,6 +1045,8 @@ BackendService::Response BackendService::restore(const JsonValue& params)
     if (deps_.applications)
         deps_.applications->stop();
     appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+    loopbackLive_.clear();
     appProcesses_ = JsonValue::makeArray();
     appState_ = appEnabled_ ? platform::AppCollectorState::paused : platform::AppCollectorState::disabled;
 
@@ -1107,6 +1179,8 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
         if (deps_.applications)
             deps_.applications->stop();
         appAccumulator_.clear();
+        appSampledAtMs_ = 0; appSampleGeneration_.clear();
+        loopbackLive_.clear();
         appProcesses_ = JsonValue::makeArray();
         appState_ = appEnabled_ ? platform::AppCollectorState::paused : platform::AppCollectorState::disabled;
         JsonValue result = JsonValue::makeObject();
@@ -1129,7 +1203,16 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
 
     if (request.method == method::kCollectNow)
     {
-        const Events events = collectOnce(now);
+        Events events;
+        if (paused_)
+        {
+            if (const Status refreshed = refreshPausedLive(now); !refreshed)
+                events.error = Error{errorCode::kStorageFailure, refreshed.message};
+            events.names.push_back(event::kLive);
+            events.items.push_back(buildLive());
+        }
+        else
+            events = collectOnce(now);
         Response response;
         if (!events.error.code.empty())
         {
@@ -1156,8 +1239,20 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
     return response;
 }
 
+Status BackendService::refreshPausedLive(TimePoint now)
+{
+    // 只刷新展示并读取旧网络映射，不写入用量或执行应用采样、额度检查。
+    auto report = deps_.network.sampleWifi();
+    if (const Status mapped = mapLegacyNetworks(deps_.store.database(), report); !mapped)
+        return mapped;
+    linkRates_.clear();
+    refreshLive(report, now);
+    return Status::success();
+}
+
 void BackendService::refreshLive(const platform::SampleReport& report, TimePoint now)
 {
+    liveUpdatedAt_ = now;
     liveLinks_.clear();
     for (const platform::WifiLink& link : report.links)
     {
@@ -1206,6 +1301,8 @@ void BackendService::refreshLive(const platform::SampleReport& report, TimePoint
         liveState_ = "offline";
     else if (!liveLinks_.empty())
         liveState_ = "connected";
+    else if (!report.failures.empty())
+        liveState_ = "unreadable";
     else
         liveState_ = "disconnected";
 
@@ -1223,22 +1320,29 @@ void BackendService::evaluateQuotas(TimePoint now, Events& events)
     for (const storage::NetworkRecord& record : deps_.store.networks().all(status))
     {
         const auto ledger = deps_.store.networks().ledger(record.key, status);
-        if (!ledger)
+        if (!ledger || ledger->periodKey != core::periodKeyFor(record.quotaPeriod, now))
             continue;
 
         core::QuotaSettings quotaSettings;
         quotaSettings.capGb = record.capGb;
         quotaSettings.warnPercent = record.warnPercent;
+        quotaSettings.warnPercents = record.warnPercents;
         quotaSettings.period = record.quotaPeriod;
         const core::QuotaState state = core::quotaStateOf(quotaSettings, ledger->usedBytes, now);
         if (!state.limited)
             continue;
 
-        const std::string noticeKey = record.key + "|" + state.periodKey;
-        if (settings.notifications && record.notify && state.reachedWarn(record.warnPercent) && notified_.insert(noticeKey).second)
+        auto updatedLedger = *ledger;
+        for (double threshold : record.warnPercents)
         {
+            if (!settings.notifications || !record.notify || !state.reachedWarn(threshold) ||
+                std::find(updatedLedger.notifiedWarnPercents.begin(), updatedLedger.notifiedWarnPercents.end(), threshold) != updatedLedger.notifiedWarnPercents.end()) continue;
+            updatedLedger.notifiedWarnPercents.push_back(threshold);
+            core::normalizeWarnPercents(updatedLedger.notifiedWarnPercents);
+            if (!deps_.store.networks().saveLedger(updatedLedger)) break;
             JsonValue alert = JsonValue::makeObject();
             alert.set("kind", JsonValue::makeString("quotaWarn"));
+            alert.set("warnPercent", JsonValue::makeNumber(threshold));
             alert.set("networkId", JsonValue::makeString(record.key));
             alert.set("ssid", JsonValue::makeString(record.ssid));
             alert.set("alias", JsonValue::makeString(record.alias));

@@ -41,9 +41,13 @@ tests/                        单元测试与真实系统只读冒烟测试
 | `platform/windows/system_api.*` | 系统查询接口与采样编排依赖的数据结构 |
 | `platform/windows/windows_network_platform.*` | 采样与断开的编排（依赖注入，可在任何平台测试） |
 | `platform/win32/wlanapi_query.*` | 真正的系统调用：打开 WLAN 会话、枚举、查询、断开、读计数 |
+| `platform/win32/etw_app_capture.*` | 非回环 ETW 应用事件与进程身份 |
+| `platform/win32/tcp_estats_capture.*` | 每秒读取 IPv4/IPv6 回环 TCP 实测字节 |
+| `ipc/loopback_live.*` | 回环实时基线、速率与代理客户端四元组匹配 |
 
 `platform/windows/` 里的文件不包含任何 Win32 头文件，因此它们的单元测试在 Linux 上原生运行；
-`platform/win32/` 里的代码只做字段搬运与错误码分类，逻辑都在被测试覆盖的那一侧。
+`platform/win32/` 包含系统调用、ETW 会话和 EStats 轮询；平台无关的解析、实时基线与归属逻辑另行测试。
+Windows 实时应用采集使用非回环 ETW 与回环 TCP EStats，回环字节不写入 Wi-Fi 累计。代理客户端实时字节与历史连接权重估算分别展示，详见 [Windows 采集文档](../docs/WINDOWS_APP_CAPTURE.md) 和 [实时 JSON 合约](platform/win32/APP_TRAFFIC.md)。
 
 ## 业务规则（core/）
 

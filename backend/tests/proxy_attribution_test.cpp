@@ -143,6 +143,66 @@ void supportsIpv6AndStableConnectionKeys()
     WIFIMETER_CHECK(proxyClientsFromTables({{7890}, {}}, {listener(10, 7890, "192.168.1.2"), client(20, 51000)}, processes).observations.empty());
 }
 
+void exposesClientsWhenOnlyTheProxyPathIsUnreadable()
+{
+    const std::vector<ProxyProcess> owners{{20, "client", "client.exe"}};
+    auto first = client(20, 51000, 7897);
+    auto second = client(20, 51001, 7897);
+    auto report = proxyClientsFromTables({{7897}, {}}, {listener(10, 7897), first, first, second}, owners);
+    WIFIMETER_CHECK(report.observations.empty());
+    WIFIMETER_CHECK_EQ(report.detectedClients.size(), std::size_t(1));
+    if (!report.detectedClients.empty())
+    {
+        WIFIMETER_CHECK_EQ(report.detectedClients[0].appId, std::string("client"));
+        WIFIMETER_CHECK_EQ(report.detectedClients[0].connections, std::uint64_t(2));
+        WIFIMETER_CHECK_EQ(report.detectedClients[0].proxyName, std::string("端口 7897（路径不可读）"));
+    }
+    // 多个监听属主且没有反向连接时不猜；反向连接唯一时可以确认 TCP 属主。
+    auto rows = std::vector<ProxyTcpConnection>{listener(10, 7897), listener(11, 7897), first};
+    WIFIMETER_CHECK(proxyClientsFromTables({{7897}, {}}, rows, owners).detectedClients.empty());
+    auto server = first;
+    server.processId = 10;
+    std::swap(server.localAddress, server.remoteAddress);
+    std::swap(server.localPort, server.remotePort);
+    rows.push_back(server);
+    WIFIMETER_CHECK_EQ(proxyClientsFromTables({{7897}, {}}, rows, owners).detectedClients.size(), std::size_t(1));
+    WIFIMETER_CHECK(proxyClientsFromTables({{7897}, {}}, {first}, owners).detectedClients.empty());
+    WIFIMETER_CHECK(proxyClientsFromTables({{7897}, {}}, {listener(10, 7897), first}, {}).detectedClients.empty());
+    report = proxyClientsFromTables({{7897}, {}}, {listener(10, 7897), first},
+        {{10, "proxy", "proxy.exe"}, {20, "client", "client.exe"}});
+    WIFIMETER_CHECK_EQ(report.observations.size(), std::size_t(1));
+    WIFIMETER_CHECK(report.detectedClients.empty());
+}
+
+void explainsMissingIdentitiesWithoutInventingClients()
+{
+    const std::vector<ProxyProcess> processes{{10, "proxy", "proxy.exe"}, {20, "client", "client.exe"}};
+    const auto readable = proxyClientsFromTables({{7890}, {}}, {listener(10, 7890), client(20, 51000)}, processes);
+    WIFIMETER_CHECK(readable.detail.empty());
+    for (const auto& rows : {std::vector<ProxyTcpConnection>{listener(999, 7890), client(20, 51000)},
+             std::vector<ProxyTcpConnection>{listener(10, 7890), client(999, 51000)}})
+    {
+        const auto missing = proxyClientsFromTables({{7890}, {}}, rows, processes);
+        WIFIMETER_CHECK(missing.available);
+        WIFIMETER_CHECK(missing.observations.empty());
+        WIFIMETER_CHECK(missing.detail.find("权限") != std::string::npos);
+        WIFIMETER_CHECK(missing.detail.find("999") == std::string::npos);
+    }
+    // 一部分身份缺失不应阻止保存已确认的连接证据。
+    const auto partial = proxyClientsFromTables({{7890}, {}},
+        {listener(10, 7890), client(20, 51000), client(999, 51001)}, processes);
+    WIFIMETER_CHECK_EQ(partial.observations.size(), std::size_t(1));
+    WIFIMETER_CHECK(!partial.detail.empty());
+    // TUN 的远端不是 loopback，端口相同也不能据此分配给代理。
+    auto tun = client(20, 51000);
+    tun.remoteAddress = "198.18.0.1";
+    tun.remoteIsLoopback = false;
+    const auto noLoopback = proxyClientsFromTables({{7890}, {}}, {listener(10, 7890), tun}, processes);
+    WIFIMETER_CHECK(noLoopback.observations.empty());
+    WIFIMETER_CHECK(noLoopback.detail.find("TCP loopback") != std::string::npos);
+    WIFIMETER_CHECK(noLoopback.detail.find("TUN") != std::string::npos);
+}
+
 void mergesClientWeightsAndKeepsUnknownShares()
 {
     const auto rows = estimateProxyUsage("2026-10-01", {{"p", "Proxy", 11, 5}},
@@ -228,6 +288,8 @@ int main()
     resolvesProxyOwnersWithoutMixingPortsOrGuessing();
     exposesIdleListenersForPortOnlyConfiguration();
     supportsIpv6AndStableConnectionKeys();
+    exposesClientsWhenOnlyTheProxyPathIsUnreadable();
+    explainsMissingIdentitiesWithoutInventingClients();
     mergesClientWeightsAndKeepsUnknownShares();
     conservesFullWidthByteCounts();
     samplesTheNativeApiReadOnly();

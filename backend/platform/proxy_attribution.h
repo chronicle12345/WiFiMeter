@@ -21,7 +21,7 @@ struct ProxyClientObservation
     std::string name;
     std::uint64_t connections = 0;
     // 当前快照内已去重的四元组键；调用方可按日期、代理路径、客户端路径跨快照去重。
-    std::vector<std::string> connectionKeys;
+    std::vector<std::string> connectionKeys{};
 };
 
 struct ProxyProcess
@@ -33,6 +33,16 @@ struct ProxyProcess
 
 enum class ProxySampleStatus { disabled, ready, unsupported, failed };
 
+// 已确认 TCP 属主，但代理路径不可读；仅展示连接，不参与持久化或字节归属。
+struct ProxyDetectedClient
+{
+    std::string appId;
+    std::string name;
+    std::string proxyName;
+    std::uint64_t connections = 0;
+    std::vector<std::string> connectionKeys{};
+};
+
 struct ProxyClientReport
 {
     bool available = false;
@@ -41,6 +51,7 @@ struct ProxyClientReport
     std::string detail;
     // 包含空闲监听器；路径读不到时保留 PID，appId/name 为空，不用于猜测字节归属。
     std::vector<ProxyProcess> proxies;
+    std::vector<ProxyDetectedClient> detectedClients;
 };
 
 enum class ProxyTcpState { other, listen, established };
@@ -56,6 +67,8 @@ struct ProxyTcpConnection
     std::uint16_t remotePort = 0;
     bool remoteIsLoopback = false;
 };
+
+std::string proxyConnectionKey(const ProxyTcpConnection& row);
 
 // 纯函数：注入同一轮 TCP 表和进程表。识别所有代理 PID，排除代理及采样进程自身。
 // 同端口有多个不同代理且无法用反向连接确定属主时，不猜测归属。

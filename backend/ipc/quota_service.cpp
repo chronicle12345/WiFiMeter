@@ -1,5 +1,7 @@
 #include "service.h"
+#include "../support/quota_thresholds.h"
 #include <cmath>
+#include <algorithm>
 #include "../storage/total_quota.h"
 
 namespace wifimeter::ipc {
@@ -13,6 +15,7 @@ JsonValue totalSettings(const storage::TotalQuotaSettings& value) {
     auto out = JsonValue::makeObject();
     out.set("capGb", JsonValue::makeNumber(value.capGb));
     out.set("warnPercent", JsonValue::makeNumber(value.warnPercent));
+    out.set("warnPercents", support::thresholdArray(value.warnPercents));
     out.set("period", JsonValue::makeString(totalPeriod(value.period)));
     out.set("notify", JsonValue::makeBool(value.notify));
     out.set("autoDisconnect", JsonValue::makeBool(value.autoDisconnect));
@@ -21,12 +24,13 @@ JsonValue totalSettings(const storage::TotalQuotaSettings& value) {
 bool parseTotalSettings(const JsonValue& input, storage::TotalQuotaSettings& settings) {
     if (!input.isObject()) return false;
     for (const auto* key : {"notify", "autoDisconnect"}) if (input.has(key) && !input.find(key)->isBool()) return false;
-    for (const auto* key : {"capGb", "warnPercent"}) if (input.has(key) && !input.find(key)->isNumber()) return false;
+    for (const auto* key : {"capGb"}) if (input.has(key) && !input.find(key)->isNumber()) return false;
     const auto period = input.stringOr("period", totalPeriod(settings.period));
     if (period != "day" && period != "month" && period != "all") return false;
     settings.period = period == "day" ? core::QuotaPeriod::day : period == "all" ? core::QuotaPeriod::all : core::QuotaPeriod::month;
     settings.capGb = input.doubleOr("capGb", settings.capGb);
-    const double warn = input.doubleOr("warnPercent", settings.warnPercent);
+    if (!support::parseWarnPercents(input, settings.warnPercent, settings.warnPercents)) return false;
+    const double warn = settings.warnPercent;
     if (!std::isfinite(warn) || warn < 1 || warn > 100 || !std::isfinite(settings.capGb) || settings.capGb < 0 || settings.capGb > 9000000000.0 || (settings.capGb > 0 && settings.capGb < 1e-9)) return false;
     settings.warnPercent = warn;
     settings.notify = input.boolOr("notify", settings.notify);
@@ -68,6 +72,7 @@ support::JsonValue BackendService::totalQuotaBackup(storage::Status& status) con
         item.set("periodKey", JsonValue::makeString(ledger.periodKey));
         item.set("usedBytes", JsonValue::makeString(core::decimalString(ledger.usedBytes)));
         item.set("warningNotified", JsonValue::makeBool(ledger.warningNotified));
+        item.set("notifiedWarnPercents", support::thresholdArray(ledger.notifiedWarnPercents));
         item.set("limitNotified", JsonValue::makeBool(ledger.limitNotified));
         ledgers.push(std::move(item));
     }
@@ -89,6 +94,9 @@ storage::Status BackendService::restoreTotalQuota(const JsonValue& document) {
         if (!item.find("usedBytes") || !item.find("usedBytes")->isString() || !core::parseDecimal(item.stringOr("usedBytes"), ledger.usedBytes)) return Status::failure("Invalid quota bytes.");
         if (!item.find("warningNotified") || !item.find("warningNotified")->isBool() || !item.find("limitNotified") || !item.find("limitNotified")->isBool()) return Status::failure("Invalid quota notification state.");
         ledger.warningNotified = item.boolOr("warningNotified");
+        if (const auto* notified = item.find("notifiedWarnPercents")) {
+            if (!support::readThresholdArray(*notified, ledger.notifiedWarnPercents, true)) return Status::failure("Invalid warning notification state.");
+        } else if (ledger.warningNotified) ledger.notifiedWarnPercents = {snapshot.settings.warnPercent};
         ledger.limitNotified = item.boolOr("limitNotified");
         snapshot.ledgers.push_back(ledger);
     }
@@ -102,14 +110,29 @@ void BackendService::evaluateTotalQuota(core::TimePoint now, Events& events) {
     const auto settings = deps_.store.settings().load(status);
     if (!status) return;
     if (settings.notifications && view.settings.notify) {
+        for (double threshold : view.settings.warnPercents) {
+            if (!view.quota.reachedWarn(threshold) || std::find(view.ledger.notifiedWarnPercents.begin(), view.ledger.notifiedWarnPercents.end(), threshold) != view.ledger.notifiedWarnPercents.end()) continue;
+            bool marked = false;
+            status = deps_.store.totalQuota().markNotified(view.settings.period, view.ledger.periodKey, storage::TotalQuotaNotification::warning, marked, threshold);
+            if (status && marked) {
+                auto alert = JsonValue::makeObject();
+                alert.set("kind", JsonValue::makeString("quotaWarn"));
+                alert.set("scope", JsonValue::makeString("total"));
+                alert.set("ssid", JsonValue::makeString("Total Wi-Fi"));
+                alert.set("warnPercent", JsonValue::makeNumber(threshold));
+                alert.set("percent", JsonValue::makeNumber(view.quota.percent()));
+                alert.set("usedBytes", JsonValue::makeString(core::decimalString(view.ledger.usedBytes)));
+                events.names.push_back(event::kAlert); events.items.push_back(std::move(alert));
+            }
+        }
         bool marked = false;
         const bool limit = view.quota.reachedLimit();
-        if (limit) { bool ignored = false; deps_.store.totalQuota().markNotified(view.settings.period, view.ledger.periodKey, storage::TotalQuotaNotification::warning, ignored); }
-        status = deps_.store.totalQuota().markNotified(view.settings.period, view.ledger.periodKey,
-            limit ? storage::TotalQuotaNotification::limit : storage::TotalQuotaNotification::warning, marked);
+
+        if (limit) status = deps_.store.totalQuota().markNotified(view.settings.period, view.ledger.periodKey,
+            storage::TotalQuotaNotification::limit, marked);
         if (status && marked) {
             auto alert = JsonValue::makeObject();
-            alert.set("kind", JsonValue::makeString(limit ? "quotaLimit" : "quotaWarn"));
+            alert.set("kind", JsonValue::makeString("quotaLimit"));
             alert.set("scope", JsonValue::makeString("total"));
             alert.set("ssid", JsonValue::makeString("Total Wi-Fi"));
             alert.set("percent", JsonValue::makeNumber(view.quota.percent()));

@@ -30,6 +30,7 @@ struct NetworkRecord
     bool autoDisconnect = false;
     std::string firstSeenAt;  // ISO8601，可为空
     std::string lastSeenAt;
+    std::vector<double> warnPercents = {};
 };
 
 struct QuotaLedgerRecord
@@ -37,6 +38,7 @@ struct QuotaLedgerRecord
     std::string networkKey;
     std::string periodKey;
     core::ByteCount usedBytes = 0;
+    std::vector<double> notifiedWarnPercents = {};
 };
 
 class NetworkRepository
@@ -48,13 +50,14 @@ public:
 
     // 采集到某个网络时登记：不存在则新建，存在则只更新 ssid 与最近出现时间，
     // 保留用户设置与首次出现时间。created 表示本次是否新建。
+    Status ensureSchema();
     Status observe(const core::NetworkRef& network, const std::string& seenAtIso, bool& created);
 
     std::vector<NetworkRecord> all(Status& status) const;
     std::optional<NetworkRecord> find(const std::string& key, Status& status) const;
 
     // 用户可改的部分。alias 允许为空（回退到 ssid 显示）。
-    Status updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect);
+    Status updateUserSettings(const std::string& key, const std::string& alias, double capGb, double warnPercent, core::QuotaPeriod period, bool notify, bool autoDisconnect, const std::vector<double>& warnPercents = {});
 
     Status remove(const std::string& key);
 

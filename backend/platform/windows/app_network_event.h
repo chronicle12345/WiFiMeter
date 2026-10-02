@@ -27,6 +27,8 @@ struct AppNetworkEvent
     std::optional<AppNetworkPacket> packet;
 };
 
+bool isLoopbackAddress(const std::array<std::uint8_t, 16>& address, bool ipv6);
+
 // TcpIp/UdpIp 的 v2 MOF 数据。PID 来自 payload，不能使用记录事件的线程 PID。
 // 只读取固定前缀；connid 是指针大小字段，不参与字节或接口归属。
 AppNetworkEvent parseAppNetworkEvent(AppNetworkProtocol protocol, std::uint8_t opcode,

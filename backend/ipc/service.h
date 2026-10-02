@@ -20,6 +20,7 @@
 #include "../storage/store.h"
 #include "../support/json.h"
 #include "messages.h"
+#include "loopback_live.h"
 
 namespace wifimeter::ipc
 {
@@ -108,6 +109,7 @@ private:
     support::JsonValue buildLive() const;
     support::JsonValue networkToJson(const storage::NetworkRecord& record, core::ByteCount usedBytes, const std::string& periodKey) const;
     support::JsonValue settingsToJson(const storage::SettingsRecord& settings) const;
+    storage::Status refreshPausedLive(core::TimePoint now);
     void refreshLive(const platform::SampleReport& report, core::TimePoint now);
     void evaluateQuotas(core::TimePoint now, Events& events);
     support::JsonValue appCollectionToJson() const;
@@ -117,6 +119,7 @@ private:
     Deps deps_;
     core::UsageAccumulator accumulator_;
     core::AppUsageAccumulator appAccumulator_;
+    LoopbackLive loopbackLive_;
     bool appEnabled_ = false;
     mutable bool proxyStorageReady_ = false;
     std::optional<core::TimePoint> proxySampleAt_;
@@ -125,10 +128,14 @@ private:
     platform::AppCollectorState appState_ = platform::AppCollectorState::disabled;
     std::string appDetail_;
     core::TimePoint appLastAt_{};
+    std::int64_t appSampledAtMs_ = 0;
+    std::string appSampleGeneration_;
+    core::TimePoint appSampleReceivedAt_{};
     support::JsonValue appProcesses_ = support::JsonValue::makeArray();
     bool paused_ = false;
     core::TimePoint nextSampleAt_{};
     core::TimePoint lastSampleAt_{};
+    core::TimePoint liveUpdatedAt_{};
     bool hasSampled_ = false;
 
     std::string liveState_ = "disconnected";
@@ -139,7 +146,6 @@ private:
     std::map<std::string, std::pair<core::ByteCount, core::ByteCount>> linkRates_;  // 字节/秒
     std::string liveMessage_;
     int skippedIntervals_ = 0;
-    std::set<std::string> notified_;
     std::map<std::string, core::TimePoint> totalDisconnectAttempts_;
     std::vector<std::pair<std::string, support::JsonValue>> pending_;
 };

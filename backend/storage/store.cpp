@@ -40,6 +40,8 @@ std::unique_ptr<Store> Store::open(const std::string& path, Status& status)
     store->settings().load(status);
     if (!status)
         return nullptr;
+    status = store->networks().ensureSchema();
+    if (!status) return nullptr;
     status = store->totalQuota().ensureSchema();
     if (!status) return nullptr;
     return store;
@@ -78,6 +80,7 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
         {
             quotaSettings.capGb = record->capGb;
             quotaSettings.warnPercent = record->warnPercent;
+            quotaSettings.warnPercents = record->warnPercents;
             quotaSettings.period = record->quotaPeriod;
         }
 
@@ -96,7 +99,7 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
         if (rolled)
             summary.rolledPeriods.push_back(delta.network.key);
 
-        if (const Status saved = networks_.saveLedger(QuotaLedgerRecord{delta.network.key, ledger.periodKey, ledger.usedBytes}); !saved)
+        if (const Status saved = networks_.saveLedger(QuotaLedgerRecord{delta.network.key, ledger.periodKey, ledger.usedBytes, stored && !rolled ? stored->notifiedWarnPercents : std::vector<double>{}}); !saved)
             return saved;
 
         ++summary.recordedNetworks;

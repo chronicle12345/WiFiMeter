@@ -1,4 +1,7 @@
 #include "total_quota.h"
+#include "quota_schema.h"
+#include "../support/quota_thresholds.h"
+#include <algorithm>
 
 #include <sqlite3.h>
 
@@ -31,6 +34,8 @@ core::QuotaPeriod parsePeriod(const std::string& period)
 
 Status validate(const TotalQuotaSettings& settings)
 {
+    auto thresholds = settings.warnPercents;
+    if (!core::normalizeWarnPercents(thresholds, settings.warnPercent)) return Status::failure("Invalid warning thresholds.");
     if (!std::isfinite(settings.capGb) || settings.capGb < 0 || settings.capGb > 9000000000.0 || !std::isfinite(settings.warnPercent) || settings.warnPercent < 1 || settings.warnPercent > 100 || *periodName(settings.period) == '\0')
         return Status::failure("总 WiFi 额度设置无效。上限为 0..9000000000 GB，预警为 1..100，周期为 day/month/all。");
     return Status::success();
@@ -80,12 +85,12 @@ private:
 
 TotalQuotaLedger ledgerRow(const Statement& statement)
 {
-    return {parsePeriod(statement.columnText(0)), statement.columnText(1), fromStoredBytes(statement.columnInt64(2)), statement.columnInt64(3) != 0, statement.columnInt64(4) != 0};
+    return {parsePeriod(statement.columnText(0)), statement.columnText(1), fromStoredBytes(statement.columnInt64(2)), statement.columnInt64(3) != 0, statement.columnInt64(4) != 0, support::storedThresholds(statement.columnText(5))};
 }
 
 core::QuotaSettings coreSettings(const TotalQuotaSettings& settings)
 {
-    return {settings.capGb, settings.warnPercent, settings.period};
+    return {settings.capGb, settings.warnPercent, settings.period, settings.warnPercents};
 }
 
 }  // namespace
@@ -137,13 +142,17 @@ CREATE TABLE IF NOT EXISTS total_quota_ledgers (
             "DROP TABLE total_quota_settings_previous;");
         if (!copied) return copied;
     }
+    if (auto status = ensureQuotaColumn(database_, "total_quota_settings", "warn_percents"); !status) return status;
+    if (auto status = ensureQuotaColumn(database_, "total_quota_ledgers", "notified_warn_percents"); !status) return status;
+    // Upgrade the old single notification flag without replaying that warning.
+    if (auto status = database_.exec("UPDATE total_quota_ledgers SET notified_warn_percents='[' || (SELECT warn_percent FROM total_quota_settings WHERE id=1) || ']' WHERE warning_notified=1 AND notified_warn_percents='[]';"); !status) return status;
     return transaction.commit();
 }
 
 TotalQuotaSettings TotalQuotaRepository::readSettings(Status& status) const
 {
     TotalQuotaSettings settings;
-    auto statement = database_.prepare("SELECT cap_gb, warn_percent, period, notify, auto_disconnect FROM total_quota_settings WHERE id = 1;", status);
+    auto statement = database_.prepare("SELECT cap_gb, warn_percent, period, notify, auto_disconnect, warn_percents FROM total_quota_settings WHERE id = 1;", status);
     if (!statement) return settings;
     if (!statement->step())
     {
@@ -151,23 +160,29 @@ TotalQuotaSettings TotalQuotaRepository::readSettings(Status& status) const
         return settings;
     }
     settings = {statement->columnDouble(0), statement->columnDouble(1), parsePeriod(statement->columnText(2)), statement->columnInt64(3) != 0, statement->columnInt64(4) != 0};
+    settings.warnPercents = support::storedThresholds(statement->columnText(5));
+    core::normalizeWarnPercents(settings.warnPercents, settings.warnPercent);
+    settings.warnPercent = settings.warnPercents.front();
     status = validate(settings);
     return settings;
 }
 
-Status TotalQuotaRepository::writeSettings(const TotalQuotaSettings& settings)
+Status TotalQuotaRepository::writeSettings(const TotalQuotaSettings& input)
 {
+    auto settings = input;
+    if (!core::normalizeWarnPercents(settings.warnPercents, settings.warnPercent)) return Status::failure("Invalid warning thresholds.");
+    settings.warnPercent = settings.warnPercents.front();
     Status status;
-    auto statement = database_.prepare("UPDATE total_quota_settings SET cap_gb=?1, warn_percent=?2, period=?3, notify=?4, auto_disconnect=?5 WHERE id=1;", status);
+    auto statement = database_.prepare("UPDATE total_quota_settings SET cap_gb=?1, warn_percent=?2, period=?3, notify=?4, auto_disconnect=?5, warn_percents=?6 WHERE id=1;", status);
     if (!statement) return status;
-    if (!statement->bind(1, settings.capGb) || !statement->bind(2, settings.warnPercent) || !statement->bind(3, std::string(periodName(settings.period))) || !statement->bind(4, static_cast<std::int64_t>(settings.notify)) || !statement->bind(5, static_cast<std::int64_t>(settings.autoDisconnect)))
+    if (!statement->bind(1, settings.capGb) || !statement->bind(2, settings.warnPercent) || !statement->bind(3, std::string(periodName(settings.period))) || !statement->bind(4, static_cast<std::int64_t>(settings.notify)) || !statement->bind(5, static_cast<std::int64_t>(settings.autoDisconnect)) || !statement->bind(6, support::thresholdArray(settings.warnPercents).dump()))
         return Status::failure(statement->error());
     return statement->run();
 }
 
 std::optional<TotalQuotaLedger> TotalQuotaRepository::readLedger(core::QuotaPeriod period, const std::string& key, Status& status) const
 {
-    auto statement = database_.prepare("SELECT period, period_key, used_bytes, warning_notified, limit_notified FROM total_quota_ledgers WHERE period=?1 AND period_key=?2;", status);
+    auto statement = database_.prepare("SELECT period, period_key, used_bytes, warning_notified, limit_notified, notified_warn_percents FROM total_quota_ledgers WHERE period=?1 AND period_key=?2;", status);
     if (!statement) return std::nullopt;
     if (!statement->bind(1, std::string(periodName(period))) || !statement->bind(2, key))
     {
@@ -179,16 +194,19 @@ std::optional<TotalQuotaLedger> TotalQuotaRepository::readLedger(core::QuotaPeri
     return std::nullopt;
 }
 
-Status TotalQuotaRepository::writeLedger(const TotalQuotaLedger& ledger)
+Status TotalQuotaRepository::writeLedger(const TotalQuotaLedger& input)
 {
+    auto ledger = input;
+    if (!ledger.notifiedWarnPercents.empty() && !core::normalizeWarnPercents(ledger.notifiedWarnPercents))
+        return Status::failure("Invalid warning notification state.");
     const auto used = toStoredBytes(ledger.usedBytes);
     if (!used) return Status::failure("总额度用量超出可存储范围。");
     Status status;
     auto statement = database_.prepare(
-        "INSERT INTO total_quota_ledgers(period,period_key,used_bytes,warning_notified,limit_notified) VALUES(?1,?2,?3,?4,?5) "
-        "ON CONFLICT(period,period_key) DO UPDATE SET used_bytes=excluded.used_bytes, warning_notified=excluded.warning_notified, limit_notified=excluded.limit_notified;", status);
+        "INSERT INTO total_quota_ledgers(period,period_key,used_bytes,warning_notified,limit_notified,notified_warn_percents) VALUES(?1,?2,?3,?4,?5,?6) "
+        "ON CONFLICT(period,period_key) DO UPDATE SET used_bytes=excluded.used_bytes, warning_notified=excluded.warning_notified, limit_notified=excluded.limit_notified, notified_warn_percents=excluded.notified_warn_percents;", status);
     if (!statement) return status;
-    if (!statement->bind(1, std::string(periodName(ledger.period))) || !statement->bind(2, ledger.periodKey) || !statement->bind(3, *used) || !statement->bind(4, static_cast<std::int64_t>(ledger.warningNotified)) || !statement->bind(5, static_cast<std::int64_t>(ledger.limitNotified)))
+    if (!statement->bind(1, std::string(periodName(ledger.period))) || !statement->bind(2, ledger.periodKey) || !statement->bind(3, *used) || !statement->bind(4, static_cast<std::int64_t>(ledger.warningNotified)) || !statement->bind(5, static_cast<std::int64_t>(ledger.limitNotified)) || !statement->bind(6, support::thresholdArray(ledger.notifiedWarnPercents).dump()))
         return Status::failure(statement->error());
     return statement->run();
 }
@@ -252,7 +270,9 @@ TotalQuotaView TotalQuotaRepository::current(core::TimePoint now, Status& status
     if (!status || !ledger) return result;
     result.ledger = *ledger;
     result.quota = core::quotaStateOf(coreSettings(result.settings), ledger->usedBytes, now);
-    result.warningPending = result.settings.notify && !ledger->warningNotified && result.quota.reachedWarn(result.settings.warnPercent);
+    result.warningPending = result.settings.notify && std::any_of(result.settings.warnPercents.begin(), result.settings.warnPercents.end(), [&](double threshold) {
+        return result.quota.reachedWarn(threshold) && std::find(ledger->notifiedWarnPercents.begin(), ledger->notifiedWarnPercents.end(), threshold) == ledger->notifiedWarnPercents.end();
+    });
     result.limitPending = (result.settings.notify || result.settings.autoDisconnect) && !ledger->limitNotified && result.quota.reachedLimit();
     status = transaction.commit();
     return result;
@@ -265,7 +285,7 @@ TotalQuotaSnapshot TotalQuotaRepository::load(Status& status) const
     if (!transaction.active()) { status = Status::failure(database_.lastError()); return snapshot; }
     snapshot.settings = readSettings(status);
     if (!status) return snapshot;
-    auto statement = database_.prepare("SELECT period, period_key, used_bytes, warning_notified, limit_notified FROM total_quota_ledgers ORDER BY period, period_key;", status);
+    auto statement = database_.prepare("SELECT period, period_key, used_bytes, warning_notified, limit_notified, notified_warn_percents FROM total_quota_ledgers ORDER BY period, period_key;", status);
     if (!statement) return snapshot;
     while (statement->step()) snapshot.ledgers.push_back(ledgerRow(*statement));
     if (statement->failed()) { status = Status::failure(statement->error()); return {}; }
@@ -282,9 +302,9 @@ Status TotalQuotaRepository::save(const TotalQuotaSettings& settings, core::Time
     const auto old = readSettings(status);
     if (!status) return status;
     if (const Status initialized = ensurePeriods(now); !initialized) return initialized;
-    if (old.capGb != settings.capGb || old.warnPercent != settings.warnPercent)
+    if (old.capGb != settings.capGb)
     {
-        if (const Status reset = database_.exec("UPDATE total_quota_ledgers SET warning_notified=0, limit_notified=0;"); !reset) return reset;
+        if (const Status reset = database_.exec("UPDATE total_quota_ledgers SET warning_notified=0, limit_notified=0, notified_warn_percents='[]';"); !reset) return reset;
     }
     if (const Status saved = writeSettings(settings); !saved) return saved;
     return transaction.commit();
@@ -303,12 +323,18 @@ Status TotalQuotaRepository::save(const TotalQuotaSnapshot& snapshot)
     if (!transaction.active()) return Status::failure(database_.lastError());
     if (const Status saved = writeSettings(snapshot.settings); !saved) return saved;
     if (const Status cleared = database_.exec("DELETE FROM total_quota_ledgers;"); !cleared) return cleared;
-    for (const auto& ledger : snapshot.ledgers)
+    for (auto ledger : snapshot.ledgers) {
+        if (ledger.warningNotified && ledger.notifiedWarnPercents.empty()) {
+            auto thresholds = snapshot.settings.warnPercents;
+            core::normalizeWarnPercents(thresholds, snapshot.settings.warnPercent);
+            ledger.notifiedWarnPercents = {thresholds.front()};
+        }
         if (const Status saved = writeLedger(ledger); !saved) return saved;
+    }
     return transaction.commit();
 }
 
-Status TotalQuotaRepository::markNotified(core::QuotaPeriod period, const std::string& periodKey, TotalQuotaNotification notification, bool& marked)
+Status TotalQuotaRepository::markNotified(core::QuotaPeriod period, const std::string& periodKey, TotalQuotaNotification notification, bool& marked, double threshold)
 {
     marked = false;
     if (!validKey(period, periodKey) || (notification != TotalQuotaNotification::warning && notification != TotalQuotaNotification::limit))
@@ -323,9 +349,31 @@ Status TotalQuotaRepository::markNotified(core::QuotaPeriod period, const std::s
     if (!ledger || settings.period != period) return transaction.commit();
     const auto quota = core::quotaStateOf(coreSettings(settings), ledger->usedBytes, core::TimePoint{});
     const bool warning = notification == TotalQuotaNotification::warning;
-    const bool eligible = warning ? settings.notify && quota.reachedWarn(settings.warnPercent) : (settings.notify || settings.autoDisconnect) && quota.reachedLimit();
+    if (warning)
+    {
+        auto updated = *ledger;
+        const auto candidates = threshold == 0 ? settings.warnPercents : std::vector<double>{threshold};
+        bool changed = false;
+        for (double candidate : candidates)
+        {
+            if (!settings.notify || !quota.reachedWarn(candidate) || std::find(settings.warnPercents.begin(), settings.warnPercents.end(), candidate) == settings.warnPercents.end()) continue;
+            if (std::find(updated.notifiedWarnPercents.begin(), updated.notifiedWarnPercents.end(), candidate) != updated.notifiedWarnPercents.end()) continue;
+            updated.notifiedWarnPercents.push_back(candidate);
+            changed = true;
+            if (threshold == 0) break;
+        }
+        if (changed) {
+            core::normalizeWarnPercents(updated.notifiedWarnPercents);
+            updated.warningNotified = true;
+            if (auto saved = writeLedger(updated); !saved) return saved;
+        }
+        status = transaction.commit();
+        if (status) marked = changed;
+        return status;
+    }
+    const bool eligible = (settings.notify || settings.autoDisconnect) && quota.reachedLimit();
     if (!eligible) return transaction.commit();
-    const std::string flag = warning ? "warning_notified" : "limit_notified";
+    const std::string flag = "limit_notified";
     auto statement = database_.prepare("UPDATE total_quota_ledgers SET " + flag + "=1 WHERE period=?1 AND period_key=?2 AND " + flag + "=0;", status);
     if (!statement) return status;
     if (!statement->bind(1, std::string(periodName(period))) || !statement->bind(2, periodKey)) return Status::failure(statement->error());
@@ -338,7 +386,7 @@ Status TotalQuotaRepository::markNotified(core::QuotaPeriod period, const std::s
 
 Status TotalQuotaRepository::clearUsage()
 {
-    return database_.exec("UPDATE total_quota_ledgers SET used_bytes=0, warning_notified=0, limit_notified=0;");
+    return database_.exec("UPDATE total_quota_ledgers SET used_bytes=0, warning_notified=0, limit_notified=0, notified_warn_percents='[]';");
 }
 
 }  // namespace wifimeter::storage

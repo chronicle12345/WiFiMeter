@@ -1,4 +1,4 @@
-// Windows 授权辅助进程：只采集 ETW 网络元数据，通过专用管道返回累计计数。
+// Windows 授权辅助进程：采集非回环 ETW 与回环 TCP EStats，通过专用管道返回累计计数。
 #include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>

@@ -342,7 +342,7 @@ void upgradesPreviousCapConstraint()
         "ALTER TABLE total_quota_settings RENAME TO saved_settings;"
         "CREATE TABLE total_quota_settings(id INTEGER PRIMARY KEY CHECK(id=1), cap_gb REAL NOT NULL DEFAULT 0 CHECK(cap_gb BETWEEN 0 AND 100000),"
         "warn_percent INTEGER NOT NULL DEFAULT 80, period TEXT NOT NULL DEFAULT 'month', notify INTEGER NOT NULL DEFAULT 0, auto_disconnect INTEGER NOT NULL DEFAULT 0);"
-        "INSERT INTO total_quota_settings SELECT * FROM saved_settings; DROP TABLE saved_settings;").ok);
+        "INSERT INTO total_quota_settings SELECT id,cap_gb,warn_percent,period,notify,auto_disconnect FROM saved_settings; DROP TABLE saved_settings;").ok);
     store.reset();
     store = Store::open(directory.file("meter.db"), status);
     WIFIMETER_CHECK(store != nullptr);
@@ -397,6 +397,51 @@ void fractionalThresholdSurvivesRestartAndRestore()
     }
 }
 
+void multipleThresholdsPersistAndReset()
+{
+    TempDirectory directory("total-multiple-thresholds");
+    Status status;
+    const auto now = utcTime(2026, 10, 1);
+    auto store = Store::open(directory.file("meter.db"), status);
+    WIFIMETER_CHECK(store != nullptr);
+    if (!store) return;
+    TotalQuotaSettings settings;
+    settings.capGb = 0.000001;
+    settings.notify = true;
+    settings.period = QuotaPeriod::day;
+    settings.warnPercents = {90, 50, 75.5, 50};
+    WIFIMETER_CHECK(store->totalQuota().save(settings, now).ok);
+    WIFIMETER_CHECK(add(*store, now, 800).ok);
+    auto current = view(*store, now);
+    WIFIMETER_CHECK_EQ(current.settings.warnPercents.size(), std::size_t{3});
+    WIFIMETER_CHECK_EQ(current.settings.warnPercent, 50.0);
+    bool marked = false;
+    for (double threshold : {50.0, 75.5}) {
+        WIFIMETER_CHECK(store->totalQuota().markNotified(settings.period, current.ledger.periodKey, TotalQuotaNotification::warning, marked, threshold).ok);
+        WIFIMETER_CHECK(marked);
+    }
+    WIFIMETER_CHECK(store->totalQuota().markNotified(settings.period, current.ledger.periodKey, TotalQuotaNotification::warning, marked, 90).ok);
+    WIFIMETER_CHECK(!marked);
+    store.reset();
+    store = Store::open(directory.file("meter.db"), status);
+    WIFIMETER_CHECK(!view(*store, now).warningPending);
+    auto snapshot = store->totalQuota().load(status);
+    WIFIMETER_CHECK(store->totalQuota().save(snapshot).ok);
+    WIFIMETER_CHECK(!view(*store, now).warningPending);
+    WIFIMETER_CHECK(add(*store, now, 100).ok);
+    WIFIMETER_CHECK(view(*store, now).warningPending);
+    WIFIMETER_CHECK(store->totalQuota().markNotified(settings.period, current.ledger.periodKey, TotalQuotaNotification::warning, marked, 90).ok);
+    WIFIMETER_CHECK(marked);
+    const auto tomorrow = now + std::chrono::hours(24);
+    WIFIMETER_CHECK(add(*store, tomorrow, 600).ok);
+    WIFIMETER_CHECK(view(*store, tomorrow).warningPending);
+    WIFIMETER_CHECK(store->clearUsage().ok);
+    WIFIMETER_CHECK(add(*store, tomorrow, 600).ok);
+    WIFIMETER_CHECK(view(*store, tomorrow).warningPending);
+    settings.warnPercents = {0, 50};
+    WIFIMETER_CHECK(!store->totalQuota().save(settings, tomorrow).ok);
+}
+
 void allCoreDoesNotRoll()
 {
     QuotaSettings settings;
@@ -414,6 +459,7 @@ int main()
 {
     wifimeter::test::useTimeZone("UTC");
     fractionalThresholdSurvivesRestartAndRestore();
+    multipleThresholdsPersistAndReset();
     allCoreDoesNotRoll();
     capBoundaries();
     upgradesPreviousCapConstraint();

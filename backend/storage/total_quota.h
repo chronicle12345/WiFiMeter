@@ -18,6 +18,7 @@ struct TotalQuotaSettings
     core::QuotaPeriod period = core::QuotaPeriod::month;
     bool notify = false;
     bool autoDisconnect = false;
+    std::vector<double> warnPercents = {};
 };
 
 struct TotalQuotaLedger
@@ -27,6 +28,7 @@ struct TotalQuotaLedger
     core::ByteCount usedBytes = 0;
     bool warningNotified = false;
     bool limitNotified = false;
+    std::vector<double> notifiedWarnPercents = {};
 };
 
 // JSON 备份由调用者转换；保留所有周期账本，恢复后切换周期也不依赖已裁剪的历史。
@@ -57,7 +59,7 @@ public:
     TotalQuotaView current(core::TimePoint now, Status& status);
     TotalQuotaSnapshot load(Status& status) const;
 
-    // 首次从对应历史初始化，已有账本保留；修改 capGb/warnPercent 重置通知标志。
+    // 首次从对应历史初始化，已有账本保留；修改 capGb 重置通知标志，修改提醒档位保留已提醒档位。
     // 使用 SAVEPOINT，可独立调用，也可加入调用者的事务。
     Status save(const TotalQuotaSettings& settings, core::TimePoint now);
     // 恢复时原样替换总额度设置及全部账本；历史用量由调用者在同一外层事务内恢复。
@@ -65,7 +67,7 @@ public:
 
     // 条件更新持久标志；marked=false 表示已标记、未到阈值或当前策略不适用。
     // 调用方只在 marked=true 时发出对应事件；发送与数据库提交不构成分布式事务。
-    Status markNotified(core::QuotaPeriod period, const std::string& periodKey, TotalQuotaNotification notification, bool& marked);
+    Status markNotified(core::QuotaPeriod period, const std::string& periodKey, TotalQuotaNotification notification, bool& marked, double threshold = 0);
 
 private:
     friend class Store;

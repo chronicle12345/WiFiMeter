@@ -18,6 +18,16 @@ double clampWarnPercent(double warnPercent)
 
 }  // namespace
 
+bool normalizeWarnPercents(std::vector<double>& values, double legacy)
+{
+    if (values.empty()) values.push_back(legacy);
+    for (double value : values)
+        if (!std::isfinite(value) || value < 1 || value > 100) return false;
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return true;
+}
+
 ByteCount bytesOfGigabytes(double gigabytes)
 {
     if (!(gigabytes > 0.0) || !std::isfinite(gigabytes))

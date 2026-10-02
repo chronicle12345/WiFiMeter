@@ -281,8 +281,13 @@ void importsFractionalWarningThreshold()
         const auto network=store->networks().find(core::fallbackKeyForSsid("LedgerFixture"),status);
         WIFIMETER_CHECK(network.has_value());
         const double expected=token=="79.9999999999999999999" ? 80.0 : 85.5;
-        if (network) WIFIMETER_CHECK_EQ(network->warnPercent,expected);
+        if (network) {
+            WIFIMETER_CHECK_EQ(network->warnPercent,expected);
+            WIFIMETER_CHECK_EQ(network->warnPercents.size(),std::size_t{1});
+            WIFIMETER_CHECK_EQ(network->warnPercents.front(),expected);
+        }
         WIFIMETER_CHECK_EQ(store->totalQuota().load(status).settings.warnPercent,expected);
+        WIFIMETER_CHECK_EQ(store->totalQuota().load(status).settings.warnPercents.size(),std::size_t{1});
     }
 }
 
@@ -411,5 +416,80 @@ void preservesEscapedKeysExactNumbersAndRawArchives()
     }
 }
 
+
+void keepsExistingOverlapAndValidatesWholeSource()
+{
+    storage::Status status; JsonValue out; std::string code;
+    for (const bool hourlyOnly : {false,true})
+    {
+        auto store=storage::Store::open(":memory:",status);
+        storage::NetworkRecord network; network.key="existing"; network.ssid="虚构Cafe";
+        WIFIMETER_CHECK(store->networks().replace(network));
+        if (!hourlyOnly) WIFIMETER_CHECK(store->usage().setDaily(network.key,"2020-01-01",12,13));
+        WIFIMETER_CHECK(store->usage().setHourly(network.key,"2020-01-01",8,5,6));
+        auto input=request();
+        auto raw=input.stringOr("stateJson");
+        const auto date=raw.find("\"Date\":\"2020-01-01\"");
+        raw.insert(date,"\"Date\":\"2020-01-02\",\"RxBytes\":0,\"TxBytes\":0},{");
+        input.set("stateJson",JsonValue::makeString(raw));
+        input.set("overlapPolicy",JsonValue::makeString("keep-existing"));
+        auto bad=input;
+        auto invalidRaw=raw; const auto total=invalidRaw.find("9007199254740993");
+        invalidRaw.replace(total,16,"9007199254740994");
+        bad.set("stateJson",JsonValue::makeString(invalidRaw));
+        WIFIMETER_CHECK(!ipc::importLegacy(*store,bad,test::utcTime(2026,1,1),out,code));
+        WIFIMETER_CHECK_EQ(code,std::string("LegacyInvalid"));
+        WIFIMETER_CHECK_EQ(rows(*store,"daily_usage"),hourlyOnly ? 0 : 1);
+        WIFIMETER_CHECK_EQ(rows(*store,"legacy_network_keys"),0);
+        WIFIMETER_CHECK_EQ(rows(*store,"legacy_imports"),0);
+        WIFIMETER_CHECK(store->database().exec("CREATE TRIGGER reject_archive BEFORE INSERT ON legacy_imports BEGIN SELECT RAISE(ABORT,'failure'); END"));
+        WIFIMETER_CHECK(!ipc::importLegacy(*store,input,test::utcTime(2026,1,1),out,code));
+        WIFIMETER_CHECK_EQ(rows(*store,"daily_usage"),hourlyOnly ? 0 : 1);
+        WIFIMETER_CHECK_EQ(rows(*store,"networks"),1);
+        WIFIMETER_CHECK_EQ(rows(*store,"legacy_network_keys"),0);
+        WIFIMETER_CHECK_EQ(rows(*store,"legacy_imports"),0);
+        WIFIMETER_CHECK(store->database().exec("DROP TRIGGER reject_archive"));
+        const auto imported=ipc::importLegacy(*store,input,test::utcTime(2026,1,1),out,code);
+        WIFIMETER_CHECK(imported);
+        if (!imported) continue;
+        WIFIMETER_CHECK_EQ(out.intOr("skippedDayCount"),1);
+        WIFIMETER_CHECK_EQ(out.intOr("dailyCount"),2);
+        WIFIMETER_CHECK(out.find("warnings") && out.find("warnings")->dump().find("2020-01-01")!=std::string::npos);
+        const auto reportWarnings=out.find("warnings")->dump();
+        const auto kept=store->usage().dailyRange(network.key,"2020-01-01","2020-01-01",status);
+        WIFIMETER_CHECK_EQ(kept.size(),hourlyOnly ? std::size_t(0) : std::size_t(1));
+        if (!kept.empty()) { WIFIMETER_CHECK_EQ(kept[0].rxBytes,12ULL); WIFIMETER_CHECK_EQ(kept[0].txBytes,13ULL); }
+        const auto hourly=store->usage().hourlyOfDay(network.key,"2020-01-01",status);
+        WIFIMETER_CHECK_EQ(hourly.size(),std::size_t(1));
+        if (!hourly.empty()) { WIFIMETER_CHECK_EQ(hourly[0].rxBytes,5ULL); WIFIMETER_CHECK_EQ(hourly[0].txBytes,6ULL); }
+        auto archive=store->database().prepare("SELECT state_json,settings_json,app_usage_json FROM legacy_imports",status);
+        WIFIMETER_CHECK(archive && archive->step());
+        if (archive) {
+            WIFIMETER_CHECK_EQ(archive->columnText(0),raw);
+            WIFIMETER_CHECK_EQ(archive->columnText(1),input.stringOr("settingsJson"));
+            WIFIMETER_CHECK_EQ(archive->columnText(2),input.stringOr("appUsageJson"));
+        }
+        archive.reset();
+        WIFIMETER_CHECK(ipc::importLegacy(*store,input,test::utcTime(2026,1,1),out,code));
+        WIFIMETER_CHECK(out.boolOr("alreadyImported"));
+        WIFIMETER_CHECK_EQ(out.intOr("skippedDayCount"),1);
+        WIFIMETER_CHECK(ipc::legacyMigrationStatus(*store,input,out,code));
+        WIFIMETER_CHECK_EQ(out.find("warnings")->dump(),reportWarnings);
+        input.set("sourceId",JsonValue::makeString("other-source"));
+        WIFIMETER_CHECK(ipc::importLegacy(*store,input,test::utcTime(2026,1,1),out,code));
+        WIFIMETER_CHECK_EQ(out.intOr("dailyCount"),0);
+        WIFIMETER_CHECK_EQ(out.intOr("skippedDayCount"),3);
+        WIFIMETER_CHECK_EQ(rows(*store,"daily_usage"),hourlyOnly ? 2 : 3);
+    }
+    for (const auto& policy : {JsonValue::makeString(""),JsonValue::makeString("merge"),JsonValue::makeBool(true),JsonValue::makeInt(1),JsonValue::makeNull()})
+    {
+        auto store=storage::Store::open(":memory:",status);
+        auto input=request(); input.set("overlapPolicy",policy);
+        WIFIMETER_CHECK(!ipc::importLegacy(*store,input,test::utcTime(2026,1,1),out,code));
+        WIFIMETER_CHECK_EQ(code,std::string("LegacyInvalid"));
+        WIFIMETER_CHECK_EQ(rows(*store,"legacy_imports"),0);
+    }
 }
-int main() { importsFractionalWarningThreshold(); rejectsMalformedNumbersBeforeQuoting(); preservesEscapedKeysExactNumbersAndRawArchives(); ledgerPrecisionWarningsAndExistingProtection(); importsNetworkPoliciesAndIndependentLedgers(); initialRetentionPreventsHistoryPruning(); separatesWiredIdentity(); importsAndRetries(); rollbackAndProtection(); importsCachedDaysAndInitialSettings(); return WIFIMETER_REPORT(); }
+
+}
+int main() { keepsExistingOverlapAndValidatesWholeSource(); importsFractionalWarningThreshold(); rejectsMalformedNumbersBeforeQuoting(); preservesEscapedKeysExactNumbersAndRawArchives(); ledgerPrecisionWarningsAndExistingProtection(); importsNetworkPoliciesAndIndependentLedgers(); initialRetentionPreventsHistoryPruning(); separatesWiredIdentity(); importsAndRetries(); rollbackAndProtection(); importsCachedDaysAndInitialSettings(); return WIFIMETER_REPORT(); }

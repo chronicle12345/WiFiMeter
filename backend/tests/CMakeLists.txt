@@ -40,8 +40,11 @@ endforeach()
 # 只能在 Windows 上构建；交叉编译时它不能由 Wine 代表（Wine 的 WLAN 实现与真实系统不同），
 # 因此不进 ctest，需要时在 Windows 机器上单独运行 build/windows/tests/windows_smoke_test.exe。
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+    wifimeter_add_test(windows_wlan_query_test wifimeter-platform-win32)
     wifimeter_add_test(windows_smoke_test wifimeter-platform-win32)
     wifimeter_add_test(windows_app_traffic_test wifimeter-platform-win32)
+    wifimeter_add_test(windows_estats_smoke_test wifimeter-platform-win32)
+    set_tests_properties(windows_estats_smoke_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 endif()
 
 set(WIFIMETER_CORE_TESTS
@@ -136,3 +139,7 @@ wifimeter_add_test(proxy_attribution_test wifimeter-platform)
 wifimeter_add_test(proxy_service_test wifimeter-ipc)
 
 wifimeter_add_test(server_sampling_test wifimeter-ipc)
+
+wifimeter_add_test(speed_unit_test wifimeter-ipc)
+
+wifimeter_add_test(loopback_live_test wifimeter-ipc)

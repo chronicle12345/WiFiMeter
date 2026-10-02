@@ -4,6 +4,15 @@
 
 namespace wifimeter::platform::windows
 {
+bool isLoopbackAddress(const std::array<std::uint8_t, 16>& address, bool ipv6)
+{
+    if (!ipv6) return address[0] == 127;
+    for (int i=0; i<10; ++i) if (address[i]) return false;
+    if (address[10]==255 && address[11]==255) return address[12]==127;
+    for (int i=10; i<15; ++i) if (address[i]) return false;
+    return address[15]==1;
+}
+
 
 AppNetworkEvent parseAppNetworkEvent(AppNetworkProtocol protocol, std::uint8_t opcode,
     std::uint8_t version, std::span<const std::uint8_t> payload)

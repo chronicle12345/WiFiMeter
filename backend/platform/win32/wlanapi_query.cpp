@@ -17,7 +17,10 @@ namespace
 // WLAN API 与 IP Helper 都通过返回码报告错误，不用 GetLastError 之外的机制。
 std::string errorDetail(const char* call, std::uint32_t code)
 {
-    return std::string(call) + " 失败，错误码 " + std::to_string(code);
+    std::string detail = std::string(call) + " 失败，错误码 " + std::to_string(code);
+    if (code == ERROR_ACCESS_DENIED)
+        detail += "：WLAN 访问权限被拒绝。请检查 Windows 隐私和安全性中的位置权限 (location)，允许此应用访问 WLAN 连接信息。";
+    return detail;
 }
 
 // 会话失效与 WLAN 服务未启动都属于“依赖不可用”：前者重新打开会话即可恢复，
@@ -110,7 +113,7 @@ std::optional<int> Win32System::channelFrequency(const GUID& interfaceGuid) cons
     return frequency;
 }
 
-bool Win32System::connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const
+std::uint32_t Win32System::connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTION_ATTRIBUTES& attributes) const
 {
     DWORD size = 0;
     PVOID data = nullptr;
@@ -120,11 +123,11 @@ bool Win32System::connectionAttributes(const GUID& interfaceGuid, WLAN_CONNECTIO
     {
         if (data != nullptr)
             WlanFreeMemory(data);
-        return false;
+        return code != ERROR_SUCCESS ? code : ERROR_INVALID_DATA;
     }
     attributes = *static_cast<const WLAN_CONNECTION_ATTRIBUTES*>(data);
     WlanFreeMemory(data);
-    return true;
+    return ERROR_SUCCESS;
 }
 
 QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
@@ -168,7 +171,8 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
         status.adapterAlias = adapterAliasFrom(description, status.interfaceId);
 
         WLAN_CONNECTION_ATTRIBUTES attributes{};
-        if (connectionAttributes(info.InterfaceGuid, attributes))
+        const auto connectionCode = connectionAttributes(info.InterfaceGuid, attributes);
+        if (connectionCode == ERROR_SUCCESS)
         {
             status.connected = attributes.isState == wlan_interface_state_connected;
             status.mode = connectionModeFrom(static_cast<std::uint32_t>(attributes.wlanConnectionMode));
@@ -189,19 +193,16 @@ QueryResult<std::vector<WlanStatus>> Win32System::wlanStatuses()
                 status.frequencyMhz = channelFrequency(info.InterfaceGuid);
             }
         }
-        else if (info.isState != wlan_interface_state_connected)
-        {
-            // 网卡本来就没连上：查不到连接属性是正常现象，不产生失败记录。
-            status.connected = false;
-            status.mode = ConnectionMode::discoverySecure;
-        }
         else
         {
-            // 枚举说已连接，但连接属性查不到：这是异常，不能安静地当成“未关联”，
-            // 否则界面会显示成没连 Wi-Fi，用户看不出是查询失败。
-            status.connected = false;
-            status.mode = ConnectionMode::discoverySecure;
-            result.addFailure(FailureKind::inconsistent, "网卡报告已连接，但无法读取连接属性。", status.interfaceId);
+            // 枚举结果保留实际连接状态；属性读取失败不能推断为断开，也不能猜测 SSID。
+            status.connected = info.isState == wlan_interface_state_connected;
+            status.mode = ConnectionMode::invalid;
+            if (status.connected || connectionCode != ERROR_INVALID_STATE)
+            {
+                result.addFailure(isUnavailable(connectionCode) ? FailureKind::unavailable : FailureKind::commandFailed,
+                    errorDetail("WlanQueryInterface(current_connection)", connectionCode), status.interfaceId);
+            }
         }
 
         statuses.push_back(std::move(status));

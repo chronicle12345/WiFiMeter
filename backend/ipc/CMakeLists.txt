@@ -12,6 +12,7 @@ endif()
 add_library(wifimeter-ipc STATIC
     messages.cpp
     service.cpp
+    loopback_live.cpp
     quota_service.cpp
     legacy_import.cpp
     backup_archive.cpp

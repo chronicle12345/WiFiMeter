@@ -8,6 +8,13 @@ using namespace wifimeter::platform::windows;
 
 int main()
 {
+    std::array<std::uint8_t,16> address{};
+    address[0]=127; WIFIMETER_CHECK(isLoopbackAddress(address,false));
+    address[0]=10; WIFIMETER_CHECK(!isLoopbackAddress(address,false));
+    address={};address[15]=1;WIFIMETER_CHECK(isLoopbackAddress(address,true));
+    address[10]=255;address[11]=255;address[12]=127;WIFIMETER_CHECK(isLoopbackAddress(address,true));
+    address[12]=192;WIFIMETER_CHECK(!isLoopbackAddress(address,true));
+
     for (const auto protocol : {AppNetworkProtocol::tcp, AppNetworkProtocol::udp})
     {
         for (const bool ipv6 : {false, true})

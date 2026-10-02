@@ -33,6 +33,10 @@ struct AppTrafficSample
     std::uint64_t rxBytes = 0;
     std::uint64_t txBytes = 0;
     bool active = true;
+    // 仅 loopback TCP 样本使用；与代理连接快照共用规范四元组。
+    std::string connectionKey{};
+    // 原生验证与诊断使用的实际采样来源，旧快照可省略。
+    std::string source{};
 };
 
 struct AppTrafficReport
@@ -41,6 +45,9 @@ struct AppTrafficReport
     std::string generation;
     std::string detail;
     std::vector<AppTrafficSample> samples;
+    // 采集端单调时钟毫秒数；0 表示旧格式，EStats 独立于 ETW 刷新。
+    std::int64_t sampledAtMs = 0;
+    std::int64_t loopbackSampledAtMs = 0;
 };
 
 class AppTrafficSource
