@@ -18,34 +18,48 @@ test.afterEach(async () => {
 });
 
 for (const language of ['zh-CN', 'en']) {
-    for (const [width, height] of [[1280, 800], [1248, 768], [900, 650]]) {
-        test(`overview fits ${width}x${height} in ${language} without clipping`, async ({}, testInfo) => {
-            await page.evaluate(language => window.desktop.backend.request('updateSettings', { settings: { language } }), language);
-            await page.reload();
-            await page.setViewportSize({ width, height });
-            await expect(page.locator('.quota-foot')).toBeVisible();
-            await page.screenshot({ path: testInfo.outputPath('overview.png'), fullPage: true });
-            const layout = await page.evaluate(() => {
-                const root = document.scrollingElement;
-                const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.quota-foot', '.notice-line'];
-                return {
-                    height: innerHeight, scrollHeight: root.scrollHeight,
-                    width: innerWidth, scrollWidth: root.scrollWidth,
-                    outside: selectors.filter(selector => {
-                        const rect = document.querySelector(selector).getBoundingClientRect();
-                        return rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth;
-                    }),
-                    clipping: [document.documentElement, document.body, document.querySelector('.main'), document.querySelector('#content'), ...document.querySelectorAll('#content .panel')]
-                        .filter(el => ['hidden', 'clip'].includes(getComputedStyle(el).overflowY)).map(el => el.className || el.tagName)
-                };
+    for (const quotaState of ['notice', 'quiet', 'unset']) {
+        for (const [width, height] of [[1280, 800], [1248, 768], [900, 650], [1280, 900]]) {
+            test(`overview fits ${width}x${height} in ${language} with ${quotaState} without clipping`, async ({}, testInfo) => {
+                await page.evaluate(language => window.desktop.backend.request('updateSettings', { settings: { language } }), language);
+                await page.evaluate(async quotaState => {
+                    const key = document.querySelector('.quota-card [data-id]').dataset.id;
+                    await window.desktop.backend.request('updateNetwork', { key, capGb: quotaState === 'unset' ? 0 : quotaState === 'quiet' ? 50 : 5 });
+                }, quotaState);
+                await page.reload();
+                await page.setViewportSize({ width, height });
+                await expect(page.locator('.quota-body')).toBeVisible();
+                await expect(page.locator('.notice-line')).toHaveCount(quotaState === 'notice' ? 1 : 0);
+                await page.screenshot({ path: testInfo.outputPath('overview.png'), fullPage: true });
+                const layout = await page.evaluate(() => {
+                    const root = document.scrollingElement;
+                    const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
+                    return {
+                        bottomGap: innerHeight - document.querySelector('#content').lastElementChild.getBoundingClientRect().bottom,
+                        quotaHeight: document.querySelector('.quota-card').getBoundingClientRect().height,
+                        height: innerHeight, scrollHeight: root.scrollHeight,
+                        width: innerWidth, scrollWidth: root.scrollWidth,
+                        outside: selectors.filter(selector => {
+                            const element = document.querySelector(selector);
+                            if (!element) return false;
+                            const rect = element.getBoundingClientRect();
+                            return rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth;
+                        }),
+                        clipping: [document.documentElement, document.body, document.querySelector('.main'), document.querySelector('#content'), ...document.querySelectorAll('#content .panel')]
+                            .filter(el => ['hidden', 'clip'].includes(getComputedStyle(el).overflowY)).map(el => el.className || el.tagName)
+                    };
+                });
+                console.log(`${language} ${width}x${height}: ${JSON.stringify(layout)}`);
+                expect(layout.scrollHeight).toBeLessThanOrEqual(layout.height);
+                expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
+                expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
+                expect(layout.bottomGap).toBeLessThanOrEqual(24);
+                if (quotaState === 'unset') expect(layout.quotaHeight).toBeLessThanOrEqual(240);
+                expect(layout.outside).toEqual([]);
+                expect(layout.clipping).toEqual([]);
+                expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
             });
-            console.log(`${language} ${width}x${height}: ${JSON.stringify(layout)}`);
-            expect(layout.scrollHeight).toBeLessThanOrEqual(layout.height);
-            expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
-            expect(layout.outside).toEqual([]);
-            expect(layout.clipping).toEqual([]);
-            expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
-        });
+        }
     }
 }
 

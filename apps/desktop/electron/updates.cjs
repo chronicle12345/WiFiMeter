@@ -58,7 +58,11 @@ function redirectAllowed(value, original) {
  * checkOnStartup, manual}; state is latest/available/error, with error on failure
  * and skipped=disabled/cached for skipped automatic checks.
  * install() additionally returns state=cancelled/manual/installing/busy.
- * status always mirrors state. confirm({...snapshot, title, message, detail})
+ * onProgress(fullSnapshot) observes checking/downloading/verifying/preparing/installing
+ * and terminal results. progress is {receivedBytes,totalBytes,percent,phase}, or null
+ * outside active phases. Only downloading has a percentage, when length is known.
+ * Download 100% does not imply verification or installation has completed.
+ * Observer exceptions/rejections are ignored. status always mirrors state. confirm({...snapshot, title, message, detail})
  * must return strictly true; missing confirm fails closed.
  * beforeInstall() is awaited after verification, before launchInstaller(file, [], { digest }).
  * launchInstaller(file, argv) resolves once a helper reliably accepts the task.
@@ -69,16 +73,17 @@ function redirectAllowed(value, original) {
  * and exposes install only through an explicit user action, never a timer.
  */
 function createUpdateService({ currentVersion, platform, arch, userData,
-    fetch: fetchImpl = globalThis.fetch, openExternal, launchInstaller, beforeInstall, confirm } = {}) {
+    fetch: fetchImpl = globalThis.fetch, openExternal, launchInstaller, beforeInstall, confirm, onProgress } = {}) {
     const current = parseVersion(currentVersion);
     const preferencesPath = path.join(userData, 'update-preferences.json');
     let preferences;
     let preferenceFailure = false;
     let selectedAsset = null;
     let installing = false;
+    let checking = false;
     let queue = Promise.resolve();
     let snapshot = { state: 'unchecked', currentVersion, latestVersion: null, notes: '',
-        url: `${REPOSITORY}/releases/latest`, canInstall: false, checkOnStartup: true, manual: false };
+        url: `${REPOSITORY}/releases/latest`, canInstall: false, checkOnStartup: true, manual: false, progress: null };
 
     function serial(operation) {
         const result = queue.then(operation);
@@ -136,6 +141,23 @@ function createUpdateService({ currentVersion, platform, arch, userData,
         return { ...value, status: value.state };
     }
 
+    // Observers receive complete snapshots; UI failures must not interrupt an update.
+    function publish(extra = {}) {
+        snapshot = { ...snapshot, ...extra };
+        const value = result();
+        try { Promise.resolve(onProgress?.({ ...value, progress: value.progress && { ...value.progress } })).catch(() => {}); }
+        catch { /* A closed renderer must not abort the download. */ }
+        return value;
+    }
+
+    function phase(state, progress = {}) {
+        return publish({ state, error: undefined, progress: {
+            receivedBytes: snapshot.progress?.receivedBytes ?? 0,
+            totalBytes: snapshot.progress?.totalBytes ?? null,
+            ...progress, percent: null, phase: state
+        } });
+    }
+
     async function request(url, signal) {
         return fetchImpl(url, { redirect: 'manual', signal, credentials: 'omit',
             headers: { Accept: url === API ? 'application/vnd.github+json' : 'application/octet-stream' } });
@@ -152,6 +174,7 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             // 失败的自动请求也计入限频；仅保存设置和时间，不保存请求、token 或签名 URL。
             if (automatic) await savePreferences({ ...preferences, lastAutomaticAt: now });
             selectedAsset = null;
+            phase('checking', { receivedBytes: 0, totalBytes: null });
             const response = await request(API, AbortSignal.timeout(30_000));
             if (!response.ok || response.redirected) throw Error('release request failed');
             const release = await response.json();
@@ -172,18 +195,19 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             snapshot = { state: newer ? 'available' : 'latest', currentVersion,
                 latestVersion: latest.version, notes: typeof release.body === 'string' ? release.body : '',
                 url, canInstall: Boolean(selectedAsset), manual: newer && !selectedAsset,
-                checkOnStartup: preferences.checkOnStartup };
-            return result();
+                checkOnStartup: preferences.checkOnStartup, progress: null };
+            return publish();
         } catch {
             selectedAsset = null;
-            snapshot = { ...snapshot, state: 'error', canInstall: false, manual: false,
+            snapshot = { ...snapshot, state: 'error', canInstall: false, manual: false, progress: null,
                 error: preferenceFailure ? '无法读写更新偏好设置，请修复 update-preferences.json 后重试。'
                     : '检查更新失败，请检查网络连接后重试。' };
-            return result();
+            return publish();
         }
     }
 
     async function download(asset) {
+        phase('downloading', { receivedBytes: 0, totalBytes: null });
         const directory = path.join(userData, 'updates');
         await fs.mkdir(directory, { recursive: true });
         const destination = path.join(directory, `${randomUUID()}-${asset.name}`);
@@ -203,12 +227,30 @@ function createUpdateService({ currentVersion, platform, arch, userData,
                 if (!redirectAllowed(url, asset.url)) throw Error('untrusted asset URL');
             }
             if (!response.ok || !response.body) throw Error('download failed');
+            const length = response.headers.get('content-length');
+            const parsedLength = length && /^\d+$/.test(length) ? Number(length) : null;
+            const totalBytes = Number.isSafeInteger(parsedLength) && parsedLength > 0 ? parsedLength : null;
+            let receivedBytes = 0;
+            let lastProgressAt = 0;
+            function downloadProgress(force = false) {
+                const now = Date.now();
+                if (!force && now - lastProgressAt < 100) return;
+                lastProgressAt = now;
+                publish({ state: 'downloading', progress: { receivedBytes, totalBytes,
+                    percent: totalBytes === null ? null : Math.min(100, receivedBytes / totalBytes * 100),
+                    phase: 'downloading' } });
+            }
+            downloadProgress(true);
             const hash = createHash('sha256');
             const hashing = new Transform({ transform(chunk, encoding, callback) {
                 hash.update(chunk);
+                receivedBytes += chunk.length;
+                downloadProgress();
                 callback(null, chunk);
             } });
             await pipeline(response.body, hashing, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), { signal });
+            downloadProgress(true);
+            phase('verifying');
             if (hash.digest('hex') !== asset.digest) throw Error('digest mismatch');
             await fs.rename(temporary, destination);
             return destination;
@@ -228,9 +270,14 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             await savePreferences({ ...preferences, checkOnStartup: value });
             return { checkOnStartup: value };
         }),
-        check: options => serial(() => checkNow(options)),
+        async check(options) {
+            if (installing || checking) return result({ state: 'busy' });
+            checking = true;
+            try { return await serial(() => checkNow(options)); }
+            finally { checking = false; }
+        },
         async install() {
-            if (installing) return result({ state: 'busy' });
+            if (installing || checking) return result({ state: 'busy' });
             installing = true;
             let file;
             try {
@@ -250,21 +297,23 @@ function createUpdateService({ currentVersion, platform, arch, userData,
                         : '请在官方发布页选择适合当前系统和安装方式的软件包。'
                 };
                 if (!confirm || await confirm(message) !== true) {
-                    return { ...status, state: 'cancelled', status: 'cancelled' };
+                    return publish({ state: 'cancelled', progress: null, error: undefined });
                 }
                 if (!target.asset) {
                     if (!openExternal) throw Error('missing openExternal');
                     await openExternal(status.url);
-                    return { ...status, state: 'manual', status: 'manual', manual: true };
+                    return publish({ state: 'manual', manual: true, progress: null, error: undefined });
                 }
                 if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
                 file = await download(target.asset);
+                phase('preparing');
                 await beforeInstall();
+                phase('installing');
                 await launchInstaller(file, [], { digest: target.asset.digest });
                 file = null; // 成功启动后保留安装包，避免安装器尚未读取时被删除。
-                return { ...status, state: 'installing', status: 'installing' };
+                return result();
             } catch {
-                return result({ state: 'error', error: '安装更新失败，下载或 SHA-256 校验未完成，或安装程序无法启动。' });
+                return publish({ state: 'error', progress: null, error: '安装更新失败，下载或 SHA-256 校验未完成，或安装程序无法启动。' });
             } finally {
                 installing = false;
                 if (file) await fs.unlink(file).catch(() => {});

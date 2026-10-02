@@ -4,7 +4,7 @@ import { createAutosave, autosaveStatus } from './ui/autosave.js';
 import { parseWarnPercents, quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
-import { updatesView } from './ui/updates.js';
+import { updatesView, refreshUpdates } from './ui/updates.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyConfigPatch, proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -269,7 +269,7 @@ function drawerApps(n){
 }
 function appStatus(n){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${c.available?button('app-collection',c.enabled?t('停止应用采集'):t('启用应用采集'),'','small-btn'):''}</div>${c.detail||c.message?`<p class="form-error" role="alert">${esc(c.detail||c.message)}</p>`:''}${c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
+ return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${c.available?button('app-collection',c.enabled?t('停止应用采集'):t('启用应用采集'),'','small-btn'):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
 }
 function currentAppRows(){const {start,end}=getRange();if(appContext().appGrouping==='summary')return sortApps(displayedAppSummary(appNetworkId(),start,end),appContext().appSort,appContext().appSearch);return applicationRows(displayedAppRecords(),{networkId:appNetworkId(),start,end,grouping:appContext().appGrouping,sort:appContext().historySort,direction:appContext().historyDirection,search:appContext().appSearch});}
 function appControlPanel(){return appControlView(appControl,{button,esc});}
@@ -552,12 +552,12 @@ let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
 async function copySsid(id){const text=getNetwork(id)?.ssid||'';try{await navigator.clipboard.writeText(text);toast(t('已复制原始 SSID。'));}catch(e){showModal(t('复制网络名称'),tr`<p class="modal-desc">浏览器不允许直接写入剪贴板。可以选中下方名称复制。</p><input class="input" value="${esc(text)}" readonly autofocus>`,button('close-modal',t('完成'),'','primary'),()=>$('.modal input')?.select());}}
 function renderStatusHelp(){refreshStatusHelp($('#settings-status'),{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus});}
-function renderUpdates(){renderStatusHelp();const panel=$('#updatesPanel');if(panel)panel.outerHTML=updatesView(updateStatus,updateBusy);}
+function renderUpdates(){renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
 async function updateAction(action){
  if(updateBusy)return;
  if(action==='install'&&(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty)){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return;}
- updateBusy=true;renderUpdates();
- const content=$('#content');if(action==='install')content.inert=true;
+ updateBusy=true;if(action==='check')updateStatus={...updateStatus,state:'checking',error:'',progress:null};renderUpdates();
+ const content=$('#content');
  try{updateStatus=await window.desktop.updates[action]();}
  catch(error){updateStatus={...updateStatus,state:'error',error:error.message};}
  finally{content.inert=false;updateBusy=false;renderUpdates();}
@@ -607,6 +607,7 @@ const actions={
  'select-interface':e=>{ui.activeInterfaceId=e.dataset.id;closeModal();renderMain();}
 };
 document.addEventListener('click',async event=>{
+ const updateLink=event.target.closest('.release-notes-body a');if(updateLink){event.preventDefault();const href=updateLink.getAttribute('href');if(href)try{await window.desktop.updates.openLink(href);}catch(error){toast(error.message,true);}return;}
  const target=event.target.closest('[data-action]');if(!target||target.disabled)return;
  const handler=actions[target.dataset.action];if(!handler)return;if(target.tagName==='A')event.preventDefault();
  try{await handler(target);}catch(e){toast(e.message||t('操作失败，请重试。'),true);}
@@ -693,5 +694,5 @@ store.start({from:initialRange.start,to:initialRange.end}).then(()=>{
 
 if(window.desktop.updates){
  window.desktop.updates.status().then(status=>{updateStatus=status;renderUpdates();}).catch(error=>{updateStatus={state:'error',error:error.message};renderUpdates();});
- window.desktop.updates.onStatus(status=>{updateStatus=status;renderUpdates();if(status.state==='available')toast(t('发现新版本，请在设置中查看更新。'));});
+ window.desktop.updates.onStatus(status=>{updateStatus={...updateStatus,...status};renderUpdates();if(status.state==='available')toast(t('发现新版本，请在设置中查看更新。'));});
 }

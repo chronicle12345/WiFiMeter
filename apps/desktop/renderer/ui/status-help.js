@@ -12,7 +12,7 @@ const states = {
     ready:['可用','Ready','good'], unchecked:['尚未检查','Not checked','muted'],
     checking:['正在检查','Checking','muted'], latest:['已是最新版本','Up to date','good'],
     available:['发现新版本','Update available','good'], error:['发生错误','Error','error'],
-    installing:['正在安装','Installing','muted'], recovered:['已恢复采集','Collection restored','good'],
+    downloading:['正在下载','Downloading','muted'], verifying:['正在校验','Verifying','muted'], preparing:['准备安装','Preparing installation','muted'], installing:['启动安装程序','Starting installer','muted'], recovered:['已恢复采集','Collection restored','good'],
     cancelled:['已取消','Cancelled','muted'], manual:['已打开发布页','Release page opened','muted']
 };
 function diagnostic(source) {

@@ -78,3 +78,35 @@ test('failed update offers recovery through the install action and removes it af
     await expect(recover).toHaveCount(0);
     await expect(page.locator('#updatesPanel')).not.toContainText('恢复失败');
 });
+
+test('release notes render Markdown safely and progress preserves the open notes',async()=>{
+ await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('updates:check');ipcMain.handle('updates:check',()=>({state:'available',currentVersion:'1.2.1',latestVersion:'1.2.2',canInstall:true,notes:'# Release\n\n## Changes\n- **Improved** speed\n- `code`\n\n[Details](https://github.com/chronicle12345/WiFiMeter/releases)\n\n<script>window.notesAttack=true</script><img src=x onerror="window.notesAttack=true"><a href="javascript:alert(1)">bad</a>'}));});
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();await page.locator('[data-action="check-updates"]').click();
+ await page.locator('.release-notes summary').click();
+ await expect(page.locator('.release-notes-body h1')).toHaveText('Release');await expect(page.locator('.release-notes-body li')).toHaveCount(2);await expect(page.locator('.release-notes-body strong')).toHaveText('Improved');
+ await expect(page.locator('.release-notes-body script,.release-notes-body img,.release-notes-body [href^="javascript:"]')).toHaveCount(0);
+ expect(await page.evaluate(()=>window.notesAttack)).toBeUndefined();
+ await page.evaluate(()=>{window.notesNode=document.querySelector('.release-notes-body');});
+ const progress=async(state,receivedBytes,totalBytes,percent)=>app.evaluate(({BrowserWindow},value)=>BrowserWindow.getAllWindows()[0].webContents.send('updates:status',value),{state,progress:{phase:state,receivedBytes,totalBytes,percent},notes:'# Release\n\n## Changes\n- **Improved** speed\n- `code`\n\n[Details](https://github.com/chronicle12345/WiFiMeter/releases)\n\n<script>window.notesAttack=true</script><img src=x onerror="window.notesAttack=true"><a href="javascript:alert(1)">bad</a>'});
+ await progress('downloading',500000,1000000,50);await expect(page.locator('progress')).toHaveAttribute('value','50');await expect(page.locator('.update-progress-label')).toContainText('50%');
+ await expect(page.locator('.release-notes')).toHaveAttribute('open','');expect(await page.evaluate(()=>window.notesNode===document.querySelector('.release-notes-body'))).toBe(true);
+ await progress('downloading',600000,null,null);await expect(page.locator('progress')).not.toHaveAttribute('value');await expect(page.locator('.update-progress-label')).toContainText('600.0 KB');
+ await progress('verifying',1000000,1000000,null);await expect(page.locator('.update-progress')).toHaveAttribute('data-phase','verifying');await expect(page.locator('progress')).not.toHaveAttribute('value');
+ await progress('preparing',1000000,1000000,null);await expect(page.locator('.update-progress')).toHaveAttribute('data-phase','preparing');
+ await progress('installing',1000000,1000000,null);await expect(page.locator('.update-progress-label')).toContainText('安装程序');
+});
+
+test('download progress is readable while install is pending and survives reload',async()=>{
+ await app.evaluate(({ipcMain})=>{
+  globalThis.fixtureUpdate={state:'available',currentVersion:'1.2.1',latestVersion:'1.2.2',canInstall:true,notes:'## Changes\n- Progress'};
+  for(const name of ['updates:check','updates:status','updates:install'])ipcMain.removeHandler(name);
+  ipcMain.handle('updates:check',()=>globalThis.fixtureUpdate);ipcMain.handle('updates:status',()=>globalThis.fixtureUpdate);
+  ipcMain.handle('updates:install',()=>new Promise(resolve=>{globalThis.finishInstall=resolve;}));
+ });
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();await page.locator('[data-action="check-updates"]').click();await page.locator('[data-action="install-update"]').click();
+ await app.evaluate(({BrowserWindow})=>{Object.assign(globalThis.fixtureUpdate,{state:'downloading',busy:true,progress:{phase:'downloading',receivedBytes:250000,totalBytes:1000000,percent:25}});BrowserWindow.getAllWindows()[0].webContents.send('updates:status',globalThis.fixtureUpdate);});
+ await expect(page.locator('progress')).toHaveAttribute('value','25');await page.locator('.release-notes summary').click();await expect(page.locator('.release-notes-body h2')).toHaveText('Changes');
+ await page.reload();await page.locator('[data-category="about"]').click();await expect(page.locator('progress')).toHaveAttribute('value','25');await expect(page.locator('[data-action="check-updates"]')).toBeDisabled();
+ await app.evaluate(({BrowserWindow})=>{Object.assign(globalThis.fixtureUpdate,{state:'error',busy:false,progress:null,error:'fixture download failed'});BrowserWindow.getAllWindows()[0].webContents.send('updates:status',globalThis.fixtureUpdate);globalThis.finishInstall(globalThis.fixtureUpdate);});
+ await expect(page.locator('progress')).toHaveCount(0);await expect(page.locator('#updateStatusRegion')).toContainText('fixture download failed');await expect(page.locator('[data-action="check-updates"]')).toBeEnabled();
+});

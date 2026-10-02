@@ -208,11 +208,13 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .app-avatar img { width:100%; height:100%; object-fit:contain; }
 .app-avatar.app-avatar--compact { width:24px; height:24px; display:inline-grid; margin-right:8px; vertical-align:middle; }
 
-/* 总览按可用高度收紧间距；内容增多时仍允许文档自然滚动。 */
+/* 总览将剩余视口高度分配给趋势图，内容增多时仍允许文档自然滚动。 */
 html[data-page="overview"] #content>.panel,
 html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 @media(min-width:761px){
- html[data-page="overview"] .main{padding:16px 22px}
+ html[data-page="overview"] .main{padding:16px 22px 20px;min-height:100dvh;display:flex;flex-direction:column}
+ html[data-page="overview"] #content{display:flex;flex-direction:column;flex:1}
+ html[data-page="overview"] #content>*{flex-shrink:0}
  html[data-page="overview"] #content>.toolbar,
  html[data-page="overview"] #content>.connection,
  html[data-page="overview"] #content>.metrics,
@@ -225,9 +227,13 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content .total-quota-card>.panel-head{padding:0;gap:16px}
  html[data-page="overview"] #content .total-quota-values{padding:0;gap:16px;font-size:12px}
  html[data-page="overview"] #content .total-quota-card>.progress{grid-column:1/-1;margin:0}
- html[data-page="overview"] #content .chart-row{gap:12px;grid-template-columns:minmax(0,1.8fr) minmax(250px,1fr)}
+ html[data-page="overview"] #content .chart-row{gap:12px;grid-template-columns:minmax(0,1.8fr) minmax(250px,1fr);flex:1}
+ html[data-page="overview"] #content>.chart-row:last-child{margin-bottom:0}
+ html[data-page="overview"] #content .chart-row>.panel:first-child{display:flex;flex-direction:column}
+ html[data-page="overview"] #content .chart-wrap{display:flex;flex:1;min-height:125px}
+ html[data-page="overview"] #content .quota-card:not(:has(.quota-foot)){align-self:start}
  html[data-page="overview"] #content .chart-row .panel-head{padding:12px 18px 8px}
- html[data-page="overview"] #content .chart{height:clamp(120px,calc(100dvh - 515px),194px)}
+ html[data-page="overview"] #content .chart{height:100%;min-height:120px;flex:1}
  html[data-page="overview"] #content .chart-caption{padding:0 18px 10px}
  html[data-page="overview"] #content .quota-body{padding:6px 18px 12px}
  html[data-page="overview"] #content .quota-main{font-size:30px;line-height:1.25;margin:2px 0 8px}
@@ -263,3 +269,11 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content>.total-quota-card,
  html[data-page="overview"] #content>.chart-row{margin-bottom:6px}
 }
+.release-notes{margin:20px 23px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.release-notes>summary{padding:14px 16px;cursor:pointer;font-weight:600;background:var(--surface-2)}
+.release-notes-body{padding:6px 20px 20px;max-height:420px;overflow:auto;font-size:13px;line-height:1.8;overflow-wrap:anywhere}
+.release-notes-body h1,.release-notes-body h2,.release-notes-body h3,.release-notes-body h4{margin:18px 0 9px;font-size:16px;letter-spacing:normal}
+.release-notes-body h1{font-size:20px}.release-notes-body p{margin:10px 0}.release-notes-body ul,.release-notes-body ol{padding-left:22px}.release-notes-body li{margin:5px 0}
+.release-notes-body code{font-family:Consolas,monospace;background:var(--surface-2);padding:2px 4px;border-radius:4px}.release-notes-body pre{overflow:auto;padding:12px;background:var(--surface-2)}
+.release-notes-body table{border-collapse:collapse;width:100%}.release-notes-body th,.release-notes-body td{padding:8px;border:1px solid var(--line)}
+#updateStatusRegion{margin:12px 23px}.update-progress{margin:14px 0}.update-progress-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:10px;flex-wrap:wrap}.update-progress progress{display:block;width:100%;height:10px;accent-color:var(--accent-fill);border:0;border-radius:8px;overflow:hidden}.update-progress progress::-webkit-progress-bar{background:var(--track)}.update-progress progress::-webkit-progress-value{background:var(--accent-fill);border-radius:8px}

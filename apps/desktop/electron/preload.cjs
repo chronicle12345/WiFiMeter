@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('desktop', {
         return () => ipcRenderer.removeListener('window:visibility', listener);
     },
     updates: {
+        openLink: url => ipcRenderer.invoke('updates:open-link', url),
         status: () => ipcRenderer.invoke('updates:status'),
         setCheckOnStartup: value => ipcRenderer.invoke('updates:setting', value),
         check: () => ipcRenderer.invoke('updates:check'),

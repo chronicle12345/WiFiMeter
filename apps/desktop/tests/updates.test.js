@@ -246,3 +246,105 @@ test('a release without an asset array remains available for manual installation
     assert.equal(status.canInstall, false);
     assert.equal(status.manual, true);
 });
+
+for (const knownLength of [true, false]) test(`stream progress reports real bytes, known length=${knownLength}`, async t => {
+    const statuses = [];
+    const f = await fixture(t, { onProgress: value => statuses.push(value), fetch: async url => {
+        if (url.includes('api.github.com')) return Response.json(release());
+        return new Response(new ReadableStream({ async start(controller) {
+            controller.enqueue(bytes.subarray(0, 4));
+            await new Promise(resolve => setTimeout(resolve, 130));
+            controller.enqueue(bytes.subarray(4, 8));
+            controller.enqueue(bytes.subarray(8));
+            controller.close();
+        } }), { headers: knownLength ? { 'content-length': String(bytes.length) } : {} });
+    } });
+    const result = await f.service.install();
+    assert.equal(result.state, 'installing');
+    assert.equal(statuses[0].state, 'checking');
+    const downloading = statuses.filter(value => value.state === 'downloading');
+    assert.equal(downloading[0].progress.receivedBytes, 0);
+    assert.ok(downloading.some(value => value.progress.receivedBytes > 0 && value.progress.receivedBytes < bytes.length));
+    assert.ok(downloading.length <= 4, 'rapid chunks must be throttled between the forced start and end');
+    assert.equal(downloading.at(-1).progress.receivedBytes, bytes.length);
+    assert.equal(downloading.at(-1).progress.percent, knownLength ? 100 : null);
+    for (const value of statuses) {
+        assert.equal(value.status, value.state);
+        assert.equal(value.currentVersion, '1.2.0');
+        if (value.progress) {
+            assert.equal(value.progress.phase, value.state);
+            if (value.state !== 'downloading' || !knownLength) assert.equal(value.progress.percent, null);
+        }
+    }
+    assert.deepEqual(statuses.slice(-3).map(value => value.state), ['verifying', 'preparing', 'installing']);
+    assert.equal(result.progress.percent, null);
+});
+
+test('digest failure clears progress and never emits preparing or installing; retry clears error', async t => {
+    const statuses = [];
+    const f = await fixture(t, { onProgress: value => statuses.push(value), fetch: async url =>
+        url.includes('api.github.com') ? Response.json(release()) : new Response('corrupt') });
+    assert.equal((await f.service.install()).state, 'error');
+    assert.equal(statuses.at(-1).progress, null);
+    assert.equal(statuses.some(value => ['preparing', 'installing'].includes(value.state)), false);
+    assert.deepEqual(f.events, ['confirm']);
+    await f.service.check();
+    assert.equal(statuses.at(-1).state, 'available');
+    assert.equal(statuses.at(-1).error, undefined);
+});
+
+for (const asynchronous of [false, true]) test(`observer failure cannot interrupt updates, async=${asynchronous}`, async t => {
+    let observations = 0;
+    const f = await fixture(t, { onProgress: () => {
+        observations++;
+        if (asynchronous) return Promise.reject(Error('observer'));
+        throw Error('observer');
+    } });
+    assert.equal((await f.service.install()).state, 'installing');
+    await new Promise(setImmediate);
+    assert.ok(observations > 0);
+    assert.deepEqual(f.events, ['confirm', 'stop', 'launch']);
+});
+
+test('confirmation cancellation is published and checks cannot replace an active install', async t => {
+    const statuses = [];
+    let finishConfirm;
+    const f = await fixture(t, { onProgress: value => statuses.push(value), confirm: () => new Promise(resolve => { finishConfirm = resolve; }) });
+    await f.service.check();
+    const pending = f.service.install();
+    await new Promise(setImmediate);
+    assert.equal((await f.service.check()).state, 'busy');
+    assert.equal((await f.service.install()).state, 'busy');
+    assert.equal(f.calls.length, 1);
+    finishConfirm(false);
+    assert.equal((await pending).state, 'cancelled');
+    assert.equal(statuses.at(-1).state, 'cancelled');
+    assert.equal(statuses.at(-1).progress, null);
+});
+
+
+test('a failed stream clears progress, removes the partial file, and does not prepare installation', async t => {
+    const statuses = [];
+    const f = await fixture(t, { onProgress: value => statuses.push(value), fetch: async url => {
+        if (url.includes('api.github.com')) return Response.json(release());
+        return new Response(new ReadableStream({ async start(controller) {
+            controller.enqueue(bytes.subarray(0, 4));
+            await new Promise(resolve => setTimeout(resolve, 20));
+            controller.error(Error('stream interrupted'));
+        } }));
+    } });
+    assert.equal((await f.service.install()).progress, null);
+    assert.equal(statuses.at(-1).state, 'error');
+    assert.equal(statuses.some(value => ['verifying', 'preparing', 'installing'].includes(value.state)), false);
+    assert.deepEqual(f.events, ['confirm']);
+    assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates')), []);
+});
+
+test('preparation and handoff hooks see their phase without an installation percentage', async t => {
+    let status;
+    const f = await fixture(t, { onProgress: value => { status = value; },
+        beforeInstall: async () => { assert.equal(status.state, 'preparing'); assert.equal(status.progress.percent, null); },
+        launchInstaller: async () => { assert.equal(status.state, 'installing'); assert.equal(status.progress.percent, null); }
+    });
+    assert.equal((await f.service.install()).state, 'installing');
+});

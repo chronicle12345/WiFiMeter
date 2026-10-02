@@ -247,7 +247,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         }
         finally { migrationBusy = false; }
     });
-    let updateState = { currentVersion: app.getVersion(), checkOnStartup: true };
+    let updateState = { state: 'unchecked', status: 'unchecked', currentVersion: app.getVersion(), checkOnStartup: true, progress: null, busy: false };
     let updateRecovery = null;
     let updateRequestBusy = false;
     async function recoverAfterUpdateFailure(result) {
@@ -267,7 +267,21 @@ if (primaryInstance) app.whenReady().then(async () => {
                 error: `更新取消，恢复失败：${error.message} 数据操作保持暂停，请稍后点击恢复采集重试。` };
         }
     }
+    const updateResult = value => {
+        const state = value.state ?? updateState.state;
+        const active = ['checking', 'downloading', 'verifying', 'preparing', 'installing'].includes(state);
+        updateState = { ...updateState, ...value, state, status: state,
+            progress: active ? (value.progress ?? updateState.progress) : null,
+            error: state === 'error' ? (value.error ?? updateState.error) : value.error,
+            busy: updateRequestBusy || (installingUpdate && !updateRecovery) };
+        if (window && !window.isDestroyed()) {
+            try { window.webContents.send('updates:status', updateState); }
+            catch { /* The latest status remains available after the renderer reloads. */ }
+        }
+        return updateState;
+    };
     const updateService = createUpdateService({
+        onProgress: updateResult,
         currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
         userData: app.getPath('userData'),
         openExternal: url => shell.openExternal(url),
@@ -300,30 +314,46 @@ if (primaryInstance) app.whenReady().then(async () => {
             backend = null; quitting = true; system?.beginQuit(); app.quit();
         }
     });
-    const updateResult = value => {
-        updateState = { ...updateState, ...value };
-        if (window && !window.isDestroyed()) window.webContents.send('updates:status', updateState);
-        return updateState;
-    };
-    ipcMain.handle('updates:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.settings()); });
+    ipcMain.handle('updates:open-link', async (event, value) => {
+        if (!trusted(event)) throw Error('Unsupported page.');
+        const url = new URL(value);
+        if (url.protocol !== 'https:' || url.username || url.password) throw Error('Unsupported update link.');
+        await shell.openExternal(url.href);
+    });
+    ipcMain.handle('updates:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(updateRequestBusy || installingUpdate ? {} : await updateService.settings()); });
     ipcMain.handle('updates:setting', async (event, value) => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.setCheckOnStartup(value)); });
-    ipcMain.handle('updates:check', async event => { if (!trusted(event)) throw Error('Unsupported page.'); return updateResult(await updateService.check()); });
+    async function checkForUpdates(options) {
+        if (updateRequestBusy) return { ...updateState, state: 'busy', status: 'busy', busy: true };
+        if (updateRecovery || installingUpdate) return updateState;
+        updateRequestBusy = true;
+        let result;
+        try { result = await updateService.check(options); }
+        finally { updateRequestBusy = false; }
+        return updateResult(result);
+    }
+    ipcMain.handle('updates:check', async event => {
+        if (!trusted(event)) throw Error('Unsupported page.');
+        return checkForUpdates();
+    });
     ipcMain.handle('updates:install', async event => {
         if (!trusted(event)) throw Error('Unsupported page.');
-        if (updateRequestBusy) return { ...updateState, state: 'busy', status: 'busy' };
+        if (updateRequestBusy || (installingUpdate && !updateRecovery)) return { ...updateState, state: 'busy', status: 'busy', busy: true };
         updateRequestBusy = true;
+        let result;
         try {
-            if (updateRecovery) return updateResult(await recoverAfterUpdateFailure({ state: 'recovered', status: 'recovered', error: '' }));
-            const result = await updateService.install();
-            return updateResult(result.state === 'installing' || result.state === 'busy'
-                ? result : await recoverAfterUpdateFailure(result));
+            if (updateRecovery) result = await recoverAfterUpdateFailure({ state: 'recovered', status: 'recovered', error: '' });
+            else {
+                result = await updateService.install();
+                if (result.state !== 'installing' && result.state !== 'busy') result = await recoverAfterUpdateFailure(result);
+            }
         } finally { updateRequestBusy = false; }
+        return updateResult(result);
     });
     await window.loadFile(pagePath);
     if (backgroundTest) window.showInactive();
     await startup;
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
-        updateService.check({ automatic: true }).then(updateResult).catch(error => updateResult({ state: 'error', error: error.message }));
+        checkForUpdates({ automatic: true }).catch(error => updateResult({ state: 'error', error: error.message }));
     }
     if (migrationStatus.error) dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
 });

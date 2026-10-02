@@ -14,12 +14,12 @@ const require = createRequire(import.meta.url);
 const digest = createHash('sha256').update('verified fixture').digest('hex');
 const directory = fileURLToPath(new URL('../electron/', import.meta.url));
 
-async function harness({ failure, paused = false, appsEnabled = false } = {}) {
+async function harness({ failure, paused = false, appsEnabled = false, updateFactory } = {}) {
     let ready, window, backend, hooks, quitCount = 0, releaseReady;
-    const handlers = new Map(), calls = [];
+    const handlers = new Map(), calls = [], updates = [];
     const handoffReady = new Promise(resolve => { releaseReady = resolve; });
     class Window extends EventEmitter {
-        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send() {}, session: { setPermissionRequestHandler() {} } }); }
+        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send(channel, value) { if (channel === 'updates:status') updates.push(value); }, session: { setPermissionRequestHandler() {} } }); }
         isDestroyed() { return false; }
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
@@ -55,7 +55,7 @@ async function harness({ failure, paused = false, appsEnabled = false } = {}) {
         './app-icons.cjs': { registerAppIcons() {} },
         './app-control.cjs': { createAppControl: () => ({}) },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { calls.push('handoff'); if (failure === 'handoff') throw Error('helper failed'); await handoffReady; } },
-        './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), check: async () => ({ state: 'available' }), async install() {
+        './updates.cjs': { createUpdateService(options) { hooks = options; if (updateFactory) return updateFactory(options); return { settings: async () => ({ checkOnStartup: true }), check: async () => ({ state: 'available' }), async install() {
             calls.push('install');
             try { await options.beforeInstall(); await options.launchInstaller('verified.exe', [], { digest }); return { state: 'installing' }; }
             catch { return { state: 'error', error: 'generic installation error' }; }
@@ -68,7 +68,7 @@ async function harness({ failure, paused = false, appsEnabled = false } = {}) {
     });
     await ready; await new Promise(setImmediate); assert.equal(calls.filter(call => call === 'tray').length, 1); backend.paused = paused; backend.appsEnabled = appsEnabled; calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { backend, calls, hooks, releaseReady, get quitCount() { return quitCount; }, invoke: (name, payload) => handlers.get(name)(event, payload) };
+    return { backend, calls, hooks, updates, releaseReady, get quitCount() { return quitCount; }, invoke: (name, payload) => handlers.get(name)(event, payload) };
 }
 
 for (const paused of [false, true]) test(`handoff failure restores original paused=${paused}`, async () => {
@@ -84,6 +84,7 @@ test('shutdown still pending keeps protection and gives an explicit recovery fai
     const result = await h.invoke('updates:install');
     assert.match(result.error, /恢复失败/);
     assert.equal(result.recoveryRequired, true);
+    assert.equal(result.busy, false);
     assert.match(updatesView(result), /data-action="install-update"[^>]*>恢复采集<\/button>/);
     assert.equal((await h.invoke('updates:status')).recoveryRequired, true);
     assert.equal((await h.invoke('updates:check')).recoveryRequired, true);
@@ -294,4 +295,66 @@ test('failed update restores application collection after restarting the stopped
     assert.equal(h.backend.appsEnabled, true);
     assert.equal(h.backend.paused, false);
     assert.equal(h.quitCount, 0);
+});
+
+
+test('progress wiring is initialized before service construction and survives status reads', async () => {
+    let finish;
+    let checks = 0, installs = 0;
+    const h = await harness({ updateFactory(options) {
+        options.onProgress({ state: 'unchecked', status: 'unchecked', progress: null });
+        return {
+            settings: async () => ({ checkOnStartup: true }),
+            check: async () => { checks++; return { state: 'available' }; },
+            install: async () => {
+                installs++;
+                options.onProgress({ state: 'downloading', status: 'downloading', currentVersion: '1.2.0',
+                    latestVersion: '1.3.0', progress: { receivedBytes: 4, totalBytes: 10, percent: 40, phase: 'downloading' } });
+                await new Promise(resolve => { finish = resolve; });
+                return { state: 'error', status: 'error', error: 'download failed' };
+            }
+        };
+    } });
+    const pending = h.invoke('updates:install');
+    await new Promise(setImmediate);
+    const status = await h.invoke('updates:status');
+    assert.equal(status.state, 'downloading');
+    assert.equal(status.progress.receivedBytes, 4);
+    assert.equal(status.busy, true);
+    assert.equal(h.updates.at(-1).progress.percent, 40);
+    assert.equal((await h.invoke('updates:check')).state, 'busy');
+    assert.equal((await h.invoke('updates:install')).state, 'busy');
+    assert.equal(checks, 0); assert.equal(installs, 1);
+    finish();
+    const failed = await pending;
+    assert.equal(failed.progress, null);
+    assert.equal(failed.busy, false);
+    assert.equal((await h.invoke('updates:status')).progress, null);
+    await h.invoke('updates:check');
+    assert.equal((await h.invoke('updates:status')).error, undefined);
+});
+
+
+test('in-flight checking rejects repeat actions without replacing the saved phase', async () => {
+    let finish;
+    let checks = 0;
+    const h = await harness({ updateFactory(options) { return {
+        settings: async () => ({ checkOnStartup: true }),
+        check: async () => {
+            checks++;
+            options.onProgress({ state: 'checking', status: 'checking', progress: { receivedBytes: 0, totalBytes: null, percent: null, phase: 'checking' } });
+            await new Promise(resolve => { finish = resolve; });
+            return { state: 'available', status: 'available', progress: null };
+        },
+        install: async () => assert.fail('must not install during a check')
+    }; } });
+    const pending = h.invoke('updates:check');
+    await new Promise(setImmediate);
+    assert.equal((await h.invoke('updates:status')).state, 'checking');
+    assert.equal((await h.invoke('updates:install')).state, 'busy');
+    assert.equal((await h.invoke('updates:check')).state, 'busy');
+    assert.equal((await h.invoke('updates:status')).state, 'checking');
+    assert.equal(checks, 1);
+    finish();
+    assert.equal((await pending).busy, false);
 });
