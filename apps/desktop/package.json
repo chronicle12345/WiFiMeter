@@ -1,6 +1,6 @@
 {
   "name": "wifimeter-linux",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Cross-platform network traffic monitoring with local storage",
   "private": true,
   "type": "module",

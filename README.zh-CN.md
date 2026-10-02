@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0" /></a>
+  <a href="docs/releases/v1.2.3.md"><img src="https://img.shields.io/badge/version-1.2.3-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.3" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/platforms-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -24,7 +24,7 @@
 
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
-适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.0，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
+适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.3，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
 以下总览和应用历史截图均使用虚构数据。
 

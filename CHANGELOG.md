@@ -4,6 +4,14 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## [1.2.3] - 2026-10-03
+
+- Fix Windows installer handoff readiness and keep the update helper running after the application exits; report failures by update stage.
+- Align the overview network selector with Refresh and Export, expand the network quota card, and clarify comma-separated proxy port entry. See the [release notes](docs/releases/v1.2.3.md) for upgrading from affected older versions.
+
+- 修复 Windows 更新安装交接的就绪通信，确保应用退出后辅助进程仍可运行；按更新阶段显示失败原因。
+- 将网络选择器与刷新、导出对齐，扩大网络额度卡片，并明确英文逗号分隔多个代理端口的输入方式。从旧版更新的方法见[发布说明](docs/releases/v1.2.3.md)。
+
 ## [1.2.2] - 2026-10-02
 
 - Render update release notes as sanitized Markdown, show download bytes and phase-specific progress, and let the overview trend chart fill the remaining viewport height.
@@ -69,4 +77,5 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 
 [1.2.1]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.1
 
+[1.2.3]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.3
 [1.2.2]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.2
