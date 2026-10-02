@@ -4,6 +4,16 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## [1.2.1] - 2026-10-02
+
+- Added automatic saving with status and retry feedback, an application drawer and icons, multiple quota thresholds, a compact traffic window and theme selection; refreshed the overview and improved legacy import access and record handling.
+- Added live Windows proxy-client TCP EStats measurements and fixed duplicate-snapshot rate calculations using source timestamps. Realtime proxy data covers observed loopback TCP clients only, excludes UDP/QUIC and Wi-Fi totals, and remains separate from historical estimates.
+- The lightweight PowerShell v1.1.1 edition remains unchanged. Native validation is platform-dependent; complete administrator-level validation of the updated Windows hybrid ETW/EStats path is still required. See the [release notes](docs/releases/v1.2.1.md) for measurement limits and migration guidance.
+
+- 新增自动保存状态与失败重试、应用抽屉与图标、多阈值额度提醒、流量小窗和主题选择；调整总览，改进旧版导入入口及记录处理。
+- Windows 代理客户端新增 TCP EStats 实时测量，按采集源时间戳修复重复快照造成的速率异常。代理实时数据仅覆盖已观测回环 TCP 客户端，不含 UDP/QUIC，不计入 Wi-Fi 总量，并与历史估算分开。
+- 轻量 PowerShell v1.1.1 原版保持不变。原生验证需按平台完成；更新后的 Windows ETW/EStats 混合流程仍需完整的管理员权限验收。测量限制与迁移说明见[发布说明](docs/releases/v1.2.1.md)。
+
 ## 1.2.0
 
 Cross-platform integration, legacy JSON migration, complete backups, application controls and history, Ethernet accounting, total Wi-Fi quotas, bilingual UI and multi-architecture packaging. See [release notes](docs/releases/v1.2.0.md).
@@ -46,3 +56,5 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 
 [1.1.1]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1
 [1.1.0]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0
+
+[1.2.1]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.1
