@@ -6,7 +6,7 @@ test.beforeEach(async () => {
     harness = await createHarness({ rxStep: 4100000000 });
     const env = { ...process.env, ...harness.env, WIFIMETER_BACKGROUND_TEST: '1' };
     delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: ['.'], env });
+    app = await electron.launch({ args: ['.', '--force-device-scale-factor=1'], env });
     page = await app.firstWindow();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.notice-line')).toBeVisible();
@@ -16,6 +16,21 @@ test.afterEach(async () => {
     harness?.cleanup();
     app = null;
 });
+
+async function resizeWindow(width, height) {
+    // Electron 的视口模拟可能不更新媒体查询，使用原生窗口并补偿平台边框尺寸。
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setMinimumSize(0, 0));
+    let windowWidth = width, windowHeight = height;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0].setSize(size.width, size.height), { width: windowWidth, height: windowHeight });
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        const actual = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+        if (actual.width === width && actual.height === height) return;
+        windowWidth += width - actual.width;
+        windowHeight += height - actual.height;
+    }
+    expect(await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))).toEqual({ width, height });
+}
 
 for (const language of ['zh-CN', 'en']) {
     for (const quotaState of ['notice', 'quiet', 'unset']) {
@@ -27,7 +42,7 @@ for (const language of ['zh-CN', 'en']) {
                     await window.desktop.backend.request('updateNetwork', { key, capGb: quotaState === 'unset' ? 0 : quotaState === 'quiet' ? 50 : 5 });
                 }, quotaState);
                 await page.reload();
-                await page.setViewportSize({ width, height });
+                await resizeWindow(width, height);
                 await expect(page.locator('.quota-body')).toBeVisible();
                 await expect(page.locator('.notice-line')).toHaveCount(quotaState === 'notice' ? 1 : 0);
                 await page.screenshot({ path: testInfo.outputPath('overview.png'), fullPage: true });
@@ -36,7 +51,14 @@ for (const language of ['zh-CN', 'en']) {
                     const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
                     return {
                         bottomGap: innerHeight - document.querySelector('#content').lastElementChild.getBoundingClientRect().bottom,
-                        quotaHeight: document.querySelector('.quota-card').getBoundingClientRect().height,
+                        cards: [...document.querySelectorAll('.chart-row>.panel')].map(element => {
+                            const rect = element.getBoundingClientRect();
+                            return { top: rect.top, bottom: rect.bottom, height: rect.height };
+                        }),
+                        controls: ['#networkFilter', '[data-action="refresh"]', '[data-action="export"]'].map(selector => {
+                            const rect = document.querySelector(`.toolbar-actions ${selector}`).getBoundingClientRect();
+                            return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+                        }),
                         height: innerHeight, scrollHeight: root.scrollHeight,
                         width: innerWidth, scrollWidth: root.scrollWidth,
                         outside: selectors.filter(selector => {
@@ -54,7 +76,13 @@ for (const language of ['zh-CN', 'en']) {
                 expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
                 expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
                 expect(layout.bottomGap).toBeLessThanOrEqual(24);
-                if (quotaState === 'unset') expect(layout.quotaHeight).toBeLessThanOrEqual(240);
+                expect(Math.abs(layout.cards[0].top - layout.cards[1].top)).toBeLessThan(1);
+                expect(Math.abs(layout.cards[0].bottom - layout.cards[1].bottom)).toBeLessThan(1);
+                for (const control of layout.controls.slice(1)) {
+                    expect(Math.abs(control.top - layout.controls[0].top)).toBeLessThan(1);
+                    expect(Math.abs(control.bottom - layout.controls[0].bottom)).toBeLessThan(1);
+                }
+                expect(layout.controls[1].left - layout.controls[0].right).toBeLessThanOrEqual(12);
                 expect(layout.outside).toEqual([]);
                 expect(layout.clipping).toEqual([]);
                 expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
@@ -64,7 +92,7 @@ for (const language of ['zh-CN', 'en']) {
 }
 
 test('narrow overview keeps both quotas accessible by scrolling', async ({}, testInfo) => {
-    await page.setViewportSize({ width: 390, height: 650 });
+    await resizeWindow(390, 650);
     await expect(page.locator('.quota-card')).toBeVisible();
     expect(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight)).toBe(true);
     await page.locator('.quota-foot').scrollIntoViewIfNeeded();
@@ -75,7 +103,7 @@ test('narrow overview keeps both quotas accessible by scrolling', async ({}, tes
 });
 
 test('settings retain continuous document scrolling after leaving overview', async () => {
-    await page.setViewportSize({ width: 900, height: 650 });
+    await resizeWindow(900, 650);
     await page.locator('.nav [data-page="settings"]').click();
     await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(7);
     await expect(page.locator('.settings-scroll-panel')).toHaveCount(1);
@@ -86,7 +114,7 @@ test('settings retain continuous document scrolling after leaving overview', asy
 });
 
 test('proxy table wraps long paths, aligns rates and scrolls with the applications page', async ({}, testInfo) => {
-    await page.setViewportSize({ width: 900, height: 650 });
+    await resizeWindow(900, 650);
     await page.locator('.nav [data-page="apps"]').click();
     await page.evaluate(async () => {
         await window.desktop.backend.request('setPaused', { paused: true });

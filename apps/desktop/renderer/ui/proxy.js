@@ -9,7 +9,7 @@ export function proxyStatus(proxy) {
 }
 export function proxyForm(proxy) {
     const fields = proxy?.available ? tr`<form id="proxyConfigForm" class="quota-form">
-        <div class="field"><label for="proxyPorts">代理端口</label><input class="input" id="proxyPorts" name="ports" value="${esc((proxy.ports||[]).join(', '))}" placeholder="7890, 1080"></div>
+        <div class="field"><label for="proxyPorts">代理端口</label><input class="input" type="text" id="proxyPorts" name="ports" value="${esc((proxy.ports||[]).join(', '))}" placeholder="7890, 1080, 7897" autocomplete="off" spellcheck="false" aria-describedby="proxyPortsHint"><p class="field-hint" id="proxyPortsHint">多个端口用英文逗号分隔，例如 7890, 1080。端口范围为 1 到 65535，留空清除。</p></div>
         <div class="field"><label for="proxyProcesses">代理进程名（可选）</label><input class="input" id="proxyProcesses" name="processNames" value="${esc((proxy.processNames||[]).join(', '))}" placeholder="Clash.exe, v2ray.exe"></div>
         <div class="form-error" role="alert"></div>${autosaveStatus('proxySaveStatus')}
     </form>` : '';

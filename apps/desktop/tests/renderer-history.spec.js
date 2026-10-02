@@ -314,6 +314,29 @@ test('各设置分类无保存取消按钮，独立表单自动保存并在重�
  await page.locator('[data-category="general"]').click();await expect(page.locator('[name="interval"]')).toHaveValue('10');
 });
 
+test('代理端口支持英文逗号输入，保存多个端口后重新加载并拒绝非法值',async()=>{
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="proxy"]').click();
+ const ports=page.locator('#proxyPorts');
+ await expect(ports).toHaveAttribute('type','text');
+ await expect(page.locator('#proxyPortsHint')).toContainText('多个端口用英文逗号分隔');
+ await ports.fill('7890');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890]);
+ await ports.press('End');await ports.pressSequentially(', ');
+ await expect(ports).toHaveValue('7890, ');
+ await ports.pressSequentially('1080, 65535, 7890',{delay:50});
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890,1080,65535]);
+ await expect(page.locator('#proxySaveStatus')).toHaveAttribute('data-state','saved');
+ await page.reload();await page.locator('[data-category="proxy"]').click();
+ await expect(ports).toHaveValue('7890, 1080, 65535');
+ await ports.fill('7890, 65536');
+ await expect(page.locator('#proxyConfigForm .form-error')).toContainText('1 到 65535');
+ expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890,1080,65535]);
+ await ports.fill('');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([]);
+ await expect(page.locator('#proxySaveStatus')).toHaveAttribute('data-state','saved');
+ await page.reload();await page.locator('[data-category="proxy"]').click();await expect(ports).toHaveValue('');
+});
+
 test('代理文本自动保存合并快速输入，失败后保留输入并允许重试',async()=>{
  await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="proxy"]').click();
  await app.evaluate(()=>{globalThis.rendererFixture.failSave='updateProxyConfig';});

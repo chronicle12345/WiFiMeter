@@ -28,8 +28,13 @@ test('代理估算只替换对应网络日期的代理原始行，客户端直�
 test('代理配置解析多个端口与可选进程，拒绝非法端口并去重',()=>{
  const values=(ports,processNames)=>new Map([['ports',ports],['processNames',processNames]]);
  assert.deepEqual(proxyConfigPatch(values('7890, 1080；7890','Clash.exe; v2ray.exe; clash.EXE')),{ports:[7890,1080],processNames:['Clash.exe','v2ray.exe']});
+ assert.deepEqual(proxyConfigPatch(values('1, 7890, 1080, 65535, 7890','')),{ports:[1,7890,1080,65535],processNames:[]});
+ assert.deepEqual(proxyConfigPatch(values('7890, ','')),{ports:[7890],processNames:[]});
  assert.deepEqual(proxyConfigPatch(values('','')),{ports:[],processNames:[]});
- for(const ports of ['0','65536','1.5','abc'])assert.throws(()=>proxyConfigPatch(values(ports,'')));
+ for(const ports of ['0','65536','1.5','abc','7890, 0','7890, 65536','7890, 1e3'])assert.throws(()=>proxyConfigPatch(values(ports,'')));
+ const maximumPorts=Array.from({length:64},(_,index)=>index+1);
+ assert.deepEqual(proxyConfigPatch(values(maximumPorts.join(','),'')).ports,maximumPorts);
+ assert.throws(()=>proxyConfigPatch(values([...maximumPorts,65].join(','),'')));
  assert.throws(()=>proxyConfigPatch(values('7890','invalid\u0000name')));
 });
 
