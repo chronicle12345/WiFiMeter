@@ -94,6 +94,8 @@ test('network quota changes save without a button and dangerous enable still con
 test('auto speed units save and main and mini display the same values',async()=>{
  await category('display');await page.locator('[name="speedUnit"]').selectOption('auto');await expect.poll(async()=>(await snapshot()).settings.speedUnit).toBe('auto');
  await page.evaluate(async()=>{await window.desktop.windowPreferences.update({miniWindow:true});await window.desktop.backend.request('setPaused',{paused:true});});await page.locator('.nav [data-page="overview"]').click();await page.reload();
+ await expect(page.locator('.collector-title')).toHaveText('Collection paused');
+ await expect(page.locator('[data-live-rx]')).toHaveText('—');
  if(process.platform==='win32'){await expect.poll(()=>app.windows().length).toBe(2);await expect(app.windows().find(w=>w!==page).locator('#download')).toBeVisible();}
  await app.evaluate(({BrowserWindow})=>{const live={event:'live',state:'connected',collector:'running',updatedAt:new Date().toISOString(),speedUnit:'auto',connections:[{networkId:'test',interfaceId:'WLAN',ssid:'Fixture',type:'wifi',band:'5 GHz',signal:80,rxPerSecond:'2500',txPerSecond:'125000'}]};for(const win of BrowserWindow.getAllWindows()){win.webContents.send('mini:live',live);win.webContents.send('backend:event',live);}});
  await expect(page.locator('[data-live-rx]')).toHaveText('2.5');await expect(page.locator('[data-live-rx-unit]')).toHaveText('KB/s');

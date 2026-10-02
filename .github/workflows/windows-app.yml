@@ -110,7 +110,7 @@ jobs:
         run: python backend/tests/windows_app_capture_smoke.py "$env:BUILD_DIR/app/wifimeter-app-capture.exe" --require-native
       - name: Require actual native TCP EStats capture
         run: |
-          & "$env:BUILD_DIR/tests/windows_estats_smoke_test.exe"
+          & (Join-Path $env:GITHUB_WORKSPACE "$env:BUILD_DIR/tests/Release/windows_estats_smoke_test.exe")
           if ($LASTEXITCODE -ne 0) { throw 'TCP EStats must pass with native administrator permissions; a skip is not a pass.' }
       - name: Desktop unit tests against the native backend
         run: npm --prefix apps/desktop run test:unit
