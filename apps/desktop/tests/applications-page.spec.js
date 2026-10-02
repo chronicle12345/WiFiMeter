@@ -256,7 +256,12 @@ test('proxy clients appear only on applications and live changes replace zero ra
 
 test('live estimates refresh displayed clients while preserving upload and download totals',async()=>{
  await app.evaluate(()=>{const f=globalThis.rendererFixture;const id=f.snapshot.networks[0].id;f.snapshot.appRecords=[{networkId:id,date:'2020-01-01',appId:'C:\\Proxy\\Proxy.exe',name:'Proxy',rxBytes:'1000',txBytes:'3000'}];f.snapshot.proxyEstimatedRecords=[];});
- await openApplications();await page.locator('#appDataSource').selectOption('estimated');await expect(page.locator('.app-row')).toContainText('Proxy');
+ await openApplications();
+ const originalSource=await page.locator('#appDataSource').elementHandle();
+ await page.locator('#appDataSource').selectOption('estimated');
+ await expect.poll(()=>originalSource.evaluate(element=>element.isConnected)).toBe(false);
+ await expect(page.locator('#appDataSource')).toHaveValue('estimated');
+ await expect(page.locator('.app-row')).toContainText('Proxy');
  await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});
  await expect(page.locator('.app-row')).toHaveCount(2);await expect(page.locator('.app-row').filter({hasText:'Browser'})).toContainText('2.4 KB');await expect(page.locator('.app-row').filter({hasText:'Chat'})).toContainText('1.6 KB');await expect(page.locator('#appTotal')).toHaveText('4KB');
 });

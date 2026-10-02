@@ -33,6 +33,44 @@ export function createDataClient(handlers = {}) {
     const state = { storageFailed: false, available: Boolean(window.desktop?.backend), unsubscribe: null, ready: false };
 
     let rangeVersion = 0;
+    let eventRevision = 0;
+    let pendingSnapshot = null;
+
+    // 只记录当前请求期间的全量组和字段，不重放 usage/appUsage 的字节增量。
+    function rememberEvent(message) {
+        const revision = ++eventRevision;
+        if (!pendingSnapshot) return;
+        const updatedAt = Date.parse(message.updatedAt);
+        const remember = (map, key, value) => map.set(key, { revision, updatedAt, value: structuredClone(value) });
+        if (message.totalQuota) remember(pendingSnapshot.fields, 'totalQuota', message.totalQuota);
+        if (message.event === 'live') {
+            remember(pendingSnapshot.fields, 'live', payloadOf(message));
+            for (const key of ['appCollection', 'proxy', 'appProcesses']) {
+                if (message[key] != null) remember(pendingSnapshot.fields, key, message[key]);
+            }
+        }
+        if (message.event === 'live' || message.event === 'appUsage') {
+            for (const update of message.proxyEstimatedUpdates ?? []) {
+                remember(pendingSnapshot.groups, proxyUsageKey(update), update);
+            }
+        }
+    }
+
+    function restorePendingEvents(pending, next, params) {
+        const snapshotTime = Date.parse(next.live?.updatedAt);
+        // updatedAt 是采样时间，非协议序号：只能排除明确较旧的事件。
+        // 时间相同或缺失时按请求内接收 revision 保留最后值，不能保证跨通道严格顺序。
+        const fresh = entry => entry.revision > pending.revision
+            && !(Number.isFinite(snapshotTime) && Number.isFinite(entry.updatedAt) && entry.updatedAt < snapshotTime);
+        for (const [key, entry] of pending.fields) {
+            if (fresh(entry)) snapshot[key] = entry.value;
+        }
+        const inRange = group => (!params.networkKey || group.networkId === params.networkKey)
+            && (!params.from || group.date >= params.from) && (!params.to || group.date <= params.to);
+        applyProxyEstimatedUpdates([...pending.groups.values()]
+            .filter(entry => fresh(entry) && inRange(entry.value)).map(entry => entry.value));
+    }
+
     let activeRange = {};
     // Keep a lookup only for rows touched by live updates, not a second copy of all history.
     const dailyRows = new Map(), appRows = new Map(), hourlyRows = new Map();
@@ -110,6 +148,7 @@ export function createDataClient(handlers = {}) {
     function subscribe() {
         if (state.unsubscribe || !state.available) return;
         state.unsubscribe = window.desktop.backend.onEvent(message => {
+            rememberEvent(message);
             if (message.totalQuota) snapshot.totalQuota = message.totalQuota;
             if (message.event === 'live') {
                 applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
@@ -182,11 +221,18 @@ export function createDataClient(handlers = {}) {
 
         async queryRange(params) {
             const version = ++rangeVersion;
-            const next = await request('snapshot', params);
-            if (version !== rangeVersion) return false;
-            activeRange = { ...params };
-            applySnapshot(next);
-            return true;
+            const pending = { revision: eventRevision, groups: new Map(), fields: new Map() };
+            pendingSnapshot = pending;
+            try {
+                const next = await request('snapshot', params);
+                if (version !== rangeVersion) return false;
+                activeRange = { ...params };
+                applySnapshot(next);
+                restorePendingEvents(pending, next, activeRange);
+                return true;
+            } finally {
+                if (pendingSnapshot === pending) pendingSnapshot = null;
+            }
         },
 
         async reload() {

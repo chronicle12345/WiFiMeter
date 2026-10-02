@@ -349,6 +349,7 @@ function renderDrawer(){
  const tab=ui.drawer.tab;
  $('#drawerRoot').innerHTML=drawerShell({title:esc(networkName(n)),badge:isConnected(n.id)?t('<span class="pill"><i class="dot"></i>已连接</span>'):'',closeLabel:t('关闭网络详情'),subtitle:tr`<div class="drawer-sub"><span>${isEthernet(n)?t('原始身份'):'SSID'} · ${esc(n.ssid)}</span><button class="icon-btn small-icon" data-action="copy-ssid" data-id="${n.id}" aria-label="复制 SSID">${icon('copy')}</button></div>`,tabs:tr`<div class="drawer-tabs" role="tablist" aria-label="网络详情分类">${[['usage',t('用量明细')],['apps',t('应用分布')],['settings',t('网络设置')]].map(([id,label])=>`<button class="drawer-tab ${tab===id?'active':''}" role="tab" aria-selected="${tab===id}" data-action="drawer-tab" data-tab="${id}">${label}</button>`).join('')}</div>`,content:tab==='usage'?drawerUsage(n):tab==='apps'?drawerApps(n):drawerSettings(n),icon});appIcons.hydrate(document);
  syncInert();
+ if(tab==='apps')renderAppList();
 }
 let modalReturnFocus=null;
 function showModal(title,body,actions='',onShow=null){

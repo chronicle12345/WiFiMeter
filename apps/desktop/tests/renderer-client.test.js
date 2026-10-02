@@ -305,3 +305,100 @@ test('应用累计和估算异步到达时守恒，新的客户端分配在 live
  assert.equal(client.snapshot.proxyEstimatedRecords[0].rxBytes,'120');
  client.stop();
 });
+
+async function snapshotRaceClient(t) {
+    const original = globalThis.window;
+    t.after(() => { globalThis.window = original; });
+    let receive;
+    const pending = [];
+    globalThis.window = { desktop: { backend: {
+        request: async method => method !== 'snapshot' ? { ok: true, result: {} }
+            : new Promise((resolve, reject) => pending.push(result => result instanceof Error ? reject(result) : resolve({ ok: true, result }))),
+        onEvent: handler => { receive = handler; return () => {}; }
+    } } };
+    const client = createDataClient();
+    const started = client.start();
+    await new Promise(resolve => setImmediate(resolve));
+    pending.shift()({}); await started;
+    t.after(() => client.stop());
+    return { client, pending, receive: message => receive(message) };
+}
+
+const raceGroup = (rxBytes, proxyAppId = 'proxy') => ({ networkId: 'home', date: '2026-10-02', proxyAppId,
+    records: rxBytes === null ? [] : [{ networkId: 'home', date: '2026-10-02', proxyAppId, appId: 'client', rxBytes, txBytes: '0' }] });
+
+test('snapshot response and live in one transport chunk retain complete groups and live fields', async t => {
+    const { client, receive } = await snapshotRaceClient(t);
+    const { createRequire } = await import('node:module');
+    const { BackendClient } = createRequire(import.meta.url)('../electron/backend.cjs');
+    const transport = new BackendClient({ executable: 'unused', databasePath: 'unused' });
+    transport.on('event', receive);
+    window.desktop.backend.request = async () => ({ ok: true, result: await new Promise((resolve, reject) => {
+        transport.pending.set(1, { resolve, reject, timer: null });
+    }) });
+    const reload = client.reload();
+    const live = { event: 'live', updatedAt: '2026-10-02T10:00:01Z', proxyEstimatedUpdates: [raceGroup('200')],
+        proxy: { clients: ['new'] }, appCollection: { state: 'running' }, appProcesses: [{ appId: 'new' }], totalQuota: { usedBytes: '200' } };
+    transport.consume(JSON.stringify({ id: 1, ok: true, result: { live: { updatedAt: '2026-10-02T10:00:00Z' }, proxyEstimatedRecords: raceGroup('100').records } }) + '\n' + JSON.stringify(live) + '\n');
+    await reload;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('200').records);
+    for (const key of ['proxy', 'appCollection', 'appProcesses', 'totalQuota']) assert.deepEqual(client.snapshot[key], live[key]);
+    assert.equal(client.snapshot.live.updatedAt, live.updatedAt);
+});
+
+test('pending snapshot retains last complete group including removal without replaying usage increments', async t => {
+    const { client, pending, receive } = await snapshotRaceClient(t);
+    const reload = client.reload();
+    receive({ event: 'live', proxyEstimatedUpdates: [raceGroup('150'), raceGroup('20', 'removed')], proxy: { clients: ['kept'] } });
+    receive({ event: 'appUsage', records: [{ networkId: 'home', date: '2026-10-02', appId: 'proxy', rxBytes: '10', txBytes: '0' }], proxyEstimatedUpdates: [raceGroup('200'), raceGroup(null, 'removed')] });
+    receive({ event: 'usage', day: '2026-10-02', networks: [{ networkId: 'home', rxBytes: '10', txBytes: '0' }] });
+    receive({ event: 'live', state: 'connected' });
+    pending.shift()({ proxyEstimatedRecords: [...raceGroup('200').records, ...raceGroup('20', 'removed').records],
+        records: [{ rxBytes: '100' }], appRecords: [{ rxBytes: '200' }], proxy: { clients: [] } });
+    await reload;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('200').records);
+    assert.deepEqual(client.snapshot.proxy.clients, ['kept']);
+    assert.equal(client.snapshot.records[0].rxBytes, '100');
+    assert.equal(client.snapshot.appRecords[0].rxBytes, '200');
+});
+
+test('snapshot freshness excludes older live and only journals the latest request window', async t => {
+    const { client, pending, receive } = await snapshotRaceClient(t);
+    receive({ event: 'live', proxyEstimatedUpdates: [raceGroup('50', 'before')] });
+    const first = client.reload();
+    receive({ event: 'live', proxyEstimatedUpdates: [raceGroup('60', 'first')] });
+    const second = client.queryRange({ from: '2026-10-02', to: '2026-10-02', networkKey: 'home' });
+    receive({ event: 'live', updatedAt: '2026-10-02T10:00:00Z', proxyEstimatedUpdates: [raceGroup('100')], proxy: { clients: ['old'] } });
+    pending[1]({ live: { updatedAt: '2026-10-02T10:00:01Z' }, proxyEstimatedRecords: raceGroup('200').records, proxy: { clients: ['new'] } });
+    await second;
+    pending[0]({ proxyEstimatedRecords: [] }); await first;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('200').records);
+    assert.deepEqual(client.snapshot.proxy.clients, ['new']);
+    const third = client.reload();
+    receive({ event: 'live', updatedAt: '2026-10-02T10:00:01Z', proxyEstimatedUpdates: [raceGroup(null), { ...raceGroup('1', 'outside'), date: '2026-10-01', records: [{ ...raceGroup('1', 'outside').records[0], date: '2026-10-01' }] }] });
+    pending[2]({ live: { updatedAt: '2026-10-02T10:00:01Z' }, proxyEstimatedRecords: raceGroup('200').records });
+    await third;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, []);
+});
+
+
+test('superseded completion and failed queries do not retain or clear another request journal', async t => {
+    const { client, pending, receive } = await snapshotRaceClient(t);
+    const first = client.reload();
+    const second = client.reload();
+    pending[0]({}); await first;
+    const update = raceGroup('300');
+    receive({ event: 'live', proxyEstimatedUpdates: [update] });
+    update.records[0].rxBytes = '999';
+    pending[1]({ proxyEstimatedRecords: [] }); await second;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('300').records);
+    const failed = client.reload();
+    receive({ event: 'live', proxyEstimatedUpdates: [raceGroup('400')] });
+    pending[2](new Error('snapshot failed'));
+    await assert.rejects(failed, /snapshot failed/);
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('400').records);
+    receive({ event: 'live', proxyEstimatedUpdates: [raceGroup('500')] });
+    const last = client.reload();
+    pending[3]({ proxyEstimatedRecords: raceGroup('600').records }); await last;
+    assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('600').records);
+});
