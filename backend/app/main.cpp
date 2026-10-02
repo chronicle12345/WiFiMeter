@@ -107,7 +107,7 @@ int main(int argc, char** argv)
         }
         if (argument == "--version")
         {
-            std::printf("wifimeter-backend 1.2.1（协议版本 %d）\n", ipc::kProtocolVersion);
+            std::printf("wifimeter-backend 1.2.2（协议版本 %d）\n", ipc::kProtocolVersion);
             return 0;
         }
         if (argument == "--paused")

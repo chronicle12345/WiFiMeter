@@ -4,6 +4,16 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## [1.2.2] - 2026-10-02
+
+- Render update release notes as sanitized Markdown, show download bytes and phase-specific progress, and let the overview trend chart fill the remaining viewport height.
+- Resolve Windows proxy identities from fresh, matching helper evidence and replace affected cumulative estimate groups without double counting. Download and upload totals must each match native totals before estimated rows replace native proxy rows.
+- Historical attribution remains a connection-weight estimate, not exact per-client history. Original usage and network totals are unchanged; old records without observations cannot be precisely reconstructed. The lightweight PowerShell v1.1.1 edition remains unchanged. See the [release notes](docs/releases/v1.2.2.md) for scope and validation limits.
+
+- 更新说明支持 Markdown 渲染与安全清理，新增下载字节数及分阶段进度，总览趋势图填充视口剩余高度。
+- Windows 代理身份通过新鲜且匹配的 helper 证据补全；受影响的累计估算按组替换，避免重复计数。下载和上传分别满足总量守恒后，才用估算行替换代理原始行。
+- 历史归属仍按连接权重估算，不代表精确的客户端历史用量。原始用量和网卡总量不改，缺少观测的旧记录无法精确还原。轻量 PowerShell v1.1.1 原版保持不变。统计范围与验证限制见[发布说明](docs/releases/v1.2.2.md)。
+
 ## [1.2.1] - 2026-10-02
 
 - Added automatic saving with status and retry feedback, an application drawer and icons, multiple quota thresholds, a compact traffic window and theme selection; refreshed the overview and improved legacy import access and record handling.
@@ -58,3 +68,5 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 [1.1.0]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.0
 
 [1.2.1]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.1
+
+[1.2.2]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.2
