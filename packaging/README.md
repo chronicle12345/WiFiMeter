@@ -2,6 +2,22 @@
 
 以下是构建入口支持的目标，不代表这些目标已经完成安装或实机验收。性能基准环境为 Windows x64、Node.js 24.14.1。当前 npm ci 已完成，Electron 可运行；本机已有 VS18 和 Ninja/MinGW 工具链，build/windows 已构建。新增架构和安装格式仍需分别验证。
 
+## 快捷脚本
+
+在 Linux x64 环境的仓库根目录运行（Windows 包也在 Linux 上交叉构建）：
+
+```bash
+node packaging/build-windows.cjs # Windows 安装包和便携包
+node packaging/build-linux.cjs   # Linux deb 包
+node packaging/build-all.cjs     # 依次生成 Windows 和 Linux 包
+```
+
+脚本也可从其他目录通过绝对路径运行。两端一起打包需要 Linux x64（或 WSL）及下文两端工具链；任一端失败立即停止并返回失败状态。默认输出为 `dist/windows/` 和 `dist/linux/`。这些脚本不安装、不发布产物。
+
+单端入口透传 `--arch`、`--formats` 等原有参数。`build-all.cjs` 的参数同时传给两端，可使用 `--arch x64`；`--formats dir` 可同时组装两端目录，各端不同的安装格式应分别运行单端脚本。
+
+Windows 的 Tauri 迁移仍在进行，快捷脚本跟随正式平台构建器；目前尚未切换到 Tauri 安装包。
+
 ## 构建入口
 
 从仓库根目录运行。先按现有流程安装 apps/desktop 的 npm 依赖。版本来自现有 package.json，脚本不修改版本、不发布、不安装产物。
