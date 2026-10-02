@@ -39,6 +39,79 @@ Status observeProxy(storage::Database& db, const std::string& day, const std::st
     return insert->run();
 }
 
+// 只使用本轮 helper 的双向 EStats 连接，不缓存 PID 到路径的对应关系。
+void resolveHelperIdentities(platform::ProxyClientReport& report, const platform::AppTrafficReport& apps)
+{
+    if (apps.generation.empty() || (apps.state != platform::AppCollectorState::running &&
+        apps.state != platform::AppCollectorState::partial)) return;
+    std::map<std::uint32_t, std::string> instances;
+    std::set<std::uint32_t> conflicting;
+    for (const auto& sample : apps.samples)
+    {
+        if (!sample.active || sample.interfaceId != "loopback" || sample.source != "WindowsTcpEStats") continue;
+        const auto prefix = std::to_string(sample.processId) + ":";
+        if (sample.instanceId.rfind(prefix, 0) != 0) { conflicting.insert(sample.processId); continue; }
+        const auto end = sample.instanceId.find(':', prefix.size());
+        const auto created = sample.instanceId.substr(prefix.size(), end - prefix.size());
+        if (created.empty() || created == "0" || created.find_first_not_of("0123456789") != std::string::npos)
+        { conflicting.insert(sample.processId); continue; }
+        const auto identity = created + "|" + folded(sample.appId);
+        const auto [entry, inserted] = instances.emplace(sample.processId, identity);
+        if (!inserted && entry->second != identity) conflicting.insert(sample.processId);
+    }
+    const auto usable = [&](const platform::AppTrafficSample& sample) {
+        return sample.active && sample.processId && !conflicting.count(sample.processId) &&
+            instances.count(sample.processId) && sample.interfaceId == "loopback" &&
+            sample.source == "WindowsTcpEStats" && !sample.appId.empty() && sample.appId != "unknown";
+    };
+    std::vector<platform::ProxyDetectedClient> unresolved;
+    for (auto detected : report.detectedClients)
+    {
+        std::vector<std::string> remaining;
+        for (const auto& key : detected.connectionKeys)
+        {
+            const auto separator = key.find('>');
+            if (separator == std::string::npos) { remaining.push_back(key); continue; }
+            const auto reverse = key.substr(separator + 1) + ">" + key.substr(0, separator);
+            const platform::AppTrafficSample* server = nullptr;
+            bool clientFound = false, ambiguous = false;
+            for (const auto& sample : apps.samples)
+            {
+                if (!usable(sample)) continue;
+                if (sample.connectionKey == key && folded(sample.appId) == folded(detected.appId) &&
+                    sample.processId != detected.proxyProcessId) clientFound = true;
+                if (sample.connectionKey != reverse || sample.processId != detected.proxyProcessId) continue;
+                if (server && server->instanceId != sample.instanceId) ambiguous = true;
+                server = &sample;
+            }
+            if (!clientFound || !server || ambiguous || folded(server->appId) == folded(detected.appId))
+            { remaining.push_back(key); continue; }
+            auto observation = std::find_if(report.observations.begin(), report.observations.end(), [&](const auto& value) {
+                return folded(value.proxyAppId) == folded(server->appId) && folded(value.appId) == folded(detected.appId);
+            });
+            if (observation == report.observations.end())
+                report.observations.push_back({server->appId, server->name, detected.appId, detected.name, 1, {key}});
+            else if (std::find(observation->connectionKeys.begin(), observation->connectionKeys.end(), key) == observation->connectionKeys.end())
+            {
+                observation->connectionKeys.push_back(key);
+                observation->connections = observation->connectionKeys.size();
+            }
+            auto proxy = std::find_if(report.proxies.begin(), report.proxies.end(), [&](const auto& value) {
+                return value.processId == server->processId;
+            });
+            if (proxy == report.proxies.end()) report.proxies.push_back({server->processId, server->appId, server->name});
+            else if (proxy->appId.empty()) *proxy = {server->processId, server->appId, server->name};
+        }
+        if (!remaining.empty() || detected.connectionKeys.empty())
+        {
+            detected.connectionKeys = std::move(remaining);
+            if (!detected.connectionKeys.empty()) detected.connections = detected.connectionKeys.size();
+            unresolved.push_back(std::move(detected));
+        }
+    }
+    report.detectedClients = std::move(unresolved);
+}
+
 Status persistObservations(storage::Database& db, const std::string& day, const platform::ProxyClientReport& report)
 {
     storage::Transaction transaction(db);
@@ -203,6 +276,7 @@ void BackendService::collectProxyClients(TimePoint now)
     if (status)
     {
         proxyReport_ = deps_.proxySampler ? deps_.proxySampler(options) : platform::sampleProxyClients(options);
+        if (proxyReport_.available && proxyIdentityFresh_) resolveHelperIdentities(proxyReport_, proxyIdentityReport_);
         if (proxyReport_.available) status = persistObservations(deps_.store.database(), core::dayKeyOf(core::localStampOf(now)), proxyReport_);
     }
     if (!status)
@@ -239,6 +313,52 @@ Status BackendService::clearProxyObservations() const
     if (!transaction.active()) return Status::failure(deps_.store.database().lastError());
     const auto status=deps_.store.database().exec("DELETE FROM proxy_observations; DELETE FROM proxy_apps;");
     return status ? transaction.commit() : status;
+}
+
+JsonValue BackendService::proxyEstimatedUpdates(TimePoint now, Status& status)
+{
+    auto updates = JsonValue::makeArray();
+    const auto day = core::dayKeyOf(core::localStampOf(now));
+    // 仅重算采样当日，跨日保留前一日已发送的历史，不发送虚假的清除。
+    if (proxyEstimateDay_ != day) { proxyEstimateGroups_.clear(); proxyEstimateDay_ = day; }
+    const auto rows = deps_.store.usage().appRange({}, day, day, status);
+    if (!status) return updates;
+    const auto records = proxyEstimatedRecords(rows, status);
+    if (!status) return updates;
+    std::map<std::string, JsonValue> groups;
+    for (const auto& row : records.items())
+    {
+        auto identity = JsonValue::makeArray();
+        identity.push(JsonValue::makeString(row.stringOr("networkId")));
+        identity.push(JsonValue::makeString(day));
+        identity.push(JsonValue::makeString(folded(row.stringOr("proxyAppId"))));
+        const auto key = identity.dump();
+        auto [entry, inserted] = groups.try_emplace(key, JsonValue::makeObject());
+        if (inserted)
+        {
+            entry->second.set("networkId", JsonValue::makeString(row.stringOr("networkId")));
+            entry->second.set("date", JsonValue::makeString(day));
+            entry->second.set("proxyAppId", JsonValue::makeString(row.stringOr("proxyAppId")));
+            entry->second.set("records", JsonValue::makeArray());
+        }
+        auto values = *entry->second.find("records");
+        values.push(row);
+        entry->second.set("records", std::move(values));
+    }
+    for (const auto& [key, group] : groups)
+    {
+        const auto old = proxyEstimateGroups_.find(key);
+        if (old == proxyEstimateGroups_.end() || old->second.dump() != group.dump()) updates.push(group);
+    }
+    for (const auto& [key, old] : proxyEstimateGroups_)
+        if (!groups.count(key))
+        {
+            auto removed = old;
+            removed.set("records", JsonValue::makeArray());
+            updates.push(std::move(removed));
+        }
+    proxyEstimateGroups_ = std::move(groups);
+    return updates;
 }
 
 JsonValue BackendService::proxyEstimatedRecords(const std::vector<storage::AppUsageRow>& rows, Status& status) const

@@ -252,3 +252,56 @@ test('live proxy discovery updates without reloading history or changing byte to
     assert.deepEqual(client.snapshot.proxy.clients,[]);
     client.stop();
 });
+
+test('live 和 appUsage 替换受影响的累计估算组，支持撤销且不重载历史', async t => {
+ const original=globalThis.window;t.after(()=>{globalThis.window=original;});
+ let receive;const calls=[];
+ const row=(networkId,date,proxyAppId,appId,rxBytes)=>({networkId,date,proxyAppId,appId,name:appId,rxBytes,txBytes:'0',estimated:true});
+ const old=row('home','2026-10-02','C:\\Proxy.exe','old','100');
+ const unrelated=[row('office',old.date,old.proxyAppId,'other','20'),row('home','2026-10-01',old.proxyAppId,'yesterday','30'),row('home',old.date,'D:\\Proxy.exe','separate','40')];
+ globalThis.window={desktop:{backend:{request:async method=>{calls.push(method);return {ok:true,result:method==='snapshot'?{proxyEstimatedRecords:[old,...unrelated]}:{}};},onEvent:handler=>{receive=handler;return()=>{};}}}};
+ let notified;
+ const client=createDataClient({onLive:()=>{notified=structuredClone(client.snapshot.proxyEstimatedRecords);}});await client.start();
+ const next=row('home',old.date,'c:\\PROXY.EXE','new','9007199254740995');
+ const update={networkId:next.networkId,date:next.date,proxyAppId:next.proxyAppId,records:[next]};
+ receive({event:'live',proxyEstimatedUpdates:[update]});
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,[...unrelated,next]);
+ assert.deepEqual(notified,client.snapshot.proxyEstimatedRecords);
+ receive({event:'live',proxyEstimatedUpdates:[update]});
+ assert.equal(client.snapshot.proxyEstimatedRecords.length,4);
+ receive({event:'live',proxy:{clients:[]}});
+ assert.equal(client.snapshot.proxyEstimatedRecords.at(-1).rxBytes,'9007199254740995');
+ receive({event:'appUsage',records:[],proxyEstimatedUpdates:[{...update,records:[]}]});
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,unrelated);
+ receive({event:'live',proxyEstimatedUpdates:[update]});
+ await client.reload();
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,[old,...unrelated]);
+ receive({event:'live',proxyEstimatedUpdates:[update]});
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,[...unrelated,next]);
+ await client.clearRecords();
+ receive({event:'live',proxyEstimatedUpdates:[update]});
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,[next]);
+ assert.deepEqual(calls,['hello','snapshot','snapshot','clearUsage']);
+ client.stop();
+});
+
+test('应用累计和估算异步到达时守恒，新的客户端分配在 live 后显示', async t => {
+ const original=globalThis.window;t.after(()=>{globalThis.window=original;});let receive;
+ const native={date:'2026-10-02',networkId:'home',appId:'C:\\Proxy.exe',name:'Proxy',rxBytes:'100',txBytes:'10'};
+ const estimate={...native,proxyAppId:native.appId,appId:'client-a',name:'Client A',estimated:true};
+ globalThis.window={desktop:{backend:{request:async method=>({ok:true,result:method==='snapshot'?{appRecords:[{...native}],proxyEstimatedRecords:[estimate]}:{}}),onEvent:handler=>{receive=handler;return()=>{};}}}};
+ const {proxyUsageRecords}=await import('../renderer/data/proxy.js');
+ const client=createDataClient();await client.start();
+ const display=()=>proxyUsageRecords(client.snapshot.appRecords,client.snapshot.proxyEstimatedRecords,true);
+ receive({event:'appUsage',records:[{...native,rxBytes:'100',txBytes:'10'}]});
+ assert.equal(display().length,1);assert.equal(display()[0].appId,native.appId);
+ assert.equal(display()[0].rxBytes,'200');
+ const records=[{...estimate,rxBytes:'120',txBytes:'12'},{...estimate,appId:'client-b',name:'Client B',rxBytes:'80',txBytes:'8'}];
+ receive({event:'live',proxyEstimatedUpdates:[{networkId:native.networkId,date:native.date,proxyAppId:native.appId,records}]});
+ assert.deepEqual(display().map(row=>row.appId),['client-a','client-b']);
+ assert.equal(display().reduce((sum,row)=>sum+BigInt(row.rxBytes),0n),200n);
+ assert.equal(display().reduce((sum,row)=>sum+BigInt(row.txBytes),0n),20n);
+ records[0].rxBytes='999';
+ assert.equal(client.snapshot.proxyEstimatedRecords[0].rxBytes,'120');
+ client.stop();
+});

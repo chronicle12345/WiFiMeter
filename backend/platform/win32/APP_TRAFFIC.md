@@ -19,7 +19,7 @@ snapshot.appProcesses 和 live.appProcesses 的回环行：
   "name": "client.exe",
   "processId": 123,
   "instanceId": "123:processCreationTime:socketGeneration",
-  "connectionKey": "9:127.0.0.1:50001>9:127.0.0.1:7897",
+  "connectionKey": "9:127.0.0.1:50001>9:127.0.0.1:8080",
   "source": "WindowsTcpEStats",
   "scope": "loopback",
   "measurementAvailable": true,
@@ -60,18 +60,6 @@ EStats 启用需要管理员令牌。采样模块不触发 UAC；已有 helper �
 - windows_app_capture_smoke_test.py：普通权限验证预热握手、连接保持及无非回环地址时明确失败。
 - windows_estats_smoke_test：管理员环境下创建独立 IPv4/IPv6 本地连接，检查客户端 tx=65536、rx=32768 字节和进程身份；非管理员返回 77，由 ctest 标记 skipped，不触发 UAC，不访问数据库。
 
-本次 build/windows 全量构建成功；普通权限 ctest 共 33 项，32 项通过，windows_estats_smoke_test 因无管理员令牌跳过。另以 CREATE_NO_WINDOW 启动真实 wifimeter-app-capture --stdio，确认返回 permission / error 5。
-
-随后父任务通过明确授权的 UAC 管理员隐藏 runner 单独运行 windows_estats_smoke_test。日志 artifacts/estats-admin-test.log 记录 IPv4 与 IPv6 客户端均为 rx=32768、tx=65536，8 项检查、0 项失败；父任务确认退出码为 0。至此已验证本机管理员环境下的真实 EStats 回环字节和普通权限下的真实 helper 拒绝路径。该管理员测试是独立补充验收，不修改此前普通权限 ctest 的跳过记录。
-
-用户 7897 代理的现有真实传输链路已完成授权隐藏采样。日志 artifacts/proxy-estats-native.log 记录 4 次、间隔 5 秒的快照：collector 均为 running，source 均为 WindowsTcpEStats，measuredClients 均为 4，sampledConnections 为 14–15，loopbackRows 为 50–54。rxBytes 依次为 0、140644、198485、352699，txBytes 依次为 0、31、14612、19808；父任务确认退出码为 0。该结果验证已有真实代理客户端的字节随传输增加，未将连接数换算为字节。日志中的数值为当轮客户端实测累计汇总，不代表当日总量或完整网卡流量。
-
-父任务另报告 renderer 的 proxy/live 聚合测试 8 项全部通过。此结果与原生采样验收分别记录：原生日志验证字节来源与客户端匹配，renderer 测试验证实时数据的消费与聚合。本轮仅更新文档，没有重复构建或运行测试。短连接、关闭前末尾字节和回环 UDP/QUIC 等限制仍按上文保留。
-
-复测时可由已授权管理员 runner 隐藏启动后端并指定临时数据库，保存 ports=[7897]、启用应用采集，等待现有连接自然产生流量，无需制造对外请求。每个后端会创建并校验自己拥有的 helper 管道，不能把另一后端已连接的 helper 直接复用到本次临时数据库会话。
-
-后续 CI 合约修复新增了 helper 原生 source 字段，并重写 windows_app_capture_smoke.py 的两组验证。普通权限握手自测 2 项通过，--require-native 在当前非管理员令牌下按约定返回 1。父任务随后通过 RunAs 请求运行 hybrid-native.ps1，系统返回操作已被用户取消；脚本未执行，也未生成本次 hybrid 日志。因此新版完整 hybrid CI 脚本尚未完成本机管理员验收，不能据此宣称非回环 ETW 与回环 EStats 的整组原生验证已通过。此前管理员 EStats IPv4/IPv6 与 7897 真实链路的成功记录仍然有效，不能代替新版 hybrid 验收。本次取消后不再触发授权。
-
 
 ## 2026-10-02 采样时序修复
 
@@ -85,4 +73,23 @@ helper 报告新增两个可选 JSON 整数字段：sampledAtMs 是采集端 Get
 
 回归先复现后修复：1250 毫秒内增加 1000 字节，原 loopback 路径先得到 500 B/s，重复读取变成 0，下一轮变成 1111；修复后均按源采样时间得到 800 B/s。服务 Wi-Fi 路径对应得到 500、0、1000，修复后为 800、800、800，且数据库累计仍为 2000 字节。测试另覆盖新零增量、过期、乱序、generation 重启及 2/5/10 秒设置。
 
-本次只读本机验证调用 GetPerTcpConnectionEStats，不调用 SetPerTcpConnectionEStats，不触发 UAC。64 条已启用的 IPv4 回环连接读取成功，无 API 错误。相隔 2 秒，verge-mihomo.exe（PID 20672）的同连接计数增加 rx=13440、tx=729 字节，另一个客户端 PID 7080 增加 rx=554、tx=13286 字节。这个观察确认当前连接有实际传输，不代表所有连接持续繁忙，也不能替代新版 helper 在授权环境下的传输冒烟测试。
+
+## 2026-10-02 代理身份补全与历史估算事件
+
+普通权限后端读取 GetExtendedTcpTable 可以确认代理端 PID，但 QueryFullProcessImageName 可能失败。仅配置端口且 processNames 为空时，原实现只生成 detectedClients，不保存 proxy_apps 或 proxy_observations；历史估算没有路径或配置名称可以匹配，因此为空。该情况会导致已有代理原生记录无法匹配客户端估算。
+
+现在 detectedClients 在后端内部保留 proxyProcessId。服务只使用本轮新到达的 helper EStats 快照补全：必须有非空 generation 和递增 loopbackSampledAtMs，同一份快照同时包含客户端完整四元组及代理端反向四元组，代理 PID 与 TCP 查询结果一致。进程实例带创建时间，同 PID 出现不同创建时间或路径、缺少客户端端点、路径未知、来源不符、重复或乱序快照时均不补全。不维护跨轮 PID 到路径缓存。新 generation 重新验证本轮证据，不沿用旧连接身份。
+
+通过验证后，将观测当日的真实代理路径和去重连接键保存到现有表；不补写过去日期的客户端权重，不修改 app_usage。缺少当日观测的旧记录只允许形成 proxy/unattributed，不将今天的客户端连接用于过去日期。历史估算仍按连接数量分配，并非逐客户端实测历史。
+
+live 新增可选字段 proxyEstimatedUpdates，格式如下：
+
+```json
+{"proxyEstimatedUpdates":[{"networkId":"network-key","date":"2026-10-02","proxyAppId":"C:\\proxy.exe","records":[]}]}
+```
+
+每组 records 是该网络、日期和代理完整路径的累计估算行，字段与 snapshot.proxyEstimatedRecords 相同。消费者整组替换，不能按增量加法处理；空数组清除对应组。后端只重算采样当日应用记录，并与上次发送组比较，原生累计或观测权重变化时发送变化组。跨日不清除前一日历史。首次采样可发送全部当日估算组，完整历史仍由 snapshot 获取。路径比较忽略大小写，不用文件名代替完整路径。前端必须分别校验 RX、TX 守恒后替换代理原生行，不能将估算行与同一代理原始行同时累计。
+
+上传方向核查：GetIfEntry2 的 InOctets 对应 RX，OutOctets 对应 TX；ETW 10/26 为发送、11/27 为接收，TCP 14/30 重传计入发送，连接及复制事件不计入。网卡 core 首次读取只建基线，后续记录差值；应用记录、回环实时数据与代理估算不加入网卡总量。
+
+回环只用于实时显示，AppUsageAccumulator 不把 loopback 映射成 Wi-Fi networkId。长期不双计方案应保留网卡及代理原生账本，将已验证的客户端回环字节另存为独立范围的历史；若用于外网归属，应按同一时间窗口和方向，将代理外网额度分配给客户端，保留未归属差额，并标为估算，不能直接相加。本轮未扩展数据库或改变这一合同。

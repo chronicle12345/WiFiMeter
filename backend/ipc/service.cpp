@@ -306,6 +306,9 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
     if (!appEnabled_ || deps_.applications == nullptr)
         return;
     const auto report = deps_.applications->read();
+    proxyIdentityFresh_ = !report.generation.empty() && report.loopbackSampledAtMs > 0 &&
+        (report.generation != proxyIdentityReport_.generation || report.loopbackSampledAtMs > proxyIdentityReport_.loopbackSampledAtMs);
+    if (proxyIdentityFresh_) proxyIdentityReport_ = report;
     appState_ = report.state;
     appDetail_ = report.detail;
     const auto staleAfter = std::chrono::seconds(std::max(5, intervalSeconds() * 2));
@@ -1461,7 +1464,12 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     }
 
     events.names.push_back(event::kLive);
-    events.items.push_back(buildLive());
+    auto live = buildLive();
+    Status estimateStatus;
+    auto estimateUpdates = proxyEstimatedUpdates(now, estimateStatus);
+    if (!estimateStatus) events.error = Error{errorCode::kStorageFailure, estimateStatus.message};
+    else if (estimateUpdates.size()) live.set("proxyEstimatedUpdates", std::move(estimateUpdates));
+    events.items.push_back(std::move(live));
 
     evaluateQuotas(now, events);
     return events;

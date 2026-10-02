@@ -42,3 +42,15 @@ test('proxy settings configure only; clients and aligned live rates belong to ap
  assert.equal((html.match(/<th class="right">/g)||[]).length,3);
  assert.equal((html.match(/<td class="right num">/g)||[]).length,3);
 });
+
+test('估算替换按 Windows 完整路径匹配，按网络日期隔离，过期或孤立估算不改变总量', () => {
+ const source = [raw('home','2026-10-02','C:\\Proxy\\Clash.exe','9007199254740995'),raw('office','2026-10-02','C:\\Proxy\\Clash.exe','10'),raw('home','2026-10-01','C:\\Proxy\\Clash.exe','20'),raw('home','2026-10-02','D:\\Proxy\\Clash.exe','30')];
+ const estimate = {...raw('home','2026-10-02','C:\\Client.exe','9007199254740995'),proxyAppId:'c:\\proxy\\CLASH.EXE',estimated:true};
+ const result = proxyUsageRecords(source,[estimate],true);
+ assert.equal(result.length,4);
+ assert.ok(result.includes(estimate));
+ assert.equal(result.reduce((sum,row)=>sum+BigInt(row.rxBytes),0n),9007199254741055n);
+ for(const patch of [{rxBytes:'1'},{txBytes:'1'},{networkId:'other'},{date:'2026-10-03'},{proxyAppId:'E:\\Proxy\\Clash.exe'}]) {
+  assert.deepEqual(proxyUsageRecords(source,[{...estimate,...patch}],true),source);
+ }
+});

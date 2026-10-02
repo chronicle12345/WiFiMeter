@@ -1,12 +1,40 @@
 import { t } from '../i18n.js';
 
-// 只替换有估算结果的代理日期，不推断其他日期或网络的代理用量。
+// Windows 应用按完整路径忽略大小写匹配；网络和日期保持精确匹配。
+export const proxyUsageKey = (row, appId = row.proxyAppId) =>
+    JSON.stringify([row.networkId, row.date, appId.toLowerCase()]);
+
+// 每组估算必须覆盖原生累计收发字节，事件先后到达时暂时保留原生行。
 export function proxyUsageRecords(native, estimates = [], enabled = false) {
     if (!enabled) return native;
-    const rows = estimates.filter(row => row.estimated === true && row.proxyAppId);
-    const key = (row, appId) => JSON.stringify([row.networkId, row.date, appId]);
-    const replaced = new Set(rows.map(row => key(row, row.proxyAppId)));
-    return [...native.filter(row => !replaced.has(key(row, row.appId))), ...rows];
+    const totals = new Map();
+    for (const row of native) {
+        const key = proxyUsageKey(row, row.appId);
+        const total = totals.get(key) || { rx: 0n, tx: 0n };
+        total.rx += BigInt(row.rxBytes);
+        total.tx += BigInt(row.txBytes);
+        totals.set(key, total);
+    }
+    const groups = new Map();
+    for (const row of estimates) {
+        if (row.estimated !== true || !row.proxyAppId) continue;
+        const key = proxyUsageKey(row);
+        const group = groups.get(key) || { rx: 0n, tx: 0n, rows: [] };
+        group.rx += BigInt(row.rxBytes);
+        group.tx += BigInt(row.txBytes);
+        group.rows.push(row);
+        groups.set(key, group);
+    }
+    const replaced = new Set();
+    const rows = [];
+    for (const [key, group] of groups) {
+        const total = totals.get(key);
+        if (total && total.rx === group.rx && total.tx === group.tx) {
+            replaced.add(key);
+            rows.push(...group.rows);
+        }
+    }
+    return [...native.filter(row => !replaced.has(proxyUsageKey(row, row.appId))), ...rows];
 }
 
 export function proxyConfigPatch(values) {

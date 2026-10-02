@@ -153,6 +153,101 @@ void loopbackBytesAreLiveButNotWifiUsage()
     WIFIMETER_CHECK(carriesProxy);
     WIFIMETER_CHECK_EQ(h.count("app_usage"),std::int64_t(0));
 }
+void helperResolvesOnlyMatchingCurrentConnections()
+{
+    Harness h;
+    const std::string clientKey="9:127.0.0.1:50001>9:127.0.0.1:7897";
+    const std::string serverKey="9:127.0.0.1:7897>9:127.0.0.1:50001";
+    h.proxyReport.available=true;
+    h.proxyReport.status=platform::ProxySampleStatus::ready;
+    h.proxyReport.proxies={{10,{}, {}}};
+    h.proxyReport.detectedClients={{"client.exe","Client","Port 7897",1,{clientKey},10}};
+    configure(h); enable(h);
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=1000;
+    h.apps.report.samples={
+        {"loopback","client.exe","Client","12:100:1",12,0,0,true,clientKey,"WindowsTcpEStats"},
+        {"loopback","proxy.exe","Proxy","10:200:2",10,0,0,true,serverKey,"WindowsTcpEStats"}};
+    const auto start=utcTime(2026,10,1,0,0,0);
+    h.service->collectOnce(start);
+    WIFIMETER_CHECK_EQ(h.count("proxy_apps"),std::int64_t(1));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(1));
+    h.raw("net-a","2026-09-30","proxy.exe",17,19);
+    const auto snapshot=h.call("snapshot",json(R"({"from":"2026-09-30","to":"2026-09-30"})"));
+    const auto* estimates=snapshot.result.find("proxyEstimatedRecords");
+    WIFIMETER_CHECK(estimates && estimates->size()==1 && estimates->at(0).boolOr("unattributed"));
+    WIFIMETER_CHECK(h.store->database().exec("DELETE FROM proxy_apps; DELETE FROM proxy_observations;").ok);
+    h.service->collectOnce(start+std::chrono::seconds(5));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=7000;
+    h.apps.report.samples[1].processId=99;
+    h.apps.report.samples[1].instanceId="99:200:2";
+    h.service->collectOnce(start+std::chrono::seconds(10));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=12000;
+    h.apps.report.samples[1].processId=10;
+    h.apps.report.samples[1].instanceId="10:201:3";
+    h.apps.report.samples.push_back(h.apps.report.samples[1]);
+    h.apps.report.samples.back().instanceId="10:200:2";
+    h.service->collectOnce(start+std::chrono::seconds(15));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    h.apps.report.samples.pop_back();
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=17000;
+    h.apps.report.samples[0].connectionKey="other-connection";
+    h.service->collectOnce(start+std::chrono::seconds(20));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    h.apps.report.samples[0].connectionKey=clientKey;
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=16000;
+    h.service->collectOnce(start+std::chrono::seconds(25));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=16500;
+    h.service->collectOnce(start+std::chrono::seconds(30));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(0));
+    // 新 generation 可以从较小的单调时钟开始，但必须重新提供双向身份。
+    h.apps.report.generation="new-helper";
+    h.apps.report.sampledAtMs=h.apps.report.loopbackSampledAtMs=1000;
+    h.service->collectOnce(start+std::chrono::seconds(35));
+    WIFIMETER_CHECK_EQ(h.count("proxy_observations"),std::int64_t(1));
+}
+void estimatedUpdatesReplaceOnlyChangedDayNetworkProxyGroups()
+{
+    Harness h;
+    configure(h); enable(h); h.proxyReport=observed();
+    const auto start=utcTime(2026,10,1,0,0,0);
+    h.raw("net-a","2026-10-01","proxy.exe",101,11);
+    h.raw("net-b","2026-10-01","proxy.exe",30,60);
+    h.raw("net-a","2026-09-30","proxy.exe",900,800);
+    const auto updates = [](const ipc::BackendService::Events& events) {
+        auto result=JsonValue::makeArray();
+        for (const auto& item : events.items)
+            if (const auto* groups=item.find("proxyEstimatedUpdates"))
+                for (const auto& group : groups->items()) result.push(group);
+        return result;
+    };
+    const auto first=updates(h.service->collectOnce(start));
+    WIFIMETER_CHECK_EQ(first.size(),std::size_t(2));
+    for (const auto& group : first.items())
+    {
+        WIFIMETER_CHECK_EQ(group.stringOr("date"),std::string("2026-10-01"));
+        std::uint64_t rx=0,tx=0;
+        for (const auto& row : group.find("records")->items())
+        { rx+=std::stoull(row.stringOr("rxBytes")); tx+=std::stoull(row.stringOr("txBytes")); }
+        WIFIMETER_CHECK_EQ(rx,group.stringOr("networkId")=="net-a" ? std::uint64_t(101) : std::uint64_t(30));
+        WIFIMETER_CHECK_EQ(tx,group.stringOr("networkId")=="net-a" ? std::uint64_t(11) : std::uint64_t(60));
+    }
+    WIFIMETER_CHECK_EQ(updates(h.service->collectOnce(start+std::chrono::seconds(1))).size(),std::size_t(0));
+    h.raw("net-a","2026-10-01","proxy.exe",9,19);
+    const auto changed=updates(h.service->collectOnce(start+std::chrono::seconds(2)));
+    WIFIMETER_CHECK_EQ(changed.size(),std::size_t(1));
+    if (changed.size()) WIFIMETER_CHECK_EQ(changed.at(0).stringOr("networkId"),std::string("net-a"));
+    h.proxyReport.observations.push_back({"proxy.exe","Proxy","new.exe","New",1,{"new-key"}});
+    WIFIMETER_CHECK_EQ(updates(h.service->collectOnce(start+std::chrono::seconds(5))).size(),std::size_t(2));
+    WIFIMETER_CHECK(h.store->database().exec("DELETE FROM app_usage WHERE network_key='net-a' AND day='2026-10-01';").ok);
+    const auto removed=updates(h.service->collectOnce(start+std::chrono::seconds(6)));
+    WIFIMETER_CHECK_EQ(removed.size(),std::size_t(1));
+    if (removed.size()) WIFIMETER_CHECK_EQ(removed.at(0).find("records")->size(),std::size_t(0));
+    const auto nextDay=updates(h.service->collectOnce(start+std::chrono::hours(24)));
+    WIFIMETER_CHECK_EQ(nextDay.size(),std::size_t(0));
+}
 void samplesAtMostEveryFiveSecondsAndDeduplicatesAcrossRestarts()
 {
     Harness harness;
@@ -569,6 +664,8 @@ int main()
 {
     test::useTimeZone("UTC");
     loopbackBytesAreLiveButNotWifiUsage();
+    helperResolvesOnlyMatchingCurrentConnections();
+    estimatedUpdatesReplaceOnlyChangedDayNetworkProxyGroups();
     persistsProxyConfig();
     samplesAtMostEveryFiveSecondsAndDeduplicatesAcrossRestarts();
     discoversClientsOnSaveWithoutStartingByteCollection();

@@ -293,6 +293,7 @@ ProxyClientReport proxyClientsFromTables(const ProxyOptions& options,
                 if (detectedKeys[key].insert(proxyConnectionKey(row)).second)
                 {
                     auto& found = detected[key];
+                    found.proxyProcessId = pid;
                     found.appId = client->second->appId;
                     found.name = client->second->name.empty() ? fileName(found.appId) : client->second->name;
                     found.proxyName = "端口 " + std::to_string(row.remotePort) + "（路径不可读）";

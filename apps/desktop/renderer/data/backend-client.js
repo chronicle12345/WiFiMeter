@@ -1,4 +1,5 @@
 import { appendCoverageGaps } from './coverage.js';
+import { proxyUsageKey } from './proxy.js';
 import { t } from '../i18n.js';
 // 页面数据客户端：把后端协议包装成 app.js 需要的形状。
 //
@@ -95,11 +96,23 @@ export function createDataClient(handlers = {}) {
         }
     }
 
+    // live/appUsage 只携带受影响组的完整累计值；空 records 表示撤销该组。
+    function applyProxyEstimatedUpdates(updates) {
+        if (!updates?.length) return;
+        const groups = new Map(updates.map(update => [proxyUsageKey(update), update.records]));
+        snapshot.proxyEstimatedRecords = snapshot.proxyEstimatedRecords
+            .filter(row => !groups.has(proxyUsageKey(row)));
+        for (const records of groups.values()) {
+            snapshot.proxyEstimatedRecords.push(...records.map(row => ({ ...row })));
+        }
+    }
+
     function subscribe() {
         if (state.unsubscribe || !state.available) return;
         state.unsubscribe = window.desktop.backend.onEvent(message => {
             if (message.totalQuota) snapshot.totalQuota = message.totalQuota;
             if (message.event === 'live') {
+                applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
                 snapshot.live = payloadOf(message);
                 snapshot.appCollection = message.appCollection ?? snapshot.appCollection;
                 snapshot.proxy = message.proxy ?? snapshot.proxy;
@@ -121,6 +134,7 @@ export function createDataClient(handlers = {}) {
                     row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes)).toString();
                     row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes)).toString();
                 }
+                applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
                 appendCoverageGaps(snapshot.appGaps, message.gaps ?? []);
                 (handlers.onAppUsage ?? handlers.onUsage)?.(message);
                 return;

@@ -98,6 +98,7 @@ private:
     support::JsonValue proxyJson(storage::Status& status) const;
     support::JsonValue proxyEstimatedRecords(const std::vector<storage::AppUsageRow>& rows, storage::Status& status) const;
     void collectProxyClients(core::TimePoint now);
+    support::JsonValue proxyEstimatedUpdates(core::TimePoint now, storage::Status& status);
     storage::Status pruneProxyObservations(core::TimePoint now) const;
     storage::Status clearProxyObservations() const;
     Response updateTotalQuota(const support::JsonValue& params, core::TimePoint now);
@@ -124,6 +125,10 @@ private:
     mutable bool proxyStorageReady_ = false;
     std::optional<core::TimePoint> proxySampleAt_;
     platform::ProxyClientReport proxyReport_;
+    platform::AppTrafficReport proxyIdentityReport_;
+    bool proxyIdentityFresh_ = false;
+    std::string proxyEstimateDay_;
+    std::map<std::string, support::JsonValue> proxyEstimateGroups_;
     bool proxyReportCurrent_ = false;
     platform::AppCollectorState appState_ = platform::AppCollectorState::disabled;
     std::string appDetail_;

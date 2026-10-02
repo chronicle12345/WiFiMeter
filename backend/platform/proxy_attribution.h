@@ -33,7 +33,7 @@ struct ProxyProcess
 
 enum class ProxySampleStatus { disabled, ready, unsupported, failed };
 
-// 已确认 TCP 属主，但代理路径不可读；仅展示连接，不参与持久化或字节归属。
+// 已确认 TCP 属主，但代理路径不可读；补全同轮 helper 双向连接身份前，不参与持久化或字节归属。
 struct ProxyDetectedClient
 {
     std::string appId;
@@ -41,6 +41,7 @@ struct ProxyDetectedClient
     std::string proxyName;
     std::uint64_t connections = 0;
     std::vector<std::string> connectionKeys{};
+    std::uint32_t proxyProcessId = 0;  // TCP 表确认的代理端 PID，仅作为同轮连接匹配条件。
 };
 
 struct ProxyClientReport
