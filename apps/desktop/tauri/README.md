@@ -50,6 +50,19 @@ Core tests can run on Linux without a Linux Tauri shell. Windows-only behavior,
 WebView2 rendering, installation and memory/size measurements must be verified on
 Windows before switching the release entry point.
 
+The Windows WebView2 smoke test uses the existing C++ network fixtures and a
+temporary profile. It checks navigation, collection controls, exact counters and
+preference events, then closes the native window and waits for a clean exit:
+
+```powershell
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/debug/WiFiMeter.exe').Path
+$env:WIFIMETER_BACKEND = (Resolve-Path 'build/windows/app/wifimeter-backend.exe').Path
+npm --prefix apps/desktop run test:tauri:windows
+```
+
+Run this test with Windows Node.js. CDP is enabled only in that test process; the
+normal application does not open a debugging port.
+
 API references: [Tauri commands](https://v2.tauri.app/develop/calling-rust/),
 [events](https://v2.tauri.app/develop/calling-frontend/),
 [Windows prerequisites](https://v2.tauri.app/start/prerequisites/).
