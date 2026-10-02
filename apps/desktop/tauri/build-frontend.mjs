@@ -17,7 +17,7 @@ export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri
     await cp(path.join(appDirectory, 'renderer'), path.join(output, 'renderer'), { recursive: true });
     for (const file of [
         ...vendorFiles, ...miniFiles.map(file => `electron/mini/${file}`),
-        'tauri/bridge.js', 'tauri/bootstrap.js', 'assets/icon.png'
+        'tauri/bridge.js', 'tauri/bootstrap.js', 'tauri/close-guard.js', 'assets/icon.png'
     ]) {
         await mkdir(path.dirname(path.join(output, file)), { recursive: true });
         await cp(path.join(appDirectory, file), path.join(output, file));

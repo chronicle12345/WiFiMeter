@@ -1,11 +1,13 @@
 // 在真正的 Windows WebView2 中检查现有页面 → Tauri IPC → C++ → SQLite。
 // 只给测试进程启用 CDP，使用独立配置目录及现有网卡夹具。
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { chromium, expect } from '@playwright/test';
 import { createHarness } from '../tests/support/backend-harness.mjs';
 
@@ -26,6 +28,10 @@ const exited = once(child, 'exit');
 let log = '', browser, page;
 child.stdout.on('data', chunk => { log += chunk; });
 child.stderr.on('data', chunk => { log += chunk; });
+async function native(action, ...args) {
+    const { stdout } = await promisify(execFile)('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('./test-window.ps1', import.meta.url)), '-ProcessId', String(child.pid), '-Action', action, ...args], { timeout: 10000, windowsHide: true });
+    return stdout.trim() ? JSON.parse(stdout) : null;
+}
 try {
     const endpoint = `http://127.0.0.1:${port}`;
     const deadline = Date.now() + 40000;
@@ -41,6 +47,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.waitForFunction(() => Boolean(window.desktop));
+    console.log('WebView2 bridge ready');
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');
     await expect(page.locator('#collector')).toContainText('正在采集');
@@ -65,14 +72,54 @@ try {
         return event;
     });
     assert.equal(changed.theme, 'dark');
+    console.log('Pages and backend passed; checking native close choices');
+    await page.evaluate(() => {
+        window.testVisibility = [];
+        window.desktop.onVisibility(value => window.testVisibility.push(value));
+        return window.desktop.windowPreferences.update({ closeAction: 'ask' });
+    });
+    await native('close');
+    await expect.poll(async () => (await native('dialog')).found).toBe(true);
+    assert.equal((await native('dialog')).focused, '取消');
+    await native('click', '-ButtonName', '取消');
+    await expect.poll(async () => (await native('dialog')).found).toBe(false);
+    assert.equal(child.exitCode, null);
+    console.log('Native cancellation passed');
+    await native('close');
+    await expect.poll(async () => (await native('dialog')).found).toBe(true);
+    await native('click', '-ButtonName', '最小化到托盘', '-Remember');
+    await expect.poll(() => page.evaluate(async () => (await window.desktop.windowPreferences.read()).closeAction)).toBe('tray');
+    await expect.poll(() => page.evaluate(() => window.testVisibility.at(-1))).toBe(false);
+    console.log('Remembered tray choice passed');
+    const second = spawn(process.env.WIFIMETER_EXECUTABLE, [], { env: { ...process.env, ...harness.env }, stdio: 'ignore' });
+    await once(second, 'exit');
+    await expect.poll(() => page.evaluate(() => window.testVisibility.at(-1))).toBe(true);
+    console.log('Single-instance activation passed');
+    await page.evaluate(() => {
+        window.testDirtyHandler = event => event.preventDefault();
+        window.addEventListener('beforeunload', window.testDirtyHandler);
+        return window.desktop.windowPreferences.update({ closeAction: 'exit' });
+    });
+    await native('close');
+    await expect.poll(async () => (await native('dialog')).found).toBe(true);
+    assert.equal((await native('dialog')).focused, '取消 / Cancel');
+    await native('click', '-ButtonName', '取消 / Cancel');
+    await expect.poll(async () => (await native('dialog')).found).toBe(false);
+    assert.equal(child.exitCode, null);
+    await page.evaluate(() => window.removeEventListener('beforeunload', window.testDirtyHandler));
     assert.deepEqual(errors, []);
     if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ path: process.env.WIFIMETER_SCREENSHOT });
-    console.log('PASS: Windows WebView2 pages, collection pause/resume, exact counters, legacy status and preference events');
+    console.log('PASS: Windows WebView2 pages, backend, preferences, native close dialogs, tray hiding, single-instance activation and unsaved-change cancellation');
+} catch (error) {
+    console.error('Smoke test failed:', error);
+    throw error;
 } finally {
     if (child.exitCode === null) {
+        const dialog = await native('dialog').catch(() => null);
+        if (dialog?.found) await native('click', '-ButtonName', dialog.focused === '取消 / Cancel' ? '取消 / Cancel' : '取消').catch(() => {});
+        await page?.evaluate(() => window.removeEventListener('beforeunload', window.testDirtyHandler)).catch(() => {});
         await page?.evaluate(() => window.desktop?.windowPreferences.update({ closeAction: 'exit' })).catch(() => {});
-        const close = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${child.pid}).CloseMainWindow() | Out-Null`], { stdio: 'ignore' });
-        await once(close, 'exit');
+        await native('close');
         const graceful = await Promise.race([exited.then(() => true), delay(30000, false, { ref: false })]);
         if (!graceful) {
             const cleanup = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });

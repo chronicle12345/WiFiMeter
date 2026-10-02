@@ -1,4 +1,5 @@
 import { createDesktopBridge } from './bridge.js';
+import { installCloseGuard } from './close-guard.js';
 
 const { core, event, window: windows } = window.__TAURI__;
 const bridge = await createDesktopBridge({ invoke: core.invoke, listen: event.listen });
@@ -13,6 +14,8 @@ if (location.pathname.endsWith('/electron/mini/index.html')) {
     });
     await import('../electron/mini/renderer.js');
 } else {
+    const removeCloseGuard = await installCloseGuard({ target: window, listen: event.listen, invoke: core.invoke });
+    window.addEventListener('unload', removeCloseGuard, { once: true });
     window.desktop = bridge.desktop;
     await import('../renderer/app.js');
 }

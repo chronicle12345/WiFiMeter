@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod close_check;
 pub mod collector;
 pub mod files;
 pub mod identity;
@@ -9,3 +10,5 @@ mod native_dialog;
 pub mod preferences;
 #[cfg(all(windows, feature = "desktop-shell"))]
 pub mod shell;
+#[cfg(all(windows, feature = "desktop-shell"))]
+mod tray;

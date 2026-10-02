@@ -8,12 +8,14 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: tray/close preferences, floating-window placement,
+the intermediate Tauri host: floating-window placement,
 autostart/notifications, application icons/control and updates still need
 integration. Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
 System login-item inheritance will be connected with autostart integration.
+Tray activation, close preferences, remembered choices and the renderer's existing
+unsaved-change checks are connected to the native window lifecycle.
 
 ## Development on Windows
 
@@ -52,7 +54,9 @@ Windows before switching the release entry point.
 
 The Windows WebView2 smoke test uses the existing C++ network fixtures and a
 temporary profile. It checks navigation, collection controls, exact counters and
-preference events, then closes the native window and waits for a clean exit:
+preference events, native close choices, tray hiding, single-instance activation
+and canceling an exit with unsaved changes. It then closes the native window and
+waits for a clean exit:
 
 ```powershell
 $env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/debug/WiFiMeter.exe').Path

@@ -1,8 +1,10 @@
 use crate::{
     backend::{Backend, BackendError},
+    close_check::CloseCheck,
     collector::Collector,
     files, identity, ipc_policy, native_dialog,
     preferences::Preferences,
+    tray,
 };
 use serde_json::{json, Value};
 use std::{
@@ -22,6 +24,11 @@ struct Desktop {
     last_live: Mutex<Option<Value>>,
     quitting: AtomicBool,
     closing: AtomicBool,
+    close_prompt: AtomicBool,
+    main_ready: AtomicBool,
+    close_check: CloseCheck,
+    settings: Mutex<Value>,
+    tray_lock: Mutex<()>,
 }
 
 fn trusted(window: &WebviewWindow, channel: Option<&str>) -> Result<(), String> {
@@ -35,13 +42,99 @@ fn trusted(window: &WebviewWindow, channel: Option<&str>) -> Result<(), String> 
     )
 }
 
-fn show_main(app: &tauri::AppHandle) {
+pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.emit("window:visibility", true);
     }
+}
+
+fn ensure_tray(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<Desktop>();
+    let _tray = state.tray_lock.lock().unwrap();
+    let language = state.settings.lock().unwrap()["language"]
+        .as_str()
+        .unwrap_or("zh-CN")
+        .to_string();
+    tray::ensure(app, &language).map_err(|error| error.to_string())
+}
+
+fn apply_runtime_settings(app: &tauri::AppHandle, settings: &Value) {
+    *app.state::<Desktop>().settings.lock().unwrap() = settings.clone();
+    if let Err(error) = ensure_tray(app) {
+        eprintln!("[tray] {error}");
+    }
+}
+
+fn close_main(window: WebviewWindow) {
+    let app = window.app_handle().clone();
+    let state = app.state::<Desktop>();
+    let result = (|| -> Result<(), String> {
+        let preferences = state.preferences.read();
+        let action = preferences["closeAction"].as_str().unwrap_or("tray");
+        let (action, remember) = if action == "ask" {
+            let Some(choice) = native_dialog::close_action(&window) else {
+                return Ok(());
+            };
+            choice
+        } else {
+            (action, false)
+        };
+        if action == "tray" {
+            ensure_tray(&app)?;
+            window.hide().map_err(|error| error.to_string())?;
+            let _ = window.emit("window:visibility", false);
+        }
+        if remember {
+            state
+                .preferences
+                .update(json!({"closeAction":action}))
+                .map_err(|error| error.to_string())?;
+            publish_preferences(&app)?;
+        }
+        if action == "exit" {
+            app.exit(0);
+        }
+        Ok(())
+    })();
+    state.close_prompt.store(false, Ordering::SeqCst);
+    if let Err(error) = result {
+        show_main(&app);
+        app.dialog()
+            .message(error)
+            .title("WiFiMeter")
+            .blocking_show();
+    }
+}
+
+fn can_quit(app: &tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<Desktop>();
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(true);
+    };
+    if !state.main_ready.load(Ordering::SeqCst) {
+        return Ok(true);
+    }
+    let (id, response) = state.close_check.begin();
+    let result = window
+        .emit("window:before-close", id)
+        .map_err(|error| error.to_string())
+        .and_then(|_| {
+            response
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|_| "窗口尚未完成保存检查，请稍后重试。".to_string())
+        });
+    state.close_check.cancel(id);
+    Ok(!result? || native_dialog::confirm_discard(&window))
+}
+
+#[tauri::command]
+fn desktop_close_reply(window: WebviewWindow, id: u64, dirty: bool) -> Result<(), String> {
+    trusted(&window, Some("window:close-reply"))?;
+    window.state::<Desktop>().close_check.reply(id, dirty);
+    Ok(())
 }
 
 fn publish_preferences(app: &tauri::AppHandle) -> Result<Value, String> {
@@ -73,7 +166,12 @@ async fn desktop_request(
                         .collector
                         .request(method, params, || native_dialog::confirm_resume(&window))
                     {
-                        Ok(result) => json!({"ok":true,"result":result}),
+                        Ok(result) => {
+                            if method == "updateSettings" && result["settings"].is_object() {
+                                apply_runtime_settings(&app, &result["settings"]);
+                            }
+                            json!({"ok":true,"result":result})
+                        }
                         Err(error) => json!({"ok":false,"error":error}),
                     },
                 )
@@ -185,6 +283,7 @@ fn desktop_ready(window: WebviewWindow) -> Result<(), String> {
         .emit("window-preferences:changed", state.preferences.read())
         .map_err(|error| error.to_string())?;
     if window.label() == "main" {
+        state.main_ready.store(true, Ordering::SeqCst);
         window
             .emit("window:visibility", window.is_visible().unwrap_or(false))
             .map_err(|error| error.to_string())?;
@@ -219,7 +318,7 @@ pub fn run() {
             show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![desktop_request, desktop_ready])
+        .invoke_handler(tauri::generate_handler![desktop_request, desktop_ready, desktop_close_reply])
         .setup(|app| {
             let override_directory = std::env::var_os("WIFIMETER_USER_DATA").map(PathBuf::from);
             let app_data = app.path().data_dir()?;
@@ -258,6 +357,11 @@ pub fn run() {
                 last_live: Mutex::new(None),
                 quitting: AtomicBool::new(false),
                 closing: AtomicBool::new(false),
+                close_prompt: AtomicBool::new(false),
+                main_ready: AtomicBool::new(false),
+                close_check: CloseCheck::default(),
+                settings: Mutex::new(json!({"language":"zh-CN"})),
+                tray_lock: Mutex::new(()),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)
@@ -269,10 +373,14 @@ pub fn run() {
                         && url.path() == "/renderer/index.html"
                 })
                 .build()?;
+            if let Err(error) = ensure_tray(app.handle()) { eprintln!("[tray] {error}"); }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let state = handle.state::<Desktop>();
                 let migration = state.collector.migration_status();
+                if let Ok(hello) = state.collector.request("hello", json!({}), || false) {
+                    apply_runtime_settings(&handle, &hello["settings"]);
+                }
                 if let Some(error) = migration["error"].as_str().filter(|error| !error.is_empty()) {
                     handle.dialog().message(format!("{error}\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。"))
                         .title("WiFiMeter data import / 数据导入").blocking_show();
@@ -284,8 +392,17 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 if !window.state::<Desktop>().quitting.load(Ordering::SeqCst) {
                     api.prevent_close();
-                    window.app_handle().exit(0);
+                    let state = window.state::<Desktop>();
+                    if window.label() == "main" && !state.close_prompt.swap(true, Ordering::SeqCst) {
+                        if let Some(window) = window.app_handle().get_webview_window("main") {
+                            tauri::async_runtime::spawn_blocking(move || close_main(window));
+                        }
+                    }
                 }
+            }
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)) {
+                let visible = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+                let _ = window.emit("window:visibility", visible);
             }
         })
         .build(tauri::generate_context!())
@@ -303,6 +420,17 @@ pub fn run() {
                 let app = app.clone();
                 tauri::async_runtime::spawn_blocking(move || {
                     let state = app.state::<Desktop>();
+                    match can_quit(&app) {
+                        Ok(true) => (),
+                        result => {
+                            state.closing.store(false, Ordering::SeqCst);
+                            if let Err(error) = result {
+                                show_main(&app);
+                                app.dialog().message(error).title("WiFiMeter").blocking_show();
+                            }
+                            return;
+                        }
+                    }
                     match state.collector.stop_gracefully(Duration::from_secs(30)) {
                         Ok(()) => {
                             state.quitting.store(true, Ordering::SeqCst);
