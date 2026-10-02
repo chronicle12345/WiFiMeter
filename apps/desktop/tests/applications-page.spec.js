@@ -76,8 +76,13 @@ test('独立应用页跨网络汇总、历史筛选及深链接',async()=>{
 });
 
 test('应用断网入口复用原生选择、阻止、解除及上传限速失败回读',async()=>{
-    test.skip(process.platform!=='win32','Native application control requires Windows');
     await openApplications();await page.locator('[data-action="application-control"]').click();
+    if(process.platform!=='win32'){
+        await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+        await expect(page.locator('[data-action="choose-program"], [data-operation], #uploadKBps')).toHaveCount(0);
+        expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'))).toEqual([]);
+        return;
+    }
     await page.locator('[data-action="choose-program"]').click();
     await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
     await page.locator('[data-operation="block"]').click();
@@ -226,9 +231,16 @@ test('measured proxy live rates appear without adding loopback bytes to history'
  await expect(page.locator('#proxyClientsRegion')).toContainText('6.0 KB/s');
  await expect(page.locator('#appTotal')).toHaveText(historyTotal);
  await page.locator('[data-action="select-live-app"]').click();await expect(page.locator('.application-summary')).toContainText('6.0 KB/s');
- await page.locator('#uploadKBps').fill('96');
+ if(process.platform==='win32')await page.locator('#uploadKBps').fill('96');
+ else{
+  await expect(page.locator('#uploadKBps')).toHaveCount(0);
+  await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+ }
  await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{appId:'C:\\Apps\\Browser.exe',name:'Browser',processId:42,networkId:'',scope:'loopback',rxPerSecond:'9000',txPerSecond:'1000',measurementAvailable:true}]});});
- await expect(page.locator('.application-summary')).toContainText('9.0 KB/s');await expect(page.locator('#uploadKBps')).toHaveValue('96');
+ await expect(page.locator('.application-summary')).toContainText('9.0 KB/s');
+ await expect(page.locator('#appTotal')).toHaveText(historyTotal);
+ if(process.platform==='win32')await expect(page.locator('#uploadKBps')).toHaveValue('96');
+ else await expect(page.locator('#uploadKBps')).toHaveCount(0);
 });
 
 test('proxy clients appear only on applications and live changes replace zero rates',async()=>{

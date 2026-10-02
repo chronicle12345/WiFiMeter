@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHarness } from './support/backend-harness.mjs';
 
-test('real executable logo updates only its avatar and preserves fallbacks', async () => {
+test('executable logo or nativeImage fixture updates only its avatar and preserves fallbacks', async () => {
     const profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-icons-'));
     const harness = await createHarness();
     const env = { ...process.env, WIFIMETER_BACKGROUND_TEST: '1', WIFIMETER_USER_DATA: profile, ...harness.env };
@@ -14,7 +14,13 @@ test('real executable logo updates only its avatar and preserves fallbacks', asy
         app = await electron.launch({ args: ['.'], env });
         const page = await app.firstWindow();
         await page.waitForLoadState('domcontentloaded');
-        const url = await app.evaluate(async ({ app }) => (await app.getFileIcon(process.execPath, { size: 'normal' })).toDataURL());
+        const url = await app.evaluate(async ({ app, nativeImage }) => {
+            // Linux 桌面环境未必提供可执行文件图标，用真实 PNG 验证异步解码。
+            const image = process.platform === 'linux'
+                ? nativeImage.createFromBitmap(Buffer.from([0x40, 0x80, 0xc0, 0xff]), { width: 1, height: 1 })
+                : await app.getFileIcon(process.execPath, { size: 'normal' });
+            return image.toDataURL();
+        });
         expect(url).toMatch(/^data:image\/png;base64,/);
         await page.evaluate(async url => {
             const { createAppIconLoader } = await import('./ui/app-icons.js');
@@ -75,6 +81,19 @@ test('application page resolves a known backend executable through the icon brid
    return window.desktop.backend.request('restore',{backup});
   },executable);expect(result.ok).toBe(true);
   await page.reload();await page.locator('.nav [data-page="apps"]').click();
+  const icon=await page.evaluate(appId=>window.desktop.appIcons.get({appId}),executable);
+  if(process.platform==='linux' && icon===null){
+   await expect(page.locator('.app-row .app-avatar')).toHaveText('E');
+   await expect(page.locator('.app-row .app-avatar img')).toHaveCount(0);
+   await page.locator('[data-action="select-app"]').click();
+   await expect(page.locator('#drawerTitle .app-avatar')).toHaveText('E');
+   await expect(page.locator('#drawerTitle .app-avatar img')).toHaveCount(0);
+   // 继续走真实 IPC 和后端路径查验，仅替换系统图标提取结果。
+   await app.evaluate(({app,nativeImage})=>{
+    app.getFileIcon=async()=>nativeImage.createFromBitmap(Buffer.from([0x40,0x80,0xc0,0xff]),{width:1,height:1});
+   });
+   await page.reload();
+  }else expect(icon).toMatch(/^data:image\/png;base64,/);
   await expect(page.locator('.app-row .app-avatar img')).toBeVisible();
   expect(await page.locator('.app-row .app-avatar img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await page.locator('[data-action="select-app"]').click();await expect(page.locator('#drawerTitle .app-avatar img')).toBeVisible();

@@ -7,6 +7,7 @@ import multiprocessing
 import os
 from pathlib import Path
 import queue
+import shutil
 import socket
 import subprocess
 import sys
@@ -16,6 +17,37 @@ import time
 
 def endpoint(address, port, scope=0):
     return (address, port, 0, scope) if ":" in address else (address, port)
+
+
+def connection_key(local, remote):
+    # 与 proxyConnectionKey 的地址长度、地址、端口编码一致。
+    return f"{len(local[0])}:{local[0]}:{local[1]}>{len(remote[0])}:{remote[0]}:{remote[1]}"
+
+
+def target_samples(report, pids, keys):
+    return [row for row in report["samples"] if row["processId"] in pids and
+            (keys is None or row.get("connectionKey") == keys[row["processId"]])]
+
+
+def capture_samples(report, pids, keys, source, loopback):
+    # 先检查 PID 的所有来源，避免端点筛选隐藏没有 connectionKey 的 ETW 重复行。
+    for row in target_samples(report, pids, None):
+        assert row.get("source") == source, ("错误来源或重复采样", row)
+    rows = target_samples(report, pids, keys)
+    for row in rows:
+        assert (row["interfaceId"] == "loopback") == loopback, row
+        assert row["active"] and row["appId"] != "unknown", row
+        if loopback:
+            assert row.get("connectionKey"), row
+    if loopback:
+        assert len({(row["processId"], row["connectionKey"]) for row in rows}) == len(rows), ("回环连接端点重复", rows)
+    return rows
+
+
+def assert_payload_bytes(rows, expected):
+    # DataBytesIn/Out 包含重传数据、不含 TCP 头；payload 仅是下界，保留原始计数。
+    # https://learn.microsoft.com/windows/win32/api/tcpestats/ns-tcpestats-tcp_estats_data_rod_v0
+    assert all(int(row["rxBytes"]) >= expected and int(row["txBytes"]) >= expected for row in rows), rows
 
 
 def receive(connection, size):
@@ -39,7 +71,7 @@ def server(family, address, scope, datagram, ready, connected, transmit, done, r
             listener.listen(1)
         ready.put(listener.getsockname()[1])
         if datagram:
-            connected.put(os.getpid())
+            connected.put((os.getpid(), None))
             assert transmit.wait(30), "未收到传输指令"
             payload, remote = listener.recvfrom(8192)
             assert len(payload) == 4096
@@ -50,7 +82,7 @@ def server(family, address, scope, datagram, ready, connected, transmit, done, r
             connection, _ = listener.accept()
             with connection:
                 connection.settimeout(30)
-                connected.put(os.getpid())
+                connected.put((os.getpid(), connection_key(connection.getsockname(), connection.getpeername())))
                 assert transmit.wait(30), "未收到传输指令"
                 payload = receive(connection, 65536)
                 connection.sendall(payload)
@@ -64,7 +96,7 @@ def client(family, address, scope, datagram, port, connected, transmit, done, re
         connection.settimeout(30)
         connection.bind(endpoint(address, 0, scope))
         connection.connect(endpoint(address, port, scope))
-        connected.put(os.getpid())
+        connected.put((os.getpid(), connection_key(connection.getsockname(), connection.getpeername())))
         assert transmit.wait(30), "未收到传输指令"
         payload = b"w" * (4096 if datagram else 65536)
         connection.sendall(payload)
@@ -78,7 +110,9 @@ def local_addresses():
     command = ("$ErrorActionPreference='Stop'; "
                "Get-NetIPAddress -AddressState Preferred | "
                "Select-Object IPAddress,InterfaceIndex | ConvertTo-Json -Compress")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+    # 使用 runner 已运行的 PowerShell 7，避免 ARM64 上另启旧版 Windows PowerShell。
+    powershell = shutil.which("pwsh") or "powershell.exe"
+    result = subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", command],
                             capture_output=True, text=True, encoding="utf-8", errors="replace",
                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=30, check=True)
     rows = json.loads(result.stdout.strip() or "[]")
@@ -154,18 +188,13 @@ def test_connection(context, helper, reports, generation, family, address, scope
         sending = context.Process(target=client, args=(family, address, scope, datagram, port, connected, transmit, done, release))
         sending.start()
         children.append(sending)
-        pids = {connected.get(timeout=15), connected.get(timeout=15)}
+        connections = dict(connected.get(timeout=15) for _ in range(2))
+        pids = set(connections)
+        keys = connections if loopback else None
         assert pids == {serving.pid, sending.pid}, (label, pids)
 
         def selected(report):
-            rows = [row for row in report["samples"] if row["processId"] in pids]
-            for row in rows:
-                assert row.get("source") == source, ("错误来源或重复采样", label, row)
-                assert (row["interfaceId"] == "loopback") == loopback, (label, row)
-                assert row["active"] and row["appId"] != "unknown", (label, row)
-                if loopback:
-                    assert row.get("connectionKey"), row
-            return rows
+            return capture_samples(report, pids, keys, source, loopback)
 
         if loopback:
             warm = wait_snapshot(helper, reports, generation,
@@ -189,11 +218,13 @@ def test_connection(context, helper, reports, generation, family, address, scope
         assert len({row["appId"] for row in rows}) == 1, rows
         if loopback:
             assert len(rows) == 2, rows
-            assert all(int(row["rxBytes"]) == expected and int(row["txBytes"]) == expected for row in rows), rows
-        identities = {(row["instanceId"], row["interfaceId"]): row for row in rows}
+            print(json.dumps({"label": label, "targetKeys": keys, "target": rows,
+                              "sameProcess": target_samples(report, pids, None)}, ensure_ascii=False), flush=True)
+            assert_payload_bytes(rows, expected)
+        identities = {(row["instanceId"], row["interfaceId"], row.get("connectionKey")): row for row in rows}
         repeated = snapshot(helper, reports)
         for key, row in identities.items():
-            again = next(item for item in repeated["samples"] if (item["instanceId"], item["interfaceId"]) == key)
+            again = next(item for item in repeated["samples"] if (item["instanceId"], item["interfaceId"], item.get("connectionKey")) == key)
             assert int(again["rxBytes"]) >= int(row["rxBytes"]), again
             assert int(again["txBytes"]) >= int(row["txBytes"]), again
         release.set()
@@ -202,8 +233,8 @@ def test_connection(context, helper, reports, generation, family, address, scope
             assert child.exitcode == 0, (label, child.pid, child.exitcode)
 
         def closed(report):
-            remaining = {(row["instanceId"], row["interfaceId"]): row for row in report["samples"]
-                         if (row["instanceId"], row["interfaceId"]) in identities}
+            remaining = {(row["instanceId"], row["interfaceId"], row.get("connectionKey")): row for row in report["samples"]
+                         if (row["instanceId"], row["interfaceId"], row.get("connectionKey")) in identities}
             if loopback:
                 # 轮询连接关闭后行可消失，不要求 ETW 风格的退出后最终行。
                 return all(not row["active"] for row in remaining.values())

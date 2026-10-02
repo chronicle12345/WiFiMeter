@@ -254,3 +254,12 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content .segmented button{padding-inline:8px}
  html[data-page="overview"] #content .toolbar-actions .btn{padding-inline:10px}
 }
+
+/* 矮窗口减少五组区块间距共 20px，保留图表和提示的完整内容。 */
+@media(min-width:761px) and (max-height:650px){
+ html[data-page="overview"] #content>.toolbar,
+ html[data-page="overview"] #content>.connection,
+ html[data-page="overview"] #content>.metrics,
+ html[data-page="overview"] #content>.total-quota-card,
+ html[data-page="overview"] #content>.chart-row{margin-bottom:6px}
+}

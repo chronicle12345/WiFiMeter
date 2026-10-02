@@ -60,7 +60,9 @@ void exercise(bool v6)
     const auto* measured=find(after);WIFIMETER_CHECK(measured);
     if(measured) {
         std::fprintf(stdout,"IPv%d client PID %lu: rx=%llu tx=%llu source=WindowsTcpEStats\n",v6?6:4,GetCurrentProcessId(),static_cast<unsigned long long>(measured->rxBytes),static_cast<unsigned long long>(measured->txBytes));
-        WIFIMETER_CHECK_EQ(measured->txBytes,std::uint64_t(65536));WIFIMETER_CHECK_EQ(measured->rxBytes,std::uint64_t(32768));
+        // DataBytesIn/Out include retransmitted data, so payload sizes are lower bounds.
+        // https://learn.microsoft.com/windows/win32/api/tcpestats/ns-tcpestats-tcp_estats_data_rod_v0
+        WIFIMETER_CHECK(measured->txBytes>=std::uint64_t(65536));WIFIMETER_CHECK(measured->rxBytes>=std::uint64_t(32768));
         WIFIMETER_CHECK_EQ(measured->appId,first->appId);WIFIMETER_CHECK(!measured->instanceId.empty());
     }
 }
