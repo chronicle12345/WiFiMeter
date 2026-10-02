@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { updatesView } from '../renderer/ui/updates.js';
+import { setLanguage } from '../renderer/i18n.js';
 const require = createRequire(import.meta.url);
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -347,4 +349,54 @@ test('preparation and handoff hooks see their phase without an installation perc
         launchInstaller: async () => { assert.equal(status.state, 'installing'); assert.equal(status.progress.percent, null); }
     });
     assert.equal((await f.service.install()).state, 'installing');
+});
+
+for (const phase of ['downloading', 'verifying', 'preparing', 'installing']) test(`installation failure identifies ${phase} without leaking download URLs`, async t => {
+    const options = {};
+    if (phase === 'downloading') options.fetch = async url => {
+        if (url.includes('api.github.com')) return Response.json(release());
+        throw Object.assign(Error('fetch failed https://signed.example/secret?token=private'), { cause: { code: 'ECONNRESET' } });
+    };
+    if (phase === 'verifying') options.fetch = async url => url.includes('api.github.com') ? Response.json(release()) : new Response('changed');
+    if (phase === 'preparing') options.beforeInstall = async () => { throw Error('Collector has not finished saving.'); };
+    if (phase === 'installing') options.launchInstaller = async () => {
+        throw Object.assign(Error('Update helper closed before READY.'), { code: 'HANDOFF_CLOSED_BEFORE_READY' });
+    };
+    const f = await fixture(t, options);
+    const result = await f.service.install();
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, phase);
+    assert.equal(result.progress, null);
+    const labels = { downloading: '下载更新失败', verifying: '更新文件 SHA-256 校验失败',
+        preparing: '准备安装更新失败', installing: '启动更新辅助程序失败' };
+    assert.ok(result.error.startsWith(labels[phase]));
+    assert.doesNotMatch(result.error, /signed\.example|token=private/);
+    if (phase === 'downloading') assert.equal(result.errorCode, 'ECONNRESET');
+    if (phase === 'preparing') assert.match(result.error, /Collector has not finished saving/);
+    if (phase === 'installing') assert.equal(result.errorCode, 'HANDOFF_CLOSED_BEFORE_READY');
+    await f.service.check();
+    assert.equal((await f.service.check()).errorPhase, undefined);
+});
+
+test('update errors translate fixed explanations while preserving local paths and recovery errors', async t => {
+    const localPath = 'C:\\每月报告\\每日记录.exe';
+    const f = await fixture(t, { beforeInstall: async () => { throw Error(`Cannot save ${localPath}`); } });
+    const result = await f.service.install();
+    assert.match(updatesView(result), /准备安装更新失败/);
+    setLanguage('en');
+    try {
+        const html = updatesView(result);
+        assert.match(html, /Update preparation failed/);
+        assert.ok(html.includes(localPath));
+        const helper = await fixture(t, { launchInstaller: async () => {
+            throw Object.assign(Error('Update helper closed before READY.'), { code: 'HANDOFF_CLOSED_BEFORE_READY' });
+        } });
+        const helperHtml = updatesView(await helper.service.install());
+        assert.match(helperHtml, /Could not start the update helper/);
+        assert.match(helperHtml, /closed communication before it was ready/);
+        assert.doesNotMatch(helperHtml, /辅助进程/);
+        const recovery = updatesView({ ...result, recoveryRequired: true, error: 'Specific recovery failure' });
+        assert.match(recovery, /Specific recovery failure/);
+        assert.doesNotMatch(recovery, /Update preparation failed/);
+    } finally { setLanguage('zh-CN'); }
 });

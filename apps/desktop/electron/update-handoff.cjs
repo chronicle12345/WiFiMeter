@@ -1,7 +1,7 @@
 'use strict';
 
 const { spawn } = require('node:child_process');
-const { createReadStream } = require('node:fs');
+const { createReadStream, readFileSync } = require('node:fs');
 const { createHash } = require('node:crypto');
 const path = require('node:path');
 
@@ -24,6 +24,7 @@ async function launchUpdateHandoff(file, { userData, digest, timeout = 15000 } =
     // Lock the same file while waiting: allow reads, deny replacement/deletion.
     // EOF without GO cancels a helper that became ready after the parent's timeout.
     const script = `$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
 $target=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))
 $file=$null
 $authorized=$false
@@ -41,17 +42,19 @@ try {
     if(-not $p.WaitForExit(60000)){throw 'WiFiMeter did not exit within 60 seconds'}
     Start-Process -FilePath $target -WindowStyle Hidden
 } catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
     if($authorized){
         Add-Type -AssemblyName System.Windows.Forms
         [System.Windows.Forms.MessageBox]::Show("无法启动更新，请关闭并重新打开 WiFiMeter 后重试。\nUpdate could not start. Close and reopen WiFiMeter, then try again.", 'WiFiMeter 软件更新 / Update') | Out-Null
     }
     exit 1
 } finally {if($file){$file.Dispose()}}`;
-    const helper = spawn(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-        ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-        { detached: true, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    const bridge = readFileSync(path.join(__dirname, 'update-bridge.cjs'), 'utf8');
+    const helper = spawn(process.execPath,
+        ['-e', bridge, Buffer.from(script, 'utf16le').toString('base64')],
+        { detached: true, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
     await new Promise((resolve, reject) => {
-        let settled = false, output = '', authorized = false;
+        let settled = false, output = '', diagnostic = '', authorized = false;
         const finish = error => {
             if (settled) return;
             settled = true;
@@ -61,26 +64,36 @@ try {
             helper.stdout.removeListener('end', onEnd);
             if (!helper.stdin.writableEnded) helper.stdin.end();
             helper.stdout.destroy();
+            helper.stderr.destroy();
             helper.unref();
-            if (error) reject(error); else resolve();
+            if (error) {
+                if (diagnostic.trim()) {
+                    error.diagnostic = diagnostic.trim().replace(/\s+/g, ' ').slice(0, 512);
+                    error.message += ` ${error.diagnostic}`;
+                }
+                reject(error);
+            } else resolve();
         };
-        const onExit = code => finish(Error(`Update helper exited before handoff (code=${code}).`));
-        const onEnd = () => { if (!authorized) finish(Error('Update helper closed before READY.')); };
+        const failure = (code, message) => Object.assign(Error(message), { code });
+        const onExit = code => finish(failure('HANDOFF_EXITED_BEFORE_READY', `Update helper exited before handoff (code=${code}).`));
+        const onEnd = () => { if (!authorized) finish(failure('HANDOFF_CLOSED_BEFORE_READY', 'Update helper closed before READY.')); };
         const onData = chunk => {
             output += chunk.toString('utf8');
-            if (output.length > 128) return finish(Error('Invalid update helper response.'));
+            if (output.length > 128) return finish(failure('HANDOFF_INVALID_RESPONSE', 'Invalid update helper response.'));
             if (!output.includes('\n')) return;
-            if (output !== 'READY\r\n' && output !== 'READY\n') return finish(Error('Invalid update helper response.'));
+            if (output !== 'READY\r\n' && output !== 'READY\n') return finish(failure('HANDOFF_INVALID_RESPONSE', 'Invalid update helper response.'));
             if (authorized) return;
             authorized = true;
             helper.stdin.end('GO\n', error => finish(error));
         };
-        const timer = setTimeout(() => finish(Error('Update helper READY timed out.')), timeout);
+        const timer = setTimeout(() => finish(failure('HANDOFF_READY_TIMEOUT', 'Update helper READY timed out.')), timeout);
         helper.once('exit', onExit);
         // Keep error handlers for late stream/process errors after cancellation.
         helper.on('error', finish);
         helper.stdin.on('error', finish);
         helper.stdout.on('error', finish);
+        helper.stderr.on('error', finish);
+        helper.stderr.on('data', chunk => { diagnostic += chunk.toString('utf8').slice(0, Math.max(0, 4096 - diagnostic.length)); });
         helper.stdout.on('end', onEnd);
         helper.stdout.on('data', onData);
     });

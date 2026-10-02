@@ -7,6 +7,26 @@ export const english = Object.fromEntries(`
 正在启动安装程序…|Starting installer…
 后续安装进度将在安装程序中显示。|Further installation progress is shown in the installer.
 更新失败。|Update failed.
+下载更新失败|Update download failed
+更新文件 SHA-256 校验失败|Update SHA-256 verification failed
+准备安装更新失败|Update preparation failed
+启动更新辅助程序失败|Could not start the update helper
+安装更新失败|Update installation failed
+文件内容与官方 SHA-256 不一致，请重新下载。|The file does not match the official SHA-256. Download it again.
+下载服务器没有返回可用的安装包。|The download server did not return a usable installer.
+下载重定向无效或次数过多。|The download redirect was invalid or exceeded the limit.
+下载被重定向到未允许的地址。|The download was redirected to an address that is not allowed.
+下载请求出现了非预期的重定向。|The download request returned an unexpected redirect.
+安装包在校验后发生变化，请重新下载。|The installer changed after verification. Download it again.
+安装包路径不符合更新目录要求。|The installer path does not meet the update directory requirements.
+缺少已验证的安装包 SHA-256。|The verified installer SHA-256 is missing.
+辅助进程在确认就绪前关闭了通信。|The update helper closed communication before it was ready.
+辅助进程在确认就绪前退出。|The update helper exited before it was ready.
+辅助进程返回了无效的就绪信息。|The update helper returned an invalid ready response.
+等待辅助进程确认就绪超时。|Timed out waiting for the update helper to become ready.
+请求超时，请重试。|The request timed out. Try again.
+网络请求、文件写入或下载流未完成，请重试。|The network request, file write or download stream did not complete. Try again.
+未知错误|Unknown error
 本地 TCP|Local TCP
 本地代理连接 · 实时速度不计入 Wi-Fi 总量|Local proxy connections · Live rates are separate from Wi-Fi totals
 关闭应用详情|Close application details

@@ -4,6 +4,12 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const renderedNotes = new WeakMap();
 const activePhases = new Set(['checking','downloading','verifying','preparing','installing']);
 const bytes = value => { let n=Math.max(0,Number(value)||0),i=0;const units=['B','KB','MB','GB'];while(n>=1000&&i<3){n/=1000;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`; };
+function updateError(status) {
+    if (!status.error || !status.errorPhase || status.recoveryRequired) return status.error || '';
+    const labels={downloading:'下载更新失败',verifying:'更新文件 SHA-256 校验失败',preparing:'准备安装更新失败',installing:'启动更新辅助程序失败'};
+    const detail=[status.errorReason?t(status.errorReason):'',status.errorDetail||''].filter(Boolean).join(' ');
+    return `${t(labels[status.errorPhase]||'安装更新失败')}${t('：')}${detail}${status.errorCode?` (${status.errorCode})`:''}`;
+}
 export function updateProgress(status) {
     if (!activePhases.has(status.state)) return '';
     const progress=status.progress||{},known=status.state==='downloading'&&Number.isFinite(progress.percent)&&progress.totalBytes>0;
@@ -18,7 +24,7 @@ export function updatesView(status = {}, busy = false) {
     return tr`<section class="panel settings-group" id="updatesPanel"><div class="panel-head"><div><h2>软件更新</h2></div></div>
         <label class="quota-check"><input id="checkUpdatesOnStartup" type="checkbox" ${status.checkOnStartup !== false ? 'checked' : ''} ${locked ? 'disabled' : ''}>启动时检查更新</label>
         <p class="small muted update-version">当前版本：${esc(status.currentVersion || '—')}${status.latestVersion ? tr` · 最新版本：${esc(status.latestVersion)}` : ''}</p>
-        <div id="updateStatusRegion"><p role="status">${messages[status.state] || ''}${status.error ? ' ' + esc(status.error) : ''}</p>${updateProgress(status)}</div>
+        <div id="updateStatusRegion"><p role="status">${messages[status.state] || ''}${status.error ? ' ' + esc(updateError(status)) : ''}</p>${updateProgress(status)}</div>
         ${status.notes ? `<details class="release-notes"><summary>${t('更新说明')}</summary><div class="release-notes-body">${releaseNotes(status.notes)}</div></details>` : ''}
         <div class="settings-actions"><button class="btn" data-action="check-updates" ${locked ? 'disabled' : ''}>检查更新</button>
         ${status.recoveryRequired || status.state === 'available' ? `<button class="btn primary" data-action="install-update" ${locked ? 'disabled' : ''}>${status.recoveryRequired ? t('恢复采集') : status.canInstall ? t('下载并安装') : t('打开版本下载页')}</button>` : ''}</div></section>`;

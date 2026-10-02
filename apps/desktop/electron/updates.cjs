@@ -52,6 +52,39 @@ function redirectAllowed(value, original) {
         && /^\/github-production-release-asset(?:-[0-9a-f]+)?\//.test(url.pathname);
 }
 
+function installationFailure(error, phase) {
+    const labels = { downloading: '下载更新失败', verifying: '更新文件 SHA-256 校验失败',
+        preparing: '准备安装更新失败', installing: '启动更新辅助程序失败' };
+    const reasons = {
+        'digest mismatch': '文件内容与官方 SHA-256 不一致，请重新下载。',
+        'download failed': '下载服务器没有返回可用的安装包。',
+        'invalid redirect': '下载重定向无效或次数过多。',
+        'untrusted asset URL': '下载被重定向到未允许的地址。',
+        'unexpected redirect': '下载请求出现了非预期的重定向。',
+        'Installer changed after download verification.': '安装包在校验后发生变化，请重新下载。',
+        'Installer must be a verified executable in the update directory.': '安装包路径不符合更新目录要求。',
+        'Missing verified installer digest.': '缺少已验证的安装包 SHA-256。'
+    };
+    const codes = { HANDOFF_CLOSED_BEFORE_READY: '辅助进程在确认就绪前关闭了通信。',
+        HANDOFF_EXITED_BEFORE_READY: '辅助进程在确认就绪前退出。',
+        HANDOFF_INVALID_RESPONSE: '辅助进程返回了无效的就绪信息。',
+        HANDOFF_READY_TIMEOUT: '等待辅助进程确认就绪超时。' };
+    let reason = reasons[error?.message] || codes[error?.code];
+    let detail = '';
+    // Network exceptions may contain signed URLs. Report only a bounded error
+    // code in the download stage; preparation and helper errors are local.
+    const code = [error?.code, error?.cause?.code].find(value => typeof value === 'string' && /^[A-Z0-9_]{1,64}$/.test(value));
+    if (!reason && error?.name === 'TimeoutError') reason = '请求超时，请重试。';
+    if (['preparing', 'installing'].includes(phase)) {
+        if (!reason) detail = String(error?.message || '未知错误').replace(/\s+/g, ' ').slice(0, 512);
+        else if (error?.diagnostic) detail = String(error.diagnostic).replace(/\s+/g, ' ').slice(0, 512);
+    }
+    if (!reason && !detail) reason = '网络请求、文件写入或下载流未完成，请重试。';
+    const description = [reason, detail].filter(Boolean).join(' ');
+    return { error: `${labels[phase] || '安装更新失败'}：${description}${code ? ` (${code})` : ''}`,
+        errorPhase: phase, errorCode: code || null, errorReason: reason || '', errorDetail: detail };
+}
+
 /**
  * All methods return Promises. settings()/setCheckOnStartup() return {checkOnStartup}.
  * check() returns {status, state, currentVersion, latestVersion, notes, url, canInstall,
@@ -151,7 +184,8 @@ function createUpdateService({ currentVersion, platform, arch, userData,
     }
 
     function phase(state, progress = {}) {
-        return publish({ state, error: undefined, progress: {
+        return publish({ state, error: undefined, errorPhase: undefined, errorCode: undefined,
+            errorReason: undefined, errorDetail: undefined, progress: {
             receivedBytes: snapshot.progress?.receivedBytes ?? 0,
             totalBytes: snapshot.progress?.totalBytes ?? null,
             ...progress, percent: null, phase: state
@@ -312,8 +346,9 @@ function createUpdateService({ currentVersion, platform, arch, userData,
                 await launchInstaller(file, [], { digest: target.asset.digest });
                 file = null; // 成功启动后保留安装包，避免安装器尚未读取时被删除。
                 return result();
-            } catch {
-                return publish({ state: 'error', progress: null, error: '安装更新失败，下载或 SHA-256 校验未完成，或安装程序无法启动。' });
+            } catch (error) {
+                const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
+                return publish({ state: 'error', progress: null, ...failure });
             } finally {
                 installing = false;
                 if (file) await fs.unlink(file).catch(() => {});

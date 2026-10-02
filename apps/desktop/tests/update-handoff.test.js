@@ -115,13 +115,13 @@ test('main quits only after handoff READY', async () => {
 });
 
 function handoffHarness() {
-    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stdin = new PassThrough(); child.unref = () => {};
+    const child = new EventEmitter(); child.stdout = new PassThrough(); child.stdin = new PassThrough(); child.stderr = new PassThrough(); child.unref = () => {};
     let spawned;
     const module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'update-handoff.cjs'), 'utf8'), {
-        module, Buffer, process, setTimeout, clearTimeout,
+        module, __dirname: directory, Buffer, process, setTimeout, clearTimeout,
         require: name => name === 'node:child_process' ? { spawn(...args) { spawned = args; return child; } }
-            : name === 'node:fs' ? { createReadStream: () => Readable.from([Buffer.from('verified '), Buffer.from('fixture')]) }
+            : name === 'node:fs' ? { createReadStream: () => Readable.from([Buffer.from('verified '), Buffer.from('fixture')]), readFileSync: fs.readFileSync }
             : name === 'node:fs/promises' ? { readFile: async () => { assert.fail('Installer hashing must stream, not read the full file'); } } : require(name)
     });
     return { child, get spawned() { return spawned; }, launch: options => module.exports.launchUpdateHandoff('C:\\profile\\updates\\verified.exe', { userData: 'C:\\profile', digest, ...options }) };
@@ -140,7 +140,11 @@ test('READY is framed across chunks and only then authorizes the fixed installer
     h.child.stdout.write('DY\r\n'); await p;
     assert.equal(h.child.stdin.read().toString(), 'GO\n');
     const [host, args, options] = h.spawned;
-    assert.match(host, /System32.*WindowsPowerShell.*powershell.exe$/);
+    assert.equal(host, process.execPath);
+    assert.equal(args[0], '-e');
+    assert.match(args[1], /WindowsPowerShell/);
+    assert.equal(options.detached, true);
+    assert.equal(options.env.ELECTRON_RUN_AS_NODE, '1');
     assert.equal(options.windowsHide, true); assert.notEqual(options.shell, true);
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
     assert.match(script, /FileShare\]::Read/); assert.match(script, /SHA256/);
@@ -151,6 +155,40 @@ test('timeout closes input without authorizing a late READY', async () => {
     await assert.rejects(p, /timed out|超时/i);
     h.child.stdout.emit('data', Buffer.from('READY\n'));
     assert.equal(h.child.stdin.read()?.toString().includes('GO'), undefined);
+});
+
+test('helper failures retain a bounded local diagnostic and an actionable code', async () => {
+    const h = handoffHarness(); const pending = h.launch({ timeout: 1000 });
+    await new Promise(setImmediate);
+    h.child.stderr.write('PowerShell refused the file. ' + 'x'.repeat(5000));
+    h.child.emit('exit', 1);
+    await assert.rejects(pending, error => {
+        assert.equal(error.code, 'HANDOFF_EXITED_BEFORE_READY');
+        assert.match(error.message, /PowerShell refused/);
+        assert.ok(error.message.length < 600);
+        return true;
+    });
+});
+
+test('bridge keeps PowerShell attached to its surviving host and removes Electron Node mode', () => {
+    const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    const fakeProcess = { argv: ['runtime', 'Zml4dHVyZQ=='], env: { SystemRoot: 'C:\\Windows',
+        ELECTRON_RUN_AS_NODE: '1', electron_run_as_node: '1', FIXTURE: 'preserved' },
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() };
+    let spawned;
+    runInNewContext(fs.readFileSync(path.join(directory, 'update-bridge.cjs'), 'utf8'), {
+        process: fakeProcess, require: name => name === 'node:child_process' ? { spawn(...args) { spawned = args; return child; } } : require(name)
+    });
+    const [host, args, options] = spawned;
+    assert.match(host, /WindowsPowerShell.*powershell.exe$/);
+    assert.equal(args.at(-1), 'Zml4dHVyZQ==');
+    assert.notEqual(options.detached, true);
+    assert.equal(options.windowsHide, true);
+    assert.equal(options.env.FIXTURE, 'preserved');
+    assert.equal(Object.keys(options.env).some(name => name.toUpperCase() === 'ELECTRON_RUN_AS_NODE'), false);
+    assert.equal(fakeProcess.env.ELECTRON_RUN_AS_NODE, '1');
+    child.emit('exit', 0);
+    assert.equal(fakeProcess.exitCode, 0);
 });
 
 function backendHarness() {
@@ -261,7 +299,9 @@ function Start-Process {
     [Console]::Out.WriteLine('LAUNCH-STUB')
 }
 `;
-    const child = require('node:child_process').spawn(h.spawned[0], ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(stubs + script, 'utf16le').toString('base64')], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = require('node:child_process').spawn(h.spawned[0], ['-e', h.spawned[1][1], Buffer.from(stubs + script, 'utf16le').toString('base64')], {
+        detached: true, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe']
+    });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.stdin.on('error', () => {}); child.stdin.end(['GO', 'start-failure', 'parent-timeout'].includes(mode) ? 'GO\n' : '');
@@ -357,4 +397,78 @@ test('in-flight checking rejects repeat actions without replacing the saved phas
     assert.equal(checks, 1);
     finish();
     assert.equal((await pending).busy, false);
+});
+
+// Exercise the real runtime and helper script. Only Start-Process is replaced;
+// the .exe contains text and cannot be executed by this test.
+for (const runtime of ['Node', 'Electron', 'Electron ASAR']) test(`Windows ${runtime} handoff survives its parent and keeps the installer locked`, { skip: process.platform !== 'win32' }, async t => {
+    const os = require('node:os');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-handoff-survival-'));
+    const updates = path.join(root, 'updates'); fs.mkdirSync(updates);
+    const installer = path.join(updates, "verified';fixture.exe");
+    const marker = path.join(root, 'launch-stub.txt');
+    const packageRoot = path.join(root, 'package');
+    const packageDirectory = path.join(packageRoot, 'electron');
+    const archive = path.join(root, 'app.asar');
+    fs.writeFileSync(installer, 'verified fixture');
+    t.after(() => {
+        for (const file of [marker, installer, path.join(root, 'parent.cjs'), archive]) fs.rmSync(file, { force: true });
+        if (fs.existsSync(packageDirectory)) {
+            for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) fs.rmSync(path.join(packageDirectory, file), { force: true });
+            fs.rmdirSync(packageDirectory); fs.rmdirSync(packageRoot);
+        }
+        fs.rmdirSync(updates); fs.rmdirSync(root);
+    });
+    const source = fs.readFileSync(path.join(directory, 'update-handoff.cjs'), 'utf8');
+    let bundleDirectory = directory;
+    if (runtime === 'Electron ASAR') {
+        fs.mkdirSync(packageDirectory, { recursive: true });
+        for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) fs.copyFileSync(path.join(directory, file), path.join(packageDirectory, file));
+        await require('@electron/asar').createPackage(packageRoot, archive);
+        bundleDirectory = path.join(archive, 'electron');
+    }
+    const encodedMarker = Buffer.from(marker, 'utf8').toString('base64');
+    const fixture = path.join(root, 'parent.cjs');
+    const stub = `
+$ProgressPreference='SilentlyContinue'
+Add-Type -TypeDefinition 'public class TestMessageBox { public static void Show(string message, string title) { System.Console.Error.WriteLine("MESSAGE-STUB: " + message); } }'
+function Start-Process {
+    param($FilePath, $WindowStyle)
+    if($env:ELECTRON_RUN_AS_NODE){throw 'Installer inherited Electron Node mode'}
+    if($WindowStyle -ne 'Hidden'){throw 'Wrong window style'}
+    $blocked=$false
+    try {$writer=[IO.File]::Open($FilePath,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite); $writer.Dispose()} catch {$blocked=$true}
+    if(-not $blocked){throw 'Installer was not locked'}
+    $marker=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedMarker}'))
+    [IO.File]::WriteAllText($marker,'PARENT-EXITED;INSTALLER-LOCKED')
+}
+`;
+    fs.writeFileSync(fixture, `
+const cp = require('node:child_process'), fs = require('node:fs');
+const { runInNewContext } = require('node:vm');
+const moduleFixture = { exports: {} };
+runInNewContext(${runtime === 'Electron ASAR' ? `fs.readFileSync(${JSON.stringify(path.join(bundleDirectory, 'update-handoff.cjs'))}, 'utf8')` : JSON.stringify(source)}, {
+    module: moduleFixture, __dirname: ${JSON.stringify(bundleDirectory)}, Buffer, process, setTimeout, clearTimeout,
+    require: name => name === 'node:child_process' ? { spawn(host, args, options) {
+        const script = Buffer.from(args.at(-1), 'base64').toString('utf16le').replaceAll('[System.Windows.Forms.MessageBox]', '[TestMessageBox]');
+        const fixed = [...args.slice(0, -1), Buffer.from(${JSON.stringify(stub)} + script, 'utf16le').toString('base64')];
+        return cp.spawn(host, fixed, options);
+    } } : require(name)
+});
+moduleFixture.exports.launchUpdateHandoff(${JSON.stringify(installer)}, {
+    userData: ${JSON.stringify(root)}, digest: ${JSON.stringify(digest)}, timeout: 30000
+}).then(() => { console.log('HANDOFF-ACCEPTED'); }, error => { console.error(error.message); process.exitCode = 1; });
+`);
+    const executable = runtime === 'Node' ? process.execPath : require('electron');
+    const child = require('node:child_process').spawn(executable, [fixture], {
+        windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
+    const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+    assert.equal(code, 0, stderr);
+    assert.match(stdout, /HANDOFF-ACCEPTED/);
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(fs.readFileSync(marker, 'utf8'), 'PARENT-EXITED;INSTALLER-LOCKED');
 });
