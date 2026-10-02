@@ -2,7 +2,7 @@ import { t, tr } from '../i18n.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function updatesView(status = {}, busy = false) {
     const messages = { recovered: t('已恢复原采集状态。'), unchecked: t('尚未检查更新。'), cancelled: t('已取消更新。'), manual: t('已打开官方发布页。'), installing: t('正在退出并启动安装程序…'), latest: t('当前已是最新版本。'), available: t('发现新版本。'), error: t('更新检查失败。'), checking: t('正在检查更新…') };
-    return tr`<section class="panel settings-group" id="updatesPanel"><div class="panel-head"><div><h2>软件更新</h2><p class="panel-sub">仅查询 GitHub 正式版本，不上传网络记录。安装前会再次确认。</p></div></div>
+    return tr`<section class="panel settings-group" id="updatesPanel"><div class="panel-head"><div><h2>软件更新</h2></div></div>
         <label class="quota-check"><input id="checkUpdatesOnStartup" type="checkbox" ${status.checkOnStartup !== false ? 'checked' : ''} ${busy ? 'disabled' : ''}>启动时检查更新</label>
         <p class="small muted">当前版本：${esc(status.currentVersion || '—')}${status.latestVersion ? tr` · 最新版本：${esc(status.latestVersion)}` : ''}</p>
         <p role="status">${messages[status.state] || ''}${status.error ? ' ' + esc(status.error) : ''}</p>

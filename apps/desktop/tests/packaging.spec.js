@@ -56,13 +56,15 @@ test.describe('打包产物', () => {
             const page = await app.firstWindow();
             const errors = [];
             page.on('pageerror', error => errors.push(error.message));
-            await expect(page.locator('h1')).toHaveText('流量总览', { timeout: 30000 });
+            await expect(page).toHaveTitle(new RegExp('流量总览'), { timeout: 30000 });
 
             // 采集器处于运行状态，说明后端已经起来并通过了协议握手。
             await expect(page.locator('#collector')).toContainText('正在采集', { timeout: 30000 });
-            await expect(page.locator('#footer')).toContainText('本机采集');
+            await expect(page.locator('#footer')).toBeEmpty();
             // 采集状态弹窗能列出真实网卡状态（这台机器上可能没有已关联的网卡）。
-            await page.getByRole('button', { name: '采集状态' }).click();
+            await page.locator('.nav [data-page="settings"]').click();
+            await page.locator('[data-category="status"]').click();
+            await page.locator('[data-action="demo"]').click();
             await expect(page.locator('.modal')).toContainText('采集器：运行中');
             expect(errors).toEqual([]);
 

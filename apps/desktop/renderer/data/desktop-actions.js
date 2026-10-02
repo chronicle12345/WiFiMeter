@@ -42,8 +42,11 @@ export function createAppControlModel(desktop) {
 export function legacyMessage(result) {
     if (!result || result.canceled) return '';
     if (result.error) return errorText(result.error);
+    if (result.importWarning) return t('当前统计已继续，旧版数据尚未导入。') + '\n' + errorText(result.importWarning);
     if (result.imported || result.alreadyImported) {
-        const lines = [result.alreadyImported ? t('此目录已导入，无需重复导入。') : t('旧版数据已导入。')];
+        const skipped = result.report?.skippedDayCount || 0;
+        const lines = [result.alreadyImported ? t('此目录已导入，无需重复导入。') : skipped ? t('旧版数据导入完成，重叠日期保留现有记录。') : t('旧版数据已导入。')];
+        if (skipped) lines.push(tr`已略过 ${skipped} 个重叠日期。`);
         if (result.backupDirectory) lines.push(tr`备份目录：${result.backupDirectory}`);
         const report = result.report;
         if (report?.appArchivedOnlyCount > 0)

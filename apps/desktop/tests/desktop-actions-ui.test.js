@@ -57,3 +57,11 @@ test('首次和重复导入都保留报告警告、仅归档数量及备份路�
     }
     assert.ok(!legacyMessage({imported:true,report:{warnings:[],appArchivedOnlyCount:0}}).includes('仅归档'));
 });
+
+ test('重叠日期报告说明略过数量并保留警告', () => {
+    const message=legacyMessage({imported:true,report:{skippedDayCount:4,warnings:['保留本机记录']}});
+    assert.match(message,/已略过 4 个重叠日期/);
+    assert.match(message,/重叠日期保留现有记录/);
+    assert.match(message,/保留本机记录/);
+    assert.ok(!message.includes('旧版数据已导入。'));
+ });

@@ -33,9 +33,9 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
         await page.getByRole('button',{name:'导出数据',exact:true}).click();await page.getByRole('button',{name:'导出记录',exact:true}).click();
         await expect(page.locator('.modal')).toHaveCount(0);const csv=await readFile(file,'utf8');
         expect(csv).toContain('"2020-01-01"');expect(csv).toContain('"520000","1","520001"');expect(csv).not.toContain('2020-02-01');
-        await page.locator('[data-page="settings"]').click();await page.locator('select[name="language"]').selectOption('en');
-        await page.locator('#settingsForm button[type="submit"]').click();await expect(page.locator('h1')).toHaveText('Preferences');
-        await page.reload();await expect(page.locator('h1')).toHaveText('Preferences');
+        await page.locator('.nav [data-page="settings"]').click();await page.locator('select[name="language"]').selectOption('en');
+        await expect.poll(() => page.evaluate(async () => (await window.desktop.backend.request('snapshot')).result.settings.language)).toBe('en');await expect(page).toHaveTitle(new RegExp('Preferences'));
+        await page.reload();await expect(page).toHaveTitle(new RegExp('Preferences'));
         expect((await page.evaluate(()=>window.desktop.backend.request('snapshot'))).result.settings.language).toBe('en');
         expect(errors).toEqual([]);
     }finally{
@@ -51,9 +51,9 @@ test('refresh beside export reloads backend values without changing the selected
         app = await electron.launch({ args: ['.'], env });
         const page = await app.firstWindow();
         await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
-        const refresh = page.locator('.head-actions [data-action="refresh"]');
+        const refresh = page.locator('.toolbar-actions [data-action="refresh"]');
         await expect(refresh).toBeVisible();
-        await expect(page.locator('.head-actions [data-action="export"]')).toBeVisible();
+        await expect(page.locator('.toolbar-actions [data-action="export"]')).toBeVisible();
         await page.evaluate(async () => {
             const { result } = await window.desktop.backend.request('snapshot');
             await window.desktop.backend.request('updateNetwork', { key: result.networks[0].id, alias: 'Refreshed fixture' });

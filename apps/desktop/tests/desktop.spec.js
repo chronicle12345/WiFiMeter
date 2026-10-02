@@ -19,7 +19,9 @@ async function launch(extraEnv = {}) {
     app = await electron.launch({ executablePath: process.env.WIFIMETER_EXECUTABLE || undefined, args: process.env.WIFIMETER_EXECUTABLE ? [] : ['.'], env });
     page = await app.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
-    await expect(page.locator('h1')).toHaveText('流量总览');
+    await expect(page).toHaveTitle(/流量总览/);
+    await expect(page.locator('#pageHead')).toHaveCount(0);
+    await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
     // 数据来自后端，等首屏拿到快照再继续。
     await expect(page.locator('.connection-title')).not.toHaveText('等待本机采集器');
 }
@@ -83,9 +85,15 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');
     await expect(page.locator('.connection-details')).toContainText('5 GHz');
     await expect(page.locator('.connection-details')).toContainText('信号 82%');
-    await expect(page.locator('#footer')).toContainText('本机采集');
+    await expect(page.locator('#footer')).toBeEmpty();
+
+    await expect(page.locator('.chart-caption')).toContainText('单位：');
+    await expect(page.locator('.chart-caption')).not.toContainText('无记录不等于零流量');
+    await expect(page.locator('.chart-caption')).not.toContainText('按所选网络汇总');
 
     await navigate('网络');
+    await expect(page.locator('#pageHead .page-description')).toHaveCount(0);
+    await expect(page.getByText('网络名称可添加备注', { exact: false })).toHaveCount(0);
     const row = page.locator('tr', { hasText: '家里的 Wi-Fi' }).first();
     await expect(row).toBeVisible();
 
@@ -98,7 +106,7 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
 
     // 应用分布标签页如实说明尚未采集。
     await page.getByRole('tab', { name: '应用分布' }).click();
-    await expect(page.locator('.drawer')).toContainText('应用级流量尚未采集');
+    await expect(page.locator('.drawer')).toContainText('启用应用采集后开始记录。');
 
     // 键盘：Esc 关闭抽屉。
     await page.keyboard.press('Escape');
@@ -107,7 +115,57 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
     await navigate('历史');
     await expect(page.locator('.history-stat').first()).toContainText('3.6');
     await navigate('设置');
-    await expect(page.locator('.settings-aside')).toContainText('本机数据库');
+    await expect(page.locator('.settings-aside')).toHaveCount(0);
+    await expect(page.locator('[data-action="settings-category"]')).toHaveCount(7);
+});
+
+test('总览保留用量、连接、趋势与额度，网络明细只在网络页展示', async () => {
+    await expect(page.locator('#content table')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '网络用量', exact: true })).toHaveCount(0);
+    await expect(page.locator('.collector-sub')).toHaveCount(0);
+    await expect(page.locator('#collector')).toContainText('正在采集');
+    await expect(page.getByRole('button', { name: '暂停统计', exact: true })).toBeEnabled();
+    await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
+    await expect(page.locator('.connection-details')).toContainText('Habitat_5G');
+    const metrics = page.locator('#content > .metrics .metric-number');
+    await expect(metrics).toHaveCount(3);
+    await expect(metrics.nth(0)).toHaveText(/3\.6\s*GB/);
+    await expect(metrics.nth(1)).toHaveText(/3\.1\s*GB/);
+    await expect(metrics.nth(2)).toHaveText(/500\s*MB/);
+    await expect(page.locator('#usage-chart-desc')).toContainText('GB');
+    await expect(page.locator('.total-quota-card')).toBeVisible();
+    await expect(page.locator('.quota-card .progress-meta')).toContainText('已用 3.6 GB / 5 GB');
+    await expect(page.getByRole('button', { name: '设置该网络额度', exact: true })).toBeEnabled();
+    await expect(page.locator('#footer')).toBeEmpty();
+
+    await navigate('网络');
+    await expect(page.locator('#networkTableRegion table')).toHaveCount(1);
+    const row = page.locator('#networkTableRegion tbody tr');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('家里的 Wi-Fi');
+    await expect(row.locator('td').nth(1)).toHaveText('3.1 GB');
+    await expect(row.locator('td').nth(2)).toHaveText('500 MB');
+    await expect(row.locator('td').nth(3)).toHaveText('3.6 GB');
+});
+
+test('未设额度时保留设置入口，不显示重复说明', async () => {
+    await displaySnapshot(snapshot => { snapshot.networks[0].capGb = 0; });
+    await expect(page.locator('.quota-card')).toContainText('尚未设置流量额度');
+    await expect(page.locator('.quota-card')).not.toContainText('可单独为每个 Wi-Fi 设置');
+    await page.getByRole('button', { name: '设置该网络额度', exact: true }).click();
+    await expect(page.locator('#quotaInput')).toBeVisible();
+    await expect(page.locator('#quotaInput')).toHaveValue('');
+});
+
+test('后端连接失败时页脚仍显示错误', async () => {
+    await app.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('backend:request');
+        ipcMain.handle('backend:request', () => ({ ok: false, error: { message: 'backend unavailable' } }));
+    });
+    await page.reload();
+    await expect(page.locator('#footer')).toHaveText('无法连接采集后端，请检查状态');
+    await expect(page.locator('#footer')).toBeVisible();
+    await expectToast('无法连接采集后端：backend unavailable');
 });
 
 // 第一阶段单独验证应用展示：仅替换快照中的应用记录，网卡数据仍来自真实后端。
@@ -186,6 +244,12 @@ test('小流量在所有用量入口使用自动单位，图表可见且 CSV 保
     await expect(page.locator('.app-row')).toContainText('下载 520 KB · 上传 1 B');
     await page.locator('#appSearch').fill('小流量');
     await expect(page.locator('#appTotal')).toHaveText(/520\s*KB/);
+    await page.locator('[data-action="select-app"]').first().click();
+    await expect(page.locator('.drawer .application-summary')).toContainText('520 KB');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tab',{name:'应用分布'})).toHaveAttribute('aria-selected','true');
+    await expect(page.locator('#appSearch')).toHaveValue('小流量');
+    await expect(page.locator('[data-action="select-app"]').first()).toBeFocused();
     await page.keyboard.press('Escape');
 
     await navigate('历史');
@@ -210,6 +274,7 @@ test('自动单位沿用二进制偏好，图表与额度明确标注单位', as
     expect(csvText).toContain('"下载_GiB","上传_GiB","总计_GiB"');
     expect(csvText).toContain('"0.000977","0.000001","0.000978"');
     await navigate('设置');
+    await page.locator('[data-category="display"]').click();
     await expect(page.getByRole('combobox', { name: '流量单位进制' })).toHaveValue('GiB');
 });
 
@@ -288,6 +353,7 @@ test('应用历史来自 SQLite，重启、完整备份恢复与清空都保留�
     await navigate('设置');
     const backupFile = path.join(profile, 'applications-backup.json');
     await saveDialog(backupFile);
+    await page.locator('[data-category="data"]').click();
     await page.getByRole('button', { name: '备份', exact: true }).click();
     await expectToast('已导出完整数据备份');
     const backup = JSON.parse(await readFile(backupFile, 'utf8'));
@@ -309,7 +375,8 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await navigate('网络');
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
     await page.getByRole('tab', { name: '应用分布' }).click();
-    await expect(page.locator('#appStatusRegion')).toContainText('应用采集未启用');
+    await expect(page.getByRole('button', { name: '启用应用采集', exact: true })).toBeVisible();
+    await expect(page.locator('#appStatusRegion')).not.toContainText('应用采集未启用');
     await page.getByRole('button', { name: '启用应用采集', exact: true }).click();
     await page.evaluate(() => window.desktop.backend.request('collectNow'));
     await expect(page.locator('#appStatusRegion')).toContainText('应用采集中');
@@ -321,9 +388,12 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await page.evaluate(() => window.desktop.backend.request('collectNow'));
     await expect(page.locator('#appSearch')).toBeFocused();
     await expect(page.locator('.app-row')).toContainText('100 MB');
-    await page.getByRole('button', { name: '最近采样进程', exact: true }).click();
-    await expect(page.locator('.modal')).toContainText('42');
-    await page.locator('.modal').getByRole('button', { name: '关闭', exact: true }).click();
+    await page.locator('#appGrouping').selectOption('live');
+    await page.locator('[data-action="select-live-app"]').first().click();
+    await expect(page.locator('.drawer .application-summary')).toContainText('42');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#appGrouping')).toHaveValue('live');
+    await expect(page.locator('#appSearch')).toHaveValue('浏览');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: '暂停统计', exact: true }).click();
     harness.appCounters(180000000, 20000000);
@@ -335,14 +405,17 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
     await page.getByRole('tab', { name: '应用分布' }).click();
     await page.getByRole('button', { name: '停止应用采集', exact: true }).click();
-    await expect(page.locator('#appStatusRegion')).toContainText('应用采集未启用');
+    await expect(page.getByRole('button', { name: '启用应用采集', exact: true })).toBeVisible();
+    await expect(page.locator('#appStatusRegion')).not.toContainText('应用采集未启用');
     await expect(page.locator('.app-row')).toContainText('100 MB');
     await page.getByRole('tab', { name: '用量明细' }).click();
     await expect(page.locator('.drawer-total')).toContainText('3.6');
 });
 
 test('采集状态显示真实网卡，暂停与恢复都由后端执行', async () => {
-    await page.getByRole('button', { name: '采集状态' }).click();
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="status"]').click();
+    await page.locator('.status-guide summary').click();await page.locator('[data-action="demo"]').click();
     await expect(page.locator('.modal')).toContainText('采集器：运行中');
     await expect(page.locator('.modal')).toContainText('AICSemi AIC8800DC');
     await page.getByRole('button', { name: '完成' }).click();
@@ -364,11 +437,13 @@ test('修改网络备注与额度会写入数据库，重启后仍然保留', as
     await page.getByRole('tab', { name: '网络设置' }).click();
     await page.locator('#aliasInput').fill('书房 Wi-Fi');
     await page.locator('#quotaInput').fill('8');
-    await page.getByRole('button', { name: '保存网络设置' }).click();
-    await expect(page.locator('.drawer h2')).toHaveText('书房 Wi-Fi');
+    await expect(page.getByRole('button', { name: '保存网络设置' })).toHaveCount(0);
 
     // 落库校验：不只看界面。
     await expect.poll(() => query("SELECT alias || '|' || cap_gb FROM networks WHERE alias <> ''")).toBe('书房 Wi-Fi|8.0');
+    await expect(page.locator('#networkSaveStatus')).toHaveAttribute('data-state', 'saved');
+    await page.getByRole('tab', { name: '用量明细' }).click();
+    await expect(page.locator('.drawer h2')).toHaveText('书房 Wi-Fi');
 
     await app.close();
     await launch();
@@ -393,6 +468,7 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     const backupFile = path.join(profile, 'backup.json');
     await saveDialog(backupFile);
     await navigate('设置');
+    await page.locator('[data-category="data"]').click();
     await page.getByRole('button', { name: '备份' }).click();
     await expectToast('已导出完整数据备份');
     const backup = JSON.parse(await readFile(backupFile, 'utf8'));
@@ -432,9 +508,7 @@ test('开机启动开关按平台登记并取消', async () => {
     }
 
     await navigate('设置');
-    await page.locator('input[name="autoStart"]').check();
-    await page.getByRole('button', { name: '保存设置' }).click();
-    await expectToast('已保存偏好');
+    await page.getByRole('checkbox', { name: '开机自启', exact: true }).check();
 
     const file = fakeHome && path.join(fakeHome, '.config/autostart/wifimeter.desktop');
     const enabled = () => process.platform === 'win32'
@@ -448,26 +522,30 @@ test('开机启动开关按平台登记并取消', async () => {
     }
 
     // 关掉后文件应当被删除。
-    await page.locator('input[name="autoStart"]').uncheck();
-    await page.getByRole('button', { name: '保存设置' }).click();
+    await page.getByRole('checkbox', { name: '开机自启', exact: true }).uncheck();
     await expect.poll(enabled, { timeout: 10000 }).toBe(false);
 });
 
 test('偏好设置会落库并影响后端行为', async () => {
     await navigate('设置');
+    await page.locator('[data-category="data"]').click();
     await page.locator('select[name="retention"]').selectOption('30');
-    await page.getByRole('button', { name: '保存设置' }).click();
-    await expectToast('已保存偏好');
+    await expect(page.locator('.modal')).toContainText('缩短保留期');
+    expect(query('SELECT retention_days FROM settings')).not.toBe('30');
+    await page.locator('.modal').getByRole('button', { name: '取消', exact: true }).click();
+    await expect(page.locator('select[name="retention"]')).not.toHaveValue('30');
+    await page.locator('select[name="retention"]').selectOption('30');
+    await page.locator('.modal [data-action="confirm"]').click();
     await expect.poll(() => query('SELECT retention_days FROM settings')).toBe('30');
 
+    await page.locator('[data-category="general"]').click();
     await page.locator('select[name="interval"]').selectOption('10');
-    await page.getByRole('button', { name: '保存设置' }).click();
     await expect.poll(() => query('SELECT interval_seconds FROM settings')).toBe('10');
     await expect(page.locator('#settingsForm')).not.toHaveAttribute('data-busy', 'true');
 
     // 单位换算立刻反映在界面上。
+    await page.locator('[data-category="display"]').click();
     await page.locator('select[name="unit"]').selectOption('GiB');
-    await page.getByRole('button', { name: '保存设置' }).click();
     await expect.poll(() => query('SELECT unit FROM settings')).toBe('GiB');
     await expect(page.locator('#settingsForm')).not.toHaveAttribute('data-busy', 'true');
     await navigate('总览');
@@ -476,5 +554,6 @@ test('偏好设置会落库并影响后端行为', async () => {
     await launch();
     await expect(page.locator('.metric.featured')).toContainText('GiB');
     await navigate('设置');
+    await page.locator('[data-category="display"]').click();
     await expect(page.getByRole('combobox', { name: '流量单位进制' })).toHaveValue('GiB');
 });

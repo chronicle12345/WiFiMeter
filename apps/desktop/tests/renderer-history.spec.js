@@ -30,6 +30,8 @@ test.beforeEach(async({},testInfo)=>{
         globalThis.rendererFixture={snapshot,calls:[],failRange:false,imports:0};
         ipcMain.removeHandler('backend:request');ipcMain.handle('backend:request',(_event,{method,params={}})=>{
             const f=globalThis.rendererFixture;f.calls.push({method,params});
+            if(f.failSave===method)return {ok:false,error:{message:'autosave denied'}};
+            if(method==='updateNetwork'){const network=f.snapshot.networks.find(n=>n.id===params.key);Object.assign(network,params);return {ok:true,result:{network}};}
             if(method==='updateProxyConfig'){Object.assign(f.snapshot.proxy,params);return {ok:true,result:{proxy:f.snapshot.proxy}};}
             if(method==='updateTotalQuota'){Object.assign(f.snapshot.totalQuota,params);return {ok:true,result:{totalQuota:f.snapshot.totalQuota}};}
             if(method==='updateSettings'){Object.assign(f.snapshot.settings,params.settings);return {ok:true,result:{settings:f.snapshot.settings}};}
@@ -46,12 +48,12 @@ test.beforeEach(async({},testInfo)=>{
         ipcMain.removeHandler('legacy:status');ipcMain.handle('legacy:status',()=>({found:true}));
         ipcMain.removeHandler('legacy:import');ipcMain.handle('legacy:import',()=>{globalThis.rendererFixture.imports++;globalThis.rendererFixture.snapshot.settings.unit='GiB';globalThis.rendererFixture.snapshot.settings.retention=45;return {imported:true,backupDirectory:'C:\\Backup'};});
     },snapshot);
-    await page.reload();await expect(page.locator('h1')).toHaveText('流量总览');
+    await page.reload();await expect(page).toHaveTitle(/流量总览/);await expect(page.locator('#pageHead')).toHaveCount(0);await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
 });
 test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 async function allHistory(){await page.locator('[data-action="period"][data-value="all"]').click();await expect(page.locator('.date-text')).toHaveText('全部已保留历史');}
-async function apps(){await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
+async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
 
 test('全部与旧日期实际查询；失败保留上次结果和筛选',async()=>{
     await allHistory();await expect(page.locator('.metric.featured')).toContainText('1.57');
@@ -75,6 +77,7 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     await page.locator('[data-action="select-app-row"]').first().click();
     if(process.platform==='win32')await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
     else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+    await page.keyboard.press('Escape');
     await page.evaluate(()=>{window.savedAppRow=document.querySelector('#appListRegion tbody tr');});
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     await expect.poll(()=>page.evaluate(()=>window.savedAppRow===document.querySelector('#appListRegion tbody tr'))).toBe(true);
@@ -86,7 +89,7 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
 });
 
 test('应用控制展示失败回读，上传 KB/s 原样传桥且无后台轮询',async()=>{
-    await allHistory();await apps();
+    await allHistory();await apps();await page.locator('[data-action="application-control"]').click();
     if(process.platform!=='win32'){
         await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
         await expect(page.locator('[data-action="choose-program"]')).toHaveCount(0);
@@ -103,7 +106,7 @@ test('应用控制展示失败回读，上传 KB/s 原样传桥且无后台轮�
 });
 
 test('旧版目录导入显示备份位置并刷新，不提交偏好表单',async()=>{
-    await page.locator('[data-page="settings"]').click();await page.locator('[data-action="legacy-status"]').click();
+    await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="data"]').click();await page.locator('[data-action="legacy-status"]').click();
     await expect(page.locator('#legacyRegion')).toContainText('发现旧版数据');
     await page.locator('[data-action="legacy-import"]').click();await expect(page.locator('#legacyRegion')).toContainText('C:\\Backup');
     const calls=await app.evaluate(()=>globalThis.rendererFixture.calls);
@@ -114,63 +117,70 @@ test('旧版目录导入显示备份位置并刷新，不提交偏好表单',asy
     expect(calls.filter(c=>c.method==='snapshot').length).toBeGreaterThan(1);
 });
 
- test('取消偏好编辑恢复已保存值，无变化刷新不替换导航节点',async()=>{
-    await page.locator('[data-page="settings"]').click();
+ test('偏好自动保存并在重载后恢复，无变化刷新不替换导航节点',async()=>{
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="display"]').click();
     await page.locator('select[name="unit"]').selectOption('GiB');
-    await page.locator('[data-action="discard-settings"]').click();
-    await expect(page.locator('select[name="unit"]')).toHaveValue('GB');
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.settings.unit)).toBe('GiB');
+    await page.reload();
+    await page.locator('[data-category="display"]').click();
+    await expect(page.locator('select[name="unit"]')).toHaveValue('GiB');
     await page.evaluate(()=>{window.savedNav=document.querySelector('#nav button');});
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     expect(await page.evaluate(()=>window.savedNav===document.querySelector('#nav button'))).toBe(true);
 });
 
 test('完整中英切换随偏好保存，重载恢复，用户名称不翻译',async({},testInfo)=>{
-    await page.locator('[data-page="settings"]').click();
+    await page.locator('.nav [data-page="settings"]').click();
     await page.locator('select[name="language"]').selectOption('en');
-    await page.locator('#settingsForm button[type="submit"]').click();
-    await expect(page.locator('h1')).toHaveText('Preferences');
+    await expect.poll(() => page.evaluate(async () => (await window.desktop.backend.request('snapshot')).result.settings.language)).toBe('en');
+    await expect(page).toHaveTitle(new RegExp('Preferences'));
     await expect(page.locator('#settingsForm')).toContainText('History retention');
     await expect(page.locator('#totalQuotaForm')).toContainText('Disconnect all Wi-Fi');
     await page.screenshot({path:testInfo.outputPath('settings-en.png'),fullPage:true});
     const text=await page.locator('#content').innerText();
-    expect(text.replaceAll('简体中文','')).not.toMatch(/[\u4e00-\u9fff]/);
-    await page.reload();await expect(page.locator('h1')).toHaveText('Preferences');
-    await page.locator('[data-page="overview"]').click();
-    await expect(page.locator('h1')).toHaveText('Usage overview');
+    expect(text.replaceAll('简体中文','').replaceAll('Language / 语言','')).not.toMatch(/[\u4e00-\u9fff]/);
+    await page.reload();await expect(page).toHaveTitle(new RegExp('Preferences'));
+    await page.locator('.nav [data-page="overview"]').click();
+    await expect(page).toHaveTitle(new RegExp('Usage overview'));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
-    await page.locator('[data-action="help"]').click();
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="status"]').click();
+    await page.locator('.status-guide summary').click();await page.locator('[data-action="help"]').click();
     await expect(page.locator('.modal')).toContainText('Missing records are not zero usage');
     expect(await page.locator('.modal').innerText()).not.toMatch(/[\u4e00-\u9fff]/);
-    await page.keyboard.press('Escape');await page.locator('[data-page="settings"]').click();
-    await page.locator('select[name="language"]').selectOption('zh-CN');await page.locator('#settingsForm button[type="submit"]').click();
-    await expect(page.locator('h1')).toHaveText('偏好设置');
+    await page.keyboard.press('Escape');await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="general"]').click();
+    await page.locator('select[name="language"]').selectOption('zh-CN');await expect.poll(() => page.evaluate(async () => (await window.desktop.backend.request('snapshot')).result.settings.language)).toBe('zh-CN');
+    await expect(page).toHaveTitle(new RegExp('偏好设置'));
 });
 
 test('总WiFi额度独立保存且概览接收账本更新，单网络支持累计',async()=>{
     await expect(page.locator('.total-quota-card')).toContainText('1.5 GB');
-    await page.locator('[data-page="settings"]').click();
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="quota"]').click();
     await page.locator('#totalCap').fill('3');await page.locator('#totalPeriod').selectOption('all');
-    await page.locator('#totalQuotaForm button[type="submit"]').click();
-    await expect(page.locator('.toast').last()).toContainText('总额度已保存');
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.totalQuota.capGb)).toBe(3);
     const calls=await app.evaluate(()=>globalThis.rendererFixture.calls);
-    expect(calls.filter(c=>c.method==='updateTotalQuota').at(-1).params).toEqual({capGb:3,warnPercent:80,period:'all',notify:true,autoDisconnect:false});
+    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.totalQuota)).toMatchObject({capGb:3,period:'all',notify:true,autoDisconnect:false});
+    expect(calls.some(c=>c.method==='updateTotalQuota'&&c.params.capGb===3)).toBe(true);
     expect(calls.filter(c=>c.method==='updateSettings')).toHaveLength(0);
-    await page.locator('[data-page="overview"]').click();await page.locator('#main').focus();
+    await page.locator('.nav [data-page="overview"]').click();await page.locator('#main').focus();
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'usage',day:'2026-10-01',networks:[],totalQuota:{...globalThis.rendererFixture.snapshot.totalQuota,usedBytes:'1800000000'}});});
     await expect(page.locator('.total-quota-card')).toContainText('1.8 GB');
-    await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'网络设置'}).click();
+    await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'网络设置'}).click();
     await page.locator('#quotaPeriod').selectOption('all');await expect(page.locator('#quotaPeriod')).toHaveValue('all');
-    await page.keyboard.press('Escape');await page.getByRole('button',{name:'放弃更改',exact:true}).click();
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.networks[0].quotaPeriod)).toBe('all');
+    await page.keyboard.press('Escape');await expect(page.locator('.drawer')).toHaveCount(0);await expect(page.locator('.modal')).toHaveCount(0);
 });
 
 test('代理配置独立保存，估算替换代理原始行并保留客户端直接流量及导出标识',async()=>{
- await page.locator('[data-page="settings"]').click();await page.locator('#proxyPorts').fill('7890,1080');await page.locator('#proxyProcesses').fill('Clash.exe');
- await page.locator('#proxyConfigForm button[type="submit"]').click();await expect(page.locator('.toast').last()).toContainText('代理配置已保存');
- expect((await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='updateProxyConfig')))[0].params).toEqual({ports:[7890,1080],processNames:['Clash.exe']});
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="proxy"]').click();await page.locator('#proxyPorts').fill('7890,1080');await page.locator('#proxyProcesses').fill('Clash.exe');
+ await expect.poll(()=>app.evaluate(()=>({ports:globalThis.rendererFixture.snapshot.proxy.ports,processNames:globalThis.rendererFixture.snapshot.proxy.processNames}))).toEqual({ports:[7890,1080],processNames:['Clash.exe']});
+ expect((await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='updateProxyConfig'))).length).toBeGreaterThan(0);
  await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id,base={date:'2020-01-01',networkId:id,txBytes:'0'};
   s.appRecords=[{...base,appId:'proxy',name:'Proxy',rxBytes:'100'},{...base,appId:'client',name:'Client',rxBytes:'5'}];
   s.proxyEstimatedRecords=[{...base,proxyAppId:'proxy',appId:'client',name:'Client',rxBytes:'70',estimated:true,unattributed:false},{...base,proxyAppId:'proxy',appId:'unknown',name:'Unattributed',rxBytes:'30',estimated:true,unattributed:true}];});
- await page.locator('[data-page="overview"]').click();await allHistory();await apps();await page.locator('#appGrouping').selectOption('day');
+ await page.locator('.nav [data-page="overview"]').click();await allHistory();await apps();await page.locator('#appGrouping').selectOption('day');
  await expect(page.locator('#appDataSource')).toHaveValue('native');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
  await page.locator('#appDataSource').selectOption('estimated');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);await expect(page.locator('#appTotal')).toContainText('105');
  await expect(page.locator('#appListRegion')).toContainText('估算 · 未归属');await expect(page.locator('#appListRegion')).not.toContainText('Proxy');
@@ -182,10 +192,10 @@ test('代理配置独立保存，估算替换代理原始行并保留客户端�
 
 test('不支持代理估算时仍允许原生采集与历史展示',async()=>{
  await app.evaluate(()=>{globalThis.rendererFixture.snapshot.proxy.available=false;});await page.reload();await allHistory();await apps();
- await expect(page.locator('#appDataSource option[value="estimated"]')).toBeDisabled();
- await expect(page.locator('.drawer')).toContainText('原生应用采集不受影响');
+ await expect(page.locator('#appDataSource option[value="estimated"]')).toHaveAttribute('disabled','');
+ await expect(page.locator('#appDataSource')).toHaveValue('native');
  await expect(page.locator('[data-action="app-collection"]')).toBeEnabled();
- await page.keyboard.press('Escape');await page.locator('[data-page="settings"]').click();await expect(page.locator('#proxyConfigForm')).toHaveCount(0);
+ await page.keyboard.press('Escape');await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="general"]').click();await expect(page.locator('#proxyConfigForm')).toHaveCount(0);
  await expect(page.locator('#content')).toContainText('当前平台不支持代理流量估算');
 });
 
@@ -193,7 +203,7 @@ test('有线名称与身份分开显示，无频段信号或无线自动断开',
  await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot,n=s.networks[0];n.type='ethernet';n.alias='';n.ssid='Ethernet:original-identity';for(const c of s.live.connections){c.type='ethernet';c.adapterAlias='Ethernet Office';delete c.band;delete c.signal;}});
  await page.reload();await expect(page.locator('.connection-title')).toContainText('Ethernet Office');
  await expect(page.locator('.connection-details')).not.toContainText('信号');await expect(page.locator('.connection-details')).not.toContainText('GHz');
- await allHistory();await page.locator('button.network-name').first().click();
+ await allHistory();await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();
  await expect(page.locator('.drawer')).toContainText('Ethernet:original-identity');await expect(page.locator('.drawer')).not.toContainText('频段 / 信号');
  await page.getByRole('tab',{name:'网络设置'}).click();await expect(page.locator('input[name="autoDisconnect"]')).toHaveCount(0);
  await expect(page.locator('.drawer')).toContainText('有线网络不支持无线断开操作');
@@ -246,18 +256,20 @@ test('生成 v1.2 合成数据验收截图',async()=>{
    s.networks[1].alias=language==='en'?'Demo Ethernet':'演示有线网络';
   },language);
   await page.reload();
-  await page.locator('[data-page="overview"]').click();
+  await page.locator('.nav [data-page="overview"]').click();
   await page.locator('[data-action="period"][data-value="month"]').click();
   await expect(page.locator('#content')).not.toHaveAttribute('aria-busy','true');
   await expect(page.locator('.date-text')).toContainText('09 / 18');
-  await expect(page.locator('h1')).toHaveText(english?'Usage overview':'流量总览');
+  await expect(page).toHaveTitle(new RegExp(english?'Usage overview':'流量总览'));
   await expect(page.locator('.connection-title')).toContainText(english?'Demo Wi-Fi':'演示无线网络');
   await expect(page.locator('#brandMark img')).toHaveAttribute('src','../assets/icon.png');
   await expect.poll(()=>page.locator('#brandMark img').evaluate(image=>image.complete&&image.naturalWidth>0)).toBe(true);
   await page.evaluate(async()=>{await document.fonts.ready;window.scrollTo(0,0);});
   await page.mouse.move(0,0);
+  await page.setViewportSize({width:1440,height:1000});
   expect(await page.evaluate(()=>({width:innerWidth,height:innerHeight}))).toEqual({width:1440,height:1000});
   await page.screenshot({path:path.join(directory,english?'screenshot-en.png':'screenshot.png'),animations:'disabled',scale:'css'});
+  await page.locator('.nav [data-page="networks"]').click();
   await page.locator('button.network-name').first().click();
   await page.locator('[data-action="drawer-tab"][data-tab="apps"]').click();
   await page.locator('#appGrouping').selectOption('month');
@@ -268,4 +280,52 @@ test('生成 v1.2 合成数据验收截图',async()=>{
   await page.screenshot({path:path.join(directory,english?'applications-en.png':'applications-zh-CN.png'),animations:'disabled',scale:'css'});
   await page.keyboard.press('Escape');
  }
+});
+
+ test('unreadable connection displays the raw diagnostic rather than disconnected',async()=>{
+ await app.evaluate(()=>{globalThis.rendererFixture.snapshot.live={...globalThis.rendererFixture.snapshot.live,state:'unreadable',message:'WlanQueryInterface <denied> 5',connections:[]};});
+ await page.locator('[data-action="refresh"]').click();
+ await expect(page.locator('.connection-title')).toHaveText('无法读取 Wi-Fi 信息');
+ await expect(page.locator('.connection-details')).toContainText('WlanQueryInterface <denied> 5');
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="status"]').click();await page.locator('.status-guide summary').click();await page.locator('[data-action="demo"]').click();
+ await expect(page.locator('.modal')).toContainText('无法确认连接信息');
+ await expect(page.locator('.modal')).not.toContainText('当前没有已关联的无线网卡');
+ });
+
+test('各设置分类无保存取消按钮，独立表单自动保存并在重载后恢复',async({},testInfo)=>{
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1248,768));
+ await page.locator('.nav [data-page="settings"]').click();
+ await page.locator('[name="interval"]').selectOption('10');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.settings.interval)).toBe(10);
+ for(const category of ['general','display','quota','proxy','data','status','about']){
+  await page.locator(`[data-category="${category}"]`).click();
+  await expect(page.locator('#content button[type="submit"]')).toHaveCount(0);
+  await expect(page.locator('[data-action^="discard-"]')).toHaveCount(0);
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath(`settings-${category}.png`)});
+ }
+ await page.locator('[data-category="quota"]').click();await page.locator('#totalCap').fill('42');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.totalQuota.capGb)).toBe(42);
+ await page.locator('[data-category="proxy"]').click();await page.locator('#proxyPorts').fill('8080');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([8080]);
+ await page.reload();
+ await page.locator('[data-category="proxy"]').click();await expect(page.locator('#proxyPorts')).toHaveValue('8080');
+ await page.locator('[data-category="quota"]').click();await expect(page.locator('#totalCap')).toHaveValue('42');
+ await page.locator('[data-category="general"]').click();await expect(page.locator('[name="interval"]')).toHaveValue('10');
+});
+
+test('代理文本自动保存合并快速输入，失败后保留输入并允许重试',async()=>{
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="proxy"]').click();
+ await app.evaluate(()=>{globalThis.rendererFixture.failSave='updateProxyConfig';});
+ await page.locator('#proxyPorts').fill('808');await page.locator('#proxyPorts').fill('8080');
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='updateProxyConfig').length)).toBe(1);
+ expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([]);
+ await expect(page.locator('#proxyPorts')).toHaveValue('8080');
+ await expect(page.locator('#proxySaveStatus')).toHaveAttribute('data-state','error');
+ await expect(page.locator('#proxySaveStatus')).toContainText('autosave denied');
+ await app.evaluate(()=>{globalThis.rendererFixture.failSave=null;});
+ await page.locator('#proxyConfigForm [data-action="retry-autosave"]').click();
+ await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([8080]);
+ await expect(page.locator('#proxySaveStatus')).toHaveAttribute('data-state','saved');
+ await page.reload();await page.locator('[data-category="proxy"]').click();await expect(page.locator('#proxyPorts')).toHaveValue('8080');
 });

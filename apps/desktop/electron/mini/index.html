@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN" data-palette="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WiFiMeter</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-shape="bar" data-palette="dark" data-collapsed="false">
+    <div class="edge-strip" aria-hidden="true"></div>
+    <main title="按住空白区域拖动窗口">
+        <header class="mini-heading"><span class="activity-dot"></span><span>WiFiMeter</span></header>
+        <div class="rates">
+            <div class="rate-download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m-5-5 5 5 5-5"/></svg><output id="download" aria-label="下载速度"><span class="rate-number">—</span><span class="rate-unit"></span></output></div>
+            <div class="rate-upload"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m-5 5 5-5 5 5"/></svg><output id="upload" aria-label="上传速度"><span class="rate-number">—</span><span class="rate-unit"></span></output></div>
+        </div>
+        <nav aria-label="小窗操作"><button id="open" aria-label="打开主窗口" title="打开主窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6m0-6-9 9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button id="close" aria-label="关闭小窗" title="关闭小窗"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></nav>
+    </main>
+    <script type="module" src="renderer.js"></script>
+</body>
+</html>

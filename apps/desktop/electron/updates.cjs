@@ -160,8 +160,10 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             const newer = compareVersions(latest, current) > 0;
             const url = `${REPOSITORY}/releases/tag/${encodeURIComponent(release.tag_name)}`;
             if (newer && platform === 'win32' && ['x64', 'ia32', 'arm64'].includes(arch)) {
-                const name = `WiFiMeter-${latest.version}-${arch}-Setup.exe`;
-                const matches = (Array.isArray(release.assets) ? release.assets : []).filter(asset =>
+                const names = [`WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`];
+                const assets = Array.isArray(release.assets) ? release.assets : [];
+                const name = names.find(name => assets.some(asset => asset.name === name)) || names[0];
+                const matches = assets.filter(asset =>
                     asset.name === name && /^sha256:[a-fA-F0-9]{64}$/.test(asset.digest || '')
                     && assetUrlAllowed(asset.browser_download_url, release.tag_name, name));
                 if (matches.length === 1) selectedAsset = { name, url: matches[0].browser_download_url,

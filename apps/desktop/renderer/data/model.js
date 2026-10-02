@@ -33,7 +33,7 @@ const shiftDay = (key, n) => {const d=dateOf(key);d.setDate(d.getDate()+n);retur
 const today = () => dayKey(new Date());
 const monthStart = key => key.slice(0,7)+'-01';
 const niceDate = key => new Intl.DateTimeFormat(getLocale(),{month:'short',day:'numeric'}).format(dateOf(key));
-const defaults = {unit:'GB', speedUnit:'MB/s', interval:5, retention:90, autoStart:false, minimizeToTray:false, notifications:true};
+const defaults = {unit:'GB', speedUnit:'auto', interval:5, retention:90, autoStart:false, minimizeToTray:false, notifications:true};
 function totalOf(rows) {let rx=0n,tx=0n;for(const r of rows){rx+=B(r.rxBytes);tx+=B(r.txBytes);}return {rx,tx,total:rx+tx};}
 function validDate(key){return typeof key==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(key)&&!Number.isNaN(+dateOf(key))&&dayKey(dateOf(key))===key;}
 function validateSnapshot(input, mode='demo') {
@@ -66,7 +66,7 @@ function validateSnapshot(input, mode='demo') {
  for(const r of data.appRecords){if(!ids.has(r.networkId)||!validDate(r.date)||!validString(r.appId,1024)||!validString(r.name,256)||!byteString(r.rxBytes)||!byteString(r.txBytes))throw Error(t('应用记录不合法。'));}
  data.settings={...defaults,...data.settings};
  const s=data.settings;
- if((s.language!==undefined&&!['en','zh-CN'].includes(s.language))||!['GB','GiB'].includes(s.unit)||!['MB/s','Mbps'].includes(s.speedUnit)||![2,5,10].includes(s.interval)||(!Number.isInteger(s.retention)||s.retention<0||s.retention>36500))throw Error(t('设置值不合法。'));
+ if((s.language!==undefined&&!['en','zh-CN'].includes(s.language))||!['GB','GiB'].includes(s.unit)||!['auto','MB/s','Mbps'].includes(s.speedUnit)||![2,5,10].includes(s.interval)||(!Number.isInteger(s.retention)||s.retention<0||s.retention>36500))throw Error(t('设置值不合法。'));
  for(const key of ['autoStart','minimizeToTray','notifications'])if(typeof s[key]!=='boolean')throw Error(t('开关值不合法。'));
  if(!data.live||!['connected','disconnected','permission','offline','loading'].includes(data.live.state)||!['running','paused','offline'].includes(data.live.collector))throw Error(t('采集器状态不合法。'));
  if(!Array.isArray(data.live.connections)||data.live.connections.length>64)throw Error(t('连接信息不合法。'));

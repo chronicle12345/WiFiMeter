@@ -10,11 +10,15 @@ test.beforeEach(async () => {
 });
 test.afterEach(async () => { if(app) await app.close(); harness?.cleanup(); });
 test('update setting persists and release checks never install before user action', async () => {
-    await page.locator('[data-page="settings"]').click();
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="about"]').click();
+    await expect(page.locator('#pageHead')).toHaveCount(0);
+    await expect(page.locator('.nav [data-page="settings"]')).toHaveAttribute('aria-current', 'page');
     await expect(page.locator('#checkUpdatesOnStartup')).toBeChecked();
     await page.locator('#checkUpdatesOnStartup').uncheck();
     await expect.poll(() => page.evaluate(async () => (await window.desktop.updates.status()).checkOnStartup)).toBe(false);
     await page.reload();
+    await page.locator('[data-category="about"]').click();
     await expect(page.locator('#checkUpdatesOnStartup')).not.toBeChecked();
     await app.evaluate(({ipcMain}) => {
         globalThis.installRequests = 0;
@@ -47,7 +51,7 @@ test('hidden windows do not redraw for backend events and catch up when shown', 
     });
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => globalThis.mutations)).toBe(0);
-    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].show());
+    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].showInactive());
     await expect.poll(() => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
     await expect.poll(() => page.evaluate(() => globalThis.mutations)).toBeGreaterThan(0);
 });
@@ -62,7 +66,8 @@ test('failed update offers recovery through the install action and removes it af
             return { state: 'recovered', recoveryRequired: false, error: '' };
         });
     });
-    await page.locator('[data-page="settings"]').click();
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="about"]').click();
     await page.locator('[data-action="check-updates"]').click();
     const recover = page.locator('#updatesPanel [data-action="install-update"]');
     await expect(recover).toHaveText('恢复采集');

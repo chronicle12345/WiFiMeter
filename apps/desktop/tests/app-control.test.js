@@ -117,3 +117,37 @@ test('malformed output and runner failures are explicit, never success', async (
         assert.equal((await control.request({ action: 'block', path: program })).error.code, killed ? 'timeout' : 'runnerFailed');
     }
 });
+
+// Only Read reaches the real provider; no mutation or elevation is requested.
+test('real Windows read query uses the hidden runner and preserves policy query results', { skip: process.platform !== 'win32' }, async t => {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const calls = [];
+    const control = createAppControl({
+        runner: async (exe, args, options) => {
+            calls.push([exe, args, options]);
+            assert.equal(decode(calls.at(-1)).data.Action, 'Read');
+            return promisify(execFile)(exe, args, options);
+        }
+    });
+    const response = await control.request({ action: 'read', path: process.execPath });
+    assert.equal(response.ok, true, JSON.stringify(response));
+    assert.equal(calls.length, 1);
+    const state = response.result.state;
+    assert.equal(state.Scope, 'LocalConfiguredPolicy');
+    assert.equal(state.Path.toLowerCase(), response.result.path.toLowerCase());
+    assert.match(state.Warning, /本地代理环回连接/);
+    for (const [field, error] of [['Blocked', 'FirewallErrorCode'], ['Throttled', 'QosErrorCode']]) {
+        if (state[error]) assert.equal(state[field], null);
+        else assert.equal(typeof state[field], 'boolean');
+    }
+    t.diagnostic(JSON.stringify(state));
+});
+
+test('packaged requests load the external native module with a hidden runner', async () => {
+    const path = await import('node:path');
+    const resourcesPath = String.raw`C:\WiFiMeter\resources`;
+    const { control, calls } = harness({ isPackaged: true, resourcesPath });
+    await control.request({ action: 'read', path: program });
+    assert.equal(decode(calls[0]).data.Module, path.join(resourcesPath, 'native', 'windows', 'AppNetworkControl.psm1'));
+});

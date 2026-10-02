@@ -17,7 +17,7 @@ const emptySnapshot = () => ({
     appProcesses: [],
     appGaps: [],
     gaps: [],
-    settings: { unit: 'GB', speedUnit: 'MB/s', interval: 5, retention: 90, autoStart: false, minimizeToTray: false, notifications: true },
+    settings: { unit: 'GB', speedUnit: 'auto', interval: 5, retention: 90, autoStart: false, minimizeToTray: false, notifications: true },
     live: { state: 'loading', collector: 'offline', connections: [], updatedAt: new Date().toISOString(), skippedIntervals: 0 }
 });
 
@@ -102,6 +102,7 @@ export function createDataClient(handlers = {}) {
             if (message.event === 'live') {
                 snapshot.live = payloadOf(message);
                 snapshot.appCollection = message.appCollection ?? snapshot.appCollection;
+                snapshot.proxy = message.proxy ?? snapshot.proxy;
                 snapshot.appProcesses = message.appProcesses ?? snapshot.appProcesses;
                 handlers.onLive?.();
                 return;

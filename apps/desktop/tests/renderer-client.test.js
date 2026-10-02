@@ -233,3 +233,22 @@ test('live row lookup never retains rows replaced by reload, clearing, or anothe
     assert.equal(client.snapshot.appRecords.length,1); assert.equal(client.snapshot.appRecords[0].rxBytes,'5');
     client.stop();
 });
+
+test('live proxy discovery updates without reloading history or changing byte totals', async t => {
+    const original = globalThis.window;
+    t.after(() => { globalThis.window = original; });
+    let receive;
+    globalThis.window = { desktop: { backend: {
+        request: async method => ({ ok: true, result: method === 'snapshot' ? { records: [{date:'2026-10-02',networkId:'home',rxBytes:'100',txBytes:'20'}], proxy:{clients:[]} } : {} }),
+        onEvent: handler => { receive = handler; return () => {}; }
+    } } };
+    const client = createDataClient(); await client.start();
+    const proxy = { available:true,status:'ready',clients:[{appId:'C:\\Apps\\Client.exe',name:'Client',connections:2}],ports:[7897] };
+    receive({event:'live',state:'connected',collector:'running',proxy,appProcesses:[{appId:'C:\\Apps\\Client.exe',source:'tcp-estats',scope:'loopback',rxPerSecond:'5000',txPerSecond:'100'}]});
+    assert.deepEqual(client.snapshot.proxy,proxy);
+    assert.equal(client.snapshot.appProcesses[0].scope,'loopback');
+    assert.equal(client.snapshot.records[0].rxBytes,'100');
+    receive({event:'live',state:'connected',collector:'running',proxy:{...proxy,clients:[]},appProcesses:[]});
+    assert.deepEqual(client.snapshot.proxy.clients,[]);
+    client.stop();
+});

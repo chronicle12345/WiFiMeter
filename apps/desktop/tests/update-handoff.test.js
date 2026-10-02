@@ -48,9 +48,11 @@ async function harness({ failure, paused = false, appsEnabled = false } = {}) {
         'node:fs': { existsSync: () => true },
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
-        './system.cjs': { createSystemIntegration: () => ({ applySettings: async () => {}, beginQuit() {}, handleWindowClose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, handleWindowClose() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => ({ found: false }) },
+        './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
+        './app-icons.cjs': { registerAppIcons() {} },
         './app-control.cjs': { createAppControl: () => ({}) },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { calls.push('handoff'); if (failure === 'handoff') throw Error('helper failed'); await handoffReady; } },
         './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), check: async () => ({ state: 'available' }), async install() {
@@ -64,7 +66,7 @@ async function harness({ failure, paused = false, appsEnabled = false } = {}) {
         require: name => imports[name] || require(name), __dirname: directory, Buffer, console,
         process: { platform: 'win32', arch: 'x64', pid: 42, env: { WIFIMETER_USER_DATA: 'fixture' }, resourcesPath: 'fixture' }
     });
-    await ready; await new Promise(setImmediate); backend.paused = paused; backend.appsEnabled = appsEnabled; calls.length = 0;
+    await ready; await new Promise(setImmediate); assert.equal(calls.filter(call => call === 'tray').length, 1); backend.paused = paused; backend.appsEnabled = appsEnabled; calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
     return { backend, calls, hooks, releaseReady, get quitCount() { return quitCount; }, invoke: (name, payload) => handlers.get(name)(event, payload) };
 }

@@ -1,12 +1,14 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage, shell, screen } = require('electron');
 const path = require('node:path');
 const { existsSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createFileActions } = require('./files.cjs');
+const { registerAppIcons } = require('./app-icons.cjs');
 const { BackendClient, resolveExecutable } = require('./backend.cjs');
 const { createSystemIntegration } = require('./system.cjs');
 const { applyProductIdentity } = require('./product.cjs');
 const { legacyDirectory, importLegacyDirectory } = require('./legacy.cjs');
+const { createWindowControls } = require('./window-controls.cjs');
 const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
@@ -16,12 +18,14 @@ const pageURL = pathToFileURL(pagePath).href;
 let window;
 let backend;
 let system;
+let windowControls;
 let quitting = false;
 let installingUpdate = false;
 let startup;
 let migrationStatus = { found: false };
 let migrationBusy = false;
 let lastAutoStartPreference = false;
+let speedUnit = 'auto';
 let preserveUnmatchedLoginItem = false;
 
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
@@ -40,6 +44,8 @@ if (process.env.WIFIMETER_TEST_ISOLATION === '1') {
 }
 
 if (process.env.WIFIMETER_SOFTWARE_RENDERING === '1') app.disableHardwareAcceleration();
+const backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1' && Boolean(process.env.WIFIMETER_USER_DATA);
+if (backgroundTest) { app.commandLine?.appendSwitch('disable-renderer-backgrounding'); app.commandLine?.appendSwitch('disable-backgrounding-occluded-windows'); }
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 app.on('second-instance', () => {
@@ -49,6 +55,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     window = new BrowserWindow({
         width: 1280, height: 900, minWidth: 900, minHeight: 650,
+        ...(backgroundTest ? { show: false, x: -32000, y: -32000, skipTaskbar: true, focusable: false } : {}),
         title: productName, backgroundColor: '#f4f7fc',
         icon: path.join(__dirname, '../assets/icon.png'),
         webPreferences: {
@@ -60,8 +67,8 @@ if (primaryInstance) app.whenReady().then(async () => {
     for (const event of ['hide', 'show', 'minimize', 'restore']) window.on(event, sendVisibility);
     window.webContents.on('did-finish-load', sendVisibility);
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    // 开启“关闭窗口时最小化到托盘”后，关闭窗口只隐藏，采集继续。
-    window.on('close', event => system?.handleWindowClose(event));
+    // 窗口控制器按偏好询问、隐藏到托盘或退出应用。
+    window.on('close', event => { if (!quitting && !system?.quitting) windowControls?.onMainClose(event); });
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.webContents.on('will-prevent-unload', event => {
@@ -96,6 +103,16 @@ if (primaryInstance) app.whenReady().then(async () => {
         logger: message => console.log(`[system] ${message}`)
     });
 
+    // 托盘先于迁移和系统设置同步创建，启动失败时也保留窗口入口。
+    system.initializeTray();
+
+    windowControls = createWindowControls({ BrowserWindow, screen, ipcMain, dialog,
+        userData: app.getPath('userData'), getWindow: () => window,
+        hideToTray: () => system.hideToTray(), requestQuit: () => app.quit(),
+        isQuitting: () => quitting || system.quitting,
+        logger: message => console.log(`[window-controls] ${message}`) });
+    await windowControls.read();
+
     // 只读查询当前可执行文件的登录启动状态，不扫描或删除其他路径的旧启动项。
     async function inheritLegacyLoginItem(result) {
         if (process.platform !== 'win32' || process.env.WIFIMETER_USER_DATA || !result.found || !result.settingsApplied) return;
@@ -114,6 +131,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     }
 
     backend.on('event', message => {
+        windowControls?.publishLive({ ...message, speedUnit });
         if (window && !window.isDestroyed()) window.webContents.send('backend:event', message);
         if (message.event === 'alert') system.notify(message);
     });
@@ -130,12 +148,21 @@ if (primaryInstance) app.whenReady().then(async () => {
         } catch (error) {
             migrationStatus = { found: true, error: error.message };
             preserveUnmatchedLoginItem = process.platform === 'win32';
-            // A failed migration stays paused so new samples cannot overlap the old history.
+            // 已有数据库的旧日期冲突不应停止当前统计；旧记录留待手动确认导入。
+            if (!firstDatabaseUse && error.code === 'LegacyOverlap') {
+                try {
+                    await backend.request('setPaused', { paused: false });
+                    migrationStatus = { found: true, imported: false, importWarning: error.message };
+                } catch (resumeError) {
+                    migrationStatus.error = resumeError.message;
+                }
+            }
         }
     })();
 
     // 启动时按已保存的偏好同步一次系统状态（开机启动文件、托盘）。
     startup.then(() => backend.request('hello')).then(result => {
+        speedUnit = result.settings?.speedUnit || 'auto';
         lastAutoStartPreference = Boolean(result.settings?.autoStart);
         if (migrationStatus.error || preserveUnmatchedLoginItem || (process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1')) return;
         return system.applySettings(result.settings ?? {});
@@ -154,10 +181,17 @@ if (primaryInstance) app.whenReady().then(async () => {
             await startup;
             if (installingUpdate) throw Error('The application is stopping for an update.');
             if (migrationBusy && !['hello', 'snapshot', 'exportUsage', 'backup', 'migrationStatus'].includes(method)) throw Error('Migration is running; changes are temporarily unavailable. / 正在迁移，暂时不能修改数据或恢复采集。');
-            if (migrationStatus.error && method === 'setPaused' && payload.params?.paused === false) throw Error(migrationStatus.error);
+            if (migrationStatus.error && method === 'setPaused' && payload.params?.paused === false) {
+                const choice = await dialog.showMessageBox(window, { type: 'question', title: 'WiFiMeter',
+                    message: '旧数据尚未导入，是否先恢复当前统计？ / Resume collection without importing old data?',
+                    buttons: ['恢复统计 / Resume', '取消 / Cancel'], defaultId: 1, cancelId: 1 });
+                if (choice.response !== 0) throw Error(migrationStatus.error);
+                migrationStatus = { ...migrationStatus, error: '', importWarning: migrationStatus.error };
+            }
             const result = await backend.request(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
             // 设置改动后立刻作用于系统，并把实际生效的结果回给页面。
             if (method === 'updateSettings' && result?.settings) {
+                speedUnit = result.settings.speedUnit || 'auto';
                 const explicitAutoStart = Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart') && Boolean(payload.params.settings.autoStart) !== lastAutoStartPreference;
                 lastAutoStartPreference = Boolean(result.settings.autoStart);
                 if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
@@ -171,6 +205,10 @@ if (primaryInstance) app.whenReady().then(async () => {
         }
     });
 
+    registerAppIcons({ ipcMain, trusted, app, request: async (method, params) => { await startup; if (installingUpdate || !backend) throw Error('Backend unavailable.'); return backend.request(method, params); } });
+
+    ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
+    ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.update(patch); });
     const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
     ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.chooseProgram(); });
     ipcMain.handle('app-control:request', (event, payload) => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.request(payload); });
@@ -181,13 +219,27 @@ if (primaryInstance) app.whenReady().then(async () => {
         if (installingUpdate) return { error: '正在更新或恢复采集，暂时不能导入数据。' };
         if (migrationBusy) return { error: 'An import is already running.' };
         migrationBusy = true;
+        let previousPaused = true;
         try {
-            const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Import WiFiMeter 1.x data / 导入旧版数据' });
+            const choice = await dialog.showOpenDialog(window, { properties: ['openDirectory'], defaultPath: legacyDirectory() || app.getPath('documents'), title: 'Import WiFiMeter 1.x data / 导入旧版数据' });
             if (choice.canceled || !choice.filePaths.length) return { canceled: true };
+            previousPaused = (await backend.request('hello')).paused !== false;
             await backend.request('setPaused', { paused: true });
-            migrationStatus = await importLegacyDirectory({ directory: choice.filePaths[0], userData: app.getPath('userData'), request: (method, params) => backend.request(method, params, { timeout: ['backup', 'importLegacy', 'restore'].includes(method) ? 300000 : 15000 }) });
+            const importSelected = overlapPolicy => importLegacyDirectory({ directory: choice.filePaths[0], userData: app.getPath('userData'), overlapPolicy,
+                request: (method, params) => backend.request(method, params, { timeout: ['backup', 'importLegacy', 'restore'].includes(method) ? 300000 : 15000 }) });
+            try { migrationStatus = await importSelected('reject'); }
+            catch (error) {
+                if (error.code !== 'LegacyOverlap') throw error;
+                const decision = await dialog.showMessageBox(window, { type: 'question', title: 'Import old data / 导入旧数据',
+                    message: '发现相同网络和日期的记录 / Overlapping network dates',
+                    detail: '保留当前数据库中已有日期的记录，只导入其余旧日期。不会相加或覆盖；旧数据原文及导入前备份均保留。 / Keep existing dates and import only non-conflicting dates. Original data and recovery backups are retained.',
+                    buttons: ['保留现有并导入其他日期 / Keep existing', '取消 / Cancel'], defaultId: 1, cancelId: 1 });
+                if (decision.response !== 0) throw error;
+                migrationStatus = await importSelected('keep-existing');
+            }
             if (!migrationStatus.found) throw Error('No state.json or state.json.bak was found in the selected directory.');
             await inheritLegacyLoginItem(migrationStatus);
+            await backend.request('setPaused', { paused: previousPaused });
             return migrationStatus;
         } catch (error) {
             await backend.request('setPaused', { paused: true }).catch(pauseError => console.error('[migration] Pause failed:', pauseError.message));
@@ -268,6 +320,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         } finally { updateRequestBusy = false; }
     });
     await window.loadFile(pagePath);
+    if (backgroundTest) window.showInactive();
     await startup;
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
         updateService.check({ automatic: true }).then(updateResult).catch(error => updateResult({ state: 'error', error: error.message }));
@@ -280,12 +333,16 @@ app.on('window-all-closed', () => app.quit());
 app.on('before-quit', event => {
     if (installingUpdate && !quitting) { event.preventDefault(); return; }
     system?.beginQuit();
-    if (quitting || !backend) return;
+    if (quitting || !backend) {
+        windowControls?.dispose();
+        return;
+    }
     event.preventDefault();
     quitting = true;
     backend.stop().catch(error => console.error(`[backend] 停止失败：${error.message}`))
         .finally(() => {
             backend = null;
+            windowControls?.dispose();
             system?.dispose();
             app.quit();
         });

@@ -1,0 +1,45 @@
+/* Neutral surfaces and indigo accents; the renderer resolves system to light/dark. */
+:root {
+  color-scheme:light;
+  --canvas:#f5f5f7; --surface:#ffffff; --surface-2:#fafafa; --panel:var(--surface);
+  --ink:#25242b; --text:#4f4d58; --muted:#706d7a; --line:#e3e2e8;
+  --accent:#6250c7; --accent-dark:#5140ac; --accent-soft:#efecfb;
+  --accent-fill:#6250c7; --accent-hover:#5140ac; --on-accent:#ffffff;
+  --chart-rx:#8b7ed2; --chart-tx:#c9c1ed; --chart-missing:#aaa5bc;
+  --hover:#f0eff4; --hover-line:#bbb3d9; --track:#e9e7ef; --switch-track:#cbc8d3;
+  --focus:#7865d6; --focus-ring:#7865d633; --divider:#c7c4cf;
+  --amber:#85601f; --amber-soft:#faf3e4; --amber-line:#e7d9b9; --amber-fill:#ac8035;
+  --red:#a13e38; --red-soft:#fbefed; --red-line:#ebd2ce; --red-fill:#a13e38;
+  --tooltip:#302c42; --tooltip-text:#ffffff; --tooltip-muted:#d8d2ed;
+  --toast:#45396e; --toast-error:#853d37; --toast-text:#ffffff;
+  --backdrop:#25212f38; --modal-backdrop:#25212f58; --switch-thumb:#ffffff;
+  --radius:14px; --shadow:0 16px 52px #211b3217;
+  --small-shadow:0 1px 3px #211b320d; --thumb-shadow:0 1px 2px #211b3226;
+  --nav-shadow:0 -2px 10px #211b3208;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif;
+  font-size:14px; color:var(--ink); background:var(--canvas); font-synthesis:none;
+}
+:root[data-theme="dark"], :root[data-palette="dark"] {
+  color-scheme:dark;
+  --canvas:#18181c; --surface:#222226; --surface-2:#1d1d21;
+  --ink:#eeedf2; --text:#d1ceda; --muted:#aaa6b5; --line:#3c3944;
+  --accent:#b9adff; --accent-dark:#d0c7ff; --accent-soft:#353045;
+  --accent-fill:#715bc7; --accent-hover:#806bd5; --on-accent:#ffffff;
+  --chart-rx:#a899ed; --chart-tx:#645b8c; --chart-missing:#7e788f;
+  --hover:#302e36; --hover-line:#716485; --track:#393540; --switch-track:#625d6d;
+  --focus:#baacff; --focus-ring:#baacff40; --divider:#65606f;
+  --amber:#e3bb71; --amber-soft:#372f22; --amber-line:#665238; --amber-fill:#c59c52;
+  --red:#f1a29a; --red-soft:#3b2929; --red-line:#6e4442; --red-fill:#b64f47;
+  --tooltip:#38323f; --tooltip-text:#f7f4fc; --tooltip-muted:#d5cee3;
+  --toast:#45395f; --toast-error:#773c37; --toast-text:#ffffff;
+  --backdrop:#00000070; --modal-backdrop:#00000099;
+  --shadow:0 16px 52px #00000052; --small-shadow:0 1px 3px #00000033;
+  --thumb-shadow:0 1px 2px #0000004d; --nav-shadow:0 -2px 10px #00000033;
+}
+
+:root { --rate-down:var(--accent); --rate-up:var(--muted); --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; }
+:root[data-palette="indigo"] {
+  color-scheme:dark; --surface:#292640; --surface-2:#242137; --ink:#f0edf9;
+  --text:#d5cee8; --muted:#b5accb; --line:#514966; --accent:#c0b2ff;
+  --accent-soft:#3a3354; --hover:#443b5e; --focus:#d0c3ff;
+}

@@ -32,3 +32,13 @@ test('代理配置解析多个端口与可选进程，拒绝非法端口并去�
  for(const ports of ['0','65536','1.5','abc'])assert.throws(()=>proxyConfigPatch(values(ports,'')));
  assert.throws(()=>proxyConfigPatch(values('7890','invalid\u0000name')));
 });
+
+import { proxyForm, proxyClientsView } from '../renderer/ui/proxy.js';
+test('proxy settings configure only; clients and aligned live rates belong to application views',()=>{
+ const proxy={available:true,status:'ready',ports:[7897],clients:[{name:'Client',appId:'C:\\Apps\\Client.exe',proxyName:'Local proxy',connections:2,measurementAvailable:true,rxPerSecond:'2500',txPerSecond:'0'}]};
+ assert.doesNotMatch(proxyForm(proxy),/proxy-client-table|select-proxy-app/);
+ const html=proxyClientsView(proxy);
+ assert.match(html,/2.5 KB\/s/);assert.match(html,/0 B\/s/);
+ assert.equal((html.match(/<th class="right">/g)||[]).length,3);
+ assert.equal((html.match(/<td class="right num">/g)||[]).length,3);
+});

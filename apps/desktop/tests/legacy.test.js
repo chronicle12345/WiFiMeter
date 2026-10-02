@@ -219,12 +219,13 @@ test('real total quota rejects lossy values with archived warnings and protects 
 });
 
 // 执行真实 main.cjs 的启动和 IPC 注册；Electron、平台集成和后端都使用内存替身。
-async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, login = false } = {}) {
+async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, login = false, paused = false, confirmResponse = 1 } = {}) {
     const { runInNewContext } = await import('node:vm');
     const { EventEmitter } = await import('node:events');
     const { fileURLToPath, pathToFileURL } = await import('node:url');
     const filename = fileURLToPath(new URL('../electron/main.cjs', import.meta.url));
-    const handlers = new Map(), calls = [], systemCalls = [], loginReads = [];
+    const handlers = new Map(), calls = [], systemCalls = [], loginReads = [], confirmations = [];
+    let trayInitializations = 0;
     let ready, window;
     class Window extends EventEmitter {
         constructor() { super(); window = this; this.webContents = { mainFrame: { url: '' }, setWindowOpenHandler() {}, on() {}, send() {}, session: { setPermissionRequestHandler() {} } }; }
@@ -236,6 +237,8 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
         start() {} async stop() {}
         async request(method, params) {
             calls.push({ method, params });
+            if (method === 'hello') return { settings, paused };
+            if (method === 'setPaused') paused = params.paused;
             if (method === 'updateSettings') settings = { ...settings, ...params.settings };
             return { settings };
         }
@@ -243,15 +246,17 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
     const app = { isPackaged: true, getVersion: () => '1.2.0', getPath: () => 'isolated', setPath() {}, setName() {}, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => true,
         whenReady: () => ({ then(fn) { ready = fn(); return ready; } }), on() {}, quit() {},
         getLoginItemSettings(options) { loginReads.push(options); return { openAtLogin: login }; } };
-    const dialog = { showOpenDialog: async () => ({ filePaths: ['fictional-legacy'] }), showErrorBox() {} };
+    const dialog = { showMessageBox: async (_window, options) => { confirmations.push(options); return { response: confirmResponse }; }, showOpenDialog: async () => ({ filePaths: ['fictional-legacy'] }), showErrorBox() {} };
     const imports = {
         electron: { app, BrowserWindow: Window, dialog, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
         'node:path': path, 'node:fs': { existsSync: () => true }, 'node:url': { pathToFileURL },
         './files.cjs': { createFileActions: () => ({ saveFile() {}, openBackup() {} }) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fake' },
-        './system.cjs': { createSystemIntegration: () => ({ applySettings: async value => { systemCalls.push(value); return {}; }, handleWindowClose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async value => { systemCalls.push(value); return {}; }, handleWindowClose() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'Fixture' }) },
         './legacy.cjs': { legacyDirectory: () => 'fictional-legacy', importLegacyDirectory: legacy || (async () => ({ found: false })) },
+        './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
+        './app-icons.cjs': { registerAppIcons() {} },
         './app-control.cjs': { createAppControl: () => ({ chooseProgram() {}, request() {} }) },
         './updates.cjs': { createUpdateService: () => ({
             settings: async () => ({ checkOnStartup: false }),
@@ -265,7 +270,7 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
         process: { platform: 'win32', env, execPath: 'C:/fictional/WiFiMeter.exe', resourcesPath: 'fictional' } }, { filename });
     await ready; await new Promise(resolve => setImmediate(resolve));
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { calls, systemCalls, loginReads, invoke: (name, payload) => handlers.get(name)(event, payload) };
+    return { calls, systemCalls, loginReads, confirmations, trayInitializations, invoke: (name, payload) => handlers.get(name)(event, payload) };
 }
 
 test('main prevents writes during manual migration, permits reads, and re-pauses after failure', async () => {
@@ -301,4 +306,111 @@ test('first migration inherits only the same executable login item and leaves un
     assert.equal(unmatched.systemCalls.length, 1);
     const isolated = await mainHarness({ legacy, login: true });
     assert.equal(isolated.loginReads.length, 0); assert.equal(isolated.systemCalls.length, 0);
+});
+
+
+test('overlap policy defaults to reject and explicit keep-existing reaches both import paths', async t => {
+    for (const completed of [false, true]) for (const overlapPolicy of [undefined, 'reject', 'keep-existing']) {
+        const { source, target } = await fixture(t);
+        const result = await importLegacyDirectory({ directory: source, userData: target, overlapPolicy, request: async (method, params) => {
+            if (method === 'migrationStatus') return { status: completed ? 'completed' : 'notImported' };
+            if (method === 'backup') return { backup: {} };
+            assert.equal(params.overlapPolicy, overlapPolicy ?? 'reject');
+            return { status: 'completed', skippedDayCount: 2, warnings: ['existing days retained'] };
+        } });
+        assert.equal(result.skippedDayCount, 2);
+        assert.deepEqual(result.warnings, ['existing days retained']);
+    }
+});
+
+test('invalid overlap policies fail before reading files or calling backend', async () => {
+    for (const overlapPolicy of [null, '', 'merge', 'keepexisting', true, 1, {}, []]) {
+        await assert.rejects(importLegacyDirectory({ overlapPolicy, request: () => assert.fail('unexpected backend call') }), /overlapPolicy/);
+    }
+});
+
+
+test('real overlap import retains SQLite days, imports remaining days and retries safely after rollback', async t => {
+    const { existsSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { BackendClient } = await import('../electron/backend.cjs');
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    const executable = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
+    if (!existsSync(executable)) { t.skip('Build backend first.'); return; }
+    let backend;
+    t.after(async () => backend?.stop());
+    const { source, target } = await fixture(t);
+    backend = new BackendClient({ executable, databasePath: path.join(target, 'overlap.db'), args: ['--paused'] });
+    const request = (method, params) => backend.request(method, params);
+    const existing = state.replaceAll('9007199254740993', '17');
+    await request('importLegacy', { sourceId: 'seed', stateJson: existing });
+    const before = (await request('backup')).backup;
+    const original = state.replace('"Days":[', '"Days":[{"Date":"2026-01-02","RxBytes":0,"TxBytes":0},');
+    await writeFile(path.join(source, 'state.json'), original);
+    await assert.rejects(importLegacyDirectory({ directory: source, userData: target, request }), /相同网络日期|overlap/i);
+    assert.deepEqual((await request('backup')).backup, before);
+    await writeFile(path.join(source, 'state.json'), original.replace('9007199254740993', '9007199254740994'));
+    await assert.rejects(importLegacyDirectory({ directory: source, userData: target, request, overlapPolicy: 'keep-existing' }), /累计总额|total/i);
+    assert.deepEqual((await request('backup')).backup, before);
+    await writeFile(path.join(source, 'state.json'), original);
+    const result = await importLegacyDirectory({ directory: source, userData: target, request, overlapPolicy: 'keep-existing' });
+    assert.equal(result.dailyCount, 1); assert.equal(result.skippedDayCount, 1);
+    assert.match(result.warnings.join(' '), /2026-01-01/);
+    const after = (await request('backup')).backup;
+    assert.equal(after.records.length, 2);
+    assert.equal(after.records.find(row => row.date === '2026-01-01').rxBytes, '17');
+    assert.equal(after.records.find(row => row.date === '2026-01-02').rxBytes, '0');
+    assert.equal(after.legacyImports.find(row => row.sourceId === result.sourceId).stateJson, original);
+    const again = await importLegacyDirectory({ directory: source, userData: target, request, overlapPolicy: 'keep-existing' });
+    assert.equal(again.alreadyImported, true); assert.equal(again.skippedDayCount, 1);
+    assert.deepEqual((await request('backup')).backup, after);
+    assert.equal(await readFile(path.join(source, 'state.json'), 'utf8'), original);
+});
+
+for (const confirmResponse of [0, 1]) test(`manual overlap import requires explicit confirmation: response ${confirmResponse}`, async () => {
+    const policies = [];
+    let count = 0;
+    const harness = await mainHarness({ confirmResponse, legacy: async options => {
+        if (++count === 1) return { found: false };
+        policies.push(options.overlapPolicy);
+        if (options.overlapPolicy === 'reject') throw Object.assign(Error('overlap'), { code: 'LegacyOverlap' });
+        return { found: true, status: 'completed', skippedDayCount: 1 };
+    } });
+    const result = await harness.invoke('legacy:import');
+    assert.equal(harness.confirmations.length, 1);
+    assert.equal(harness.confirmations[0].cancelId, 1);
+    assert.deepEqual(policies, confirmResponse === 0 ? ['reject', 'keep-existing'] : ['reject']);
+    assert.equal(harness.calls.at(-1).params.paused, confirmResponse !== 0);
+    if (confirmResponse === 0) assert.equal(result.skippedDayCount, 1);
+    else assert.equal(result.error, 'overlap');
+});
+
+for (const confirmResponse of [0, 1]) test(`resuming after failed migration requires confirmation: response ${confirmResponse}`, async () => {
+    const harness = await mainHarness({ confirmResponse, legacy: async () => { throw Error('import failed'); } });
+    const result = await harness.invoke('backend:request', { method: 'setPaused', params: { paused: false } });
+    assert.equal(harness.confirmations.length, 1);
+    assert.equal(result.ok, confirmResponse === 0);
+    const status = await harness.invoke('legacy:status');
+    if (confirmResponse === 0) {
+        assert.equal(status.error, '');
+        assert.equal(status.importWarning, 'import failed');
+    } else assert.equal(status.error, 'import failed');
+});
+
+test('默认托盘在隔离启动和迁移失败跳过设置同步时仍初始化', async () => {
+    for (const options of [{}, { env: {}, legacy: async () => { throw Error('migration failed'); } }]) {
+        const h = await mainHarness(options);
+        assert.equal(h.trayInitializations, 1);
+        assert.equal(h.systemCalls.length, 0);
+    }
+});
+
+test('automatic overlapping legacy history does not pause an existing database', async () => {
+    const h = await mainHarness({ legacy: async () => { throw Object.assign(Error('existing dates overlap'), { code: 'LegacyOverlap' }); } });
+    assert.ok(h.calls.some(call => call.method === 'setPaused' && call.params.paused === false));
+    const status = await h.invoke('legacy:status');
+    assert.equal(status.error, undefined);
+    assert.equal(status.importWarning, 'existing dates overlap');
+    assert.equal(status.imported, false);
+    assert.equal(h.confirmations.length, 0);
 });

@@ -94,19 +94,20 @@ X-GNOME-Autostart-enabled=true
     }
 
     function ensureTray() {
-        if (tray) { updateTrayMenu(); return; }
-        if (!Tray) return;
         try {
+            if (tray) { updateTrayMenu(); return; }
+            if (!Tray) return;
             tray = new Tray(nativeImage.createFromPath(iconPath));
+            tray.setToolTip('WiFiMeter');
+            updateTrayMenu();
+            tray.on('click', showWindow);
         } catch (error) {
-            // 某些桌面环境没有状态栏（例如未装扩展的 GNOME），托盘不可用不应影响主功能。
-            logger(`托盘不可用：${error.message}`);
+            // 无状态栏或初始化失败时保留主窗口，允许后续重试。
+            const failedTray = tray;
             tray = null;
-            return;
+            try { failedTray?.destroy(); } catch (_) { /* 尽力释放未完成初始化的托盘。 */ }
+            logger(`托盘不可用：${error.message}`);
         }
-        tray.setToolTip('WiFiMeter');
-        updateTrayMenu();
-        tray.on('click', showWindow);
     }
 
     function disposeTray() {
@@ -120,6 +121,8 @@ X-GNOME-Autostart-enabled=true
             return quitting;
         },
 
+        initializeTray: ensureTray,
+
         // 设置变更后同步到系统；返回实际生效的结果，供界面校对。
         async applySettings(next) {
             settings = { ...settings, ...next };
@@ -130,11 +133,28 @@ X-GNOME-Autostart-enabled=true
                 logger(`设置开机启动失败：${error.message}`);
                 autoStartApplied = false;
             }
-            if (settings.minimizeToTray) ensureTray();
-            else disposeTray();
+            // 默认常驻图标，旧 minimizeToTray 字段不再决定图标是否存在。
+            ensureTray();
             return { autoStart: autoStartApplied, minimizeToTray: Boolean(tray), notifications: settings.notifications };
         },
 
+        // 显式关闭到托盘不依赖旧的 minimizeToTray 设置，也不修改自启动项。
+        hideToTray() {
+            const window = getWindow();
+            if (quitting || !window || window.isDestroyed()) return false;
+            try {
+                ensureTray();
+            } catch (error) {
+                const failedTray = tray;
+                tray = null;
+                try { failedTray?.destroy(); } catch (_) { /* 初始化失败后尽力释放托盘。 */ }
+                logger(`托盘不可用：${error.message}`);
+                return false;
+            }
+            if (!tray) return false;
+            window.hide();
+            return true;
+        },
         // 窗口关闭时按设置决定隐藏还是退出。
         handleWindowClose(event) {
             if (quitting || !settings.minimizeToTray) return false;

@@ -191,7 +191,7 @@ test('开发态的 Windows 开机启动带上应用目录', async () => {
     rmSync(home, { recursive: true, force: true });
 });
 
-test('托盘按设置创建与销毁，不可用时不影响其他功能', async () => {
+test('系统设置同步保留托盘，退出时销毁，不可用时不影响其他功能', async () => {
     const { home, state, integration } = createFakes();
 
     await integration.applySettings({ minimizeToTray: true });
@@ -202,6 +202,8 @@ test('托盘按设置创建与销毁，不可用时不影响其他功能', async
     assert.equal(state.trayCount, 1, '重复开启不应创建第二个托盘');
 
     await integration.applySettings({ minimizeToTray: false });
+    assert.equal(state.destroyed, 0);
+    integration.dispose();
     assert.equal(state.destroyed, 1);
 
     rmSync(home, { recursive: true, force: true });
@@ -310,4 +312,17 @@ test('limit notification reports reaching the quota without inventing a failed d
     integration.notify({ kind: 'quotaLimit', scope: 'total', percent: 100 });
     assert.equal(state.notifications[0].body, 'Wi-Fi 总额度 已达到额度上限。');
     assert.doesNotMatch(state.notifications[0].body, /未能断开/);
+});
+
+test('启动创建默认托盘，旧设置及语言同步不移除或重复创建图标', async t => {
+    const { home, state, integration } = createFakes();
+    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
+    integration.initializeTray();
+    assert.equal(state.trayCount, 1);
+    assert.equal(state.hidden, 0);
+    const result = await integration.applySettings({ minimizeToTray: false, language: 'en' });
+    assert.equal(result.minimizeToTray, true);
+    assert.equal(state.destroyed, 0);
+    assert.equal(state.trayCount, 1);
+    assert.equal(state.menu.template[0].label, 'Open WiFiMeter');
 });

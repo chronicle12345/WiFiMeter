@@ -34,7 +34,7 @@ for (const arch of ['x64', 'arm64', 'ia32']) {
     const applicationBinary = path.join(unpacked, 'WiFiMeter.exe');
     const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
     const bundledCapture = path.join(unpacked, 'resources/wifimeter-app-capture.exe');
-    const installer = path.join(output, `WiFiMeter-${metadata.version}-${arch}-Setup.exe`);
+    const installer = path.join(output, `WiFiMeter-${metadata.version}-windows-${arch}-Setup.exe`);
 
     test(`Windows ${arch} 打包产物`, { skip: !existsSync(applicationBinary) && `未构建 Windows ${arch} 产物` }, () => {
         require('../../../packaging/targets.cjs').checkPackaged(unpacked, 'win32', arch);
@@ -46,7 +46,7 @@ for (const arch of ['x64', 'arm64', 'ia32']) {
         assert.ok(statSync(bundledBackend).size > 100 * 1024, '后端体积明显偏小，可能复制失败');
 
         // 引导程序只校验 PE 标记；应用架构由上面的 checkPackaged 检查。
-        for (const artifact of [installer, path.join(output, `WiFiMeter-${metadata.version}-${arch}-Portable.exe`)]) {
+        for (const artifact of [installer, path.join(output, `WiFiMeter-${metadata.version}-windows-${arch}-Portable.exe`)]) {
             if (!existsSync(artifact)) continue;
             const descriptor = openSync(artifact, 'r');
             try {

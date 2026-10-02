@@ -1,5 +1,74 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+本地 TCP|Local TCP
+本地代理连接 · 实时速度不计入 Wi-Fi 总量|Local proxy connections · Live rates are separate from Wi-Fi totals
+关闭应用详情|Close application details
+返回网络详情|Back to network details
+应用详情|Application details
+请等待自动保存完成，或重试保存失败的更改。|Wait for automatic saving to finish, or retry the failed changes.
+状态与帮助|Status and help
+小窗形状|Mini window shape
+小窗配色|Mini window palette
+条形|Bar
+方形|Square
+圆形|Circle
+靛蓝|Indigo
+贴边吸附|Snap to screen edges
+贴边自动隐藏|Auto-hide at screen edge
+保存失败，请重试。|Could not save. Please retry.
+正在保存…|Saving…
+等待保存…|Waiting to save…
+已自动保存|Saved automatically
+缩短保留期将删除范围外的历史记录，建议先备份。|Shortening retention deletes older history. Back up first.
+总额度达到上限时将断开全部 Wi-Fi。|All Wi-Fi connections will disconnect when the total quota is reached.
+
+检测到的代理客户端|Detected proxy clients
+连接数|Connections
+连接已检测到，流量数值需启用应用采集。|Connections detected. Enable application collection to measure usage.
+提醒阈值须为 1 到 100，多个值用逗号分隔。|Thresholds must be between 1 and 100, separated by commas.
+缺失区间：|Missing intervals:
+自动（推荐）|Automatic (recommended)
+应用流量|Application usage
+应用断网|Application network control
+实时采集|Live collection
+当前没有应用进程数据。|No application processes are available.
+缺少程序路径，请选择程序。|Select a program to supply its executable path.
+试试其他日期或网络。|Try another date range or network.
+启用应用采集后开始记录。|Enable application collection to start recording.
+请切换到应用汇总或历史后导出。|Switch to summary or history to export.
+
+主题|Theme
+跟随系统|System
+浅色|Light
+深色|Dark
+面包屑导航|Breadcrumbs
+旧版数据导入完成，重叠日期保留现有记录。|Import completed. Existing records were kept for overlapping dates.
+已略过|Skipped
+ 个重叠日期。| overlapping dates.
+无法读取 Wi-Fi 信息|Unable to read Wi-Fi information
+无法确认连接信息|Unable to confirm connection information
+常规|General
+显示|Display
+流量额度|Traffic quota
+代理|Proxy
+数据与迁移|Data and migration
+关于更新|About and updates
+设置分类|Settings categories
+桌面小窗|Desktop mini window
+关闭窗口时|When closing the window
+每次询问|Ask every time
+最小化到托盘|Minimize to tray
+退出应用|Exit application
+
+选择含 state.json 或 state.json.bak 的文件夹。|Choose the folder containing state.json or state.json.bak.
+
+语言与旧数据|Language and previous data
+先选择语言，或导入以前的流量记录。|Choose your language or import your previous usage records.
+选择后立即保存并切换。|Saved and applied immediately.
+先退出旧版采集器，再选择包含 state.json 或 state.json.bak 的文件夹；不要选择单个文件。|Exit the old collector, then select the folder containing state.json or state.json.bak, not an individual file.
+旧版默认目录：|Previous default folder:
+原文件会保留。导入前自动备份；发现与现有记录重叠时会停止，不会覆盖。|Original files are kept and a backup is created before import. Overlapping records stop the import instead of overwriting data.
+
 尚未检查更新。|Updates have not been checked yet.
 已取消更新。|Update cancelled.
 恢复采集|Resume collection
@@ -71,7 +140,6 @@ export const english = Object.fromEntries(`
 流量总览|Usage overview
 查看用量、连接状态与网络额度。|View usage, connection status and network quotas.
 我的网络|My networks
-按 Wi-Fi 分别记录，每段连接都有归属。|Usage is recorded separately for each Wi-Fi network.
 历史记录|Usage history
 按时间回看用量，保留清晰的流量记录。|Review recorded usage over time.
 偏好设置|Preferences
@@ -94,8 +162,6 @@ export const english = Object.fromEntries(`
 统计口径与帮助|Usage definitions and help
 采集状态|Collection status
 导出数据|Export data
-本机采集 · 数据存于本机数据库|Collected and stored on this device
-上传与下载分别统计|Upload and download tracked separately
 无法连接采集后端，请检查状态|Cannot connect to the backend. Check collection status.
 更新于|Updated
 等待本机采集器|Waiting for the collector
@@ -126,12 +192,10 @@ export const english = Object.fromEntries(`
 流量趋势|Usage trend
 上传|Upload
 单位：|Unit:
-无记录不等于零流量|Missing records do not mean zero usage
 按小时|Hourly
 按月|Monthly
 按日|Daily
 今日尚未结束|Today is still in progress
-按所选网络汇总|Totals for the selected networks
 网络额度|Network quota
 尚无网络|No networks yet
 连接并开始记录后，可设置流量额度。|Connect and collect usage to set a quota.
@@ -170,7 +234,6 @@ export const english = Object.fromEntries(`
 共|Total:
 个网络|networks
 网络排序|Network sorting
-网络名称可添加备注，原始 SSID 不会被修改。同名 SSID 的身份合并由采集器决定；网卡信息在详情中查看。额度始终使用自己的日 / 月周期，不随页面筛选变化。|Aliases do not change the original SSID. The collector determines network identities; adapter details are shown in the drawer. Quota periods are independent of the history filter.
 按用量排序|Sort by usage
 按名称排序|Sort by name
 已连接优先|Connected first
@@ -204,7 +267,7 @@ export const english = Object.fromEntries(`
 历史总量与应用统计独立展示，避免相加造成重复。|Network and application totals are shown separately to avoid double counting.
 超额默认只提醒。自动断网须在网络详情里明确开启。|Quota limits notify by default. Enable automatic disconnect explicitly in network settings.
 历史、额度与偏好都保存在本机数据库。开机启动与托盘属于系统级设置。|History, quotas and preferences are stored locally. Startup and tray behavior use system integration.
-登录时自动启动|Start at login
+开机自启|Start at login
 写入系统的自启动目录，登录后自动开始采集。|Start collecting automatically when you sign in.
 关闭窗口时最小化到托盘|Minimize to tray on close
 开启后关闭窗口只隐藏窗口，采集继续进行。|Closing the window hides it while collection continues.
@@ -480,6 +543,7 @@ JSON · 精确字节数|JSON · exact byte counts
 操作已取消。|Operation canceled.
 操作未完成。|Operation did not complete.
 此目录已导入，无需重复导入。|This directory has already been imported.
+当前统计已继续，旧版数据尚未导入。|Collection has resumed. Legacy data has not been imported.
 旧版数据已导入。|Legacy data imported.
 仅归档的应用缓存：|Application cache entries archived only:
 条，未加入应用用量统计。| entries; not included in application usage statistics.

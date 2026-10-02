@@ -1,4 +1,4 @@
-﻿﻿#requires -Version 5.1
+﻿#requires -Version 5.1
 Set-StrictMode -Version Latest
 $script:MeterNetworkModulePath = $PSCommandPath
 $script:MeterNetworkGroup = 'WiFiMeter.AppNetwork.v1'

@@ -42,7 +42,8 @@ async function readStateCandidate(directory) {
         throw error;
     }
 }
-async function importLegacyDirectory({ directory, userData, request, allowInitialSettings = false }) {
+async function importLegacyDirectory({ directory, userData, request, allowInitialSettings = false, overlapPolicy = 'reject' }) {
+    if (overlapPolicy !== 'reject' && overlapPolicy !== 'keep-existing') throw TypeError('overlapPolicy must be reject or keep-existing.');
     if (!directory) return { found: false };
     let lock;
     try {
@@ -60,7 +61,8 @@ async function importLegacyDirectory({ directory, userData, request, allowInitia
         const identity = digest(stateJson + '\0' + settingsJson + '\0' + appUsageJson);
         const status = await request('migrationStatus', { sourceId });
         const initializeSettings = typeof status.canInitializeSettings === 'boolean' ? status.canInitializeSettings : allowInitialSettings;
-        const payload = { stateJson, sourceId, ...(settingsJson ? { settingsJson } : {}), ...(appUsageJson ? { appUsageJson } : {}), ...(initializeSettings ? { allowInitialSettings: true } : {}) };
+        // main 仅在用户明确确认后传入 keep-existing；这里不自动切换策略。
+        const payload = { stateJson, sourceId, overlapPolicy, ...(settingsJson ? { settingsJson } : {}), ...(appUsageJson ? { appUsageJson } : {}), ...(initializeSettings ? { allowInitialSettings: true } : {}) };
         if (status.status === 'completed') {
             const previous = await request('importLegacy', payload);
             return { found: true, ...previous, imported: false, alreadyImported: true, sourceFile: candidate.sourceFile };

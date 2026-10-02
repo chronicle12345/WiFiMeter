@@ -222,3 +222,27 @@ test('latest version and unknown architecture never launch an installer', async 
     assert.equal((await unknown.service.install()).status, 'manual');
     assert.deepEqual(unknown.events, ['confirm', page]);
 });
+
+for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} prefers platform-qualified assets while retaining legacy names`, async t => {
+    const data = release();
+    data.assets.push(...data.assets.map(asset => ({ ...asset,
+        name: asset.name.replace('1.3.0-', '1.3.0-windows-'),
+        browser_download_url: asset.browser_download_url.replace('WiFiMeter-1.3.0-', 'WiFiMeter-1.3.0-windows-')
+    })));
+    const downloads = [];
+    const f = await fixture(t, { arch, fetch: async url => {
+        if (url.includes('api.github.com')) return Response.json(data);
+        downloads.push(url); return new Response(bytes);
+    } });
+    assert.equal((await f.service.check()).canInstall, true);
+    assert.equal((await f.service.install()).state, 'installing');
+    assert.deepEqual(downloads, [`${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-windows-${arch}-Setup.exe`]);
+});
+
+test('a release without an asset array remains available for manual installation', async t => {
+    const f = await fixture(t, { fetch: async () => Response.json({ ...release(), assets: {} }) });
+    const status = await f.service.check();
+    assert.equal(status.state, 'available');
+    assert.equal(status.canInstall, false);
+    assert.equal(status.manual, true);
+});

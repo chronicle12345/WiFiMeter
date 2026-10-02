@@ -13,10 +13,10 @@ test('语言切换覆盖静态文案与模板，插入的应用名称和路径�
     assert.equal(t('全部历史'),'全部历史');
 });
 
-test('总额度表单独立保存字段，概览按独立账本显示并说明不含有线',()=>{
+test('总额度表单独立保存字段，概览按独立账本显示且无重复说明',()=>{
     const quota={capGb:2,warnPercent:80,period:'all',notify:true,autoDisconnect:false,usedBytes:'1500000000',periodKey:'all'};
     assert.match(totalQuotaCard(quota,'GB'),/1.5 GB/);
-    assert.match(totalQuotaCard(quota,'GB'),/有线/);
+    assert.doesNotMatch(totalQuotaCard(quota,'GB'),/只累计|不包含有线/);
     assert.match(totalQuotaForm(quota),/id="totalQuotaForm"/);
     const values=new Map(Object.entries({capGb:'2',warnPercent:'80',period:'all',notify:'on'}));
     assert.deepEqual(totalQuotaPatch(values),{capGb:2,warnPercent:80,period:'all',notify:true,autoDisconnect:false});
@@ -39,6 +39,6 @@ test('总额度提醒阈值保留小数并拒绝非有限或越界值',()=>{
     for(const threshold of [1,85,85.5,100])assert.equal(totalQuotaPatch(values(threshold)).warnPercent,threshold);
     for(const threshold of [0,100.1,101,NaN,Infinity])assert.throws(()=>totalQuotaPatch(values(threshold)));
     const html=totalQuotaForm({capGb:1,warnPercent:85,period:'month'});
-    assert.match(html,/<input[^>]*id="totalWarn"[^>]*step="any"/);
+    assert.match(html,/<input[^>]*id="totalWarn"[^>]*name="warnPercents"/);
     assert.match(html,/<input[^>]*id="totalCap"[^>]*step="any"/);
 });
