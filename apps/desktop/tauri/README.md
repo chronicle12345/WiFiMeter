@@ -2,8 +2,7 @@
 
 This directory adapts the existing renderer to Tauri. `build-frontend.mjs` copies the
 renderer, styles, floating-window assets and the two browser dependencies without
-bundling Electron or changing the page layout. Only the HTML entry script and CSP
-source change. `src-tauri` contains the Rust host and the existing C++ collector's
+bundling Electron or changing the page layout. The HTML entry script, CSP and host-dialog stylesheet are adapted. `src-tauri` contains the Rust host and the existing C++ collector's
 JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
@@ -15,7 +14,9 @@ after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
 System login-item inheritance will be connected with autostart integration.
 Tray activation, close preferences, remembered choices and the renderer's existing
-unsaved-change checks are connected to the native window lifecycle.
+unsaved-change checks are connected to the native window lifecycle. Close, exit,
+resume and import confirmations use the existing UI tokens and follow its theme
+and language. Native dialogs remain available before the page is ready.
 
 ## Development on Windows
 
@@ -54,8 +55,9 @@ Windows before switching the release entry point.
 
 The Windows WebView2 smoke test uses the existing C++ network fixtures and a
 temporary profile. It checks navigation, collection controls, exact counters and
-preference events, native close choices, tray hiding, single-instance activation
-and canceling an exit with unsaved changes. It then closes the native window and
+preference events, themed close choices in light/dark mode, keyboard focus,
+import/resume localization, tray hiding, single-instance activation and canceling
+an exit with unsaved changes. It then closes the native window and
 waits for a clean exit:
 
 ```powershell

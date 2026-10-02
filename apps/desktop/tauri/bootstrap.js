@@ -1,4 +1,5 @@
 import { createDesktopBridge } from './bridge.js';
+import { installDialogs } from './dialogs.js';
 import { installCloseGuard } from './close-guard.js';
 
 const { core, event, window: windows } = window.__TAURI__;
@@ -16,6 +17,8 @@ if (location.pathname.endsWith('/electron/mini/index.html')) {
 } else {
     const removeCloseGuard = await installCloseGuard({ target: window, listen: event.listen, invoke: core.invoke });
     window.addEventListener('unload', removeCloseGuard, { once: true });
+    const removeDialogs = await installDialogs({ listen: event.listen, invoke: core.invoke });
+    window.addEventListener('unload', removeDialogs, { once: true });
     window.desktop = bridge.desktop;
     await import('../renderer/app.js');
 }

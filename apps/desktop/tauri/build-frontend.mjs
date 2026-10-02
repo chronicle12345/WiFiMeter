@@ -17,7 +17,7 @@ export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri
     await cp(path.join(appDirectory, 'renderer'), path.join(output, 'renderer'), { recursive: true });
     for (const file of [
         ...vendorFiles, ...miniFiles.map(file => `electron/mini/${file}`),
-        'tauri/bridge.js', 'tauri/bootstrap.js', 'tauri/close-guard.js', 'assets/icon.png'
+        'tauri/bridge.js', 'tauri/bootstrap.js', 'tauri/close-guard.js', 'tauri/dialogs.js', 'tauri/dialogs.css', 'tauri/dialog-copy.json', 'assets/icon.png'
     ]) {
         await mkdir(path.dirname(path.join(output, file)), { recursive: true });
         await cp(path.join(appDirectory, file), path.join(output, file));
@@ -28,7 +28,8 @@ export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri
     ]) {
         const source = await readFile(path.join(output, file), 'utf8');
         // CSP 由 Tauri 配置统一注入。Electron 的 connect-src 'none' 会阻止 Tauri IPC。
-        const html = source.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
+        const styled = file === 'renderer/index.html' ? source.replace('</head>', '<link rel="stylesheet" href="../tauri/dialogs.css">\n</head>') : source;
+        const html = styled.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
             .replace(`src="${entry}"`, `src="${bootstrap}"`);
         await writeFile(path.join(output, file), html);
     }

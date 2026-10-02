@@ -16,13 +16,13 @@ test('Tauri 配置沿用 Windows 产品身份和版本，主窗口由原生宿�
     assert.deepEqual(config.app.windows, []);
 });
 
-test('页面只开放本地 IPC，前端权限不提供任意文件或 shell 访问', () => {
+test('页面只开放同源资源和本地 IPC，前端权限不提供任意文件或 shell 访问', () => {
     const { app } = read('../src-tauri/tauri.conf.json');
     const directives = Object.fromEntries(app.security.csp.split(';').map(directive => {
         const [name, ...values] = directive.trim().split(/\s+/);
         return [name, values];
     }));
-    assert.deepEqual(directives['connect-src'], ['ipc:', 'http://ipc.localhost']);
+    assert.deepEqual(directives['connect-src'], ["'self'", 'ipc:', 'http://ipc.localhost']);
     assert.deepEqual(directives['script-src'], ["'self'"]);
     assert.deepEqual(directives['object-src'], ["'none'"]);
     const desktop = read('../src-tauri/capabilities/desktop.json');

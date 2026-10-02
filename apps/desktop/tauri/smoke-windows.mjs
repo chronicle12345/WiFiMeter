@@ -45,7 +45,7 @@ try {
     const context = browser.contexts()[0];
     page = context.pages()[0] ?? await context.waitForEvent('page');
     const errors = [];
-    page.on('pageerror', error => errors.push(error.message));
+    page.on('pageerror', error => { errors.push(error.message); console.error('WebView error:', error.message); });
     await page.waitForFunction(() => Boolean(window.desktop));
     console.log('WebView2 bridge ready');
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
@@ -72,22 +72,29 @@ try {
         return event;
     });
     assert.equal(changed.theme, 'dark');
-    console.log('Pages and backend passed; checking native close choices');
+    console.log('Pages and backend passed; checking themed close choices');
     await page.evaluate(() => {
         window.testVisibility = [];
         window.desktop.onVisibility(value => window.testVisibility.push(value));
         return window.desktop.windowPreferences.update({ closeAction: 'ask' });
     });
+    const dialog = page.locator('dialog.desktop-dialog');
     await native('close');
-    await expect.poll(async () => (await native('dialog')).found).toBe(true);
-    assert.equal((await native('dialog')).focused, '取消');
-    await native('click', '-ButtonName', '取消');
-    await expect.poll(async () => (await native('dialog')).found).toBe(false);
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeFocused();
+    await expect(dialog).toHaveCSS('background-color', 'rgb(34, 34, 38)');
+    if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT.replace('.png', '-dialog-dark.png') });
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
     assert.equal(child.exitCode, null);
-    console.log('Native cancellation passed');
+    console.log('Themed cancellation passed');
+    await page.evaluate(() => window.desktop.windowPreferences.update({ theme: 'light' }));
     await native('close');
-    await expect.poll(async () => (await native('dialog')).found).toBe(true);
-    await native('click', '-ButtonName', '最小化到托盘', '-Remember');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT.replace('.png', '-dialog-light.png') });
+    await dialog.getByRole('checkbox', { name: '记住我的选择' }).check();
+    await dialog.getByRole('button', { name: '最小化到托盘', exact: true }).click();
     await expect.poll(() => page.evaluate(async () => (await window.desktop.windowPreferences.read()).closeAction)).toBe('tray');
     await expect.poll(() => page.evaluate(() => window.testVisibility.at(-1))).toBe(false);
     console.log('Remembered tray choice passed');
@@ -101,22 +108,59 @@ try {
         return window.desktop.windowPreferences.update({ closeAction: 'exit' });
     });
     await native('close');
-    await expect.poll(async () => (await native('dialog')).found).toBe(true);
-    assert.equal((await native('dialog')).focused, '取消 / Cancel');
-    await native('click', '-ButtonName', '取消 / Cancel');
-    await expect.poll(async () => (await native('dialog')).found).toBe(false);
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('尚未保存的更改');
+    await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeFocused();
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
     assert.equal(child.exitCode, null);
     await page.evaluate(() => window.removeEventListener('beforeunload', window.testDirtyHandler));
+    // Import/resume share the same UI; verify localization, default focus and keyboard dismissal.
+    await page.evaluate(async () => {
+        const { setLanguage } = await import('/renderer/i18n.js');
+        setLanguage('en');
+        const { installDialogs } = await import('/tauri/dialogs.js');
+        let receive;
+        window.removeTestDialogs = await installDialogs({ listen: async (_, callback) => { receive = callback; return () => {}; }, invoke: async () => {} });
+        window.receiveTestDialog = receive;
+        receive({ payload: { id: 100000, kind: 'overlap' } });
+        receive({ payload: { id: 100001, kind: 'resume' } });
+    });
+    await expect(dialog).toContainText('Keep existing dates');
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(dialog.getByRole('button', { name: 'Close dialog', exact: true })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toContainText('Resume collection now?');
+    await dialog.getByRole('button', { name: 'Close dialog', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    for (const language of ['zh-CN', 'en']) {
+        await page.evaluate(async language => (await import('/renderer/i18n.js')).setLanguage(language), language);
+        for (const kind of ['close', 'discard', 'resume', 'overlap']) {
+            await page.evaluate(kind => window.receiveTestDialog({ payload: { id: 100002, kind } }), kind);
+            await expect(dialog).toBeVisible();
+            const text = await dialog.innerText();
+            const accessibleClose = await dialog.locator('.desktop-dialog-close').getAttribute('aria-label');
+            if (language === 'zh-CN') {
+                assert.doesNotMatch(text.replaceAll('WiFiMeter', ''), /[A-Za-z]/);
+                assert.equal(accessibleClose, '关闭对话框');
+            } else {
+                assert.doesNotMatch(text + accessibleClose, /[\u3400-\u9fff]/);
+            }
+            await page.keyboard.press('Escape');
+            await expect(dialog).toHaveCount(0);
+        }
+    }
+    await page.evaluate(() => window.removeTestDialogs());
     assert.deepEqual(errors, []);
-    if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ path: process.env.WIFIMETER_SCREENSHOT });
-    console.log('PASS: Windows WebView2 pages, backend, preferences, native close dialogs, tray hiding, single-instance activation and unsaved-change cancellation');
+    if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT });
+    console.log('PASS: Windows WebView2 pages, backend, preferences, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
 } catch (error) {
     console.error('Smoke test failed:', error);
     throw error;
 } finally {
     if (child.exitCode === null) {
-        const dialog = await native('dialog').catch(() => null);
-        if (dialog?.found) await native('click', '-ButtonName', dialog.focused === '取消 / Cancel' ? '取消 / Cancel' : '取消').catch(() => {});
+        await page?.keyboard.press('Escape').catch(() => {});
         await page?.evaluate(() => window.removeEventListener('beforeunload', window.testDirtyHandler)).catch(() => {});
         await page?.evaluate(() => window.desktop?.windowPreferences.update({ closeAction: 'exit' })).catch(() => {});
         await native('close');

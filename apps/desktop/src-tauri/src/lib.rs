@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod close_check;
 pub mod collector;
+pub mod dialog_requests;
 pub mod files;
 pub mod identity;
 pub mod ipc_policy;

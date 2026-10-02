@@ -1,0 +1,84 @@
+{
+  "close": {
+    "zh": [
+      "关闭 WiFiMeter",
+      "关闭窗口后如何处理？最小化到托盘后，仍会继续统计流量。",
+      [
+        "取消",
+        "最小化到托盘",
+        "退出应用"
+      ]
+    ],
+    "en": [
+      "Close WiFiMeter",
+      "What should happen when you close the window? Collection continues in the tray.",
+      [
+        "Cancel",
+        "Minimize to tray",
+        "Exit application"
+      ]
+    ],
+    "default": 0,
+    "primary": 1
+  },
+  "discard": {
+    "zh": [
+      "退出前确认",
+      "您有尚未保存的更改。退出后，这些更改将丢失。",
+      [
+        "退出应用",
+        "取消"
+      ]
+    ],
+    "en": [
+      "Unsaved changes",
+      "Your changes have not been saved. Exiting will discard them.",
+      [
+        "Exit application",
+        "Cancel"
+      ]
+    ],
+    "default": 1,
+    "danger": 0
+  },
+  "resume": {
+    "zh": [
+      "恢复流量统计",
+      "旧数据尚未导入。是否先恢复当前统计？您可以稍后再导入旧数据。",
+      [
+        "恢复统计",
+        "取消"
+      ]
+    ],
+    "en": [
+      "Resume collection",
+      "Old data has not been imported. Resume collection now? You can import old data later.",
+      [
+        "Resume collection",
+        "Cancel"
+      ]
+    ],
+    "default": 1,
+    "primary": 0
+  },
+  "overlap": {
+    "zh": [
+      "导入旧数据",
+      "发现相同网络和日期的记录。\n\n将保留当前数据库已有日期的记录，只导入其余旧日期，不会相加或覆盖。旧数据原文及导入前备份均会保留。",
+      [
+        "保留现有并导入",
+        "取消"
+      ]
+    ],
+    "en": [
+      "Import old data",
+      "Some network dates already exist.\n\nKeep existing dates and import only the remaining dates, without adding to or overwriting existing records. Original files and recovery backups are retained.",
+      [
+        "Keep existing and import",
+        "Cancel"
+      ]
+    ],
+    "default": 1,
+    "primary": 0
+  }
+}

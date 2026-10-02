@@ -8,7 +8,7 @@ import { buildFrontend } from '../tauri/build-frontend.mjs';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 
-test('Tauri 构建复用全部页面代码与样式，只替换 HTML 启动入口和 CSP', async () => {
+test('Tauri 构建复用全部页面代码与样式，适配启动入口、CSP 和宿主弹窗样式', async () => {
     const output = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-assets-'));
     try {
         await writeFile(path.join(output, 'stale.js'), 'old build');
@@ -23,7 +23,8 @@ test('Tauri 构建复用全部页面代码与样式，只替换 HTML 启动入�
             const source = await readFile(path.join(appDirectory, file), 'utf8');
             if (relative.endsWith('index.html')) {
                 const main = relative === 'renderer/index.html';
-                const normalized = source.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
+                const styled = main ? source.replace('</head>', '<link rel="stylesheet" href="../tauri/dialogs.css">\n</head>') : source;
+                const normalized = styled.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
                     .replace(main ? 'src="./app.js"' : 'src="renderer.js"',
                         main ? 'src="../tauri/bootstrap.js"' : 'src="../../tauri/bootstrap.js"');
                 assert.equal(built, normalized, relative);

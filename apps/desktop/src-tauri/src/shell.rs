@@ -2,6 +2,7 @@ use crate::{
     backend::{Backend, BackendError},
     close_check::CloseCheck,
     collector::Collector,
+    dialog_requests::DialogRequests,
     files, identity, ipc_policy, native_dialog,
     preferences::Preferences,
     tray,
@@ -27,8 +28,17 @@ struct Desktop {
     close_prompt: AtomicBool,
     main_ready: AtomicBool,
     close_check: CloseCheck,
+    dialogs: DialogRequests,
     settings: Mutex<Value>,
     tray_lock: Mutex<()>,
+}
+
+pub(crate) fn localized<'a>(app: &tauri::AppHandle, chinese: &'a str, english: &'a str) -> &'a str {
+    if app.state::<Desktop>().settings.lock().unwrap()["language"] == "en" {
+        english
+    } else {
+        chinese
+    }
 }
 
 fn trusted(window: &WebviewWindow, channel: Option<&str>) -> Result<(), String> {
@@ -137,6 +147,42 @@ fn desktop_close_reply(window: WebviewWindow, id: u64, dirty: bool) -> Result<()
     Ok(())
 }
 
+// Only called from blocking workers; the WebView remains responsive while the user decides.
+pub(crate) fn themed_dialog(
+    window: &WebviewWindow,
+    kind: &str,
+    buttons: usize,
+) -> Option<crate::dialog_requests::Answer> {
+    let state = window.state::<Desktop>();
+    if !state.main_ready.load(Ordering::SeqCst) {
+        return None;
+    }
+    let (id, response) = state.dialogs.begin(buttons);
+    show_main(window.app_handle());
+    if window
+        .emit("desktop:dialog", json!({"id":id,"kind":kind}))
+        .is_err()
+    {
+        state.dialogs.reply(id, None, false);
+    }
+    Some(response.recv().ok().flatten())
+}
+
+#[tauri::command]
+fn desktop_dialog_reply(
+    window: WebviewWindow,
+    id: u64,
+    button: Option<usize>,
+    remember: bool,
+) -> Result<(), String> {
+    trusted(&window, Some("window:dialog-reply"))?;
+    window
+        .state::<Desktop>()
+        .dialogs
+        .reply(id, button, remember);
+    Ok(())
+}
+
 fn publish_preferences(app: &tauri::AppHandle) -> Result<Value, String> {
     let state = app.state::<Desktop>();
     let value = state.preferences.read();
@@ -179,11 +225,11 @@ async fn desktop_request(
             "legacy:status" => Ok(state.collector.migration_status()),
             "legacy:import" => Ok(state.collector.import_selected(
                 || {
-                    let mut dialog = app
-                        .dialog()
-                        .file()
-                        .set_parent(&window)
-                        .set_title("Import WiFiMeter 1.x data / 导入旧版数据");
+                    let mut dialog = app.dialog().file().set_parent(&window).set_title(localized(
+                        &app,
+                        "导入旧版数据",
+                        "Import old data",
+                    ));
                     if let Some(directory) =
                         legacy_directory().or_else(|| app.path().document_dir().ok())
                     {
@@ -219,7 +265,11 @@ async fn desktop_request(
                         .dialog()
                         .file()
                         .set_parent(&window)
-                        .set_title("保存 WiFiMeter 数据")
+                        .set_title(localized(
+                            &app,
+                            "保存 WiFiMeter 数据",
+                            "Save WiFiMeter data",
+                        ))
                         .set_file_name(&filename)
                         .add_filter(extension.to_uppercase(), &[extension])
                         .blocking_save_file();
@@ -239,8 +289,12 @@ async fn desktop_request(
                         .dialog()
                         .file()
                         .set_parent(&window)
-                        .set_title("恢复 WiFiMeter 备份")
-                        .add_filter("JSON 备份", &["json"])
+                        .set_title(localized(
+                            &app,
+                            "恢复 WiFiMeter 备份",
+                            "Restore WiFiMeter backup",
+                        ))
+                        .add_filter(localized(&app, "JSON 备份", "JSON backup"), &["json"])
                         .blocking_pick_file();
                     let Some(selected) = selected else {
                         return Ok(json!({"canceled":true}));
@@ -318,7 +372,12 @@ pub fn run() {
             show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![desktop_request, desktop_ready, desktop_close_reply])
+        .invoke_handler(tauri::generate_handler![
+            desktop_request,
+            desktop_ready,
+            desktop_close_reply,
+            desktop_dialog_reply
+        ])
         .setup(|app| {
             let override_directory = std::env::var_os("WIFIMETER_USER_DATA").map(PathBuf::from);
             let app_data = app.path().data_dir()?;
@@ -360,6 +419,7 @@ pub fn run() {
                 close_prompt: AtomicBool::new(false),
                 main_ready: AtomicBool::new(false),
                 close_check: CloseCheck::default(),
+                dialogs: DialogRequests::default(),
                 settings: Mutex::new(json!({"language":"zh-CN"})),
                 tray_lock: Mutex::new(()),
             });
@@ -368,12 +428,21 @@ pub fn run() {
                 .inner_size(1280.0, 900.0)
                 .min_inner_size(900.0, 650.0)
                 .data_directory(profile.join("WebView2"))
+                .on_page_load(|window, payload| {
+                    if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                        let state = window.state::<Desktop>();
+                        state.main_ready.store(false, Ordering::SeqCst);
+                        state.dialogs.cancel_all();
+                    }
+                })
                 .on_navigation(|url| {
                     url.host_str() == Some("tauri.localhost")
                         && url.path() == "/renderer/index.html"
                 })
                 .build()?;
-            if let Err(error) = ensure_tray(app.handle()) { eprintln!("[tray] {error}"); }
+            if let Err(error) = ensure_tray(app.handle()) {
+                eprintln!("[tray] {error}");
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let state = handle.state::<Desktop>();
@@ -381,9 +450,22 @@ pub fn run() {
                 if let Ok(hello) = state.collector.request("hello", json!({}), || false) {
                     apply_runtime_settings(&handle, &hello["settings"]);
                 }
-                if let Some(error) = migration["error"].as_str().filter(|error| !error.is_empty()) {
-                    handle.dialog().message(format!("{error}\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。"))
-                        .title("WiFiMeter data import / 数据导入").blocking_show();
+                if let Some(error) = migration["error"]
+                    .as_str()
+                    .filter(|error| !error.is_empty())
+                {
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "{error}\n{}",
+                            localized(
+                                &handle,
+                                "统计已暂停，原文件未修改。",
+                                "Collection is paused. Original files are unchanged."
+                            )
+                        ))
+                        .title(localized(&handle, "数据导入", "Data import"))
+                        .blocking_show();
                 }
             });
             Ok(())
@@ -393,15 +475,22 @@ pub fn run() {
                 if !window.state::<Desktop>().quitting.load(Ordering::SeqCst) {
                     api.prevent_close();
                     let state = window.state::<Desktop>();
-                    if window.label() == "main" && !state.close_prompt.swap(true, Ordering::SeqCst) {
+                    if window.label() == "main" && !state.close_prompt.swap(true, Ordering::SeqCst)
+                    {
                         if let Some(window) = window.app_handle().get_webview_window("main") {
                             tauri::async_runtime::spawn_blocking(move || close_main(window));
                         }
                     }
                 }
             }
-            if window.label() == "main" && matches!(event, tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)) {
-                let visible = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
+            if window.label() == "main"
+                && matches!(
+                    event,
+                    tauri::WindowEvent::Focused(_) | tauri::WindowEvent::Resized(_)
+                )
+            {
+                let visible =
+                    window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
                 let _ = window.emit("window:visibility", visible);
             }
         })
@@ -426,7 +515,10 @@ pub fn run() {
                             state.closing.store(false, Ordering::SeqCst);
                             if let Err(error) = result {
                                 show_main(&app);
-                                app.dialog().message(error).title("WiFiMeter").blocking_show();
+                                app.dialog()
+                                    .message(error)
+                                    .title("WiFiMeter")
+                                    .blocking_show();
                             }
                             return;
                         }
