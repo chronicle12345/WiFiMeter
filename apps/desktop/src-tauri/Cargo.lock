@@ -4444,6 +4444,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tempfile",
+ "url",
  "windows-sys 0.61.2",
 ]
 

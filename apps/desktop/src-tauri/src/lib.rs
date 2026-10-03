@@ -16,6 +16,7 @@ pub mod notifications;
 #[cfg(all(windows, feature = "desktop-shell"))]
 mod native_dialog;
 pub mod preferences;
+pub mod updates;
 #[cfg(all(windows, feature = "desktop-shell"))]
 pub mod shell;
 #[cfg(all(windows, feature = "desktop-shell"))]
