@@ -79,7 +79,7 @@ function createSession(executable, databasePath, adapterPath, countersPath) {
  * 返回的对象里 env 供 Playwright 启动应用时使用，清理用 cleanup()。
  */
 // 默认造出 3.60 GB（3.1 GB 下载 + 0.5 GB 上传）的用量，量级贴近真实使用。
-export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } = {}) {
+export async function createHarness({ rxStep = 3100000000, txStep = 500000000, appId = '/opt/browser' } = {}) {
     if (!existsSync(backendBinary)) throw new Error(`未找到后端可执行文件：${backendBinary}，请先构建后端。`);
 
     const directory = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-ui-'));
@@ -88,7 +88,7 @@ export async function createHarness({ rxStep = 3100000000, txStep = 500000000 } 
     const databasePath = path.join(directory, 'wifimeter.db');
     const appsPath = path.join(directory, 'apps.json');
     const appCounters = (rx, tx) => writeFileSync(appsPath, JSON.stringify({ state: 'running', generation: 'one', samples: [{
-        interfaceId: 'wlan0', appId: '/opt/browser', name: '浏览器', processId: 42, instanceId: '42:100', rxBytes: String(rx), txBytes: String(tx)
+        interfaceId: 'wlan0', appId, name: '浏览器', processId: 42, instanceId: '42:100', rxBytes: String(rx), txBytes: String(tx)
     }] }));
     appCounters(0, 0);
     writeFileSync(adapterPath, JSON.stringify({ adapters: [{

@@ -19,7 +19,8 @@ await once(server, 'listening');
 const port = server.address().port;
 await new Promise(resolve => server.close(resolve));
 
-const harness = await createHarness();
+const iconExecutable = `${process.env.SystemRoot}\\explorer.exe`;
+const harness = await createHarness({ appId: iconExecutable });
 const child = spawn(process.env.WIFIMETER_EXECUTABLE, [], {
     env: { ...process.env, ...harness.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -64,6 +65,22 @@ try {
     assert.equal(snapshot.result.source, 'backend');
     assert.equal(snapshot.result.records[0].rxBytes, '3100000000');
     assert.deepEqual(await page.evaluate(() => window.desktop.legacy.status()), { found: false });
+    // A real local PE icon passes through collector lookup, native extraction and the original loader.
+    await page.locator('.nav [data-page="apps"]').click();
+    await page.getByRole('button', { name: '启用应用采集', exact: true }).click();
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    harness.appCounters(80000000, 20000000);
+    await page.evaluate(() => window.desktop.backend.request('collectNow'));
+    const icon = await page.evaluate(appId => window.desktop.appIcons.get({ appId }), iconExecutable);
+    assert.match(icon, /^data:image\/png;base64,/);
+    assert.equal(await page.evaluate(() => window.desktop.appIcons.get({ appId: 'C:\\unknown-wifimeter-app.exe' })), null);
+    for (const grouping of ['summary', 'live']) {
+        await page.locator('#appGrouping').selectOption(grouping);
+        await expect(page.locator('#appListRegion .app-avatar img')).toBeVisible();
+        assert.equal(await page.locator('#appListRegion .app-avatar img').evaluate(image => image.naturalWidth), 32);
+    }
+    console.log('Native application icons passed in summary and live views');
+    await page.locator('.nav [data-page="overview"]').click();
     const changed = await page.evaluate(async () => {
         const event = new Promise(resolve => {
             const off = window.desktop.windowPreferences.onChanged(value => { off(); resolve(value); });
@@ -87,11 +104,13 @@ try {
         const start = notifications().length;
         const result = await page.evaluate(capGb => window.desktop.backend.request('updateTotalQuota', { capGb, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }), capGb);
         assert.equal(result.ok, true);
+        assert.equal((await page.evaluate(() => window.desktop.backend.request('collectNow'))).ok, true);
         await expect.poll(() => notifications().slice(start)).toEqual(expected.map(body => ({ title: 'WiFiMeter', body })));
     }
     await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { notifications: false } }));
     const beforeDisabled = notifications().length;
     await page.evaluate(() => window.desktop.backend.request('updateTotalQuota', { capGb: 1, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }));
+    assert.equal((await page.evaluate(() => window.desktop.backend.request('collectNow'))).ok, true);
     await delay(1500);
     assert.equal(notifications().length, beforeDisabled);
     await page.evaluate(() => window.desktop.backend.request('updateTotalQuota', { capGb: 0, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }));

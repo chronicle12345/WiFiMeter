@@ -1,4 +1,5 @@
 use crate::{
+    app_icons::AppIcons,
     autostart::{Autostart, IsolatedLogin},
     backend::{Backend, BackendError},
     close_check::CloseCheck,
@@ -8,6 +9,7 @@ use crate::{
     preferences::Preferences,
     tray,
     windows_login::WindowsLogin,
+    windows_icons,
 };
 use serde_json::{json, Value};
 use std::{
@@ -39,6 +41,7 @@ struct Desktop {
     runtime_started: OnceLock<()>,
     isolated: bool,
     notification_icon: PathBuf,
+    app_icons: AppIcons,
 }
 
 fn notify(app: &tauri::AppHandle, alert: &Value) {
@@ -288,6 +291,16 @@ async fn desktop_request(
             initialize_runtime(&app);
         }
         match channel.as_str() {
+            "app-icons:get" => Ok(state
+                .app_icons
+                .get(
+                    &payload,
+                    true,
+                    |params| state.collector.request("snapshot", params, || false).ok(),
+                    windows_icons::extract,
+                )
+                .map(Value::String)
+                .unwrap_or(Value::Null)),
             "backend:request" => {
                 let method = payload["method"].as_str().unwrap_or("");
                 let params = payload.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -549,6 +562,7 @@ pub fn run() {
                 runtime_started: OnceLock::new(),
                 isolated: override_directory.is_some(),
                 notification_icon,
+                app_icons: AppIcons::default(),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)

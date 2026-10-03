@@ -7,7 +7,7 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: application icons/control
+the intermediate Tauri host: application control
 and updates still need
 integration. Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
@@ -27,6 +27,10 @@ and language. Native dialogs remain available before the page is ready.
 The floating window reuses the original renderer and supports all shapes/palettes,
 physical-pixel placement with monitor DPI, edge snapping, idle collapse/hover
 expansion, live speed units, reopening the main window and independent close.
+Application icons are extracted with Windows Shell on background IPC workers and
+returned as transparent PNG data URLs to the unchanged renderer. Only executable
+paths present in backend application records are used; historical lookups,
+bounded caches, concurrent request sharing and missing-icon fallbacks are preserved.
 
 ## Development on Windows
 
@@ -67,6 +71,7 @@ The Windows WebView2 smoke test uses the existing C++ network fixtures and a
 temporary profile. It checks navigation, collection controls, exact counters and
 preference events, isolated autostart changes, bilingual quota notification
 dispatch and its off switch, floating-window shapes/palettes, real native dragging,
+native application icons displayed by the existing application list,
 edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
 themed close choices in light/dark mode, keyboard focus,
 import/resume localization, tray hiding, single-instance activation and canceling

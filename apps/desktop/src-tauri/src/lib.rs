@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod app_icons;
 pub mod backend;
 pub mod close_check;
 pub mod collector;
@@ -21,3 +22,5 @@ mod tray;
 
 #[cfg(windows)]
 pub mod windows_login;
+#[cfg(windows)]
+pub mod windows_icons;
