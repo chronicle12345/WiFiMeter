@@ -1,4 +1,5 @@
 use crate::{
+    autostart::{Autostart, IsolatedLogin},
     backend::{Backend, BackendError},
     close_check::CloseCheck,
     collector::Collector,
@@ -6,13 +7,14 @@ use crate::{
     files, identity, ipc_policy, mini, native_dialog,
     preferences::Preferences,
     tray,
+    windows_login::WindowsLogin,
 };
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
@@ -32,6 +34,8 @@ struct Desktop {
     settings: Mutex<Value>,
     tray_lock: Mutex<()>,
     mini: mini::Controller,
+    autostart: Autostart,
+    runtime_started: OnceLock<()>,
 }
 
 pub(crate) fn localized<'a>(app: &tauri::AppHandle, chinese: &'a str, english: &'a str) -> &'a str {
@@ -72,11 +76,56 @@ fn ensure_tray(app: &tauri::AppHandle) -> Result<(), String> {
     tray::ensure(app, &language).map_err(|error| error.to_string())
 }
 
-fn apply_runtime_settings(app: &tauri::AppHandle, settings: &Value) {
-    *app.state::<Desktop>().settings.lock().unwrap() = settings.clone();
-    if let Err(error) = ensure_tray(app) {
-        eprintln!("[tray] {error}");
+fn apply_runtime_settings(
+    app: &tauri::AppHandle,
+    settings: &Value,
+    explicit: bool,
+) -> Option<Value> {
+    let state = app.state::<Desktop>();
+    *state.settings.lock().unwrap() = settings.clone();
+    let tray_ready = ensure_tray(app)
+        .map_err(|error| eprintln!("[tray] {error}"))
+        .is_ok();
+    state.autostart.apply(settings, explicit).map(|auto_start| json!({"autoStart":auto_start,"minimizeToTray":tray_ready,"notifications":settings["notifications"]}))
+}
+
+fn sync_imported_settings(app: &tauri::AppHandle) {
+    let state = app.state::<Desktop>();
+    let migration = state.collector.migration_status();
+    let Ok(mut hello) = state.collector.request("hello", json!({}), || false) else {
+        state.autostart.preserve();
+        return;
+    };
+    let english = hello["settings"]["language"] == "en";
+    let (inherit, warning) = state.autostart.prepare(&hello["settings"], &migration);
+    if inherit {
+        match state.collector.request(
+            "updateSettings",
+            json!({"settings":{"autoStart":true}}),
+            || false,
+        ) {
+            Ok(result) => hello["settings"] = result["settings"].clone(),
+            Err(error) => {
+                state.autostart.preserve();
+                state.collector.add_migration_warning(&error.message);
+            }
+        }
     }
+    if let Some(warning) = warning {
+        state.collector.add_migration_warning(match (english, warning) {
+            (true,"unmatched") => "The current executable's login item was not confirmed. Existing portable paths remain unchanged until you change the autostart preference.",
+            (true,_) => "Unable to read the login item. The existing entry has been preserved.",
+            (false,"unmatched") => "未确认当前路径的登录启动项，原旧启动项保持不变；更改开机启动设置前，不会迁移或删除其他便携版路径。",
+            _ => "无法确认旧登录启动项，已保留原项。",
+        });
+    }
+    apply_runtime_settings(app, &hello["settings"], false);
+}
+
+fn initialize_runtime(app: &tauri::AppHandle) {
+    app.state::<Desktop>()
+        .runtime_started
+        .get_or_init(|| sync_imported_settings(app));
 }
 
 fn close_main(window: WebviewWindow) {
@@ -205,6 +254,12 @@ async fn desktop_request(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<Desktop>();
         let payload = payload.unwrap_or(Value::Null);
+        if matches!(
+            channel.as_str(),
+            "backend:request" | "legacy:status" | "legacy:import"
+        ) {
+            initialize_runtime(&app);
+        }
         match channel.as_str() {
             "backend:request" => {
                 let method = payload["method"].as_str().unwrap_or("");
@@ -214,9 +269,15 @@ async fn desktop_request(
                         .collector
                         .request(method, params, || native_dialog::confirm_resume(&window))
                     {
-                        Ok(result) => {
+                        Ok(mut result) => {
                             if method == "updateSettings" && result["settings"].is_object() {
-                                apply_runtime_settings(&app, &result["settings"]);
+                                let explicit =
+                                    payload["params"]["settings"].get("autoStart").is_some();
+                                if let Some(system) =
+                                    apply_runtime_settings(&app, &result["settings"], explicit)
+                                {
+                                    result["system"] = system;
+                                }
                             }
                             json!({"ok":true,"result":result})
                         }
@@ -225,29 +286,36 @@ async fn desktop_request(
                 )
             }
             "legacy:status" => Ok(state.collector.migration_status()),
-            "legacy:import" => Ok(state.collector.import_selected(
-                || {
-                    let mut dialog = app.dialog().file().set_parent(&window).set_title(localized(
-                        &app,
-                        "导入旧版数据",
-                        "Import old data",
-                    ));
-                    if let Some(directory) =
-                        legacy_directory().or_else(|| app.path().document_dir().ok())
-                    {
-                        dialog = dialog.set_directory(directory);
-                    }
-                    dialog
-                        .blocking_pick_folder()
-                        .map(|selected| {
-                            selected
-                                .into_path()
-                                .map_err(|error| BackendError::new("unavailable", error))
-                        })
-                        .transpose()
-                },
-                || native_dialog::confirm_overlap(&window),
-            )),
+            "legacy:import" => {
+                let result = state.collector.import_selected(
+                    || {
+                        let mut dialog = app
+                            .dialog()
+                            .file()
+                            .set_parent(&window)
+                            .set_title(localized(&app, "导入旧版数据", "Import old data"));
+                        if let Some(directory) =
+                            legacy_directory().or_else(|| app.path().document_dir().ok())
+                        {
+                            dialog = dialog.set_directory(directory);
+                        }
+                        dialog
+                            .blocking_pick_folder()
+                            .map(|selected| {
+                                selected
+                                    .into_path()
+                                    .map_err(|error| BackendError::new("unavailable", error))
+                            })
+                            .transpose()
+                    },
+                    || native_dialog::confirm_overlap(&window),
+                );
+                if result["canceled"] == true {
+                    return Ok(result);
+                }
+                sync_imported_settings(&app);
+                Ok(state.collector.migration_status())
+            }
             "window-preferences:read" => Ok(state.preferences.read()),
             "window-preferences:update" => {
                 state
@@ -428,6 +496,20 @@ pub fn run() {
                 settings: Mutex::new(json!({"language":"zh-CN"})),
                 tray_lock: Mutex::new(()),
                 mini: mini::Controller::new(profile.clone()),
+                autostart: {
+                    let isolated = override_directory.is_some();
+                    let fixture =
+                        isolated && std::env::var("WIFIMETER_TEST_ISOLATION").as_deref() == Ok("1");
+                    let login: Box<dyn crate::autostart::LoginItems> = if isolated {
+                        Box::new(IsolatedLogin::default())
+                    } else {
+                        Box::new(WindowsLogin::new(
+                            std::env::current_exe()?.to_string_lossy().into_owned(),
+                        ))
+                    };
+                    Autostart::new(login, !isolated || fixture, !isolated)
+                },
+                runtime_started: OnceLock::new(),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)
@@ -455,10 +537,8 @@ pub fn run() {
                 if let Err(error) = state.mini.sync(&handle, &state.preferences.read()) {
                     eprintln!("[mini] {error}");
                 }
+                initialize_runtime(&handle);
                 let migration = state.collector.migration_status();
-                if let Ok(hello) = state.collector.request("hello", json!({}), || false) {
-                    apply_runtime_settings(&handle, &hello["settings"]);
-                }
                 if let Some(error) = migration["error"]
                     .as_str()
                     .filter(|error| !error.is_empty())

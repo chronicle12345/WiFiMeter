@@ -7,12 +7,15 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: autostart/notifications, application icons/control
+the intermediate Tauri host: notifications, application icons/control
 and updates still need
 integration. Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
-System login-item inheritance will be connected with autostart integration.
+Windows autostart uses the existing `io.wifimeter.demo` login item and reads back
+the applied state. Legacy imports inherit only the enabled current executable;
+unmatched portable paths and failed migrations preserve existing entries until
+an explicit preference change. Isolated profiles do not modify real login items.
 Tray activation, close preferences, remembered choices and the renderer's existing
 unsaved-change checks are connected to the native window lifecycle. Close, exit,
 resume and import confirmations use the existing UI tokens and follow its theme

@@ -1,3 +1,4 @@
+pub mod autostart;
 pub mod backend;
 pub mod close_check;
 pub mod collector;
@@ -16,3 +17,6 @@ pub mod preferences;
 pub mod shell;
 #[cfg(all(windows, feature = "desktop-shell"))]
 mod tray;
+
+#[cfg(windows)]
+pub mod windows_login;

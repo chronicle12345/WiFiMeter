@@ -114,6 +114,17 @@ impl Collector {
         self.migration.lock().unwrap().clone()
     }
 
+    pub fn add_migration_warning(&self, warning: &str) {
+        let mut status = self.migration.lock().unwrap();
+        if !status["warnings"].is_array() {
+            status["warnings"] = json!([]);
+        }
+        status["warnings"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(warning));
+    }
+
     fn available(&self, read_only: bool) -> Result<()> {
         if self.stopping.load(Ordering::SeqCst) {
             return Err(BackendError::new(

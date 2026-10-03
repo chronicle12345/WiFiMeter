@@ -72,7 +72,13 @@ try {
         return event;
     });
     assert.equal(changed.theme, 'dark');
-    console.log('Pages and backend passed; checking floating window');
+    for (const enabled of [true, false]) {
+        const applied = await page.evaluate(autoStart => window.desktop.backend.request('updateSettings', { settings: { autoStart } }), enabled);
+        assert.equal(applied.ok, true);
+        assert.equal(applied.result.settings.autoStart, enabled);
+        assert.equal(applied.result.system.autoStart, enabled);
+    }
+    console.log('Pages, backend and isolated autostart passed; checking floating window');
     await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true, miniAutoHide: false }));
     await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
     const mini = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
