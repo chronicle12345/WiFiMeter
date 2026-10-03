@@ -29,7 +29,7 @@ impl WindowsControl {
             fs::create_dir_all(module.parent().unwrap())?;
             files::atomic_write(
                 &module,
-                include_bytes!("../../native/windows/AppNetworkControl.psm1"),
+                include_bytes!("../../../../native/windows/AppNetworkControl.psm1"),
             )
         };
         if let Err(error) = install() {

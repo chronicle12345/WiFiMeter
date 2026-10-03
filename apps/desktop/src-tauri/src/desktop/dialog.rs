@@ -15,7 +15,7 @@ fn wide(text: &str) -> Vec<u16> {
 fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(usize, bool)> {
     // The fallback and themed dialogs share exactly the same localized text and button order.
     let copy: serde_json::Value =
-        serde_json::from_str(include_str!("../../tauri/dialog-copy.json")).ok()?;
+        serde_json::from_str(include_str!("../../../tauri/dialog-copy.json")).ok()?;
     let config = &copy[kind];
     let language = crate::shell::localized(window.app_handle(), "zh", "en");
     let content = &config[language];

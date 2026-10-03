@@ -30,7 +30,7 @@ pub fn ensure(app: &AppHandle, language: &str) -> tauri::Result<()> {
     }
     TrayIconBuilder::with_id("main")
         .icon(tauri::image::Image::from_bytes(include_bytes!(
-            "../../assets/icon.png"
+            "../../../assets/icon.png"
         ))?)
         .tooltip("WiFiMeter")
         .menu(&menu)

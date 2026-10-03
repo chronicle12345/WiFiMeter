@@ -755,7 +755,7 @@ pub fn run() {
             std::fs::create_dir_all(&profile)?;
             let notification_icon = profile.join("notification-icon.png");
             if let Err(error) =
-                files::atomic_write(&notification_icon, include_bytes!("../../assets/icon.png"))
+                files::atomic_write(&notification_icon, include_bytes!("../../../assets/icon.png"))
             {
                 eprintln!("[notification] {error}");
             }
