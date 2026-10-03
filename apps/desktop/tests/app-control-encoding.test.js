@@ -24,7 +24,7 @@ $module = Import-Module -Name '${modulePath.replaceAll("'", "''")}' -Force -Pass
 [pscustomobject]@{ Version = $PSVersionTable.PSVersion.ToString(); Exports = @($module.ExportedFunctions.Keys) } | ConvertTo-Json -Compress
 `;
     const stdout = execFileSync(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-        ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
+        ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
         { windowsHide: true, shell: false, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
     const result = JSON.parse(stdout);
     assert.match(result.Version, /^5\.1\./);

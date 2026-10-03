@@ -31,7 +31,7 @@ function decode(call) {
     assert.match(exe, /System32[\\/]WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/i);
     assert.equal(options.shell, false); assert.equal(options.windowsHide, true);
     assert.ok(options.timeout > 120000);
-    assert.deepEqual(args.slice(0, -1), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+    assert.deepEqual(args.slice(0, -1), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
     const encoded = script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)[1];
     return { script, data: JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')) };

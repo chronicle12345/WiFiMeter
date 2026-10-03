@@ -10,6 +10,7 @@ use crate::{
     tray,
     windows_login::WindowsLogin,
     windows_icons,
+    windows_control::WindowsControl,
 };
 use serde_json::{json, Value};
 use std::{
@@ -42,6 +43,7 @@ struct Desktop {
     isolated: bool,
     notification_icon: PathBuf,
     app_icons: AppIcons,
+    app_control: WindowsControl,
 }
 
 fn notify(app: &tauri::AppHandle, alert: &Value) {
@@ -291,6 +293,38 @@ async fn desktop_request(
             initialize_runtime(&app);
         }
         match channel.as_str() {
+            "app-control:request" => Ok(crate::app_control::localize(
+                state.app_control.request(&payload),
+                state.settings.lock().unwrap()["language"] == "en",
+            )),
+            "app-control:choose" => {
+                let selected = app
+                    .dialog()
+                    .file()
+                    .set_parent(&window)
+                    .set_title(localized(
+                        &app,
+                        "选择需要控制联网的程序",
+                        "Choose an application to control",
+                    ))
+                    .add_filter(localized(&app, "应用程序", "Applications"), &["exe"])
+                    .blocking_pick_file();
+                let reply = match selected {
+                    None => json!({"ok":false,"canceled":true}),
+                    Some(selected) => match selected.into_path() {
+                        Ok(path) => state
+                            .app_control
+                            .request(&json!({"action":"read","path":path.to_string_lossy()})),
+                        Err(error) => {
+                            crate::app_control::failure(BackendError::new("dialogFailed", error))
+                        }
+                    },
+                };
+                Ok(crate::app_control::localize(
+                    reply,
+                    state.settings.lock().unwrap()["language"] == "en",
+                ))
+            }
             "app-icons:get" => Ok(state
                 .app_icons
                 .get(
@@ -563,6 +597,7 @@ pub fn run() {
                 isolated: override_directory.is_some(),
                 notification_icon,
                 app_icons: AppIcons::default(),
+                app_control: WindowsControl::new(&profile),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)

@@ -173,7 +173,7 @@ function Start-MeterNetworkHelper {
     ) -join "`n"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($template.Replace('__PAYLOAD__', $payload)))
     $exe = Join-Path ([Environment]::GetFolderPath('Windows')) 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    return Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -Verb RunAs -WindowStyle Hidden -PassThru -ErrorAction Stop
+    return Start-Process -FilePath $exe -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -Verb RunAs -WindowStyle Hidden -PassThru -ErrorAction Stop
 }
 
 function Invoke-MeterAppNetworkAction {

@@ -80,6 +80,19 @@ try {
         assert.equal(await page.locator('#appListRegion .app-avatar img').evaluate(image => image.naturalWidth), 32);
     }
     console.log('Native application icons passed in summary and live views');
+    const control = await page.evaluate(path => window.desktop.appControl.request({ action: 'read', path }), iconExecutable);
+    assert.equal(control.ok, true, JSON.stringify(control));
+    assert.equal(control.result.state.Scope, 'LocalConfiguredPolicy');
+    assert.equal((await page.evaluate(path => window.desktop.appControl.request({ action: 'throttle', path, uploadKBps: 0.01 }), iconExecutable)).error.code, 'invalidRequest');
+    for (const [language, title] of [['zh-CN', '选择需要控制联网的程序'], ['en', 'Choose an application to control']]) {
+        await page.evaluate(language => window.desktop.backend.request('updateSettings', { settings: { language } }), language);
+        await page.evaluate(() => { window.testChooseResult = null; window.desktop.appControl.chooseProgram().then(result => { window.testChooseResult = result; }); });
+        await expect.poll(async () => (await native('dialog')).title, { timeout: 15000 }).toBe(title);
+        await native('cancel-dialog');
+        await expect.poll(() => page.evaluate(() => window.testChooseResult)).toEqual({ ok: false, canceled: true });
+    }
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { language: 'zh-CN' } }));
+    console.log('Application control read, validation and bilingual picker cancellation passed');
     await page.locator('.nav [data-page="overview"]').click();
     const changed = await page.evaluate(async () => {
         const event = new Promise(resolve => {
@@ -251,6 +264,7 @@ try {
     console.log('PASS: Windows WebView2 pages, backend, preferences, isolated autostart, bilingual quota notification dispatch and off switch, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
 } catch (error) {
     console.error('Smoke test failed:', error);
+    try { console.error('Mini diagnostics:', await native('bounds', '-Target', 'mini')); } catch { /* The mini may not exist yet. */ }
     throw error;
 } finally {
     if (child.exitCode === null) {

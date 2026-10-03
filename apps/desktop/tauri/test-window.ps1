@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)][int]$ProcessId,
-    [ValidateSet('close','dialog','click','visible','bounds','move','cursor','drag')][string]$Action,
+    [ValidateSet('close','dialog','cancel-dialog','click','visible','bounds','move','cursor','drag')][string]$Action,
     [ValidateSet('main','mini')][string]$Target = 'main',
     [int]$X, [int]$Y,
     [string]$ButtonName,
@@ -23,6 +23,7 @@ public static class TestWindow {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
@@ -86,6 +87,7 @@ if ($Action -in @('bounds','move','cursor','drag')) {
         @{ x=$rect.Left; y=$rect.Top; width=$rect.Right-$rect.Left; height=$rect.Bottom-$rect.Top;
            scale=[TestWindow]::GetDpiForWindow($script:main)/96; visible=[TestWindow]::IsWindowVisible($script:main);
            topmost=($extended -band 8) -ne 0; noActivate=($extended -band 0x8000000) -ne 0;
+           cursor=@{x=$cursor.X;y=$cursor.Y}; leftButtonDown=[TestWindow]::GetAsyncKeyState(1) -lt 0;
            area=@{x=$monitor.Work.Left;y=$monitor.Work.Top;width=$monitor.Work.Right-$monitor.Work.Left;height=$monitor.Work.Bottom-$monitor.Work.Top} } | ConvertTo-Json -Compress
     }
     exit
@@ -104,12 +106,17 @@ if ($script:dialog -ne [IntPtr]::Zero) {
 }
 if ($Action -eq 'dialog') {
     $focused = ''
+    $title = New-Object System.Text.StringBuilder 1024
     if ($script:dialog -ne [IntPtr]::Zero) {
+        [void][TestWindow]::GetWindowText($script:dialog, $title, 1024)
         Add-Type -AssemblyName UIAutomationClient
         Add-Type -AssemblyName UIAutomationTypes
         $focused = [System.Windows.Automation.AutomationElement]::FocusedElement.Current.Name
     }
-    @{ found = $script:dialog -ne [IntPtr]::Zero; focused = $focused } | ConvertTo-Json -Compress
+    @{ found = $script:dialog -ne [IntPtr]::Zero; focused = $focused; title = $title.ToString() } | ConvertTo-Json -Compress
+} elseif ($Action -eq 'cancel-dialog') {
+    if ($script:dialog -eq [IntPtr]::Zero) { throw 'Test dialog not found' }
+    [TestWindow]::PostMessage($script:dialog, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
 } elseif ($Action -eq 'click') {
     if ($script:dialog -eq [IntPtr]::Zero) { throw 'Test dialog not found' }
     $nativeButton = $script:controls | Where-Object { $_.class -eq 'Button' -and $_.name -eq $ButtonName } | Select-Object -First 1

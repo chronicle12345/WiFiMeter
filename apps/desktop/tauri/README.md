@@ -7,9 +7,8 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: application control
-and updates still need
-integration. Automatic and manual legacy imports are connected: collection starts
+the intermediate Tauri host: updates still need integration.
+Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
 Windows autostart uses the existing `io.wifimeter.demo` login item and reads back
@@ -31,6 +30,13 @@ Application icons are extracted with Windows Shell on background IPC workers and
 returned as transparent PNG data URLs to the unchanged renderer. Only executable
 paths present in backend application records are used; historical lookups,
 bounded caches, concurrent request sharing and missing-icon fallbacks are preserved.
+Application network control reuses the existing Windows policy module, embedded
+in the host and extracted under the profile's `native/windows` directory. The
+hidden runner validates local executable headers, preserves cancellation and
+partial policy states, and retains the existing decimal upload-rate conversion.
+Only the helper's PowerShell sessions set their execution policy; no registry
+execution policy is changed. Drawer messages and picker titles follow the app
+language; original provider diagnostics remain in detail fields.
 
 ## Development on Windows
 
@@ -72,6 +78,7 @@ temporary profile. It checks navigation, collection controls, exact counters and
 preference events, isolated autostart changes, bilingual quota notification
 dispatch and its off switch, floating-window shapes/palettes, real native dragging,
 native application icons displayed by the existing application list,
+read-only application policy queries and bilingual picker cancellation,
 edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
 themed close choices in light/dark mode, keyboard focus,
 import/resume localization, tray hiding, single-instance activation and canceling

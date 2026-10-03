@@ -73,7 +73,7 @@ try {
     [pscustomobject]@{ Status = 'Failed'; ErrorCode = 'OperationFailed'; Error = $_.Exception.Message; State = $null } | ConvertTo-Json -Compress
 }
 `;
-    return ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+    return ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
 }
 
 /**
