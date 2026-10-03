@@ -237,7 +237,7 @@ fn download_with_timeout(
     current.percent = None;
     progress(current);
     if format!("{:x}", hash.finalize()) != asset.digest {
-        return Err(UpdateError::Download);
+        return Err(UpdateError::DigestMismatch);
     }
     temporary
         .as_file()

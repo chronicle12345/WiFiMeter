@@ -13,7 +13,10 @@ use std::{
 enum Failure {
     Preferences,
     Check,
-    Install,
+    Install {
+        phase: &'static str,
+        error: UpdateError,
+    },
     Recovery,
 }
 
@@ -47,8 +50,27 @@ impl Snapshot {
                 (Failure::Preferences, true) => "Cannot read or save update preferences. Repair the update preferences file and try again.",
                 (Failure::Check, false) => "检查更新失败，请检查网络连接后重试。",
                 (Failure::Check, true) => "Could not check for updates. Check your connection and try again.",
-                (Failure::Install, false) => "安装更新失败，下载或文件校验未完成，或安装程序无法启动。",
-                (Failure::Install, true) => "Could not install the update. Download or verification failed, or the installer could not start.",
+                (Failure::Install { phase, error }, _) => {
+                    let (reason, code) = installation_reason(error, phase, english);
+                    let label = match (phase, english) {
+                        ("downloading", false) => "下载更新失败",
+                        ("downloading", true) => "Update download failed",
+                        ("verifying", false) => "更新文件 SHA-256 校验失败",
+                        ("verifying", true) => "Update SHA-256 verification failed",
+                        ("preparing", false) => "准备安装更新失败",
+                        ("preparing", true) => "Update preparation failed",
+                        ("installing", false) => "启动更新辅助程序失败",
+                        ("installing", true) => "Could not start the update helper",
+                        (_, false) => "安装更新失败",
+                        (_, true) => "Update installation failed",
+                    };
+                    value["errorPhase"] = json!(phase);
+                    value["errorCode"] = json!(code);
+                    value["error"] = json!(format!("{label}{}{reason}{}",
+                        if english { ": " } else { "：" },
+                        code.map_or(String::new(), |code| format!(" ({code})"))));
+                    return value;
+                }
                 (Failure::Recovery, false) => "更新已取消，但未能恢复采集。数据操作保持暂停，请稍后点击“恢复采集”重试。",
                 (Failure::Recovery, true) => "The update was cancelled, but collection could not be restored. Data operations remain paused. Select Resume collection to retry.",
             };
@@ -59,6 +81,61 @@ impl Snapshot {
         }
         value
     }
+}
+
+fn installation_reason(
+    error: UpdateError,
+    phase: &str,
+    english: bool,
+) -> (&'static str, Option<&'static str>) {
+    let (zh, en, code) = match error {
+        UpdateError::DigestMismatch => (
+            "文件内容与官方 SHA-256 不一致，请重新下载。",
+            "The file does not match the official SHA-256. Download it again.",
+            Some("DIGEST_MISMATCH"),
+        ),
+        UpdateError::HandoffStart => (
+            "无法启动 Windows PowerShell 更新辅助进程。",
+            "Could not start the Windows PowerShell update helper.",
+            Some("HANDOFF_START_FAILED"),
+        ),
+        UpdateError::HandoffClosed => (
+            "辅助进程在确认就绪前关闭了通信。",
+            "The update helper closed communication before it was ready.",
+            Some("HANDOFF_CLOSED_BEFORE_READY"),
+        ),
+        UpdateError::HandoffInvalid => (
+            "辅助进程返回了无效的就绪信息。",
+            "The update helper returned an invalid ready response.",
+            Some("HANDOFF_INVALID_RESPONSE"),
+        ),
+        UpdateError::HandoffTimeout => (
+            "等待辅助进程确认就绪超时。",
+            "Timed out waiting for the update helper to become ready.",
+            Some("HANDOFF_READY_TIMEOUT"),
+        ),
+        UpdateError::HandoffWrite => (
+            "无法向更新辅助进程发送安装确认。",
+            "Could not send installation authorization to the update helper.",
+            Some("HANDOFF_WRITE_FAILED"),
+        ),
+        _ if phase == "preparing" => (
+            "无法完成采集停止或数据保存，请重试。",
+            "Could not finish stopping collection or saving data. Try again.",
+            None,
+        ),
+        _ if phase == "installing" => (
+            "无法验证本地安装包或启动安装程序，请重试。",
+            "Could not verify the local installer or start installation. Try again.",
+            None,
+        ),
+        _ => (
+            "网络请求、文件写入或下载流未完成，请重试。",
+            "The network request, file write or download stream did not complete. Try again.",
+            None,
+        ),
+    };
+    (if english { en } else { zh }, code)
 }
 
 pub trait InstallHost {
@@ -288,7 +365,10 @@ impl UpdateService {
         } else {
             match self.install_now(host) {
                 Err(UpdateError::Cancelled) => self.recover(host, "cancelled", None),
-                Err(_) => self.recover(host, "error", Some(Failure::Install)),
+                Err(error) => {
+                    let phase = self.state.lock().unwrap().snapshot.state;
+                    self.recover(host, "error", Some(Failure::Install { phase, error }));
+                }
                 Ok(()) => (),
             }
         }

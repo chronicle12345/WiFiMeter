@@ -96,28 +96,35 @@ fn command(script: &str) -> Command {
 
 fn authorize(child: &mut Child, timeout: Duration) -> Result<(), UpdateError> {
     // 任一路径返回都会关闭 stdin；迟到的 READY 因收不到 GO 而取消，不会启动安装器。
-    let mut input = child.stdin.take().ok_or(UpdateError::Install)?;
-    let output = child.stdout.take().ok_or(UpdateError::Install)?;
+    let mut input = child.stdin.take().ok_or(UpdateError::HandoffWrite)?;
+    let output = child.stdout.take().ok_or(UpdateError::HandoffClosed)?;
     let (send, receive) = mpsc::channel();
     thread::spawn(move || {
         let mut line = Vec::new();
-        let result = BufReader::new(output.take(129)).read_until(b'\n', &mut line);
-        let _ = send.send(result.is_ok() && (line == b"READY\n" || line == b"READY\r\n"));
+        let result = match BufReader::new(output.take(129)).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => Err(UpdateError::HandoffClosed),
+            Ok(_) if line == b"READY\n" || line == b"READY\r\n" => Ok(()),
+            Ok(_) => Err(UpdateError::HandoffInvalid),
+        };
+        let _ = send.send(result);
     });
-    if receive.recv_timeout(timeout) != Ok(true) {
-        return Err(UpdateError::Install);
-    }
+    receive
+        .recv_timeout(timeout)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => UpdateError::HandoffTimeout,
+            mpsc::RecvTimeoutError::Disconnected => UpdateError::HandoffClosed,
+        })??;
     input
         .write_all(b"GO\n")
         .and_then(|_| input.flush())
-        .map_err(|_| UpdateError::Install)
+        .map_err(|_| UpdateError::HandoffWrite)
 }
 
 pub fn launch(file: &Path, profile: &Path, digest: &str, english: bool) -> Result<(), UpdateError> {
     let target = verified_target(file, profile, digest)?;
     let mut child = command(&script(&target, digest, std::process::id(), english))
         .spawn()
-        .map_err(|_| UpdateError::Install)?;
+        .map_err(|_| UpdateError::HandoffStart)?;
     let accepted = authorize(&mut child, Duration::from_secs(15));
     // 不杀死已授权的辅助进程；主进程退出后由它接续安装。失败路径也回收句柄。
     thread::spawn(move || {
@@ -191,6 +198,70 @@ mod tests {
         }
         fs::write(&file, b"replaced").unwrap();
         assert!(verified_target(&file, root.path(), &digest()).is_err());
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture for handoff_survives_parent_exit"]
+    fn handoff_parent_fixture() {
+        let Some(root) = std::env::var_os("WIFIMETER_HANDOFF_TEST_ROOT") else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let file = root.join("updates/verified';中文.exe");
+        let target = verified_target(&file, &root, &digest()).unwrap();
+        let marker = STANDARD.encode(root.join("launched.txt").to_string_lossy().as_bytes());
+        // Only installer launch is stubbed. PowerShell waits for this real parent
+        // process and must still hold the verified file lock after it exits.
+        let stub = format!(
+            r#"
+function Start-Process {{
+    param($FilePath,$WindowStyle)
+    $blocked=$false
+    try {{$writer=[IO.File]::Open($FilePath,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite); $writer.Dispose()}} catch {{$blocked=$true}}
+    if(-not $blocked){{throw 'Installer was not locked'}}
+    $marker=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{marker}'))
+    [IO.File]::WriteAllText($marker,'PARENT-EXITED;INSTALLER-LOCKED')
+}}
+"#
+        );
+        let body = script(&target, &digest(), std::process::id(), true).replace(
+            "[System.Windows.Forms.MessageBox]::Show($message, $title) | Out-Null",
+            "[Console]::Error.WriteLine($message)",
+        );
+        let mut helper = command(&(stub + &body)).spawn().unwrap();
+        authorize(&mut helper, Duration::from_secs(15)).unwrap();
+        // Dropping Child closes handles without terminating the helper.
+    }
+
+    #[test]
+    fn handoff_survives_parent_exit() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("updates")).unwrap();
+        fs::write(
+            root.path().join("updates/verified';中文.exe"),
+            b"verified fixture",
+        )
+        .unwrap();
+        let mut parent = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "platform::windows::update::tests::handoff_parent_fixture",
+            ])
+            .env("WIFIMETER_HANDOFF_TEST_ROOT", root.path())
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert!(wait(&mut parent).success());
+        let marker = root.path().join("launched.txt");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !marker.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            fs::read_to_string(marker).unwrap(),
+            "PARENT-EXITED;INSTALLER-LOCKED"
+        );
     }
 
     #[test]
@@ -308,7 +379,16 @@ function Start-Process {{
                     Duration::from_secs(10)
                 },
             );
-            assert_eq!(result.is_ok(), mode == "ready", "{mode}");
+            assert_eq!(
+                result,
+                match mode {
+                    "ready" => Ok(()),
+                    "bad" | "long" => Err(UpdateError::HandoffInvalid),
+                    "late" => Err(UpdateError::HandoffTimeout),
+                    _ => Err(UpdateError::HandoffClosed),
+                },
+                "{mode}"
+            );
             wait(&mut child);
             if mode != "exit" {
                 assert_eq!(

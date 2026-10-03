@@ -15,7 +15,13 @@ pub enum UpdateError {
     Preferences,
     Network,
     Download,
+    DigestMismatch,
     Install,
+    HandoffStart,
+    HandoffClosed,
+    HandoffInvalid,
+    HandoffTimeout,
+    HandoffWrite,
     Cancelled,
 }
 

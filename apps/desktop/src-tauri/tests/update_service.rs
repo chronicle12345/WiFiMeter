@@ -23,12 +23,15 @@ struct Network {
     calls: Mutex<Vec<String>>,
     fail: AtomicBool,
     bad_digest: AtomicBool,
+    fail_download: AtomicBool,
 }
 
 impl Transport for Network {
     fn get(&self, url: &str, _: Duration) -> Result<Response, UpdateError> {
         self.calls.lock().unwrap().push(url.into());
-        if self.fail.load(Ordering::SeqCst) {
+        if self.fail.load(Ordering::SeqCst)
+            || (url != API && self.fail_download.load(Ordering::SeqCst))
+        {
             return Err(UpdateError::Network);
         }
         let body =
@@ -82,6 +85,7 @@ struct Host<'a> {
     approved: bool,
     fail_prepare: bool,
     fail_launch: bool,
+    launch_error: Option<UpdateError>,
     fail_recover: AtomicBool,
     calls: Mutex<Vec<String>>,
 }
@@ -132,7 +136,9 @@ impl InstallHost for Host<'_> {
                 Value::Null
             );
         }
-        if self.fail_launch {
+        if let Some(error) = self.launch_error {
+            Err(error)
+        } else if self.fail_launch {
             Err(UpdateError::Install)
         } else {
             Ok(())
@@ -236,12 +242,20 @@ fn cancellation_downloads_nothing_and_linux_opens_only_the_release_page() {
 
 #[test]
 fn failures_clear_progress_clean_files_and_recover_before_allowing_a_retry() {
-    for failure in ["digest", "prepare", "launch"] {
+    for (failure, phase, label) in [
+        ("download", "downloading", "下载更新失败"),
+        ("digest", "verifying", "更新文件 SHA-256 校验失败"),
+        ("prepare", "preparing", "准备安装更新失败"),
+        ("launch", "installing", "启动更新辅助程序失败"),
+    ] {
         let directory = tempfile::tempdir().unwrap();
         let network = Arc::new(Network::default());
         network
             .bad_digest
             .store(failure == "digest", Ordering::SeqCst);
+        network
+            .fail_download
+            .store(failure == "download", Ordering::SeqCst);
         let events = Arc::new(Mutex::new(vec![]));
         let service = service(directory.path(), "win32", network.clone(), events.clone());
         let host = Host {
@@ -257,15 +271,27 @@ fn failures_clear_progress_clean_files_and_recover_before_allowing_a_retry() {
         assert_eq!(result["progress"], Value::Null);
         assert_eq!(result["busy"], false);
         assert_eq!(result["recoveryRequired"], false);
+        assert_eq!(result["errorPhase"], phase);
+        assert!(result["error"].as_str().unwrap().starts_with(label));
         assert_eq!(
-            fs::read_dir(directory.path().join("updates"))
-                .unwrap()
-                .count(),
-            0
+            result["errorCode"],
+            if failure == "digest" {
+                json!("DIGEST_MISMATCH")
+            } else {
+                Value::Null
+            }
         );
+        if failure != "download" {
+            assert_eq!(
+                fs::read_dir(directory.path().join("updates"))
+                    .unwrap()
+                    .count(),
+                0
+            );
+        }
         let calls = host.calls.lock().unwrap().clone();
         assert_eq!(calls.last().unwrap(), "recover");
-        if failure == "digest" {
+        if ["download", "digest"].contains(&failure) {
             assert!(!calls
                 .iter()
                 .any(|call| call == "prepare" || call == "launch"));
@@ -273,11 +299,44 @@ fn failures_clear_progress_clean_files_and_recover_before_allowing_a_retry() {
         if failure == "prepare" {
             assert!(!calls.iter().any(|call| call == "launch"));
         }
-        let chinese = result["error"].as_str().unwrap();
-        assert!(!chinese.chars().any(|c| c.is_ascii_alphabetic()));
         assert!(snapshot.value(true)["error"].as_str().unwrap().is_ascii());
         assert_eq!(service.check(false).value(false)["state"], "available");
         assert!(service.snapshot().value(false)["error"].is_null());
+        assert!(service.snapshot().value(false)["errorPhase"].is_null());
+        assert!(service.snapshot().value(false)["errorCode"].is_null());
+    }
+}
+
+#[test]
+fn handoff_errors_identify_the_failure_and_recovery_errors_take_priority() {
+    for (error, code) in [
+        (UpdateError::HandoffStart, "HANDOFF_START_FAILED"),
+        (UpdateError::HandoffClosed, "HANDOFF_CLOSED_BEFORE_READY"),
+        (UpdateError::HandoffInvalid, "HANDOFF_INVALID_RESPONSE"),
+        (UpdateError::HandoffTimeout, "HANDOFF_READY_TIMEOUT"),
+        (UpdateError::HandoffWrite, "HANDOFF_WRITE_FAILED"),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let service = service(directory.path(), "win32", Arc::default(), Arc::default());
+        let host = Host {
+            approved: true,
+            launch_error: Some(error),
+            ..Default::default()
+        };
+        let snapshot = service.install(&host);
+        assert_eq!(snapshot.value(false)["errorPhase"], "installing");
+        assert_eq!(snapshot.value(false)["errorCode"], code);
+        assert!(snapshot.value(true)["error"]
+            .as_str()
+            .unwrap()
+            .contains(code));
+        assert!(snapshot.value(true)["error"].as_str().unwrap().is_ascii());
+        host.fail_recover.store(true, Ordering::SeqCst);
+        let result = service.install(&host).value(false);
+        assert_eq!(result["recoveryRequired"], true);
+        assert!(result["errorPhase"].is_null());
+        assert!(result["errorCode"].is_null());
+        assert!(result["error"].as_str().unwrap().contains("未能恢复采集"));
     }
 }
 
