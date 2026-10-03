@@ -2,12 +2,44 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { buildOptions, buildPaths, checkBackend, assertArchitecture } = require('./targets.cjs');
 
 const root = path.resolve(__dirname, '..');
 const app = path.join(root, 'apps/desktop');
 const manifest = require('../apps/desktop/package.json');
+
+function buildEnvironment(source = process.env, repository = root) {
+    const env = { ...source };
+    const local = path.join(repository, '.cross-build');
+    const executable = file => {
+        try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); }
+        catch { return false; }
+    };
+    const hasCargo = (env.PATH || '').split(path.delimiter).some(directory => executable(path.join(directory, 'cargo')));
+    if (!hasCargo) {
+        const userCargo = env.CARGO_HOME || path.join(env.HOME || os.homedir(), '.cargo');
+        if (executable(path.join(userCargo, 'bin/cargo'))) {
+            env.PATH = [path.join(userCargo, 'bin'), env.PATH].filter(Boolean).join(path.delimiter);
+        } else if (!env.CARGO_HOME && !env.RUSTUP_HOME && executable(path.join(local, 'cargo/bin/cargo')) && fs.existsSync(path.join(local, 'rustup'))) {
+            env.CARGO_HOME = path.join(local, 'cargo');
+            env.RUSTUP_HOME = path.join(local, 'rustup');
+            env.PATH = [path.join(env.CARGO_HOME, 'bin'), env.PATH].filter(Boolean).join(path.delimiter);
+        }
+    }
+    // 复用本机已准备的交叉工具链；系统 PATH 和显式设置仍优先。
+    const binaries = ['bin', 'mingw/usr/bin', 'linux-sysroot/usr/bin'].map(directory => path.join(local, directory)).filter(directory => fs.existsSync(directory));
+    env.PATH = [env.PATH, ...binaries].filter(Boolean).join(path.delimiter);
+    const sysroot = path.join(local, 'linux-sysroot/usr');
+    const architecture = { x64: 'x86_64-linux-gnu', arm64: 'aarch64-linux-gnu' }[process.arch];
+    const pkgconfig = [path.join(sysroot, 'lib', architecture || '', 'pkgconfig'), path.join(sysroot, 'share/pkgconfig')].filter(directory => fs.existsSync(directory));
+    if (pkgconfig.length) {
+        env.PKG_CONFIG_PATH = [env.PKG_CONFIG_PATH, ...pkgconfig].filter(Boolean).join(path.delimiter);
+        env.CMAKE_PREFIX_PATH = [env.CMAKE_PREFIX_PATH, sysroot].filter(Boolean).join(path.delimiter);
+    }
+    return env;
+}
 
 function targetTriple(platform, arch) {
     if (platform === 'win32' && arch === 'x64') return 'x86_64-pc-windows-gnu';
@@ -95,14 +127,21 @@ async function buildDesktop(platform, args = process.argv.slice(2)) {
     const windows = platform === 'win32';
     const paths = buildPaths(platform, options.arch);
     const backend = path.join(root, paths.backend, 'app');
-    const env = { ...process.env };
+    const env = buildEnvironment();
     if (windows) env.CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER ||= 'x86_64-w64-mingw32-gcc';
-    const run = (command, arguments_, cwd = root) => execFileSync(command, arguments_, { cwd, env, stdio: 'inherit' });
+    const run = (command, arguments_, cwd = root) => {
+        try { return execFileSync(command, arguments_, { cwd, env, stdio: 'inherit' }); }
+        catch (error) {
+            if (error.code === 'ENOENT') throw new Error(`未找到构建工具 ${command}。请按 packaging/README.md 安装编译依赖，并将工具加入 PATH。`);
+            throw error;
+        }
+    };
     run('cargo', ['--version']);
     if (windows) run(env.CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER, ['--version']);
     if (!options.skipRebuild) {
-        if (windows) (await import('./windows/build-backend.mjs')).buildWindowsBackend();
-        else require('./build-backend.cjs').buildBackend({ arch: options.arch, linuxAppCapture: true });
+        // 后端与 Rust 构建使用同一环境，不依赖调用者临时 export。
+        if (windows) run(process.execPath, [path.join(__dirname, 'windows/build-backend.mjs')]);
+        else run(process.execPath, [path.join(__dirname, 'build-backend.cjs'), '--linux-app-capture']);
     }
     checkBackend(backend, platform, options.arch);
     if (!windows) {
@@ -160,7 +199,7 @@ async function buildDesktop(platform, args = process.argv.slice(2)) {
     return { output, unpacked };
 }
 
-module.exports = { targetTriple, bundleConfig, checkDistribution, buildDesktop };
+module.exports = { targetTriple, bundleConfig, checkDistribution, buildDesktop, buildEnvironment };
 
 if (require.main === module) {
     buildDesktop(process.argv[2], process.argv.slice(3)).catch(error => {

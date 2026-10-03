@@ -14,6 +14,8 @@
 
 ## 编译依赖
 
+脚本优先使用 `PATH` 中的 Rust；找不到时查找用户 Cargo 目录（默认 `~/.cargo/bin`），再尝试项目已有的 `.cross-build/cargo` 与 `.cross-build/rustup`。项目本地的 MinGW、NSIS 和 GTK/WebKit 开发依赖也会加入构建环境，无需手动 `export`。这仅复用已经准备的工具，不会自动安装缺失的系统依赖；全新环境仍需完成下列准备。
+
 需要 Node.js、npm、Rust stable（cargo/rustup）、CMake 和 C/C++ 工具链。Debian / Ubuntu 的系统依赖示例：
 
 ```bash

@@ -7,9 +7,44 @@ import path from 'node:path';
 import os from 'node:os';
 
 const require = createRequire(import.meta.url);
-const { targetTriple, bundleConfig, checkDistribution } = require('../../../packaging/tauri.cjs');
+const { targetTriple, bundleConfig, checkDistribution, buildEnvironment } = require('../../../packaging/tauri.cjs');
 const { buildOptions, buildPaths } = require('../../../packaging/targets.cjs');
 const root = path.resolve(import.meta.dirname, '../../..');
+
+test('未加载 Rust 环境时发现项目工具链，并将依赖路径传给构建子进程', t => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'tauri build tools '));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const local = path.join(directory, '.cross-build');
+    for (const name of ['cargo/bin', 'rustup', 'bin', 'mingw/usr/bin', 'linux-sysroot/usr/bin', 'linux-sysroot/usr/share/pkgconfig']) {
+        mkdirSync(path.join(local, name), { recursive: true });
+    }
+    writeFileSync(path.join(local, 'cargo/bin/cargo'), '#!/bin/sh\n', { mode: 0o755 });
+    const source = { HOME: directory, PATH: path.join(directory, 'empty'), PKG_CONFIG_PATH: '/custom/pkgconfig', CMAKE_PREFIX_PATH: '/custom/prefix' };
+    const env = buildEnvironment(source, directory);
+    assert.equal(env.CARGO_HOME, path.join(local, 'cargo'));
+    assert.equal(env.RUSTUP_HOME, path.join(local, 'rustup'));
+    assert.equal(env.PATH.split(path.delimiter)[0], path.join(local, 'cargo/bin'));
+    assert.ok(env.PATH.split(path.delimiter).includes(path.join(local, 'mingw/usr/bin')));
+    assert.ok(env.PKG_CONFIG_PATH.startsWith('/custom/pkgconfig' + path.delimiter));
+    assert.ok(env.PKG_CONFIG_PATH.endsWith(path.join(local, 'linux-sysroot/usr/share/pkgconfig')));
+    assert.ok(env.CMAKE_PREFIX_PATH.endsWith(path.join(local, 'linux-sysroot/usr')));
+    assert.equal(source.CARGO_HOME, undefined, '不修改调用者环境');
+});
+
+test('Rust 工具优先使用现有 PATH 或用户 Cargo 目录，保留显式配置', t => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'tauri-user-tools-'));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const cargo = path.join(directory, '.cargo');
+    mkdirSync(path.join(cargo, 'bin'), { recursive: true });
+    writeFileSync(path.join(cargo, 'bin/cargo'), '#!/bin/sh\n', { mode: 0o755 });
+    const source = { HOME: directory, PATH: path.join(directory, 'empty'), RUSTUP_HOME: '/custom/rustup' };
+    const discovered = buildEnvironment(source, directory);
+    assert.equal(discovered.PATH.split(path.delimiter)[0], path.join(cargo, 'bin'));
+    assert.equal(discovered.RUSTUP_HOME, source.RUSTUP_HOME);
+    assert.equal(discovered.CARGO_HOME, undefined);
+    const configured = { ...source, PATH: path.join(cargo, 'bin'), CARGO_HOME: '/custom/cargo' };
+    assert.deepEqual(buildEnvironment(configured, directory), configured);
+});
 
 test('共用构建器命令行解析平台和参数，编译前拒绝错误格式并返回失败', { skip: process.platform !== 'linux' }, () => {
     const result = spawnSync(process.execPath, [path.join(root, 'packaging/tauri.cjs'), 'linux', '--formats', 'nsis'], {
