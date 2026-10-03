@@ -18,6 +18,7 @@ mod native_dialog;
 pub mod preferences;
 pub mod updates;
 pub mod update_download;
+pub mod update_service;
 #[cfg(all(windows, feature = "desktop-shell"))]
 pub mod shell;
 #[cfg(all(windows, feature = "desktop-shell"))]
