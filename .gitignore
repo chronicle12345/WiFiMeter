@@ -35,3 +35,5 @@
 # Python test caches.
 __pycache__/
 *.pyc
+
+.agents/*
