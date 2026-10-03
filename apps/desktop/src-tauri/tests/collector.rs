@@ -18,6 +18,10 @@ struct FakeBackend {
     paused: AtomicBool,
     import_error: Mutex<Option<String>>,
     fail_resume: AtomicBool,
+    apps_enabled: AtomicBool,
+    fail_stop: AtomicBool,
+    fail_pause_once: AtomicBool,
+    invalid_paused: AtomicBool,
 }
 
 impl CollectorBackend for FakeBackend {
@@ -32,14 +36,25 @@ impl CollectorBackend for FakeBackend {
             .unwrap()
             .push((method.to_string(), params.clone()));
         match method {
-            "hello" => Ok(json!({"paused":self.paused.load(Ordering::SeqCst)})),
+            "hello" => Ok(
+                json!({"paused":if self.invalid_paused.load(Ordering::SeqCst) { Value::Null } else { json!(self.paused.load(Ordering::SeqCst)) },
+                "appCollection":{"enabled":self.apps_enabled.load(Ordering::SeqCst)}}),
+            ),
             "setPaused" => {
                 let paused = params["paused"].as_bool().unwrap();
                 if !paused && self.fail_resume.load(Ordering::SeqCst) {
                     return Err(BackendError::new("unavailable", "resume failed"));
                 }
                 self.paused.store(paused, Ordering::SeqCst);
+                if paused && self.fail_pause_once.swap(false, Ordering::SeqCst) {
+                    return Err(BackendError::new("timeout", "pause applied but reply lost"));
+                }
                 Ok(json!({"paused":paused}))
+            }
+            "setAppCollection" => {
+                self.apps_enabled
+                    .store(params["enabled"] == true, Ordering::SeqCst);
+                Ok(json!({}))
             }
             "migrationStatus" => Ok(json!({})),
             "backup" => {
@@ -63,6 +78,11 @@ impl CollectorBackend for FakeBackend {
             .lock()
             .unwrap()
             .push(("shutdown".into(), json!({})));
+        if self.fail_stop.load(Ordering::SeqCst) {
+            return Err(BackendError::new("timeout", "still saving"));
+        }
+        self.paused.store(true, Ordering::SeqCst);
+        self.apps_enabled.store(false, Ordering::SeqCst);
         Ok(())
     }
 }
@@ -353,4 +373,119 @@ fn shutdown_finishes_an_in_flight_read_before_stopping_the_process() {
             .collect::<Vec<_>>(),
         ["setPaused", "hello", "shutdown"]
     );
+}
+
+#[test]
+fn update_failure_restores_exact_pause_and_application_collection_preferences() {
+    for paused in [false, true] {
+        for apps in [false, true] {
+            let profile = tempfile::tempdir().unwrap();
+            let backend = backend();
+            let collector = Collector::new(backend.clone(), profile.path().into(), None);
+            collector
+                .request("setPaused", json!({"paused":paused}), || false)
+                .unwrap();
+            collector
+                .request("setAppCollection", json!({"enabled":apps}), || false)
+                .unwrap();
+            backend.calls.lock().unwrap().clear();
+            collector.prepare_update(Duration::from_secs(5)).unwrap();
+            assert!(collector.update_pending());
+            assert!(collector.request("hello", json!({}), || false).is_err());
+            assert!(collector
+                .request("setPaused", json!({"paused":false}), || false)
+                .is_err());
+            assert!(
+                collector.import_selected(|| panic!("must not open picker"), || false)["error"]
+                    .is_string()
+            );
+            assert!(collector.stop_gracefully(Duration::from_secs(5)).is_err());
+            collector.recover_update(Duration::from_secs(5)).unwrap();
+            assert!(!collector.update_pending());
+            let hello = collector.request("hello", json!({}), || false).unwrap();
+            assert_eq!(hello["paused"], paused);
+            assert_eq!(hello["appCollection"]["enabled"], apps);
+            let count = backend.calls.lock().unwrap().len();
+            collector.recover_update(Duration::from_secs(5)).unwrap();
+            assert_eq!(backend.calls.lock().unwrap().len(), count);
+            assert!(collector
+                .request("updateSettings", json!({}), || false)
+                .is_ok());
+        }
+    }
+}
+
+#[test]
+fn pending_shutdown_blocks_requests_until_recovery_can_finish_the_original_process() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+    collector.start();
+    backend.fail_stop.store(true, Ordering::SeqCst);
+    assert!(collector.prepare_update(Duration::from_millis(10)).is_err());
+    assert!(collector.recover_update(Duration::from_millis(10)).is_err());
+    assert!(collector.update_pending());
+    assert!(backend.paused.load(Ordering::SeqCst));
+    assert!(collector.request("hello", json!({}), || false).is_err());
+    backend.fail_stop.store(false, Ordering::SeqCst);
+    backend.fail_resume.store(true, Ordering::SeqCst);
+    assert!(collector.recover_update(Duration::from_secs(5)).is_err());
+    assert!(collector.update_pending());
+    backend.fail_resume.store(false, Ordering::SeqCst);
+    collector.recover_update(Duration::from_secs(5)).unwrap();
+    assert!(!collector.update_pending());
+    assert!(!backend.paused.load(Ordering::SeqCst));
+}
+
+#[test]
+fn lost_pause_reply_still_restores_state_without_requesting_shutdown() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+    collector.start();
+    backend.calls.lock().unwrap().clear();
+    backend.fail_pause_once.store(true, Ordering::SeqCst);
+    assert!(collector.prepare_update(Duration::from_secs(5)).is_err());
+    assert!(backend.paused.load(Ordering::SeqCst));
+    collector.recover_update(Duration::from_secs(5)).unwrap();
+    assert!(!backend.paused.load(Ordering::SeqCst));
+    assert!(!backend
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(method, _)| method == "shutdown"));
+}
+
+#[test]
+fn update_refuses_unknown_pause_state_and_unresolved_or_active_migrations() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+    collector.start();
+    backend.invalid_paused.store(true, Ordering::SeqCst);
+    assert!(collector.prepare_update(Duration::from_secs(5)).is_err());
+    assert!(!collector.update_pending());
+    assert!(!backend.paused.load(Ordering::SeqCst));
+    backend.invalid_paused.store(false, Ordering::SeqCst);
+    assert_eq!(
+        collector.import_selected(
+            || {
+                assert!(collector.prepare_update(Duration::from_secs(5)).is_err());
+                assert!(!collector.update_pending());
+                Ok(None)
+            },
+            || false
+        )["canceled"],
+        true
+    );
+    let source = source();
+    *backend.import_error.lock().unwrap() = Some("LegacyRead".into());
+    assert!(
+        collector.import_selected(|| Ok(Some(source.path().into())), || false)["error"].is_string()
+    );
+    backend.calls.lock().unwrap().clear();
+    assert!(collector.prepare_update(Duration::from_secs(5)).is_err());
+    assert!(!collector.update_pending());
+    assert!(backend.calls.lock().unwrap().is_empty());
 }

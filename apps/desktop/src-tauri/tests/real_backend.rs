@@ -129,3 +129,39 @@ fn desktop_lifecycle_resumes_collection_and_closes_the_real_process() {
     collector.stop_gracefully(Duration::from_secs(30)).unwrap();
     assert!(collector.request("hello", json!({}), || false).is_err());
 }
+
+#[test]
+#[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
+fn failed_update_reopens_real_database_and_restores_previous_pause_state() {
+    use wifimeter_desktop::collector::Collector;
+    let executable =
+        PathBuf::from(std::env::var_os("WIFIMETER_BACKEND").expect("set WIFIMETER_BACKEND"));
+    for paused in [false, true] {
+        let profile = tempfile::tempdir().unwrap();
+        let backend = Arc::new(Backend::new(
+            executable.clone(),
+            profile.path().join("wifimeter.db"),
+            vec!["--paused".into()],
+            Arc::new(|_| {}),
+        ));
+        let collector = Collector::new(backend, profile.path().into(), None);
+        collector
+            .request(
+                "updateSettings",
+                json!({"settings":{"unit":"GiB","retention":30}}),
+                || false,
+            )
+            .unwrap();
+        collector
+            .request("setPaused", json!({"paused":paused}), || false)
+            .unwrap();
+        collector.prepare_update(Duration::from_secs(30)).unwrap();
+        assert!(collector.request("snapshot", json!({}), || false).is_err());
+        collector.recover_update(Duration::from_secs(30)).unwrap();
+        let hello = collector.request("hello", json!({}), || false).unwrap();
+        assert_eq!(hello["paused"], paused);
+        assert_eq!(hello["settings"]["unit"], "GiB");
+        assert_eq!(hello["settings"]["retention"], 30);
+        collector.stop_gracefully(Duration::from_secs(30)).unwrap();
+    }
+}

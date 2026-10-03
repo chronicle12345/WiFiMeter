@@ -37,9 +37,17 @@ pub struct Collector {
     migration: Mutex<Value>,
     migration_busy: AtomicBool,
     stopping: AtomicBool,
+    updating: AtomicBool,
+    update_recovery: Mutex<Option<UpdateRecovery>>,
     // 等待已经发出的修改完成，再暂停、导入或关闭。只读请求无需等待目录选择框。
     mutation: Mutex<()>,
     in_flight: RwLock<()>,
+}
+
+struct UpdateRecovery {
+    paused: bool,
+    apps_enabled: bool,
+    shutdown_requested: bool,
 }
 
 struct BusyGuard<'a>(&'a AtomicBool);
@@ -65,6 +73,8 @@ impl Collector {
             migration: Mutex::new(json!({"found":false})),
             migration_busy: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
+            updating: AtomicBool::new(false),
+            update_recovery: Mutex::new(None),
             mutation: Mutex::new(()),
             in_flight: RwLock::new(()),
         }
@@ -197,8 +207,11 @@ impl Collector {
         }
         let _busy = BusyGuard(&self.migration_busy);
         let _mutation = self.mutation.lock().unwrap();
+        // 等待期间可能已经进入退出/更新；此时未开始导入，不应记录导入失败或修改采集状态。
+        if let Err(error) = self.available(true) {
+            return json!({"error":error.message});
+        }
         let result = (|| -> Result<Value> {
-            self.available(true)?;
             let Some(directory) = choose()? else {
                 return Ok(json!({"canceled":true}));
             };
@@ -244,9 +257,94 @@ impl Collector {
 
     pub fn stop_gracefully(&self, timeout: Duration) -> Result<()> {
         self.start();
+        let _update = self.update_recovery.lock().unwrap();
+        if self.update_pending() {
+            return Err(BackendError::new(
+                "unavailable",
+                "更新尚未完成，请先完成更新或恢复采集。",
+            ));
+        }
         self.stopping.store(true, Ordering::SeqCst);
+        drop(_update);
         // 包括已开始的只读请求，防止关闭后被延迟的请求重新拉起子进程。
         let _requests = self.in_flight.write().unwrap();
         self.backend.stop(timeout)
+    }
+
+    pub fn update_pending(&self) -> bool {
+        self.updating.load(Ordering::SeqCst)
+    }
+
+    pub fn prepare_update(&self, timeout: Duration) -> Result<()> {
+        self.start();
+        let mut recovery = self.update_recovery.lock().unwrap();
+        self.available(false)?;
+        if self.migration.lock().unwrap()["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+        {
+            return Err(BackendError::new(
+                "unavailable",
+                "请先处理旧数据导入问题，再安装更新。",
+            ));
+        }
+        self.updating.store(true, Ordering::SeqCst);
+        self.stopping.store(true, Ordering::SeqCst);
+        // 排空此前已发出的读写，后续 UI 请求不能在关闭后重新拉起采集进程。
+        let _requests = self.in_flight.write().unwrap();
+        if self.migration.lock().unwrap()["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+        {
+            self.updating.store(false, Ordering::SeqCst);
+            self.stopping.store(false, Ordering::SeqCst);
+            return Err(BackendError::new(
+                "unavailable",
+                "请先处理旧数据导入问题，再安装更新。",
+            ));
+        }
+        let original = self.raw_request("hello", json!({})).and_then(|value| {
+            let paused = value["paused"].as_bool().ok_or_else(|| {
+                BackendError::new("unavailable", "无法确认原采集状态，更新取消。")
+            })?;
+            Ok(UpdateRecovery {
+                paused,
+                apps_enabled: value["appCollection"]["enabled"] == true,
+                shutdown_requested: false,
+            })
+        });
+        let original = match original {
+            Ok(original) => original,
+            Err(error) => {
+                self.updating.store(false, Ordering::SeqCst);
+                self.stopping.store(false, Ordering::SeqCst);
+                return Err(error);
+            }
+        };
+        // 暂停响应也可能超时但已在后端生效，因此先保存恢复信息，再发请求。
+        *recovery = Some(original);
+        self.raw_request("setPaused", json!({"paused":true}))?;
+        recovery.as_mut().unwrap().shutdown_requested = true;
+        self.backend.stop(timeout)
+    }
+
+    pub fn recover_update(&self, timeout: Duration) -> Result<()> {
+        let mut recovery = self.update_recovery.lock().unwrap();
+        let Some(original) = recovery.as_ref() else {
+            return Ok(());
+        };
+        let _requests = self.in_flight.write().unwrap();
+        if original.shutdown_requested {
+            // stop 对已请求关闭的进程只等待实际退出，不强杀、不启动第二个进程。
+            self.backend.stop(timeout)?;
+        }
+        if original.apps_enabled {
+            self.raw_request("setAppCollection", json!({"enabled":true}))?;
+        }
+        self.raw_request("setPaused", json!({"paused":original.paused}))?;
+        *recovery = None;
+        self.updating.store(false, Ordering::SeqCst);
+        self.stopping.store(false, Ordering::SeqCst);
+        Ok(())
     }
 }
