@@ -10,6 +10,7 @@ pub mod legacy;
 #[cfg(all(windows, feature = "desktop-shell"))]
 mod mini;
 pub mod mini_geometry;
+pub mod notifications;
 #[cfg(all(windows, feature = "desktop-shell"))]
 mod native_dialog;
 pub mod preferences;

@@ -78,7 +78,25 @@ try {
         assert.equal(applied.result.settings.autoStart, enabled);
         assert.equal(applied.result.system.autoStart, enabled);
     }
-    console.log('Pages, backend and isolated autostart passed; checking floating window');
+    const notifications = () => log.split(/\r?\n/).filter(line => line.startsWith('[notification:test] ')).map(line => JSON.parse(line.slice('[notification:test] '.length)));
+    for (const [language, capGb, expected] of [
+        ['zh-CN', 3, ['Wi-Fi 总额度 已使用额度的 120%。', 'Wi-Fi 总额度 已达到额度上限。']],
+        ['en', 2, ['Total Wi-Fi has used 180% of its quota.', 'Total Wi-Fi has reached its quota.']]
+    ]) {
+        await page.evaluate(settings => window.desktop.backend.request('updateSettings', { settings }), { language, notifications: true });
+        const start = notifications().length;
+        const result = await page.evaluate(capGb => window.desktop.backend.request('updateTotalQuota', { capGb, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }), capGb);
+        assert.equal(result.ok, true);
+        await expect.poll(() => notifications().slice(start)).toEqual(expected.map(body => ({ title: 'WiFiMeter', body })));
+    }
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { notifications: false } }));
+    const beforeDisabled = notifications().length;
+    await page.evaluate(() => window.desktop.backend.request('updateTotalQuota', { capGb: 1, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }));
+    await delay(1500);
+    assert.equal(notifications().length, beforeDisabled);
+    await page.evaluate(() => window.desktop.backend.request('updateTotalQuota', { capGb: 0, warnPercent: 80, period: 'all', notify: true, autoDisconnect: false }));
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { language: 'zh-CN', notifications: true } }));
+    console.log('Pages, backend, isolated autostart and bilingual quota notification dispatch passed; checking floating window');
     await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true, miniAutoHide: false }));
     await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
     const mini = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
@@ -211,7 +229,7 @@ try {
     await page.evaluate(() => window.removeTestDialogs());
     assert.deepEqual(errors, []);
     if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT });
-    console.log('PASS: Windows WebView2 pages, backend, preferences, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
+    console.log('PASS: Windows WebView2 pages, backend, preferences, isolated autostart, bilingual quota notification dispatch and off switch, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
 } catch (error) {
     console.error('Smoke test failed:', error);
     throw error;

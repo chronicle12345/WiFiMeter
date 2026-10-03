@@ -7,7 +7,7 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: notifications, application icons/control
+the intermediate Tauri host: application icons/control
 and updates still need
 integration. Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
@@ -16,6 +16,10 @@ Windows autostart uses the existing `io.wifimeter.demo` login item and reads bac
 the applied state. Legacy imports inherit only the enabled current executable;
 unmatched portable paths and failed migrations preserve existing entries until
 an explicit preference change. Isolated profiles do not modify real login items.
+Quota alerts use the official Tauri notification plugin, with the existing language,
+notification preference and application icon. Isolated profiles record dispatches
+to stderr instead of posting real notifications. Windows notification identity must
+still be verified with an installed release package, as required by the plugin.
 Tray activation, close preferences, remembered choices and the renderer's existing
 unsaved-change checks are connected to the native window lifecycle. Close, exit,
 resume and import confirmations use the existing UI tokens and follow its theme
@@ -61,7 +65,8 @@ Windows before switching the release entry point.
 
 The Windows WebView2 smoke test uses the existing C++ network fixtures and a
 temporary profile. It checks navigation, collection controls, exact counters and
-preference events, floating-window shapes/palettes, real native dragging,
+preference events, isolated autostart changes, bilingual quota notification
+dispatch and its off switch, floating-window shapes/palettes, real native dragging,
 edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
 themed close choices in light/dark mode, keyboard focus,
 import/resume localization, tray hiding, single-instance activation and canceling

@@ -4,7 +4,7 @@ use crate::{
     close_check::CloseCheck,
     collector::Collector,
     dialog_requests::DialogRequests,
-    files, identity, ipc_policy, mini, native_dialog,
+    files, identity, ipc_policy, mini, native_dialog, notifications,
     preferences::Preferences,
     tray,
     windows_login::WindowsLogin,
@@ -20,6 +20,7 @@ use std::{
 };
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_notification::NotificationExt;
 
 struct Desktop {
     collector: Collector,
@@ -36,6 +37,32 @@ struct Desktop {
     mini: mini::Controller,
     autostart: Autostart,
     runtime_started: OnceLock<()>,
+    isolated: bool,
+    notification_icon: PathBuf,
+}
+
+fn notify(app: &tauri::AppHandle, alert: &Value) {
+    let Some(state) = app.try_state::<Desktop>() else {
+        return;
+    };
+    let Some(body) = notifications::body(&state.settings.lock().unwrap(), alert) else {
+        return;
+    };
+    // Isolated profiles exercise dispatch without posting notifications to the real desktop.
+    if state.isolated {
+        eprintln!(
+            "[notification:test] {}",
+            json!({"title":"WiFiMeter","body":body})
+        );
+        return;
+    }
+    let mut builder = app.notification().builder().title("WiFiMeter").body(body);
+    if state.notification_icon.is_file() {
+        builder = builder.icon(state.notification_icon.to_string_lossy());
+    }
+    if let Err(error) = builder.show() {
+        eprintln!("[notification] {error}");
+    }
 }
 
 pub(crate) fn localized<'a>(app: &tauri::AppHandle, chinese: &'a str, english: &'a str) -> &'a str {
@@ -440,6 +467,7 @@ pub fn run() {
             show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             desktop_request,
             desktop_ready,
@@ -451,6 +479,12 @@ pub fn run() {
             let app_data = app.path().data_dir()?;
             let profile = identity::profile_directory(&app_data, override_directory.as_deref());
             std::fs::create_dir_all(&profile)?;
+            let notification_icon = profile.join("notification-icon.png");
+            if let Err(error) =
+                files::atomic_write(&notification_icon, include_bytes!("../../assets/icon.png"))
+            {
+                eprintln!("[notification] {error}");
+            }
             let executable = std::env::var_os("WIFIMETER_BACKEND")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
@@ -465,6 +499,9 @@ pub fn run() {
                 profile.join("wifimeter.db"),
                 vec!["--paused".into()],
                 Arc::new(move |message| {
+                    if message["event"] == "alert" {
+                        notify(&handle, &message);
+                    }
                     if let Some(main) = handle.get_webview_window("main") {
                         let _ = main.emit("backend:event", &message);
                     }
@@ -510,6 +547,8 @@ pub fn run() {
                     Autostart::new(login, !isolated || fixture, !isolated)
                 },
                 runtime_started: OnceLock::new(),
+                isolated: override_directory.is_some(),
+                notification_icon,
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)
