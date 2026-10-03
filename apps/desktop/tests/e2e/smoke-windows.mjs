@@ -150,6 +150,8 @@ try {
     await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { speedUnit: 'MB/s' } }));
     await expect(mini.locator('#download .rate-unit')).toHaveText(' MB/s');
     await expect(mini.locator('body')).toHaveAttribute('data-shape', 'bar');
+    // 小窗拖动区不再声明悬停提示，鼠标移上去不应该弹出操作说明。
+    assert.equal(await mini.evaluate(() => document.querySelector('main').hasAttribute('title')), false);
     const initial = await native('bounds', '-Target', 'mini');
     assert.equal(initial.topmost, true);
     assert.equal(initial.noActivate, true);
@@ -174,12 +176,21 @@ try {
         const x = initial.area.x + Math.round(8 * initial.scale), y = initial.area.y + Math.round(200 * initial.scale);
         await native('drag', '-Target', 'mini', '-X', String(x), '-Y', String(y));
         await expect.poll(async () => (await native('bounds', '-Target', 'mini')).x).toBe(initial.area.x);
+        await expect(mini.locator('body')).toHaveAttribute('data-edge', 'left');
+        // 再次拖动并越过工作区左边缘：抓在窗口中部会让落点超出边缘，窗口仍必须算作贴边。
+        // 落点保持在桌面内（抓取点距窗口左边 35 像素），只让窗口左边越过边缘。
+        const overshoot = initial.area.x - Math.min(Math.round(30 * initial.scale), 34);
+        await native('drag', '-Target', 'mini', '-X', String(overshoot), '-Y', String(y));
+        await expect.poll(async () => (await native('bounds', '-Target', 'mini')).x).toBe(initial.area.x);
+        await expect(mini.locator('body')).toHaveAttribute('data-edge', 'left');
         const savedCursor = await native('cursor', '-X', String(initial.area.x + initial.area.width / 2 | 0), '-Y', String(initial.area.y + initial.area.height / 2 | 0));
         try {
             await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: true }));
             await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'true');
+            // 收起是逐帧收缩的动效，宽度轮询到边条宽度后再取坐标。
+            const scale = (await native('bounds', '-Target', 'mini')).scale;
+            await expect.poll(async () => (await native('bounds', '-Target', 'mini')).width).toBe(Math.round(6 * scale));
             const strip = await native('bounds', '-Target', 'mini');
-            assert.equal(strip.width, Math.round(6 * strip.scale));
             await native('cursor', '-X', String(strip.x + 2), '-Y', String(strip.y + 20));
             await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'false');
             await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(224);

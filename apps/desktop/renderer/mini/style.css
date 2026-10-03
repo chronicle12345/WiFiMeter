@@ -1,9 +1,10 @@
 @import url("../shared/tokens.css");
-:root { background:transparent; }
+/* --mini-collapse 与 src-tauri/src/mini_geometry.rs 的 COLLAPSE 保持一致。 */
+:root { background:transparent; --mini-collapse:160ms; }
 * { box-sizing:border-box; }
 html, body { width:100%; height:100%; overflow:hidden; }
 body { margin:0; user-select:none; background:transparent; color:var(--ink); }
-main { position:relative; width:100%; height:100%; padding:var(--space-3); border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); -webkit-app-region:drag; }
+main { position:absolute; inset:0; padding:var(--space-3); border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); -webkit-app-region:drag; transition:opacity var(--mini-collapse) ease-out,transform var(--mini-collapse) ease-out; }
 svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
 .mini-heading { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--muted); line-height:16px; }
 .activity-dot { width:5px; height:5px; border-radius:50%; background:var(--accent); }
@@ -40,6 +41,12 @@ body[data-shape="circle"] .rate-download output { flex-direction:column; align-i
 body[data-shape="circle"] .rate-download .rate-number { font-size:28px; line-height:31px; }
 body[data-shape="circle"] .rate-upload .rate-number { font-size:16px; }
 body[data-shape="circle"] nav { bottom:10px; left:50%; transform:translateX(-50%); }
-.edge-strip { display:none; }
-body[data-collapsed="true"] main { display:none; }
-body[data-collapsed="true"] .edge-strip { display:block; width:100%; height:100%; border-radius:3px; background:var(--accent); }
+/* 收起不是直接消失：面板淡出并朝所在边平移，边条淡入，时长与宿主逐帧收缩一致。 */
+.edge-strip { position:absolute; inset:0; border-radius:3px; background:var(--accent); opacity:0; pointer-events:none; transition:opacity var(--mini-collapse) ease-out; }
+body[data-collapsed="true"] main { opacity:0; pointer-events:none; -webkit-app-region:no-drag; }
+body[data-collapsed="true"] .edge-strip { opacity:1; }
+body[data-collapsed="true"][data-edge="left"] main { transform:translateX(-14px); }
+body[data-collapsed="true"][data-edge="right"] main { transform:translateX(14px); }
+body[data-collapsed="true"][data-edge="top"] main { transform:translateY(-14px); }
+body[data-collapsed="true"][data-edge="bottom"] main { transform:translateY(14px); }
+@media(prefers-reduced-motion:reduce) { main,.edge-strip { transition:none } }

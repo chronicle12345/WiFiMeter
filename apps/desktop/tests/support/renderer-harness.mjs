@@ -21,26 +21,70 @@ const bridge = await createDesktopBridge({
 window.desktop = bridge.desktop;
 await import('/renderer/app.js');
 `;
+// 小窗页面只需要宿主状态和小窗桥接，用来回归收起/展开的页面表现。
+const miniBootstrap = `
+const handlers = new Map();
+window.miniDesktop = {
+    openMain: async () => {}, close: async () => {},
+    onLive: handler => { handlers.set('live', handler); return () => handlers.delete('live'); },
+    onPreferences: handler => { handlers.set('preferences', handler); return () => handlers.delete('preferences'); },
+    onState: handler => { handlers.set('state', handler); return () => handlers.delete('state'); }
+};
+window.fixtureState = state => handlers.get('state')?.(state);
+await import('/renderer/mini/renderer.js');
+`;
+
+// 把 renderer/ 目录映射到根路径；virtual 提供测试引导脚本，rewrite 替换页面里的入口脚本。
+async function servePages({ virtual = {}, rewrite = (_pathname, content) => content } = {}) {
+    const server = createServer(async (request, response) => {
+        try {
+            const pathname = new URL(request.url, 'http://localhost').pathname;
+            const file = path.resolve(root, '.' + pathname);
+            if (!file.startsWith(root + path.sep) && file !== root) { response.writeHead(404).end(); return; }
+            const source = Object.hasOwn(virtual, pathname) ? virtual[pathname] : await readFile(file);
+            const type = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[path.extname(pathname)] || 'application/octet-stream';
+            // 只有文本资源才做替换，图片等二进制内容保持原样。
+            const text = ['text/html', 'text/javascript', 'text/css'].includes(type);
+            const content = text ? rewrite(pathname, source.toString()) : source;
+            response.writeHead(200, { 'Content-Type': type }).end(content);
+        } catch { response.writeHead(404).end(); }
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    return {
+        url: pathname => `http://127.0.0.1:${server.address().port}${pathname}`,
+        close: () => new Promise(resolve => server.close(resolve))
+    };
+}
+
+export async function launchMini() {
+    const browser = await chromium.launch({ headless: true });
+    const pages = await servePages({
+        virtual: { '/test-mini-bootstrap.js': miniBootstrap },
+        rewrite: (pathname, content) => pathname === '/renderer/mini/index.html'
+            ? content.replace('src="renderer.js"', 'src="/test-mini-bootstrap.js"')
+            : content
+    });
+    const page = await browser.newPage({ viewport: { width: 224, height: 92 } });
+    await page.goto(pages.url('/renderer/mini/index.html'));
+    return {
+        page,
+        async close() { await browser.close(); await pages.close(); }
+    };
+}
 
 export async function launchRenderer({ env }) {
     const backend = new BackendClient({ executable: env.WIFIMETER_BACKEND,
         databasePath: path.join(env.WIFIMETER_USER_DATA, 'wifimeter.db'),
         args: ['--fake-adapter', env.WIFIMETER_FAKE_ADAPTER, '--fake-counters', env.WIFIMETER_FAKE_COUNTERS, '--fake-apps', env.WIFIMETER_FAKE_APPS] });
     const browser = await chromium.launch({ headless: true });
-    const server = createServer(async (request, response) => {
-        try {
-            const pathname = new URL(request.url, 'http://localhost').pathname;
-            const file = path.resolve(root, '.' + pathname);
-            if (!file.startsWith(root + path.sep) && file !== root) { response.writeHead(404).end(); return; }
-            let content = pathname === '/test-bootstrap.js' ? bootstrap : await readFile(file);
-            if (pathname === '/renderer/index.html') content = content.toString()
-                .replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
-                .replace('src="./app.js"', 'src="/test-bootstrap.js"');
-            const type = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.png': 'image/png' }[path.extname(pathname)] || 'application/octet-stream';
-            response.writeHead(200, { 'Content-Type': type }).end(content);
-        } catch { response.writeHead(404).end(); }
+    const pages = await servePages({
+        virtual: { '/test-bootstrap.js': bootstrap },
+        rewrite: (pathname, content) => pathname === '/renderer/index.html'
+            ? content.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/, '')
+                .replace('src="./app.js"', 'src="/test-bootstrap.js"')
+            : content
     });
-    server.listen(0, '127.0.0.1'); await once(server, 'listening');
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     const events = { emit: (channel, payload) => page.evaluate(({ channel, payload }) => window.fixtureEmit?.(channel, payload), { channel, payload }) };
     backend.on('event', value => { events.emit('backend:event', value).catch(() => {}); });
@@ -91,7 +135,7 @@ export async function launchRenderer({ env }) {
     });
     // 每次启动独立的夹具上下文，让测试中的快照、延迟响应和计数在 reload 后仍有效。
     const context = vm.createContext({ requests, events, files, setTimeout, clearTimeout });
-    await page.goto(`http://127.0.0.1:${server.address().port}/renderer/index.html`);
+    await page.goto(pages.url('/renderer/index.html'));
     return {
         firstWindow: async () => page,
         evaluate: (callback, arg) => {
@@ -100,7 +144,7 @@ export async function launchRenderer({ env }) {
         },
         async close() {
             await browser.close(); await backend.stop();
-            await new Promise(resolve => server.close(resolve));
+            await pages.close();
         }
     };
 }

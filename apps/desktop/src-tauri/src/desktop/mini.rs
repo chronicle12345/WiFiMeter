@@ -1,4 +1,4 @@
-use crate::mini_geometry::{pixels, size, Layout, Rect};
+use crate::mini_geometry::{pixels, reseat, size, Layout, Rect, Sample, COLLAPSE_STEP};
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -15,6 +15,9 @@ use tauri::{
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+// 常态采样间隔；动效期间改用 COLLAPSE_STEP 逐帧落位。
+const SAMPLE: u64 = 100;
 
 struct Instance {
     stop: AtomicBool,
@@ -185,78 +188,187 @@ fn track(
     background: bool,
 ) -> tauri::Result<()> {
     let clock = Instant::now();
-    let mut layout = Layout::new(bounds);
-    let mut previous = Value::Null;
-    let mut display = None;
-    let mut shown = false;
-    let mut last_state = Value::Null;
+    let mut session = Session::new(bounds);
     while !instance.stop.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_millis(100));
+        let elapsed = clock.elapsed().as_millis() as u64;
+        // 收起/展开动效要逐帧落位，其余时间保持低频采样。
+        thread::sleep(Duration::from_millis(
+            if session.layout.animating(elapsed) {
+                COLLAPSE_STEP
+            } else {
+                SAMPLE
+            },
+        ));
         if !instance.ready.load(Ordering::SeqCst) {
             continue;
         }
-        let preferences = instance.preferences.lock().unwrap().clone();
-        let shape = preferences["miniShape"].as_str().unwrap_or("bar");
-        let snapping = preferences["miniSnap"] == true;
-        let auto_hide = preferences["miniAutoHide"] == true;
-        let now = clock.elapsed().as_millis() as u64;
-        let actual = actual_bounds(window)?;
-        let monitor = window.current_monitor()?.or(window.primary_monitor()?);
-        let Some(monitor) = monitor else {
-            continue;
+        if let Err(error) = tick(window, instance, &mut session, background, &clock) {
+            if instance.stop.load(Ordering::SeqCst) {
+                break;
+            }
+            session.report(error);
+        }
+    }
+    Ok(())
+}
+
+// 小窗一次采样的全部状态：布局、偏好、上一次观察到的位置和已处理的落点。
+struct Session {
+    layout: Layout,
+    preferences: Value,
+    display: Option<(Rect, f64)>,
+    state: Value,
+    shown: bool,
+    observed: Option<Rect>,
+    placed: Option<Rect>,
+    last_move: u64,
+    was_animating: bool,
+    failure: Option<String>,
+}
+
+impl Session {
+    fn new(bounds: Rect) -> Self {
+        Self {
+            layout: Layout::new(bounds),
+            preferences: Value::Null,
+            display: None,
+            state: Value::Null,
+            shown: false,
+            observed: None,
+            placed: None,
+            last_move: 0,
+            was_animating: false,
+            failure: None,
+        }
+    }
+    // 偶发失败不该让小窗从此不再吸附和隐藏，因此只记录错误变化，循环继续。
+    fn report(&mut self, error: impl std::fmt::Display) {
+        let message = error.to_string();
+        if self.failure.as_deref() != Some(message.as_str()) {
+            eprintln!("[mini] {message}");
+            self.failure = Some(message);
+        }
+    }
+}
+
+// 平台能读到指针左键时用它判断拖动，读不到时由位置变化兜底。
+#[cfg(windows)]
+fn pointer_pressed(_window: &WebviewWindow) -> bool {
+    unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 }
+}
+
+#[cfg(target_os = "linux")]
+fn pointer_pressed(window: &WebviewWindow) -> bool {
+    crate::linux_desktop::left_button_down(window.app_handle())
+}
+
+fn tick(
+    window: &WebviewWindow,
+    instance: &Instance,
+    session: &mut Session,
+    background: bool,
+    clock: &Instant,
+) -> tauri::Result<()> {
+    let preferences = instance.preferences.lock().unwrap().clone();
+    let shape = preferences["miniShape"].as_str().unwrap_or("bar");
+    let snapping = preferences["miniSnap"] == true;
+    let auto_hide = preferences["miniAutoHide"] == true;
+    let now = clock.elapsed().as_millis() as u64;
+    let actual = actual_bounds(window)?;
+    let monitor = window.current_monitor()?.or(window.primary_monitor()?);
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+    let scale = monitor.scale_factor();
+    let area = work_area(&monitor);
+    let (width, height) = size(shape, scale);
+    let changed_display = session.display != Some((area, scale));
+    let resize = session.preferences["miniShape"] != preferences["miniShape"] || changed_display;
+    let reflow =
+        !session.shown || resize || session.preferences["miniSnap"] != preferences["miniSnap"];
+    let animating = session.layout.animating(now);
+    let settling = session.layout.settling(now);
+    if background {
+        session.layout.expanded = Rect {
+            x: -32000,
+            y: -32000,
+            width,
+            height,
         };
-        let scale = monitor.scale_factor();
-        let area = work_area(&monitor);
-        let changed_display = display != Some((area, scale));
-        let resize = previous["miniShape"] != preferences["miniShape"] || changed_display;
-        let changed_snap = previous["miniSnap"] != preferences["miniSnap"];
-        if background {
-            let (width, height) = size(shape, scale);
-            layout.expanded = Rect {
-                x: -32000,
-                y: -32000,
-                width,
-                height,
+    } else {
+        let expected = session
+            .layout
+            .bounds(session.display.map_or(scale, |(_, scale)| scale));
+        if session.observed != Some(actual) {
+            session.last_move = now;
+        }
+        let sample = Sample {
+            observed: actual,
+            expected,
+            previous: session.observed,
+            placed: session.placed,
+            reflow,
+            collapsed: session.layout.collapsed,
+            animating,
+            settling,
+            pressed: !animating && actual != expected && pointer_pressed(window),
+            now,
+            last_move: session.last_move,
+        };
+        let dragging = sample.dragging();
+        if reseat(&sample) {
+            // 收起时窗口只有一条边条，布局里的展开位置才是用户放下的位置。
+            let settled = if session.layout.collapsed {
+                session.layout.expanded
+            } else {
+                actual
             };
-        } else {
-            let expected = layout.bounds(display.map_or(scale, |(_, scale)| scale));
-            let moved = actual != expected;
-            #[cfg(windows)]
-            let dragging = moved && unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 };
-            #[cfg(target_os = "linux")]
-            let dragging = moved && crate::linux_desktop::left_button_down(window.app_handle());
-            if !dragging && (!shown || resize || changed_snap || moved) {
-                let base = if layout.collapsed {
-                    layout.expanded
-                } else {
-                    actual
-                };
-                layout.place(base, area, size(shape, scale), resize, snapping, scale, now);
-            }
-            let cursor = window.cursor_position()?;
-            layout.hover(
-                (cursor.x, cursor.y),
-                snapping && auto_hide,
-                dragging,
-                scale,
-                now,
-            );
-            if dragging {
-                continue;
-            }
+            session
+                .layout
+                .place(settled, area, (width, height), resize, snapping, scale, now);
+            session.placed = Some(actual);
         }
-        let state = json!({"collapsed":layout.collapsed,"edge":layout.edge});
-        if state != last_state {
-            window.emit("mini:state", &state)?;
-            last_state = state;
+        let cursor = window.cursor_position()?;
+        session.layout.hover(
+            (cursor.x, cursor.y),
+            snapping && auto_hide,
+            dragging,
+            scale,
+            now,
+        );
+        if dragging {
+            session.observed = Some(actual);
+            session.was_animating = animating;
+            return Ok(());
         }
-        apply_bounds(window, layout.bounds(scale), actual)?;
-        if !shown {
-            window.show()?;
-            shown = true;
-        }
-        previous = preferences;
-        display = Some((area, scale));
+    }
+    publish_state(window, session)?;
+    // 动效期间按帧落位；动效刚结束的下一帧仍要补齐最后一帧，之后再遇到窗口不在目标位置上，
+    // 更可能是用户刚把它放下：宽限期内不抢，等宽限期结束按落点重排。
+    let frame = session.layout.frame(scale, now);
+    let foreign = settling && !animating && !session.was_animating && actual != frame;
+    // 记录"窗口这时应该在哪"：落到帧上就记帧，没抢的时候记读到的位置。
+    if foreign {
+        session.observed = Some(actual);
+    } else {
+        apply_bounds(window, frame, actual)?;
+        session.observed = Some(frame);
+    }
+    if !session.shown {
+        window.show()?;
+        session.shown = true;
+    }
+    session.was_animating = animating;
+    session.preferences = preferences;
+    session.display = Some((area, scale));
+    Ok(())
+}
+
+fn publish_state(window: &WebviewWindow, session: &mut Session) -> tauri::Result<()> {
+    let state = json!({"collapsed":session.layout.collapsed,"edge":session.layout.edge});
+    if state != session.state {
+        window.emit("mini:state", &state)?;
+        session.state = state;
     }
     Ok(())
 }
