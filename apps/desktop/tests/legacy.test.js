@@ -72,7 +72,7 @@ test('completed imports do not create repeated backups', async t => {
 test('legacy files survive a real SQLite import and restart without duplicate bytes', async t => {
     const { existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const { BackendClient } = await import('../electron/backend.cjs');
+    const { BackendClient } = await import('./support/backend-client.cjs');
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     const executable = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
     if (!existsSync(executable)) { t.skip('Build the real backend to verify migration.'); return; }
@@ -155,7 +155,7 @@ test('eligibility query restores initial settings after a failed first attempt',
 test('real retry eligibility and legacy total quota survive pruning and backup restore', async t => {
     const { existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const { BackendClient } = await import('../electron/backend.cjs');
+    const { BackendClient } = await import('./support/backend-client.cjs');
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     const executable = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
     if (!existsSync(executable)) { t.skip('Build backend first.'); return; }
@@ -192,7 +192,7 @@ test('real retry eligibility and legacy total quota survive pruning and backup r
 test('real total quota rejects lossy values with archived warnings and protects existing policy', async t => {
     const { existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const { BackendClient } = await import('../electron/backend.cjs');
+    const { BackendClient } = await import('./support/backend-client.cjs');
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     const executable = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
     if (!existsSync(executable)) { t.skip('Build backend first.'); return; }
@@ -333,7 +333,7 @@ test('invalid overlap policies fail before reading files or calling backend', as
 test('real overlap import retains SQLite days, imports remaining days and retries safely after rollback', async t => {
     const { existsSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
-    const { BackendClient } = await import('../electron/backend.cjs');
+    const { BackendClient } = await import('./support/backend-client.cjs');
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
     const executable = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
     if (!existsSync(executable)) { t.skip('Build backend first.'); return; }

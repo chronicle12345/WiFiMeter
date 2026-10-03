@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BackendClient } from '../electron/backend.cjs';
+import { BackendClient } from './support/backend-client.cjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const binary = process.env.WIFIMETER_BACKEND || path.join(root, process.platform === 'win32' ? 'build/windows/app/wifimeter-backend.exe' : 'build/app/wifimeter-backend');
 

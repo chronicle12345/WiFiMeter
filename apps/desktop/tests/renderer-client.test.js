@@ -330,7 +330,7 @@ const raceGroup = (rxBytes, proxyAppId = 'proxy') => ({ networkId: 'home', date:
 test('snapshot response and live in one transport chunk retain complete groups and live fields', async t => {
     const { client, receive } = await snapshotRaceClient(t);
     const { createRequire } = await import('node:module');
-    const { BackendClient } = createRequire(import.meta.url)('../electron/backend.cjs');
+    const { BackendClient } = createRequire(import.meta.url)('./support/backend-client.cjs');
     const transport = new BackendClient({ executable: 'unused', databasePath: 'unused' });
     transport.on('event', receive);
     window.desktop.backend.request = async () => ({ ok: true, result: await new Promise((resolve, reject) => {

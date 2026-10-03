@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchRenderer } from './support/renderer-harness.mjs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,8 +10,7 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
     const profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-history-backend-'));
     const harness=await createHarness();let app;
     try{
-        const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-        app=await electron.launch({args:['.'],env});const page=await app.firstWindow(),errors=[];
+        const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};app=await launchRenderer({args:['.'],env});const page=await app.firstWindow(),errors=[];
         page.on('pageerror',error=>errors.push(error.message));
         await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
         const response=await page.evaluate(async()=>{
@@ -29,7 +29,7 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
         await page.getByRole('button',{name:'应用筛选',exact:true}).click();await expect(page.locator('.modal')).toHaveCount(0);
         await expect(page.locator('.metric.featured')).toContainText('520');
         const file=path.join(profile,'old-history.csv');
-        await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file});},file);
+        await app.evaluate(({files},file)=>{files.save=file;},file);
         await page.getByRole('button',{name:'导出数据',exact:true}).click();await page.getByRole('button',{name:'导出记录',exact:true}).click();
         await expect(page.locator('.modal')).toHaveCount(0);const csv=await readFile(file,'utf8');
         expect(csv).toContain('"2020-01-01"');expect(csv).toContain('"520000","1","520001"');expect(csv).not.toContain('2020-02-01');
@@ -39,7 +39,7 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
         expect((await page.evaluate(()=>window.desktop.backend.request('snapshot'))).result.settings.language).toBe('en');
         expect(errors).toEqual([]);
     }finally{
-        if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}
+        if(app){await app.close();}
         harness.cleanup();await rm(profile,{recursive:true,force:true});
     }
 });
@@ -47,8 +47,7 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
 test('refresh beside export reloads backend values without changing the selected range', async () => {
     const harness = await createHarness(); let app;
     try {
-        const env = { ...process.env, ...harness.env }; delete env.ELECTRON_RUN_AS_NODE;
-        app = await electron.launch({ args: ['.'], env });
+        const env = { ...process.env, ...harness.env }; app = await launchRenderer({ args: ['.'], env });
         const page = await app.firstWindow();
         await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
         const refresh = page.locator('.toolbar-actions [data-action="refresh"]');

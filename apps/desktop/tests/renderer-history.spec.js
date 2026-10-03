@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchRenderer } from './support/renderer-harness.mjs';
 import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,9 +9,8 @@ let app,page,profile,harness,errors;
 test.beforeEach(async({},testInfo)=>{
     profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-renderer-'));
     harness=await createHarness();errors=[];
-    const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-    const args=['.'];if(testInfo.title==='生成 v1.2 合成数据验收截图')args.push('--force-device-scale-factor=1');
-    app=await electron.launch({args,env});page=await app.firstWindow();
+    const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};const args=['.'];if(testInfo.title==='生成 v1.2 合成数据验收截图')args.push('--force-device-scale-factor=1');
+    app=await launchRenderer({args,env});page=await app.firstWindow();
     page.on('pageerror',error=>errors.push(error.message));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.evaluate(()=>window.desktop.backend.request('setPaused',{paused:true}));
@@ -26,9 +26,9 @@ test.beforeEach(async({},testInfo)=>{
         {networkId:id,date:'2020-01-31',appId:'C:\\Apps\\Browser.exe',name:'Browser',rxBytes:'10',txBytes:'1'},
         {networkId:id,date:'2020-02-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',rxBytes:'100',txBytes:'2'}
     ];
-    await app.evaluate(({ipcMain},snapshot)=>{
+    await app.evaluate(({requests},snapshot)=>{
         globalThis.rendererFixture={snapshot,calls:[],failRange:false,imports:0};
-        ipcMain.removeHandler('backend:request');ipcMain.handle('backend:request',(_event,{method,params={}})=>{
+        requests.removeHandler('backend:request');requests.handle('backend:request',(_event,{method,params={}})=>{
             const f=globalThis.rendererFixture;f.calls.push({method,params});
             if(f.failSave===method)return {ok:false,error:{message:'autosave denied'}};
             if(method==='updateNetwork'){const network=f.snapshot.networks.find(n=>n.id===params.key);Object.assign(network,params);return {ok:true,result:{network}};}
@@ -40,17 +40,17 @@ test.beforeEach(async({},testInfo)=>{
             const from=params.from||'2026-01-01',to=params.to||'2026-12-31';
             return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to)}};
         });
-        ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
-        ipcMain.removeHandler('app-control:request');ipcMain.handle('app-control:request',(_event,input)=>{
+        requests.removeHandler('app-control:choose');requests.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
+        requests.removeHandler('app-control:request');requests.handle('app-control:request',(_event,input)=>{
             globalThis.rendererFixture.calls.push({method:'app-control',params:input});
             return input.action==='throttle'?{ok:false,error:{message:'partial failure'},result:{path:input.path,state:{Blocked:null,QosError:'readback failed'}}}:{ok:true,result:{path:input.path,state:{Blocked:false,Throttled:false}}};
         });
-        ipcMain.removeHandler('legacy:status');ipcMain.handle('legacy:status',()=>({found:true}));
-        ipcMain.removeHandler('legacy:import');ipcMain.handle('legacy:import',()=>{globalThis.rendererFixture.imports++;globalThis.rendererFixture.snapshot.settings.unit='GiB';globalThis.rendererFixture.snapshot.settings.retention=45;return {imported:true,backupDirectory:'C:\\Backup'};});
+        requests.removeHandler('legacy:status');requests.handle('legacy:status',()=>({found:true}));
+        requests.removeHandler('legacy:import');requests.handle('legacy:import',()=>{globalThis.rendererFixture.imports++;globalThis.rendererFixture.snapshot.settings.unit='GiB';globalThis.rendererFixture.snapshot.settings.retention=45;return {imported:true,backupDirectory:'C:\\Backup'};});
     },snapshot);
     await page.reload();await expect(page).toHaveTitle(/流量总览/);await expect(page.locator('#pageHead')).toHaveCount(0);await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
 });
-test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
+test.afterEach(async()=>{if(app){await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 async function allHistory(){await page.locator('[data-action="period"][data-value="all"]').click();await expect(page.locator('.date-text')).toHaveText('全部已保留历史');}
 async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
@@ -79,10 +79,10 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
     await page.keyboard.press('Escape');
     await page.evaluate(()=>{window.savedAppRow=document.querySelector('#appListRegion tbody tr');});
-    await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
+    await app.evaluate(({events})=>{events.emit('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     await expect.poll(()=>page.evaluate(()=>window.savedAppRow===document.querySelector('#appListRegion tbody tr'))).toBe(true);
     await expect(page.locator('[data-action="select-app-row"]').first()).toHaveAttribute('aria-pressed','true');
-    const file=path.join(profile,'apps.csv');await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({filePath:file,canceled:false});},file);
+    const file=path.join(profile,'apps.csv');await app.evaluate(({files},file)=>{files.save=file;},file);
     await page.locator('[data-action="export-apps"]').click();await expect(page.locator('.toast').last()).toContainText('已导出 2 条记录');
     const csv=await readFile(file,'utf8');expect(csv).toContain('"520010","2","520012"');expect(csv.indexOf('2020-01')).toBeLessThan(csv.indexOf('2020-02'));
     await page.locator('#appGrouping').selectOption('day');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);
@@ -126,7 +126,7 @@ test('旧版目录导入显示备份位置并刷新，不提交偏好表单',asy
     await page.locator('[data-category="display"]').click();
     await expect(page.locator('select[name="unit"]')).toHaveValue('GiB');
     await page.evaluate(()=>{window.savedNav=document.querySelector('#nav button');});
-    await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
+    await app.evaluate(({events})=>{events.emit('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     expect(await page.evaluate(()=>window.savedNav===document.querySelector('#nav button'))).toBe(true);
 });
 
@@ -165,7 +165,7 @@ test('总WiFi额度独立保存且概览接收账本更新，单网络支持累�
     expect(calls.some(c=>c.method==='updateTotalQuota'&&c.params.capGb===3)).toBe(true);
     expect(calls.filter(c=>c.method==='updateSettings')).toHaveLength(0);
     await page.locator('.nav [data-page="overview"]').click();await page.locator('#main').focus();
-    await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'usage',day:'2026-10-01',networks:[],totalQuota:{...globalThis.rendererFixture.snapshot.totalQuota,usedBytes:'1800000000'}});});
+    await app.evaluate(({events})=>{events.emit('backend:event',{event:'usage',day:'2026-10-01',networks:[],totalQuota:{...globalThis.rendererFixture.snapshot.totalQuota,usedBytes:'1800000000'}});});
     await expect(page.locator('.total-quota-card')).toContainText('1.8 GB');
     await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'网络设置'}).click();
     await page.locator('#quotaPeriod').selectOption('all');await expect(page.locator('#quotaPeriod')).toHaveValue('all');
@@ -184,7 +184,7 @@ test('代理配置独立保存，估算替换代理原始行并保留客户端�
  await expect(page.locator('#appDataSource')).toHaveValue('native');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
  await page.locator('#appDataSource').selectOption('estimated');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);await expect(page.locator('#appTotal')).toContainText('105');
  await expect(page.locator('#appListRegion')).toContainText('估算 · 未归属');await expect(page.locator('#appListRegion')).not.toContainText('Proxy');
- const file=path.join(profile,'proxy-estimates.csv');await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({filePath:file,canceled:false});},file);
+ const file=path.join(profile,'proxy-estimates.csv');await app.evaluate(({files},file)=>{files.save=file;},file);
  await page.locator('[data-action="export-apps"]').click();await expect(page.locator('.toast').last()).toContainText('已导出 3 条记录');
  const csv=await readFile(file,'utf8');expect(csv).toContain('估算 / 未归属');expect(csv).toContain('"5","0","5","原生记录"');
  await page.locator('#appDataSource').selectOption('native');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);await expect(page.locator('#appTotal')).toContainText('105');
@@ -223,8 +223,8 @@ test('生成 v1.2 合成数据验收截图',async()=>{
  await clockSession.send('Emulation.setTimezoneOverride',{timezoneId:'Asia/Shanghai'});
  await page.clock.setFixedTime(new Date('2026-09-18T12:00:00+08:00'));
  expect(await page.evaluate(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;})).toBe('2026-09-18');
- await app.evaluate(({BrowserWindow})=>{
-  BrowserWindow.getAllWindows()[0].setContentSize(1440,1000);
+ await page.setViewportSize({width:1440,height:1000});
+ await app.evaluate(()=>{
   const s=globalThis.rendererFixture.snapshot,today='2026-09-18';
   s.networks=[
    {id:'demo-wifi',ssid:'Demo_WiFi_5G',alias:'演示无线网络',type:'wifi',capGb:20,warnPercent:80,quotaPeriod:'month',notify:true,autoDisconnect:false,quotaLedger:{periodKey:'2026-09',usedBytes:'3600000000'}},
@@ -250,7 +250,7 @@ test('生成 v1.2 合成数据验收截图',async()=>{
  });
  for(const language of ['zh-CN','en']){
   const english=language==='en';
-  await app.evaluate((_electron,language)=>{
+  await app.evaluate((_fixture,language)=>{
    const s=globalThis.rendererFixture.snapshot;s.settings.language=language;
    s.networks[0].alias=language==='en'?'Demo Wi-Fi':'演示无线网络';
    s.networks[1].alias=language==='en'?'Demo Ethernet':'演示有线网络';
@@ -293,7 +293,7 @@ test('生成 v1.2 合成数据验收截图',async()=>{
  });
 
 test('各设置分类无保存取消按钮，独立表单自动保存并在重载后恢复',async({},testInfo)=>{
- await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1248,768));
+ await page.setViewportSize({width:1248,height:768});
  await page.locator('.nav [data-page="settings"]').click();
  await page.locator('[name="interval"]').selectOption('10');
  await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.settings.interval)).toBe(10);

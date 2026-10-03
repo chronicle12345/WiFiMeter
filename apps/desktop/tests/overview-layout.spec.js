@@ -1,12 +1,12 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchRenderer } from './support/renderer-harness.mjs';
 import { createHarness } from './support/backend-harness.mjs';
 
 let app, page, harness;
 test.beforeEach(async () => {
     harness = await createHarness({ rxStep: 4100000000 });
     const env = { ...process.env, ...harness.env, WIFIMETER_BACKGROUND_TEST: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: ['.'], env });
+    app = await launchRenderer({ args: ['.'], env });
     page = await app.firstWindow();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.notice-line')).toBeVisible();
@@ -57,7 +57,6 @@ for (const language of ['zh-CN', 'en']) {
                 if (quotaState === 'unset') expect(layout.quotaHeight).toBeLessThanOrEqual(240);
                 expect(layout.outside).toEqual([]);
                 expect(layout.clipping).toEqual([]);
-                expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
             });
         }
     }

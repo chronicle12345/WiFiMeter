@@ -11,7 +11,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
-import { BackendClient, resolveExecutable } from '../electron/backend.cjs';
+import { BackendClient, resolveExecutable } from './support/backend-client.cjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 

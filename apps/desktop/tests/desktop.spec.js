@@ -3,7 +3,8 @@
 // 网卡数据由两端共用的 JSON 夹具注入，其余全是真实实现：
 // 主进程拉起 wifimeter-backend、按行交换 JSON、SQLite 落库、页面读取快照。
 
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchRenderer } from './support/renderer-harness.mjs';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
@@ -15,8 +16,7 @@ let app, page, profile, errors, harness, fakeHome;
 
 async function launch(extraEnv = {}) {
     const env = { ...process.env, WIFIMETER_USER_DATA: profile, ...harness.env, ...extraEnv };
-    delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ executablePath: process.env.WIFIMETER_EXECUTABLE || undefined, args: process.env.WIFIMETER_EXECUTABLE ? [] : ['.'], env });
+    app = await launchRenderer({ executablePath: process.env.WIFIMETER_EXECUTABLE || undefined, args: process.env.WIFIMETER_EXECUTABLE ? [] : ['.'], env });
     page = await app.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     await expect(page).toHaveTitle(/流量总览/);
@@ -32,16 +32,11 @@ async function navigate(name) {
 }
 
 async function saveDialog(filePath) {
-    await app.evaluate(({ dialog }, result) => {
-        dialog.showSaveDialog = async () => result;
-    }, { filePath, canceled: false });
+    await app.evaluate(({ files }, file) => { files.save = file; }, filePath);
 }
 
 async function openDialog(filePath) {
-    // showOpenDialog 的结果用 filePaths 数组，与 showSaveDialog 的 filePath 不同。
-    await app.evaluate(({ dialog }, result) => {
-        dialog.showOpenDialog = async () => result;
-    }, { filePaths: [filePath], canceled: false });
+    await app.evaluate(({ files }, file) => { files.open = file; }, filePath);
 }
 
 // 提示可能同时存在多条，按内容定位而不是要求唯一。
@@ -61,7 +56,7 @@ function query(sql) {
 }
 
 test.beforeEach(async () => {
-    test.skip(!existsSync(backendBinary), '未构建后端，跳过界面测试');
+    expect(existsSync(backendBinary), '请先构建测试后端').toBe(true);
     profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-ui-'));
     errors = [];
     harness = await createHarness();
@@ -79,7 +74,7 @@ test.afterEach(async () => {
     expect(errors).toEqual([]);
 });
 
-test('四个页面展示真实采集结果，筛选、详情与键盘操作可用 @packaged-smoke', async () => {
+test('四个页面展示真实采集结果，筛选、详情与键盘操作可用', async () => {
     // 总览显示夹具注入的网络与用量。
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');
@@ -158,9 +153,9 @@ test('未设额度时保留设置入口，不显示重复说明', async () => {
 });
 
 test('后端连接失败时页脚仍显示错误', async () => {
-    await app.evaluate(({ ipcMain }) => {
-        ipcMain.removeHandler('backend:request');
-        ipcMain.handle('backend:request', () => ({ ok: false, error: { message: 'backend unavailable' } }));
+    await app.evaluate(({ requests }) => {
+        requests.removeHandler('backend:request');
+        requests.handle('backend:request', () => ({ ok: false, error: { message: 'backend unavailable' } }));
     });
     await page.reload();
     await expect(page.locator('#footer')).toHaveText('无法连接采集后端，请检查状态');
@@ -175,9 +170,9 @@ async function displaySnapshot(update) {
     const response = await page.evaluate(() => window.desktop.backend.request('snapshot'));
     const snapshot = response.result;
     update(snapshot);
-    await app.evaluate(({ ipcMain }, snapshot) => {
-        ipcMain.removeHandler('backend:request');
-        ipcMain.handle('backend:request', (_event, payload) => ({ ok: true,
+    await app.evaluate(({ requests }, snapshot) => {
+        requests.removeHandler('backend:request');
+        requests.handle('backend:request', (_event, payload) => ({ ok: true,
             result: payload.method === 'snapshot' ? snapshot : { protocol: 1 } }));
     }, snapshot);
     await page.reload();
@@ -492,39 +487,7 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     await expect.poll(() => query('SELECT alias FROM networks')).toBe('家里的 Wi-Fi');
 });
 
-test('开机启动开关按平台登记并取消', async () => {
-    if (process.platform === 'win32') {
-        // 验证界面到登录项接口的调用，不修改运行测试的 Windows 账户启动项。
-        await app.evaluate(({ app }) => {
-            let openAtLogin = false;
-            app.setLoginItemSettings = options => { openAtLogin = options.openAtLogin; };
-            app.getLoginItemSettings = () => ({ openAtLogin });
-        });
-    } else {
-        // 用临时目录隔离 Linux 的 ~/.config/autostart。
-        await app.close();
-        fakeHome = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-home-'));
-        await launch({ HOME: fakeHome, WIFIMETER_TEST_HOME: fakeHome });
-    }
-
-    await navigate('设置');
-    await page.getByRole('checkbox', { name: '开机自启', exact: true }).check();
-
-    const file = fakeHome && path.join(fakeHome, '.config/autostart/wifimeter.desktop');
-    const enabled = () => process.platform === 'win32'
-        ? app.evaluate(({ app }) => app.getLoginItemSettings().openAtLogin)
-        : existsSync(file);
-    await expect.poll(enabled, { timeout: 10000 }).toBe(true);
-    if (file) {
-        const text = await readFile(file, 'utf8');
-        expect(text).toContain('[Desktop Entry]');
-        expect(text).toContain('Exec=');
-    }
-
-    // 关掉后文件应当被删除。
-    await page.getByRole('checkbox', { name: '开机自启', exact: true }).uncheck();
-    await expect.poll(enabled, { timeout: 10000 }).toBe(false);
-});
+// 登录项登记由 Rust 平台测试和真实 Tauri e2e 测试覆盖。
 
 test('偏好设置会落库并影响后端行为', async () => {
     await navigate('设置');

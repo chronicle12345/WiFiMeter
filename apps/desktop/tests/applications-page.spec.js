@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchRenderer } from './support/renderer-harness.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,9 +9,8 @@ let app,page,profile,harness,errors;
 test.beforeEach(async({},testInfo)=>{
     profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-renderer-'));
     harness=await createHarness();errors=[];
-    const env={...process.env,WIFIMETER_BACKGROUND_TEST:'1',WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-    const args=['.','--disable-renderer-backgrounding'];
-    app=await electron.launch({args,env});page=await app.firstWindow();
+    const env={...process.env,WIFIMETER_BACKGROUND_TEST:'1',WIFIMETER_USER_DATA:profile,...harness.env};const args=['.','--disable-renderer-backgrounding'];
+    app=await launchRenderer({args,env});page=await app.firstWindow();
     page.on('pageerror',error=>errors.push(error.message));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.evaluate(()=>window.desktop.backend.request('setPaused',{paused:true}));
@@ -26,9 +26,9 @@ test.beforeEach(async({},testInfo)=>{
         {networkId:id,date:'2020-01-31',appId:'C:\\Apps\\Browser.exe',name:'Browser',rxBytes:'10',txBytes:'1'},
         {networkId:id,date:'2020-02-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',rxBytes:'100',txBytes:'2'}
     ];
-    await app.evaluate(({ipcMain},snapshot)=>{
+    await app.evaluate(({requests},snapshot)=>{
         globalThis.rendererFixture={snapshot,calls:[],failRange:false};
-        ipcMain.removeHandler('backend:request');ipcMain.handle('backend:request',(_event,{method,params={}})=>{
+        requests.removeHandler('backend:request');requests.handle('backend:request',(_event,{method,params={}})=>{
             const f=globalThis.rendererFixture;f.calls.push({method,params});
             if(method==='updateProxyConfig'){Object.assign(f.snapshot.proxy,params);return {ok:true,result:{proxy:f.snapshot.proxy}};}
             if(method==='updateTotalQuota'){Object.assign(f.snapshot.totalQuota,params);return {ok:true,result:{totalQuota:f.snapshot.totalQuota}};}
@@ -39,15 +39,15 @@ test.beforeEach(async({},testInfo)=>{
             const from=params.from||'2026-01-01',to=params.to||'2026-12-31';
             return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to)}};
         });
-        ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
-        ipcMain.removeHandler('app-control:request');ipcMain.handle('app-control:request',(_event,input)=>{
+        requests.removeHandler('app-control:choose');requests.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
+        requests.removeHandler('app-control:request');requests.handle('app-control:request',(_event,input)=>{
             globalThis.rendererFixture.calls.push({method:'app-control',params:input});
             return input.action==='throttle'?{ok:false,error:{message:'partial failure'},result:{path:input.path,state:{Blocked:null,QosError:'readback failed'}}}:{ok:true,result:{path:input.path,state:{Blocked:input.action==='block',Throttled:false}}};
         });
     },snapshot);
     await page.reload();await expect(page).toHaveTitle(/流量总览/);await expect(page.locator('#pageHead')).toHaveCount(0);await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
 });
-test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
+test.afterEach(async()=>{if(app){await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 
 async function openApplications(){
@@ -105,9 +105,9 @@ test('实时进程响应后台事件，保留限速输入并展示采集失败',
     await page.locator('#appGrouping').selectOption('live');
     await expect(page.locator('#appListRegion')).toContainText('当前没有应用进程数据。');
 
-    await app.evaluate(({BrowserWindow})=>{
+    await app.evaluate(({events})=>{
         const s=globalThis.rendererFixture.snapshot;
-        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection,appProcesses:[{networkId:s.networks[0].id,appId:'C:\\Apps\\Browser.exe',name:'Live Browser',processId:42,rxPerSecond:'1000000',txPerSecond:'125000'}]});
+        events.emit('backend:event',{event:'live',...s.live,appCollection:s.appCollection,appProcesses:[{networkId:s.networks[0].id,appId:'C:\\Apps\\Browser.exe',name:'Live Browser',processId:42,rxPerSecond:'1000000',txPerSecond:'125000'}]});
     });
     await expect(page.locator('#appListRegion')).toContainText('Live Browser');
     await expect(page.locator('#appListRegion')).toContainText('42');
@@ -115,7 +115,7 @@ test('实时进程响应后台事件，保留限速输入并展示采集失败',
     await expect(page.locator('.drawer .application-summary')).toContainText('42');
     if(process.platform==='win32'){
         await page.locator('#uploadKBps').fill('96');
-        await app.evaluate(({BrowserWindow})=>{for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
+        await app.evaluate(({events})=>{events.emit('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
         await expect(page.locator('#uploadKBps')).toHaveValue('96');
     }
     await page.keyboard.press('Escape');
@@ -134,8 +134,8 @@ test('缺少路径和采集覆盖提示保留，后台事件更新应用总量',
     await expect(page.locator('#content #appControlRegion')).toHaveCount(0);
     await page.locator('[data-action="select-app"]').click();
     if(process.platform==='win32')await expect(page.locator('#appControlRegion')).toContainText('缺少程序路径，请选择程序。');
-    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
-        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'appUsage',records:[{...s.appRecords[0],rxBytes:'1000000',txBytes:'0'}]});
+    await app.evaluate(({events})=>{const s=globalThis.rendererFixture.snapshot;
+        events.emit('backend:event',{event:'appUsage',records:[{...s.appRecords[0],rxBytes:'1000000',txBytes:'0'}]});
     });
     await page.keyboard.press('Escape');
     await expect(page.locator('#appTotal')).toContainText('1.52');
@@ -143,7 +143,6 @@ test('缺少路径和采集覆盖提示保留，后台事件更新应用总量',
 
 
 test('所有导航往返、跨网络空状态及断网入口布局',async({},testInfo)=>{
-    expect(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isFocused()&&!w.isFocusable()))).toBe(true);
     for(const [pageId,title] of [['apps','应用流量'],['networks','我的网络'],['history','历史记录'],['settings','偏好设置'],['overview','流量总览'],['apps','应用流量']]){
         await page.locator(`.nav [data-page="${pageId}"]`).click();
         await expect(page).toHaveTitle(new RegExp(title));
@@ -166,7 +165,7 @@ test('所有导航往返、跨网络空状态及断网入口布局',async({},tes
     await page.locator('#networkFilter').selectOption('all');
     await expect(page.locator('.app-row')).toHaveCount(1);
     for(const width of [1248,900]){
-        await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setContentSize(width,900),width);
+        await page.setViewportSize({width,height:900});
         const entry=page.locator('[data-action="application-control"]');
         await expect(entry).toBeVisible();
         const box=await entry.boundingBox();expect(box.width).toBeGreaterThan(60);expect(box.height).toBeGreaterThan(24);
@@ -220,11 +219,11 @@ test('应用抽屉支持焦点循环、遮罩关闭并保留应用筛选',async(
 test('measured proxy live rates appear without adding loopback bytes to history',async()=>{
  await openApplications();await page.locator('#appGrouping').selectOption('live');
  const historyTotal=await page.locator('#appTotal').textContent();
- await app.evaluate(({BrowserWindow})=>{
+ await app.evaluate(({events})=>{
   const s=globalThis.rendererFixture.snapshot;
   const base={appId:'C:\\Apps\\Browser.exe',name:'Browser',networkId:'',scope:'loopback',source:'WindowsTcpEStats',measurementAvailable:true,rxPerSecond:'3000',txPerSecond:'1000'};
   const proxy={...s.proxy,clients:[{...base,proxyName:'Port 7897',connections:2,rxPerSecond:'6000',txPerSecond:'2000'}]};
-  for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{...base,processId:42},{...base,processId:43}]});
+  events.emit('backend:event',{event:'live',...s.live,proxy,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{...base,processId:42},{...base,processId:43}]});
  });
  await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
  await expect(page.locator('#appListRegion')).toContainText('6.0 KB/s');await expect(page.locator('#appListRegion')).toContainText('本地 TCP');
@@ -236,7 +235,7 @@ test('measured proxy live rates appear without adding loopback bytes to history'
   await expect(page.locator('#uploadKBps')).toHaveCount(0);
   await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
  }
- await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{appId:'C:\\Apps\\Browser.exe',name:'Browser',processId:42,networkId:'',scope:'loopback',rxPerSecond:'9000',txPerSecond:'1000',measurementAvailable:true}]});});
+ await app.evaluate(({events})=>{const s=globalThis.rendererFixture.snapshot;events.emit('backend:event',{event:'live',...s.live,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{appId:'C:\\Apps\\Browser.exe',name:'Browser',processId:42,networkId:'',scope:'loopback',rxPerSecond:'9000',txPerSecond:'1000',measurementAvailable:true}]});});
  await expect(page.locator('.application-summary')).toContainText('9.0 KB/s');
  await expect(page.locator('#appTotal')).toHaveText(historyTotal);
  if(process.platform==='win32')await expect(page.locator('#uploadKBps')).toHaveValue('96');
@@ -248,7 +247,7 @@ test('proxy clients appear only on applications and live changes replace zero ra
  await page.reload();await page.locator('.nav [data-page="settings"]').click();
  await expect(page.locator('.proxy-client-table')).toHaveCount(0);
  await openApplications();await expect(page.locator('.proxy-client-table')).toContainText('0 B/s');
- await app.evaluate(({BrowserWindow})=>{const f=globalThis.rendererFixture;const proxy={...f.snapshot.proxy,clients:[{...f.snapshot.proxy.clients[0],rxPerSecond:'24000',txPerSecond:'6000'}]};for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...f.snapshot.live,proxy});});
+ await app.evaluate(({events})=>{const f=globalThis.rendererFixture;const proxy={...f.snapshot.proxy,clients:[{...f.snapshot.proxy.clients[0],rxPerSecond:'24000',txPerSecond:'6000'}]};events.emit('backend:event',{event:'live',...f.snapshot.live,proxy});});
  await expect(page.locator('.proxy-client-table')).toContainText('24.0 KB/s');await expect(page.locator('.proxy-client-table')).toContainText('6.0 KB/s');
  const aligned=await page.locator('.proxy-client-table').evaluate(table=>[...table.querySelectorAll('tr')].every(row=>[...row.children].slice(2).every(cell=>getComputedStyle(cell).textAlign==='right')));
  expect(aligned).toBe(true);
@@ -262,6 +261,6 @@ test('live estimates refresh displayed clients while preserving upload and downl
  await expect.poll(()=>originalSource.evaluate(element=>element.isConnected)).toBe(false);
  await expect(page.locator('#appDataSource')).toHaveValue('estimated');
  await expect(page.locator('.app-row')).toContainText('Proxy');
- await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});
+ await app.evaluate(({events})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];events.emit('backend:event',{event:'live',...s.live,proxy:s.proxy,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});
  await expect(page.locator('.app-row')).toHaveCount(2);await expect(page.locator('.app-row').filter({hasText:'Browser'})).toContainText('2.4 KB');await expect(page.locator('.app-row').filter({hasText:'Chat'})).toContainText('1.6 KB');await expect(page.locator('#appTotal')).toHaveText('4KB');
 });
