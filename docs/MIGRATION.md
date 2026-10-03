@@ -12,6 +12,18 @@ Network notes, eligible quota policies and independent quota counters are mapped
 
 The old JSON directory is a retained copy, not a second live database. New samples are written to SQLite only. Reopening the old release shows the old directory's records, not samples subsequently collected by the new application.
 
+## Custom data location
+
+Settings > Data & storage shows the folder that holds `wifimeter.db` and lets you change it. Switching stops the collector first, copies the current database (including an unmerged `-wal` file) into the selected folder, verifies the copy and only then records the new location in `data-location.json` inside the default profile directory. The original database file is kept, and the result names its path. Window preferences, migration backups, update downloads and WebView data always stay in the default profile directory; only the database moves.
+
+A folder that already contains `wifimeter.db` is never overwritten silently. The confirmation lets you use the database in that folder (the current one stays where it is), or replace it: the existing target database is first renamed to `wifimeter.db.replaced-<UTC timestamp>` in the same folder. Cancelling changes nothing.
+
+If the copy fails (no space, no permission, unreadable source, or a failed verification) the partial copy is removed, an archived target database is restored, the recorded location is unchanged and collection continues from the previous database.
+
+When a custom folder cannot be created or written at startup, the app asks whether to choose another folder or to use the default location for that run. Choosing the default for one run does not change the recorded location, and the next start tries the custom folder again. Data collected during that run is stored in the default profile, so the two databases can differ until the custom folder is available again. A database adopted from another folder keeps its own settings (language, units, retention), so the interface reloads them after switching. The legacy directory import runs once per session, so an adopted database does not import `%LOCALAPPDATA%\WiFiMeter\data` again.
+
+Filesystems without the locking and shared-memory support SQLite expects (some network shares and removable media) may fall back to a slower journal mode. The application does not block such folders, but a local disk is recommended.
+
 ## Backups
 
 A complete backup includes network records, hourly data, application history, coverage gaps, settings, quota ledgers and migration archives. Proxy configuration and observations are included when present. Restoring is an intentional replacement of the current dataset and leaves sampling paused. Invalid input rolls back rather than partially replacing existing records. A usage-only CSV or JSON export is not a complete backup.
@@ -29,6 +41,18 @@ The application retains the cross-platform profile location. The Windows profile
 网络备注、可转换的额度策略及独立额度账本会映射到新格式。原设置和缓存原文仍保存在迁移档案中。无法确定完整日期或归属的应用缓存会在报告中列出并保留原文，不会伪装成完整的原生应用采集历史。
 
 原 JSON 目录只作为保留副本，新采集记录写入 SQLite，不会继续同步回旧目录。重新运行旧版时，看到的是旧目录中的记录，不包含新版随后采集的数据。
+
+## 自定义数据位置
+
+「设置 → 数据与存储」显示 `wifimeter.db` 所在文件夹，并可更改。切换时先停止采集器，把当前数据库（含尚未合并的 `-wal`）复制到所选文件夹，校验通过后才把新位置记到默认配置目录的 `data-location.json`。原数据库文件保留，结果中会给出它的路径。窗口偏好、迁移备份、更新下载和 WebView 数据始终留在默认配置目录，只有数据库会移动。
+
+目标文件夹已有 `wifimeter.db` 时不会静默覆盖。确认框可以选择使用该文件夹中的数据库（当前数据库留在原位置），或先用当前数据替换：替换前会把目标数据库改名为同目录下的 `wifimeter.db.replaced-<UTC 时间戳>`。取消不会改动任何文件。
+
+复制失败（空间不足、没有权限、源文件读不到或校验不通过）时会删除半成品副本、把已归档的目标数据库还原，记录的位置不变，采集仍使用原数据库继续。
+
+自定义文件夹在启动时无法创建或写入时，程序会询问是重新选择文件夹，还是本次运行改用默认位置。选择默认位置不会改动已记录的位置，下次启动仍会先尝试自定义文件夹；本次运行的数据写入默认配置目录，因此在自定义文件夹恢复可用之前，两个数据库的内容可能不同。采用其他文件夹中的数据库后，语言、单位、保留时长等设置以该数据库为准，界面会在切换后重新读取。旧版目录导入每次会话只执行一次，采用的新数据库不会再导入 `%LOCALAPPDATA%\WiFiMeter\data`。
+
+缺少 SQLite 所需锁与共享内存支持的文件系统（部分网络共享和可移动介质）可能回退到较慢的日志模式。程序不会禁止这类文件夹，但建议使用本机磁盘。
 
 ## 备份与恢复
 

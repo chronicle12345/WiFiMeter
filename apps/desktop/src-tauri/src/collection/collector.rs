@@ -4,7 +4,7 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock, RwLock,
@@ -17,6 +17,12 @@ type Result<T> = std::result::Result<T, BackendError>;
 pub trait CollectorBackend: Send + Sync {
     fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value>;
     fn stop(&self, timeout: Duration) -> Result<()>;
+    /// 当前数据库文件位置。
+    fn database(&self) -> PathBuf;
+    /// 采集进程是否仍在运行。
+    fn running(&self) -> bool;
+    /// 在采集进程停止后切换数据库位置。
+    fn set_database(&self, path: PathBuf) -> Result<()>;
 }
 
 impl CollectorBackend for Backend {
@@ -26,16 +32,25 @@ impl CollectorBackend for Backend {
     fn stop(&self, timeout: Duration) -> Result<()> {
         self.stop_gracefully(timeout)
     }
+    fn database(&self) -> PathBuf {
+        self.database()
+    }
+    fn running(&self) -> bool {
+        self.running()
+    }
+    fn set_database(&self, path: PathBuf) -> Result<()> {
+        self.set_database(path)
+    }
 }
 
 pub struct Collector {
     backend: Arc<dyn CollectorBackend>,
     profile: PathBuf,
     legacy_directory: Option<PathBuf>,
-    first_database_use: bool,
     started: OnceLock<()>,
     migration: Mutex<Value>,
     migration_busy: AtomicBool,
+    relocating: AtomicBool,
     stopping: AtomicBool,
     updating: AtomicBool,
     update_recovery: Mutex<Option<UpdateRecovery>>,
@@ -63,21 +78,25 @@ impl Collector {
         profile: PathBuf,
         legacy_directory: Option<PathBuf>,
     ) -> Self {
-        let first_database_use = !profile.join("wifimeter.db").exists();
         Self {
             backend,
             profile,
             legacy_directory,
-            first_database_use,
             started: OnceLock::new(),
             migration: Mutex::new(json!({"found":false})),
             migration_busy: AtomicBool::new(false),
+            relocating: AtomicBool::new(false),
             stopping: AtomicBool::new(false),
             updating: AtomicBool::new(false),
             update_recovery: Mutex::new(None),
             mutation: Mutex::new(()),
             in_flight: RwLock::new(()),
         }
+    }
+
+    /// 当前数据库文件位置；自定义位置切换后立即反映。
+    pub fn database(&self) -> PathBuf {
+        self.backend.database()
     }
 
     fn raw_request(&self, method: &str, params: Value) -> Result<Value> {
@@ -92,10 +111,12 @@ impl Collector {
 
     pub fn start(&self) {
         self.started.get_or_init(|| {
+            // 数据位置可能已被切换，按实际数据库判断是否已有历史可保留。
+            let first_database_use = !self.backend.database().exists();
             let result = legacy::import_directory(
                 self.legacy_directory.as_deref(),
                 &self.profile,
-                self.first_database_use,
+                first_database_use,
                 "reject",
                 &mut |method, params| self.raw_request(method, params),
             )
@@ -105,7 +126,7 @@ impl Collector {
             });
             let status = match result {
                 Ok(result) => result,
-                Err(error) if !self.first_database_use && error.code == "LegacyOverlap" => {
+                Err(error) if !first_database_use && error.code == "LegacyOverlap" => {
                     match self.raw_request("setPaused", json!({"paused":false})) {
                         Ok(_) => {
                             json!({"found":true,"imported":false,"importWarning":error.message})
@@ -144,6 +165,9 @@ impl Collector {
         }
         if !read_only && self.migration_busy.load(Ordering::SeqCst) {
             return Err(BackendError::new("unavailable", "Migration is running; changes are temporarily unavailable. / 正在迁移，暂时不能修改数据或恢复采集。"));
+        }
+        if !read_only && self.relocating.load(Ordering::SeqCst) {
+            return Err(BackendError::new("unavailable", "The data location is changing; changes are temporarily unavailable. / 正在切换数据位置，暂时不能修改数据或恢复采集。"));
         }
         Ok(())
     }
@@ -253,6 +277,95 @@ impl Collector {
         };
         *self.migration.lock().unwrap() = result.clone();
         result
+    }
+
+    /// 切换数据库位置：暂停采集、停止后端，在写锁内准备文件，再按原状态恢复采集。
+    /// `prepare` 在后端已停止且没有任何请求能拉起进程时执行，用于复制数据库并写入指针。
+    /// 文件操作回滚后原数据库始终可用，因此失败时连采集状态一起退回切换前，不留下半成品状态。
+    pub fn relocate_database(
+        &self,
+        target: PathBuf,
+        prepare: impl FnOnce(&Path) -> std::result::Result<(), BackendError>,
+        timeout: Duration,
+    ) -> Result<()> {
+        self.available(false)?;
+        if self.update_pending() {
+            return Err(BackendError::new(
+                "unavailable",
+                "更新尚未完成，请先完成更新或恢复采集。",
+            ));
+        }
+        // 包括已开始的只读请求：切换期间不能让任何请求把进程按旧路径重新拉起。
+        let _requests = self.in_flight.write().unwrap();
+        if self.relocating.swap(true, Ordering::SeqCst) {
+            return Err(BackendError::new("unavailable", "正在切换数据位置。"));
+        }
+        let _busy = BusyGuard(&self.relocating);
+        let _mutation = self.mutation.lock().unwrap();
+        self.available(true)?;
+        let source = self.backend.database();
+        let original = if self.backend.running() {
+            let hello = self.raw_request("hello", json!({}))?;
+            let paused = hello["paused"].as_bool().ok_or_else(|| {
+                BackendError::new("unavailable", "无法确认原采集状态，切换取消。")
+            })?;
+            let apps = hello["appCollection"]["enabled"] == true;
+            self.raw_request("setPaused", json!({"paused":true}))?;
+            self.backend.stop(timeout)?;
+            Some((paused, apps))
+        } else {
+            None
+        };
+        // 先换路径：此时进程已退出，写锁排除了重新拉起，prepare 失败可以原样退回。
+        if let Err(error) = self.backend.set_database(target) {
+            self.restore_relocation(&source, original);
+            return Err(error);
+        }
+        if let Err(error) = prepare(&source) {
+            self.restore_relocation(&source, original);
+            return Err(error);
+        }
+        if let Some((paused, apps)) = original {
+            if apps {
+                if let Err(error) = self.raw_request("setAppCollection", json!({"enabled":true})) {
+                    eprintln!("[data-location] 恢复应用采集失败：{error}");
+                }
+            }
+            self.raw_request("setPaused", json!({"paused":paused}))?;
+        }
+        Ok(())
+    }
+
+    /// 准备失败时退回原数据库位置，并恢复切换前的采集状态。
+    fn restore_relocation(&self, source: &Path, original: Option<(bool, bool)>) {
+        if let Err(error) = self.backend.set_database(source.to_path_buf()) {
+            eprintln!("[data-location] 恢复原数据库路径失败：{error}");
+        }
+        if let Some((paused, _)) = original {
+            if let Err(error) = self.raw_request("setPaused", json!({"paused":paused})) {
+                eprintln!("[data-location] 恢复采集失败：{error}");
+            }
+        }
+    }
+
+    /// 本次运行临时改用默认位置（自定义位置不可用时的回落），不改指针文件。
+    pub fn use_temporary_database(&self, target: PathBuf) -> Result<()> {
+        self.available(false)?;
+        if self.update_pending() {
+            return Err(BackendError::new(
+                "unavailable",
+                "更新尚未完成，请先完成更新或恢复采集。",
+            ));
+        }
+        let _requests = self.in_flight.write().unwrap();
+        let _mutation = self.mutation.lock().unwrap();
+        if self.backend.running() {
+            return Err(BackendError::new(
+                "badRequest",
+                "采集器已启动，不能只切换本次运行的数据位置。",
+            ));
+        }
+        self.backend.set_database(target)
     }
 
     pub fn stop_gracefully(&self, timeout: Duration) -> Result<()> {

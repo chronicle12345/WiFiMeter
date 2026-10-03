@@ -23,7 +23,8 @@ export async function installDialogs({ listen, invoke, document = window.documen
         dialog.setAttribute('aria-describedby', 'desktop-dialog-description');
         dialog.innerHTML = `<header class="desktop-dialog-header"><span class="desktop-dialog-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></span><h2 id="desktop-dialog-title"></h2><button type="button" class="icon-btn desktop-dialog-close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header><p id="desktop-dialog-description" class="modal-desc"></p><label class="desktop-dialog-remember"><input type="checkbox"><span></span></label><footer class="modal-actions"></footer>`;
         dialog.querySelector('h2').textContent = title;
-        dialog.querySelector('.modal-desc').textContent = message.replaceAll('{version}', String(request.version ?? ''));
+        const detail = String(request.version ?? '');
+        dialog.querySelector('.modal-desc').textContent = message.replaceAll('{version}', detail).replaceAll('{detail}', detail);
         const close = dialog.querySelector('.desktop-dialog-close');
         close.setAttribute('aria-label', english ? 'Close dialog' : '关闭对话框');
         const remember = dialog.querySelector('input');

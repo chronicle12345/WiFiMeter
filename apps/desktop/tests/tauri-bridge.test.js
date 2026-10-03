@@ -31,6 +31,11 @@ const desktopContract = {
         "status": "function",
         "importDirectory": "function"
     },
+    "dataLocation": {
+        "read": "function",
+        "choose": "function",
+        "reset": "function"
+    },
     "saveFile": "function",
     "openBackup": "function",
     "backend": {
@@ -84,6 +89,7 @@ test('所有桌面操作保留通道、参数和结果，包括 false 与大整�
         ['appControl.chooseProgram', [], 'app-control:choose', null],
         ['appControl.request', [{ action: 'block', path: 'C:\\应用\\test.exe' }], 'app-control:request', { action: 'block', path: 'C:\\应用\\test.exe' }],
         ['legacy.status', [], 'legacy:status', null], ['legacy.importDirectory', [], 'legacy:import', null],
+        ['dataLocation.read', [], 'data-location:read', null], ['dataLocation.choose', [], 'data-location:choose', null], ['dataLocation.reset', [], 'data-location:reset', null],
         ['saveFile', [{ content: '9007199254740993' }], 'files:save', { content: '9007199254740993' }],
         ['openBackup', [], 'files:open-backup', null],
         ['backend.request', ['hello'], 'backend:request', { method: 'hello', params: undefined }],

@@ -92,5 +92,49 @@
     ],
     "default": 1,
     "primary": 0
+  },
+  "data-location-existing": {
+    "zh": [
+      "目标文件夹已有数据库",
+      "该文件夹已存在 wifimeter.db。\n\n使用目标数据：切换后显示该文件中的历史，当前数据库保留在原位置。\n用当前数据替换：先把目标数据库改名归档，再复制当前数据库过去。",
+      [
+        "使用目标数据",
+        "用当前数据替换",
+        "取消"
+      ]
+    ],
+    "en": [
+      "The folder already has a database",
+      "This folder already contains wifimeter.db.\n\nUse target data: the app shows that file's history and the current database stays where it is.\nReplace with current data: the target database is renamed as an archive first, then the current database is copied in.",
+      [
+        "Use target data",
+        "Replace with current data",
+        "Cancel"
+      ]
+    ],
+    "default": 2,
+    "danger": 1
+  },
+  "data-location-missing": {
+    "zh": [
+      "自定义数据位置不可用",
+      "无法创建或写入自定义数据位置：\n\n{detail}\n\n暂时使用默认位置：本次运行改用默认位置，已保存的数据位置不变，下次启动仍会先尝试原位置。\n重新选择位置：立即选择新的文件夹。",
+      [
+        "暂时使用默认位置",
+        "重新选择位置",
+        "取消"
+      ]
+    ],
+    "en": [
+      "Custom data location unavailable",
+      "The custom data location cannot be created or written:\n\n{detail}\n\nUse default for now: this run switches to the default location. The saved location is unchanged and the next start tries the custom location again.\nChoose another location: pick a new folder now.",
+      [
+        "Use default for now",
+        "Choose another location",
+        "Cancel"
+      ]
+    ],
+    "default": 2,
+    "primary": 0
   }
 }

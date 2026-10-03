@@ -29,13 +29,14 @@ function display(settings, { toggle, option, windowPreferences }) {
         row(t('实时速度单位'),t('MB/s 是字节速率；Mbps 是比特速率。'),tr`<select class="select compact" name="speedUnit" aria-label="实时速度单位">${option('auto',t('自动（推荐）'),settings.speedUnit)}${option('MB/s','MB/s',settings.speedUnit)}${option('Mbps','Mbps',settings.speedUnit)}</select>`) +
         row(t('允许额度提醒'),t('各网络分别设置提醒阈值；默认不自动断网。'),toggle('notifications',settings.notifications,t('允许额度提醒'))));
 }
-function storage(settings, { button, option, legacy }) {
+function storage(settings, { button, option, legacy, dataLocation }) {
     const retention = tr`<select class="select compact" name="retention" aria-label="历史保留时长">
         ${option(30,t('最近 30 天'),settings.retention)}${option(90,t('最近 90 天'),settings.retention)}
         ${option(365,t('最近 365 天'),settings.retention)}${option(0,t('长期保留'),settings.retention)}
         ${![0,30,90,365].includes(settings.retention)?option(settings.retention,tr`${settings.retention} 天`,settings.retention):''}
     </select>`;
     return group(t('数据与存储'),
+        (dataLocation?row(t('数据存储位置'),t('数据库文件所在文件夹；切换会复制当前数据库并保留原文件。'),dataLocation):'') +
         row(t('历史保留时长'),t('缩短保留期前会再次确认；建议先导出备份。'),retention) +
         (legacy?row(t('导入旧版数据'),t('选择旧版数据目录；导入结果与备份位置将在下方显示。'),legacy):'') +
         row(t('数据备份'),t('完整备份包含网络备注、额度及记录，不含 Wi-Fi 密码。'),`<div class="settings-actions">${button('backup',t('备份'),'export','small-btn','type="button"')}${button('restore',t('恢复'),'upload','small-btn','type="button"')}</div>`) +

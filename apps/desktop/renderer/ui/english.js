@@ -291,6 +291,23 @@ MB/s 是字节速率；Mbps 是比特速率。|MB/s measures bytes per second; M
 各网络分别设置提醒阈值；默认不自动断网。|Set thresholds per network. Automatic disconnect is off by default.
 历史保留时长|History retention
 缩短保留期前会再次确认；建议先导出备份。|Shorter retention requires confirmation. Export a backup first.
+数据存储位置|Data location
+数据库文件所在文件夹；切换会复制当前数据库并保留原文件。|Folder that holds the database file. Switching copies the current database and keeps the original file.
+读取中…|Loading…
+当前使用默认位置。|Using the default location.
+本次运行暂时使用默认位置；保存的自定义位置会在下次启动时继续尝试。|Using the default location for this run. The saved custom location is tried again on the next start.
+更改位置|Change location
+正在切换…|Switching…
+恢复默认位置|Use default location
+数据位置已更新。|Data location updated.
+数据位置已切换，当前数据库已复制到新位置。|Data location changed. The current database was copied to the new location.
+数据位置已切换，新位置会新建空白数据库。|Data location changed. A new empty database will be created there.
+当前已经是这个数据位置。|This is already the current data location.
+已恢复默认位置，不再使用自定义位置。|Back to the default location. The custom location is no longer used.
+未能切换数据位置。|The data location could not be changed.
+原数据库仍保留在：|The original database remains at:
+目标文件夹原有的数据库已归档为：|The database that was already in the target folder was archived as:
+当前数据库：|Current database:
 最近 30 天|Last 30 days
 最近 90 天|Last 90 days
 最近 365 天|Last 365 days

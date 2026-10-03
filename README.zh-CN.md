@@ -40,6 +40,7 @@
 - Windows 支持按应用禁止联网和上传限速，选择应用或可执行文件后显示控制项。上传限速不限制下载，Linux 暂不提供这些控制。
 - Windows 支持可选的代理流量估算，与原生记录分开显示。估算依据已观测的 TCP 连接，证据不足的部分保留为未归属流量。
 - 支持包含起止当天的自选日期、全部历史查询、CSV/JSON 导出、完整备份、保存天数、中英切换、托盘和开机启动。
+- 「设置 → 数据与存储」可更改数据库所在文件夹：切换时先停止采集器，把当前 `wifimeter.db` 复制到所选文件夹，并保留原文件。目标文件夹已有数据库时不会覆盖，可选择使用该数据库，或先把它归档为 `wifimeter.db.replaced-<UTC 时间戳>` 再用当前数据替换。自定义文件夹之后不可用时，下次启动会询问重新选择位置，或本次运行改用默认位置。
 
 ## 原有数据与升级
 
@@ -47,7 +48,7 @@ Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，�
 
 迁移保留原文件，先生成恢复备份，再用数据库事务导入符合条件的记录。重复导入同一份数据不会再次累计流量。遇到冲突会拒绝导入，不会直接覆盖现有数据库。无法确定归属的应用缓存，以及不能精确转换的旧设置，会保留原文并列在导入报告中。
 
-已有跨平台 SQLite 配置目录保持不变。Windows 继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，以便读取之前的数据；Linux 沿用 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。卸载不会删除这些数据目录。
+已有跨平台 SQLite 配置目录保持不变。Windows 继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，以便读取之前的数据；Linux 沿用 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。自定义位置记录在该配置目录的 `data-location.json` 中，偏好设置、迁移备份、更新下载和 WebView 数据仍留在默认位置。卸载不会删除这些数据目录。
 
 恢复方法、原文件保留方式和备份范围见[迁移说明](docs/MIGRATION.md)。原文件版 [v1.1.1](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) 仍可下载。
 

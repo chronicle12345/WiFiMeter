@@ -15,6 +15,8 @@ renderer/app.js → data/backend-client.js → Tauri bridge → Rust 宿主 → 
 
 Rust 宿主用 `src-tauri/src/collection/backend.rs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端的失败以 `{ ok: false, error }` 形式回给页面，而不是抛异常，因为跨进程只保留错误消息、会丢掉页面用来决定文案的错误码。历史、额度和网络设置以 C++ 后端为准。
 
+数据库默认位于配置目录，也可由用户在「设置 → 数据与存储」中改到其他文件夹。`src-tauri/src/data_location.rs` 在默认配置目录维护 `data-location.json` 指针，负责校验目标目录、复制数据库（含 `-wal`）、校验复制结果并归档同名文件；`Collector::relocate_database` 在一次写锁内完成「暂停 → 停止后端 → 换 `--db` → 复制并写指针 → 恢复采集」，失败则退回原路径与采集状态。后端只在启动参数上看到不同的 `--db`，协议与数据库 schema 不变；窗口偏好、迁移备份、更新下载和 WebView 数据始终留在默认配置目录。
+
 ## 桌面目录
 
 `renderer/host/` 提供桌面桥接与统一弹窗，`renderer/mini/` 是浮窗页面，与主页面共用 `renderer/shared/` 的样式。`scripts/` 放前端构建，`tests/e2e/` 驱动真实系统 WebView，`tests/support/` 提供后端夹具。构建输出位于 `apps/desktop/dist/tauri/`，不混入源代码目录。

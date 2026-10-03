@@ -1,6 +1,6 @@
 use serde_json::json;
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use wifimeter_desktop::backend::Backend;
+use wifimeter_desktop::backend::{Backend, BackendError};
 
 #[test]
 #[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
@@ -128,6 +128,59 @@ fn desktop_lifecycle_resumes_collection_and_closes_the_real_process() {
     assert_eq!(collector.migration_status(), json!({"found":false}));
     collector.stop_gracefully(Duration::from_secs(30)).unwrap();
     assert!(collector.request("hello", json!({}), || false).is_err());
+}
+
+#[test]
+#[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
+fn relocation_copies_real_data_and_keeps_serving_from_the_new_file() {
+    use wifimeter_desktop::{collector::Collector, data_location};
+    let executable =
+        PathBuf::from(std::env::var_os("WIFIMETER_BACKEND").expect("set WIFIMETER_BACKEND"));
+    let profile = tempfile::tempdir().unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let default_database = profile.path().join("wifimeter.db");
+    let backend = Arc::new(Backend::new(
+        executable,
+        default_database.clone(),
+        vec!["--paused".into()],
+        Arc::new(|_| {}),
+    ));
+    let collector = Collector::new(backend, profile.path().into(), None);
+    collector
+        .request(
+            "updateSettings",
+            json!({"settings":{"unit":"GiB","retention":30}}),
+            || false,
+        )
+        .unwrap();
+
+    let target_database = data_location::database_file(target.path());
+    collector
+        .relocate_database(
+            target_database.clone(),
+            |source| {
+                data_location::install(
+                    profile.path(),
+                    target.path(),
+                    source,
+                    data_location::Mode::Copy,
+                    &default_database,
+                )
+                .map(|_| ())
+                .map_err(|error| BackendError::new("unavailable", error))
+            },
+            Duration::from_secs(30),
+        )
+        .unwrap();
+
+    assert!(target_database.is_file());
+    assert!(default_database.is_file(), "原数据库必须保留");
+    let hello = collector.request("hello", json!({}), || false).unwrap();
+    // 新进程使用复制过来的数据库：设置还在，采集也按原状态恢复。
+    assert_eq!(hello["settings"]["unit"], "GiB");
+    assert_eq!(hello["settings"]["retention"], 30);
+    assert_eq!(hello["paused"], false);
+    collector.stop_gracefully(Duration::from_secs(30)).unwrap();
 }
 
 #[test]

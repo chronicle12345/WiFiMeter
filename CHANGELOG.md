@@ -1,8 +1,20 @@
 # Changelog / 更新日志
 
-Changes are listed by release.
+Released changes are listed by release. Unreleased describes source changes that are not part of a published version yet.
 
-更新内容按版本记录。
+已发布内容按版本记录。Unreleased 记录当前源码中尚未发布的改动。
+
+## Unreleased
+
+### English
+
+- Settings > Data & storage can move the SQLite database to another folder. Switching stops the collector, copies the current `wifimeter.db` (including an unmerged `-wal` file) into the selected folder, verifies the copy, records the new location in `data-location.json` inside the default profile directory and keeps the original database file. A database already in the target folder is never overwritten: use it as the new data, or archive it as `wifimeter.db.replaced-<UTC timestamp>` before replacing it. Window preferences, migration backups, update downloads and WebView data stay in the default profile directory.
+- A failed switch removes the partial copy, restores an archived target database and keeps collecting from the previous database. When a custom folder cannot be created or written at startup, the app asks whether to choose another folder, use the default location for that run, or leave the setting unchanged. Using the default for one run does not change the saved location.
+
+### 简体中文
+
+- 「设置 → 数据与存储」可把 SQLite 数据库移到其他文件夹。切换时先停止采集器，把当前 `wifimeter.db`（含尚未合并的 `-wal`）复制到所选文件夹，校验通过后在默认配置目录的 `data-location.json` 记录新位置，并保留原数据库文件。目标文件夹已有数据库时不会覆盖：可以选择使用该数据库，或先把它归档为 `wifimeter.db.replaced-<UTC 时间戳>` 再替换。窗口偏好、迁移备份、更新下载和 WebView 数据仍留在默认配置目录。
+- 切换失败会删除半成品副本、还原已归档的目标数据库，并继续使用原数据库采集。自定义文件夹在启动时无法创建或写入时，程序会询问重新选择文件夹、本次运行使用默认位置，或保持设置不变。本次运行使用默认位置不会改动已保存的位置。
 
 ## [1.2.2] - 2026-10-02
 

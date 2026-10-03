@@ -40,6 +40,7 @@ The following overview and application history use synthetic data.
 - Windows application blocking and upload limits, shown after selecting an application or executable. Upload limits do not limit downloads. These controls are unavailable on Linux.
 - Optional Windows proxy attribution estimates, clearly separated from native records. Estimates use observed TCP connections and retain unattributed traffic when evidence is missing.
 - Inclusive custom dates and all-history queries, CSV/JSON export, complete backups, configurable retention, English/Chinese UI, tray mode and login startup.
+- The database folder can be changed under Settings > Data & storage. Switching stops the collector, copies the current `wifimeter.db` to the selected folder and keeps the original file. A database already in the target folder is never overwritten: choose it as the new data, or archive it as `wifimeter.db.replaced-<UTC timestamp>` before the copy. If a custom folder becomes unavailable, the next start offers to pick another folder or to use the default location for that run.
 
 ## Existing data and upgrades
 
@@ -47,7 +48,7 @@ On Windows, the app discovers the file-based version's default directory at `%LO
 
 Migration preserves original files, creates a recovery backup and imports eligible records in one database transaction. Repeating the same import does not add the bytes again. Conflicting records are rejected instead of silently replacing an existing database. Ambiguous application-cache entries and unrepresentable legacy settings remain archived and are listed in the import report.
 
-Existing cross-platform SQLite profiles keep their location. Windows continues to use `%APPDATA%\WiFiMeter Demo\wifimeter.db` for compatibility. Linux uses `$XDG_CONFIG_HOME/WiFiMeter` (`~/.config/WiFiMeter` by default). Uninstalling does not remove these data directories.
+Existing cross-platform SQLite profiles keep their location. Windows continues to use `%APPDATA%\WiFiMeter Demo\wifimeter.db` for compatibility. Linux uses `$XDG_CONFIG_HOME/WiFiMeter` (`~/.config/WiFiMeter` by default). A custom location is recorded in `data-location.json` inside that profile directory, so preferences, migration backups, update downloads and WebView data stay in the default location. Uninstalling does not remove these data directories.
 
 See the [migration guide](docs/MIGRATION.md) for recovery, retained originals and backup scope. The file-based [v1.1.1 release](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) remains available.
 

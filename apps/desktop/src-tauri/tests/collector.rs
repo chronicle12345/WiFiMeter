@@ -22,6 +22,8 @@ struct FakeBackend {
     fail_stop: AtomicBool,
     fail_pause_once: AtomicBool,
     invalid_paused: AtomicBool,
+    database: Mutex<std::path::PathBuf>,
+    running: AtomicBool,
 }
 
 impl CollectorBackend for FakeBackend {
@@ -81,8 +83,26 @@ impl CollectorBackend for FakeBackend {
         if self.fail_stop.load(Ordering::SeqCst) {
             return Err(BackendError::new("timeout", "still saving"));
         }
+        self.running.store(false, Ordering::SeqCst);
         self.paused.store(true, Ordering::SeqCst);
         self.apps_enabled.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+    fn database(&self) -> std::path::PathBuf {
+        self.database.lock().unwrap().clone()
+    }
+    fn running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+    fn set_database(&self, path: std::path::PathBuf) -> Result<(), BackendError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(("setDatabase".into(), json!({"path":path.to_string_lossy()})));
+        if self.running() {
+            return Err(BackendError::new("badRequest", "still running"));
+        }
+        *self.database.lock().unwrap() = path;
         Ok(())
     }
 }
@@ -152,6 +172,9 @@ fn only_existing_database_overlap_resumes_automatically() {
             }
             let source = source();
             let backend = backend();
+            if existing {
+                *backend.database.lock().unwrap() = profile.path().join("wifimeter.db");
+            }
             *backend.import_error.lock().unwrap() = Some(code.into());
             let collector = Collector::new(
                 backend.clone(),
@@ -337,6 +360,15 @@ fn shutdown_finishes_an_in_flight_read_before_stopping_the_process() {
         fn stop(&self, timeout: Duration) -> Result<(), BackendError> {
             self.inner.stop(timeout)
         }
+        fn database(&self) -> std::path::PathBuf {
+            self.inner.database()
+        }
+        fn running(&self) -> bool {
+            self.inner.running()
+        }
+        fn set_database(&self, path: std::path::PathBuf) -> Result<(), BackendError> {
+            self.inner.set_database(path)
+        }
     }
     let (entered, waiting) = mpsc::channel();
     let (proceed, blocked) = mpsc::channel();
@@ -488,4 +520,154 @@ fn update_refuses_unknown_pause_state_and_unresolved_or_active_migrations() {
     assert!(collector.prepare_update(Duration::from_secs(5)).is_err());
     assert!(!collector.update_pending());
     assert!(backend.calls.lock().unwrap().is_empty());
+}
+
+fn methods(backend: &FakeBackend) -> Vec<String> {
+    backend
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(method, _)| method.clone())
+        .collect()
+}
+
+#[test]
+fn relocation_pauses_stops_switches_and_restores_collection() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let original = profile.path().join("wifimeter.db");
+    *backend.database.lock().unwrap() = original.clone();
+    backend.paused.store(false, Ordering::SeqCst);
+    backend.apps_enabled.store(true, Ordering::SeqCst);
+    backend.running.store(true, Ordering::SeqCst);
+    let target = profile.path().join("custom").join("wifimeter.db");
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+
+    let mut prepared = None;
+    collector
+        .relocate_database(
+            target.clone(),
+            |source| {
+                prepared = Some(source.to_path_buf());
+                Ok(())
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+
+    assert_eq!(prepared.as_deref(), Some(original.as_path()));
+    assert_eq!(collector.database(), target);
+    assert!(!backend.paused.load(Ordering::SeqCst));
+    assert_eq!(
+        methods(&backend),
+        ["hello", "setPaused", "shutdown", "setDatabase", "setAppCollection", "setPaused"]
+    );
+    let calls = backend.calls.lock().unwrap();
+    assert_eq!(calls[1].1, json!({"paused":true}));
+    assert_eq!(calls[4].1, json!({"enabled":true}));
+    assert_eq!(calls[5].1, json!({"paused":false}));
+}
+
+#[test]
+fn relocation_without_running_process_only_switches_the_path() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let original = profile.path().join("wifimeter.db");
+    *backend.database.lock().unwrap() = original;
+    let target = profile.path().join("custom").join("wifimeter.db");
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+
+    collector
+        .relocate_database(
+            target.clone(),
+            |source| {
+                assert_eq!(source, profile.path().join("wifimeter.db"));
+                Ok(())
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+
+    assert_eq!(collector.database(), target);
+    assert_eq!(methods(&backend), ["setDatabase"]);
+}
+
+#[test]
+fn relocation_failure_restores_path_and_runtime_state() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let original = profile.path().join("wifimeter.db");
+    *backend.database.lock().unwrap() = original.clone();
+    backend.paused.store(false, Ordering::SeqCst);
+    backend.apps_enabled.store(true, Ordering::SeqCst);
+    backend.running.store(true, Ordering::SeqCst);
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+
+    let error = collector
+        .relocate_database(
+            profile.path().join("custom").join("wifimeter.db"),
+            |_| Err(BackendError::new("unavailable", "复制数据库失败")),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+    assert_eq!(error.message, "复制数据库失败");
+    assert_eq!(collector.database(), original);
+    assert!(!backend.paused.load(Ordering::SeqCst));
+    assert_eq!(
+        methods(&backend),
+        ["hello", "setPaused", "shutdown", "setDatabase", "setDatabase", "setPaused"]
+    );
+}
+
+#[test]
+fn relocation_refuses_busy_migrations_pending_updates_and_stopping() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+    collector.start();
+    let target = profile.path().join("custom").join("wifimeter.db");
+    let relocation = || {
+        collector.relocate_database(
+            target.clone(),
+            |_| panic!("must not touch files"),
+            Duration::from_secs(5),
+        )
+    };
+
+    assert_eq!(
+        collector.import_selected(
+            || {
+                assert!(relocation().is_err());
+                Ok(None)
+            },
+            || false
+        )["canceled"],
+        true
+    );
+    collector.prepare_update(Duration::from_secs(5)).unwrap();
+    assert!(relocation().is_err());
+    assert!(collector.update_pending());
+    collector.recover_update(Duration::from_secs(5)).unwrap();
+    collector.stop_gracefully(Duration::from_secs(5)).unwrap();
+    assert!(relocation().is_err());
+}
+
+#[test]
+fn temporary_database_switch_requires_a_stopped_collector() {
+    let profile = tempfile::tempdir().unwrap();
+    let backend = backend();
+    *backend.database.lock().unwrap() = profile.path().join("custom").join("wifimeter.db");
+    let collector = Collector::new(backend.clone(), profile.path().into(), None);
+    let fallback = profile.path().join("wifimeter.db");
+    collector
+        .use_temporary_database(fallback.clone())
+        .unwrap();
+    assert_eq!(collector.database(), fallback);
+
+    backend.running.store(true, Ordering::SeqCst);
+    assert!(collector
+        .use_temporary_database(profile.path().join("other.db"))
+        .is_err());
+    assert_eq!(collector.database(), fallback);
 }

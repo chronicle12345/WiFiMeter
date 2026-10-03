@@ -18,6 +18,7 @@ import { t, tr, setLanguage, getLocale } from './i18n.js';
 import { totalQuotaForm, totalQuotaCard } from './ui/total-quota.js';
 import { updateRegion } from './data/render.js';
 import { createAppControlModel, legacyMessage } from './data/desktop-actions.js';
+import { dataLocationPanel, dataLocationMessage } from './data/data-location.js';
 import { historyRange, applicationRows, applicationCsv } from './data/history.js';
 import { MAX_QUOTA_GB, validQuotaGb, GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
 import { createDataClient } from './data/client.js';
@@ -64,6 +65,7 @@ const productName = window.desktop.appName;
 const appControl=createAppControlModel(window.desktop);
 const appIcons=createAppIconLoader({request:window.desktop.appIcons?.get});
 let legacyResult=null,legacyBusy=false;
+let dataLocationState=null,dataLocationBusy=false,dataLocationNotice='',dataLocationError='';
 let settingsCategory='general',windowPreferences=null;
 if(window.desktop.windowPreferences?.read){try{windowPreferences=await window.desktop.windowPreferences.read();}catch(error){console.warn('Window preferences unavailable',error);}}
 const systemTheme=window.matchMedia('(prefers-color-scheme: dark)');
@@ -186,7 +188,7 @@ function historyPage(){
  return tr`${toolbar()}<div class="history-top"><div class="panel history-stat"><div class="metric-title">${periodName()} ${t('总用量')}</div><div class="metric-number">${fmtNumber(all.total,days.length)}</div><div class="metric-note">有记录的日期：${days.length} 天</div></div><div class="panel history-stat"><div class="metric-title">日均用量</div><div class="metric-number">${fmtNumber(average,days.length)}</div><div class="metric-note">仅按有记录的日期计算</div></div><div class="panel history-stat"><div class="metric-title">单日最高用量</div><div class="metric-number">${fmtNumber(max.rx+max.tx,days.length)}</div><div class="metric-note">${max.date?niceDate(max.date):t('暂无记录')}</div></div></div>${trendPanel()}<section class="panel table-panel" style="margin-top:18px"><div class="panel-head"><div><h2>每日明细</h2><div class="panel-sub">本机采集 · 日期按本地时间归档</div></div></div>${days.length?tr`<div class="table-scroll"><table><thead><tr><th>日期</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th><th>记录说明</th></tr></thead><tbody>${sliced.map(d=>`<tr><td>${d.date}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td><td class="right strong">${fmtWithUnit(d.rx+d.tx)}</td><td><span class="pill ${d.date===today()?'warn':'gray'}">${d.date===today()?t('当日未结束'):t('已保存记录')}</span></td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>共 ${days.length} 天 · 每页 10 条</span><div class="flex gap8">${button('history-prev',t('上一页'),'','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next',t('下一页'),'','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty(t('所选时段没有记录'),t('更换日期或网络试试；缺失记录不会被当作零流量。'))}</section>`;
 }
 let updateStatus = {}, updateBusy = false;
-function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
+function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',dataLocation:window.desktop.dataLocation?dataLocationPanel({...dataLocationState,busy:dataLocationBusy,notice:dataLocationNotice,error:dataLocationError},{esc,button}):'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
  for(const key of ['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']){
@@ -220,6 +222,8 @@ function renderMain(){
  syncSaveFlags();
  syncInert();
  appIcons.hydrate(document);
+ // 数据位置只在进入设置页时读取一次，切换后由切换结果刷新。
+ if(ui.page==='settings'&&dataLocationState===null&&!dataLocationBusy)dataLocationAction('read');
 }
 function renderSettingsDrafts(preserveSettings=true){
  const focused=document.activeElement,focusName=focused?.name,focusForm=focused?.form?.id,start=focused?.selectionStart,end=focused?.selectionEnd;
@@ -284,6 +288,20 @@ async function legacyAction(importing){
  try{legacyResult=await (importing?window.desktop.legacy.importDirectory():window.desktop.legacy.status());if(legacyResult.imported){await store.reload();renderMain();}}
  catch(error){legacyResult={error:error.message};}
  finally{legacyBusy=false;render();}
+}
+function renderDataLocation(){const region=$('#dataLocationRegion');if(region)region.outerHTML=dataLocationPanel({...dataLocationState,busy:dataLocationBusy,notice:dataLocationNotice,error:dataLocationError},{esc,button});}
+async function dataLocationAction(kind){
+ if(dataLocationBusy||!window.desktop.dataLocation)return;
+ dataLocationBusy=true;if(kind!=='read'){dataLocationNotice='';dataLocationError='';}renderDataLocation();
+ let changed=false;
+ try{
+  const result=kind==='read'?await window.desktop.dataLocation.read():kind==='reset'?await window.desktop.dataLocation.reset():await window.desktop.dataLocation.choose();
+  if(kind!=='read'){dataLocationNotice=dataLocationMessage(result);if(result?.ok===false)dataLocationError=String(result.error||dataLocationError);}
+  dataLocationState=await window.desktop.dataLocation.read();
+  changed=kind!=='read'&&result?.ok===true;
+ }
+ catch(error){dataLocationError=error.message||String(error);}
+ finally{dataLocationBusy=false;if(changed){await store.reload();renderMain();toast(t('数据位置已更新。'));}else renderDataLocation();}
 }
 
 function appHistoryTable(){
@@ -592,6 +610,8 @@ const actions={
  'app-control':e=>controlOperation(e.dataset.operation),
  'legacy-status':()=>legacyAction(false),
  'legacy-import':()=>legacyAction(true),
+ 'data-location-change':()=>dataLocationAction('choose'),
+ 'data-location-reset':()=>dataLocationAction('reset'),
  'close-modal':closeModal,
  confirm:async()=>{const fn=pendingConfirm;pendingConfirm=null;pendingAutosaveCancel=null;closeModal();if(fn)await fn();},
  export:()=>ui.page==='apps'?exportApps():exportModal(), 'export-network':e=>exportModal(e.dataset.id),

@@ -3,6 +3,7 @@ pub mod app_icons;
 pub mod autostart;
 pub mod close_check;
 pub mod collection;
+pub mod data_location;
 pub mod dialog_requests;
 pub mod files;
 pub mod identity;

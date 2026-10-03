@@ -195,8 +195,30 @@ fn crash_restart_restores_pause_and_application_collection_before_replying() {
 }
 
 #[test]
-fn missing_executable_and_empty_method_fail_without_hanging() {
-    let dir = tempfile::tempdir().unwrap();
+fn database_switch_requires_a_stopped_process_and_applies_to_the_next_spawn() {
+    let (backend, _, dir) = fixture();
+    let original = dir.path().join("无线 网络.db");
+    let target = dir.path().join("移动 数据").join("meter.db");
+    backend.request("hello", json!({}), TIMEOUT).unwrap();
+    assert!(backend.running());
+    assert_eq!(backend.database(), original);
+    assert_eq!(
+        backend.set_database(target.clone()).unwrap_err().code,
+        "badRequest"
+    );
+    assert_eq!(backend.database(), original);
+
+    backend.stop_gracefully(TIMEOUT).unwrap();
+    assert!(!backend.running());
+    backend.set_database(target.clone()).unwrap();
+    assert_eq!(backend.database(), target);
+    let hello = backend.request("hello", json!({}), TIMEOUT).unwrap();
+    assert_eq!(hello["args"][3], target.to_str().unwrap());
+    backend.stop_gracefully(TIMEOUT).unwrap();
+}
+
+#[test]
+fn missing_executable_and_empty_method_fail_without_hanging() {    let dir = tempfile::tempdir().unwrap();
     let backend = Backend::new(
         dir.path().join("missing.exe"),
         dir.path().join("meter.db"),

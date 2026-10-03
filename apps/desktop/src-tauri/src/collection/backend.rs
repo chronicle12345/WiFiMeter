@@ -100,7 +100,8 @@ impl Call {
 
 pub struct Backend {
     executable: PathBuf,
-    database: PathBuf,
+    // 数据位置可以切换：始终在下一次拉起进程时读取，进程运行时不允许修改。
+    database: Mutex<PathBuf>,
     args: Vec<OsString>,
     on_event: EventHandler,
     next_id: AtomicU64,
@@ -117,7 +118,7 @@ impl Backend {
     ) -> Self {
         Self {
             executable,
-            database,
+            database: Mutex::new(database),
             args,
             on_event,
             next_id: AtomicU64::new(1),
@@ -126,12 +127,37 @@ impl Backend {
         }
     }
 
+    pub fn database(&self) -> PathBuf {
+        self.database.lock().unwrap().clone()
+    }
+
+    /// 采集器仍在运行时不能换库：旧进程还握着原数据库，换早了会写到错误的位置。
+    pub fn set_database(&self, path: PathBuf) -> Result<(), BackendError> {
+        if self.running() {
+            return Err(BackendError::new(
+                "badRequest",
+                "采集器仍在运行，不能切换数据库。",
+            ));
+        }
+        *self.database.lock().unwrap() = path;
+        Ok(())
+    }
+
+    pub fn running(&self) -> bool {
+        let mut slot = self.running.lock().unwrap();
+        match slot.as_mut() {
+            Some(running) => running.child.try_wait().ok().flatten().is_none(),
+            None => false,
+        }
+    }
+
     fn spawn(&self) -> Result<Running, BackendError> {
+        let database = self.database.lock().unwrap().clone();
         let mut command = Command::new(&self.executable);
         command
             .args(&self.args)
             .arg("--db")
-            .arg(&self.database)
+            .arg(&database)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

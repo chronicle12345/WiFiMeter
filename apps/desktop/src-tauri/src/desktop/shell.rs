@@ -4,6 +4,7 @@ use crate::{
     backend::{Backend, BackendError},
     close_check::CloseCheck,
     collector::Collector,
+    data_location,
     dialog_requests::DialogRequests,
     files, identity, ipc_policy, mini, native_dialog, notifications,
     preferences::Preferences,
@@ -31,6 +32,7 @@ use tauri_plugin_notification::NotificationExt;
 
 struct Desktop {
     profile: PathBuf,
+    default_database: PathBuf,
     updates: OnceLock<Result<UpdateService, UpdateError>>,
     collector: Collector,
     preferences: Preferences,
@@ -47,10 +49,20 @@ struct Desktop {
     autostart: Autostart,
     runtime_started: OnceLock<()>,
     isolated: bool,
+    location_busy: AtomicBool,
+    temporary_default: AtomicBool,
     notification_icon: PathBuf,
     app_icons: AppIcons,
     #[cfg(windows)]
     app_control: WindowsControl,
+}
+
+/// 同一时间只允许一次数据位置切换；作用域结束时自动解除。
+struct LocationBusy<'a>(&'a AtomicBool);
+impl Drop for LocationBusy<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl Desktop {
@@ -300,7 +312,185 @@ fn sync_imported_settings(app: &tauri::AppHandle) {
 fn initialize_runtime(app: &tauri::AppHandle) {
     app.state::<Desktop>()
         .runtime_started
-        .get_or_init(|| sync_imported_settings(app));
+        .get_or_init(|| {
+            // 数据位置必须在采集器第一次启动前定下来；切换后数据库里的设置才是有效值。
+            resolve_data_location(app);
+            sync_imported_settings(app);
+        });
+}
+
+fn data_location_state(app: &tauri::AppHandle) -> Value {
+    let state = app.state::<Desktop>();
+    let database = state.collector.database();
+    let directory = database
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.profile.clone());
+    json!({
+        "directory": directory.to_string_lossy(),
+        "database": database.to_string_lossy(),
+        "custom": data_location::load(&state.profile).is_some(),
+        "temporaryDefault": state.temporary_default.load(Ordering::SeqCst),
+        "defaultDirectory": state.profile.to_string_lossy(),
+    })
+}
+
+/// 自定义位置不可用时先询问：临时用默认位置、立即重选，或保持现状由用户稍后处理。
+fn resolve_data_location(app: &tauri::AppHandle) {
+    let state = app.state::<Desktop>();
+    let Some(configured) = data_location::load(&state.profile) else {
+        return;
+    };
+    if data_location::validate_directory(&configured).is_ok() {
+        return;
+    }
+    let unavailable = configured.to_string_lossy().into_owned();
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    match native_dialog::confirm_missing_location(&window, &unavailable) {
+        Some(0) => match state
+            .collector
+            .use_temporary_database(state.default_database.clone())
+        {
+            Ok(()) => {
+                state.temporary_default.store(true, Ordering::SeqCst);
+            }
+            Err(error) => eprintln!("[data-location] 无法使用默认数据位置：{error}"),
+        },
+        Some(1) => match change_data_location(&window, false) {
+            Ok(result) if result["ok"] == true || result["canceled"] == true => (),
+            Ok(result) => report_data_location(
+                app,
+                result["error"].as_str().unwrap_or("未能切换数据位置。"),
+            ),
+            Err(error) => report_data_location(app, &error),
+        },
+        _ => (),
+    }
+}
+
+fn report_data_location(app: &tauri::AppHandle, error: &str) {
+    if error.is_empty() {
+        return;
+    }
+    eprintln!("[data-location] {error}");
+    app.dialog()
+        .message(error)
+        .title(localized(app, "数据位置", "Data location"))
+        .blocking_show();
+}
+
+/// 选择并切换数据位置；`reset` 表示回到默认配置目录。
+/// 返回 canceled / changed:false / ok:true / ok:false 四种结果，失败时保持原状态。
+fn change_data_location(window: &WebviewWindow, reset: bool) -> Result<Value, String> {
+    let app = window.app_handle().clone();
+    let state = app.state::<Desktop>();
+    if state
+        .location_busy
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Ok(json!({"ok":false,"error":localized(&app, "正在切换数据位置。", "The data location is already changing.")}));
+    }
+    let _busy = LocationBusy(&state.location_busy);
+    let current = state.collector.database();
+    let directory = if reset {
+        state.profile.clone()
+    } else {
+        let mut dialog = app
+            .dialog()
+            .file()
+            .set_parent(window)
+            .set_title(localized(
+                &app,
+                "选择数据存储位置",
+                "Choose the data location",
+            ));
+        if let Some(parent) = current.parent() {
+            dialog = dialog.set_directory(parent);
+        }
+        let Some(selected) = dialog.blocking_pick_folder() else {
+            return Ok(json!({"canceled":true}));
+        };
+        selected
+            .into_path()
+            .map_err(|error| error.to_string())?
+    };
+    if let Err(error) = data_location::validate_directory(&directory) {
+        return Ok(json!({"ok":false,"error":error}));
+    }
+    let on_default = current
+        .parent()
+        .is_some_and(|parent| data_location::same_directory(parent, &state.profile));
+    if reset && on_default {
+        // 已经在默认位置（例如本次运行临时回落）：只需取消自定义，不再复制文件。
+        if let Err(error) = data_location::save(&state.profile, &state.profile, &state.profile) {
+            return Ok(
+                json!({"ok":false,"error":format!("无法清除数据位置设置：{error}")}),
+            );
+        }
+        state.temporary_default.store(false, Ordering::SeqCst);
+        return Ok(json!({
+            "ok": true,
+            "changed": true,
+            "cleared": true,
+            "directory": state.profile.to_string_lossy(),
+            "database": current.to_string_lossy(),
+        }));
+    }
+    if current
+        .parent()
+        .is_some_and(|parent| data_location::same_directory(parent, &directory))
+    {
+        return Ok(json!({
+            "changed": false,
+            "directory": directory.to_string_lossy(),
+        }));
+    }
+    // 目标已有数据库时不覆盖：只能采用目标数据，或先归档再用当前数据替换。
+    let mode = if data_location::database_file(&directory).exists() {
+        match native_dialog::choose_existing_database(window) {
+            Some(0) => data_location::Mode::Adopt,
+            Some(1) => data_location::Mode::Copy,
+            _ => return Ok(json!({"canceled":true})),
+        }
+    } else {
+        data_location::Mode::Copy
+    };
+    let profile = state.profile.clone();
+    let default_database = state.default_database.clone();
+    let mut outcome = None;
+    let result = state
+        .collector
+        .relocate_database(
+            directory.clone(),
+            |source| {
+                data_location::install(&profile, &directory, source, mode, &default_database)
+                    .map(|value| outcome = Some(value))
+                    .map_err(|error| BackendError::new("unavailable", error))
+            },
+            Duration::from_secs(30),
+        )
+        .map_err(|error| error.message);
+    if let Err(error) = result {
+        return Ok(json!({"ok":false,"error":error}));
+    }
+    state.temporary_default.store(false, Ordering::SeqCst);
+    // 数据库里的语言、单位、保留时长、自启等设置以新数据库为准。
+    if let Ok(hello) = state.collector.request("hello", json!({}), || false) {
+        apply_runtime_settings(&app, &hello["settings"], false);
+    }
+    let outcome = outcome.unwrap_or_default();
+    Ok(json!({
+        "ok": true,
+        "changed": true,
+        "directory": directory.to_string_lossy(),
+        "database": data_location::database_file(&directory).to_string_lossy(),
+        "copied": outcome.copied,
+        "source": outcome.source.map(|path| path.to_string_lossy().into_owned()),
+        "archived": outcome.archived.map(|path| path.to_string_lossy().into_owned()),
+    }))
 }
 
 fn close_main(window: WebviewWindow) {
@@ -437,6 +627,7 @@ async fn desktop_request(
             channel.as_str(),
             "backend:request" | "legacy:status" | "legacy:import"
         ) || channel.starts_with("updates:")
+            || channel.starts_with("data-location:")
         {
             initialize_runtime(&app);
         }
@@ -613,6 +804,9 @@ async fn desktop_request(
                 sync_imported_settings(&app);
                 Ok(state.collector.migration_status())
             }
+            "data-location:read" => Ok(data_location_state(&app)),
+            "data-location:choose" => change_data_location(&window, false),
+            "data-location:reset" => change_data_location(&window, true),
             "window-preferences:read" => Ok(state.preferences.read()),
             "window-preferences:update" => {
                 state
@@ -769,9 +963,14 @@ pub fn run() {
                     })
                 });
             let handle = app.handle().clone();
+            // 数据库位置可以自定义：指针文件留在默认配置目录，数据文件放在用户选择的文件夹。
+            let default_database = profile.join(data_location::DATABASE_FILE);
+            let database = data_location::load(&profile)
+                .map(|directory| data_location::database_file(&directory))
+                .unwrap_or_else(|| default_database.clone());
             let backend = Arc::new(Backend::new(
                 executable,
-                profile.join("wifimeter.db"),
+                database,
                 vec!["--paused".into()],
                 Arc::new(move |message| {
                     if message["event"] == "alert" {
@@ -797,6 +996,7 @@ pub fn run() {
             ));
             app.manage(Desktop {
                 profile: profile.clone(),
+                default_database,
                 updates: OnceLock::new(),
                 collector: Collector::new(backend, profile.clone(), legacy_directory()),
                 preferences: Preferences::load(profile.clone()),
@@ -836,6 +1036,8 @@ pub fn run() {
                 },
                 runtime_started: OnceLock::new(),
                 isolated: override_directory.is_some(),
+                location_busy: AtomicBool::new(false),
+                temporary_default: AtomicBool::new(false),
                 notification_icon,
                 app_icons: AppIcons::default(),
                 #[cfg(windows)]

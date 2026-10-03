@@ -12,7 +12,8 @@ fn wide(text: &str) -> Vec<u16> {
 
 // Tauri dialog 当前没有 defaultId；使用同样的 Windows TaskDialog，保留按钮顺序和默认取消。
 // 仅从阻塞工作线程调用，所有字符串和按钮数组在同步调用返回前保持存活。
-fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(usize, bool)> {
+// `detail` 用于版本号或路径等正文插入值，对应 {version} 与 {detail} 两个占位符。
+fn choose(window: &WebviewWindow, kind: &str, detail: Option<&str>) -> Option<(usize, bool)> {
     // The fallback and themed dialogs share exactly the same localized text and button order.
     let copy: serde_json::Value =
         serde_json::from_str(include_str!("../../../renderer/host/dialog-copy.json")).ok()?;
@@ -22,7 +23,8 @@ fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(
     let title = content[0].as_str()?;
     let message = content[1]
         .as_str()?
-        .replace("{version}", version.unwrap_or(""));
+        .replace("{version}", detail.unwrap_or(""))
+        .replace("{detail}", detail.unwrap_or(""));
     let labels: Vec<_> = content[2]
         .as_array()?
         .iter()
@@ -32,7 +34,7 @@ fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(
     let verification = (kind == "close").then(|| {
         crate::shell::localized(window.app_handle(), "记住我的选择", "Remember my choice")
     });
-    if let Some(answer) = crate::shell::themed_dialog(window, kind, labels.len(), version) {
+    if let Some(answer) = crate::shell::themed_dialog(window, kind, labels.len(), detail) {
         return answer;
     }
     #[cfg(target_os = "linux")]
@@ -123,4 +125,14 @@ pub fn confirm_update(window: &WebviewWindow, version: &str, install: bool) -> b
         Some(version),
     )
     .is_some_and(|(index, _)| index == 0)
+}
+
+/// 目标目录已有数据库：0 使用目标数据，1 用当前数据替换，2/关闭视为取消。
+pub fn choose_existing_database(window: &WebviewWindow) -> Option<usize> {
+    choose(window, "data-location-existing", None).map(|(index, _)| index)
+}
+
+/// 自定义数据位置不可用：0 暂时使用默认位置，1 重新选择位置，2/关闭保持现状。
+pub fn confirm_missing_location(window: &WebviewWindow, directory: &str) -> Option<usize> {
+    choose(window, "data-location-missing", Some(directory)).map(|(index, _)| index)
 }

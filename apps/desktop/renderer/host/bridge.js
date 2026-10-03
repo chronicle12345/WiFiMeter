@@ -54,6 +54,11 @@ export async function createDesktopBridge({ invoke, listen, platform = 'win32' }
             status: () => request('legacy:status'),
             importDirectory: () => request('legacy:import')
         },
+        dataLocation: {
+            read: () => request('data-location:read'),
+            choose: () => request('data-location:choose'),
+            reset: () => request('data-location:reset')
+        },
         saveFile: payload => request('files:save', payload),
         openBackup: () => request('files:open-backup'),
         backend: {

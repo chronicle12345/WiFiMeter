@@ -77,6 +77,8 @@ Windows 拖拽和悬停检查需要可接受鼠标定位的输入桌面。`--ski
 
 Windows 沿用 `%APPDATA%\WiFiMeter Demo` 与 `io.wifimeter.demo`，Linux 沿用 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。产品显示名称统一为 WiFiMeter。宿主始终向采集器传入明确的 `--db` 路径；已有数据库和窗口偏好可继续读取。
 
+数据库位置可在「设置 → 数据与存储」中更改，桌面通道为 `data-location:read|choose|reset`（桥接对象 `window.desktop.dataLocation`）。自定义位置记录在配置目录的 `data-location.json`，指针与数据位置分开，因此数据目录丢失时仍能回退；`WIFIMETER_USER_DATA` 隔离目录内同样带指针文件，测试互不影响。`src-tauri/src/data_location.rs` 负责校验目标目录、复制数据库（含 `-wal`）、校验结果、归档同名文件与写指针；`Collector::relocate_database` 在一次写锁内完成「暂停 → 停止后端 → 换 `--db` → 复制并写指针 → 恢复采集」，失败退回原路径与采集状态。目标已有数据库时由宿主弹窗选择采用或替换，替换前把目标库归档为 `wifimeter.db.replaced-<UTC 时间戳>`；自定义目录不可用时启动弹窗提供重新选择、本次运行使用默认位置或保持现状。窗口偏好、迁移备份、更新下载和 WebView 数据仍留在默认配置目录。
+
 `renderer/data/client.js` 选择真实后端客户端或浏览器 mock。`window.desktop` 保留原有请求、事件、文件保存/打开及偏好接口；取消仍作为独立结果返回。后端错误保留错误码，页面按当前语言显示文案。浮窗只能调用自身窗口操作，不能直接访问后端或文件接口。
 
 全量 JSON 备份带 `wifimeter-backend-backup` 标记；CSV 用于导出，不能作为完整备份恢复。恢复前暂停采集。旧数据导入保留原文和恢复备份，重叠日期需明确选择；后端异常重启会恢复最后确认的暂停及应用采集状态。

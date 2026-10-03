@@ -65,6 +65,19 @@ export async function launchRenderer({ env }) {
     requests.handle('updates:status', () => updates);
     requests.handle('updates:setting', (_event, value) => (updates = { ...updates, checkOnStartup: value }));
     requests.handle('legacy:status', () => ({ found: false }));
+    // 数据位置夹具：默认使用隔离目录，切换后指向 -custom 目录，测试可整体替换处理器。
+    const defaultDatabase = path.join(env.WIFIMETER_USER_DATA, 'wifimeter.db');
+    let dataLocation = { directory: env.WIFIMETER_USER_DATA, database: defaultDatabase, custom: false, temporaryDefault: false, defaultDirectory: env.WIFIMETER_USER_DATA };
+    requests.handle('data-location:read', () => dataLocation);
+    requests.handle('data-location:choose', () => {
+        const directory = `${env.WIFIMETER_USER_DATA}-custom`;
+        dataLocation = { ...dataLocation, directory, database: path.join(directory, 'wifimeter.db'), custom: true, temporaryDefault: false };
+        return { ok: true, changed: true, directory, database: dataLocation.database, copied: true, source: defaultDatabase };
+    });
+    requests.handle('data-location:reset', () => {
+        dataLocation = { ...dataLocation, directory: dataLocation.defaultDirectory, database: defaultDatabase, custom: false, temporaryDefault: false };
+        return { ok: true, changed: true, directory: dataLocation.directory, database: defaultDatabase, copied: true };
+    });
     requests.handle('app-icons:get', () => null);
     requests.handle('files:save', async (_event, { body }) => {
         if (!files.save) return { canceled: true };
