@@ -30,3 +30,5 @@ pub mod windows_login;
 pub mod windows_icons;
 #[cfg(windows)]
 pub mod windows_control;
+#[cfg(windows)]
+pub mod windows_update;
