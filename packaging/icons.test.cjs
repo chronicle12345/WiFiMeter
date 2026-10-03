@@ -9,11 +9,9 @@ const root = path.resolve(__dirname, '..');
 const desktopRequire = createRequire(path.join(root, 'apps/desktop/package.json'));
 const assets = path.join(root, 'apps/desktop/assets');
 
-test('Windows installer and uninstaller explicitly use the application logo', () => {
-    const config = require('./windows/electron-builder.cjs');
-    assert.equal(config.win.icon, 'assets/icon.ico');
-    assert.equal(config.nsis.installerIcon, config.win.icon);
-    assert.equal(config.nsis.uninstallerIcon, config.win.icon);
+test('Tauri uses the application ICO and PNG for native bundles', () => {
+    const config = require('../apps/desktop/src-tauri/tauri.conf.json');
+    assert.deepEqual(config.bundle.icon, ['../assets/icon.ico', '../assets/icon.png']);
 });
 
 test('SVG, PNG and every ICO frame match the official logo with transparent corners', async () => {
@@ -39,8 +37,16 @@ test('SVG, PNG and every ICO frame match the official logo with transparent corn
     const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
     try {
         const page = await browser.newPage({ deviceScaleFactor: 1 });
+        // 与生成器相同的 CSS 像素栅格化。
+        await page.setContent('<style>html,body{margin:0;background:transparent}img{display:block;width:100vw;height:100vh}</style><img alt="">');
+        await page.locator('img').evaluate(async (image, svg) => {
+            image.src = `data:image/svg+xml;base64,${svg}`;
+            await image.decode();
+        }, source.toString('base64'));
         for (const { size, png } of frames) {
-            const result = await page.evaluate(async ({ size, png, svg }) => {
+            await page.setViewportSize({ width: size, height: size });
+            const reference = await page.screenshot({ omitBackground: true });
+            const result = await page.evaluate(async ({ size, png, reference }) => {
                 async function pixels(src) {
                     const image = new Image();
                     image.src = src;
@@ -52,17 +58,24 @@ test('SVG, PNG and every ICO frame match the official logo with transparent corn
                     return { width: image.naturalWidth, height: image.naturalHeight, data: context.getImageData(0, 0, size, size).data };
                 }
                 const actual = await pixels(`data:image/png;base64,${png}`);
-                const expected = await pixels(`data:image/svg+xml;base64,${svg}`);
+                const expected = await pixels(`data:image/png;base64,${reference}`);
                 let difference = 0;
-                for (let i = 0; i < actual.data.length; i++) difference += Math.abs(actual.data[i] - expected.data[i]);
+                for (let i = 0; i < actual.data.length; i += 4) {
+                    // 比较实际可见颜色；完全透明像素的 RGB 以及低 alpha 边缘的反预乘舍入不影响显示。
+                    for (let channel = 0; channel < 3; channel++) difference += Math.abs(
+                        actual.data[i + channel] * actual.data[i + 3] / 255 - expected.data[i + channel] * expected.data[i + 3] / 255);
+                    difference += Math.abs(actual.data[i + 3] - expected.data[i + 3]);
+                }
                 return { width: actual.width, height: actual.height, difference: difference / actual.data.length,
                     corners: [3, (size - 1) * 4 + 3, (size * (size - 1)) * 4 + 3, size * size * 4 - 1].map(i => actual.data[i]) };
-            }, { size, png: png.toString('base64'), svg: source.toString('base64') });
+            }, { size, png: png.toString('base64'), reference: reference.toString('base64') });
             assert.equal(result.width, size);
             assert.equal(result.height, size);
             assert.deepEqual(result.corners, [0, 0, 0, 0], `${size}px corners must remain transparent`);
-            // Allow small browser rasterizer differences, but reject a different palette or shape.
-            assert.ok(result.difference < 2, `${size}px differs from the official SVG: ${result.difference}`);
+            // 16/24px 图标的边缘占比高，允许 Windows/Linux 栅格化产生至多 4/255 的平均差异；
+            // 其余尺寸保留 2/255 上限，拒绝不同配色或图案。
+            const tolerance = size < 32 ? 4 : 2;
+            assert.ok(result.difference < tolerance, `${size}px differs from the official SVG: ${result.difference}`);
         }
     } finally {
         await browser.close();

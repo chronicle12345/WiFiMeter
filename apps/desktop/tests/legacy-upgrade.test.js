@@ -64,11 +64,11 @@ async function runGuardFixture(script) {
 }
 
 test('installer replaces the default process terminator at the final selected-directory check', async () => {
-    const nsis = await readFile(path.join(root, 'packaging/windows/installer.nsh'), 'utf8');
-    assert.match(nsis, /!macro customCheckAppRunning\b/);
-    const definition = '!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}\\stop-legacy.ps1"';
-    assert.ok(nsis.indexOf(definition) >= 0 && nsis.indexOf(definition) < nsis.indexOf('!macro customCheckAppRunning'), 'Resolve the helper at include time, before macro expansion');
-    const macro = nsis.slice(nsis.indexOf('!macro customCheckAppRunning'), nsis.indexOf('!macroend'));
+    const nsis = await readFile(path.join(root, 'packaging/windows/tauri-hooks.nsh'), 'utf8');
+    assert.match(nsis, /!macro CheckIfAppIsRunning\b/);
+    const definition = '!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}/stop-legacy.ps1"';
+    assert.ok(nsis.indexOf(definition) >= 0 && nsis.indexOf(definition) < nsis.indexOf('!macro CheckIfAppIsRunning'), 'Resolve the helper at include time, before macro expansion');
+    const macro = nsis.slice(nsis.indexOf('!macro CheckIfAppIsRunning'), nsis.indexOf('!macroend'));
     assert.ok(macro.includes('"${WIFIMETER_LEGACY_HELPER}"'));
     assert.ok(!macro.includes('${__FILEDIR__}'), 'Installer and uninstaller call sites must not determine the helper path');
     assert.match(nsis, /-InstallDirectory "\$INSTDIR(?:\\\.)?"/);

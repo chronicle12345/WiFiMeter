@@ -1,6 +1,6 @@
 # 项目架构
 
-桌面应用位于 `apps/desktop/`：同一套页面通过 Tauri 宿主面向 Windows/Linux，真实网络采集与业务存储由本机 C++ 后端负责。发布包已使用 Tauri；旧 Electron 开发入口和 CI 正在后续清理中。
+桌面应用位于 `apps/desktop/`：同一套页面通过 Tauri 宿主面向 Windows/Linux，真实网络采集与业务存储由本机 C++ 后端负责。开发、测试与发布入口均已切换到 Tauri；原有页面和数据目录保留。
 
 ## 当前数据流
 
@@ -88,4 +88,4 @@ C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `bui
 身份定义集中在 `apps/desktop/src-tauri/src/identity.rs` 并有单元测试；显示名称更新时保留
 Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
 
-发布打包不修改用户数据。运行时保留原有数据目录和升级兼容逻辑；测试使用独立配置目录。桌面、采集器和打包工具分别验证，CI 入口位于 `.github/workflows/`。
+发布打包不修改用户数据。运行时保留原有数据目录和升级兼容逻辑；测试使用独立配置目录。桌面、采集器和打包工具分别验证，CI 入口位于 `.github/workflows/`，可复用脚本位于 `.github/scripts/`。

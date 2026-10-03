@@ -1,15 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { productIdentityFor } from '../electron/product.cjs';
 
 const read = file => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8'));
 
 test('Tauri 配置沿用 Windows 产品身份和版本，主窗口由原生宿主创建', () => {
     const config = read('../src-tauri/tauri.conf.json');
-    const identity = productIdentityFor('win32', 'C:\\AppData');
-    assert.equal(config.productName, identity.productName);
-    assert.equal(config.identifier, identity.appUserModelId);
+    assert.equal(config.productName, 'WiFiMeter');
+    assert.equal(config.identifier, 'io.wifimeter.demo');
     assert.equal(config.version, '../package.json');
     assert.equal(config.build.frontendDist, '../dist/tauri');
     assert.equal(config.app.withGlobalTauri, true);

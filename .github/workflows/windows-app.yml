@@ -1,4 +1,4 @@
-name: Windows native matrix
+name: Windows cross build and native tests
 
 on:
   workflow_call:
@@ -7,156 +7,106 @@ permissions:
   contents: read
 
 jobs:
-  native:
-    name: Windows ${{ matrix.arch }} backend, UI and packages
-    runs-on: ${{ matrix.runner }}
+  cross:
+    name: Build Windows x64 on Linux
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: windows-latest
-            arch: x64
-            node_arch: x64
-            python_arch: x64
-            cmake_arch: x64
-          - runner: windows-latest
-            arch: ia32
-            node_arch: x86
-            python_arch: x64
-            cmake_arch: Win32
-          - runner: windows-11-arm
-            arch: arm64
-            node_arch: arm64
-            python_arch: arm64
-            cmake_arch: ARM64
-    defaults:
-      run:
-        shell: pwsh
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc-posix
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22.22.0
-          architecture: ${{ matrix.node_arch }}
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        if: matrix.arch != 'arm64'
-        with:
-          python-version: 3.13.7
-          architecture: ${{ matrix.python_arch }}
-      - name: Use the official portable ARM64 Python runtime
-        if: matrix.arch == 'arm64'
+      - run: bash .github/scripts/linux-deps.sh
+      - run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+          rustup target add x86_64-pc-windows-gnu
+          npm ci --prefix apps/desktop
+      - name: Build collectors, core tests and debug WebView2 host
         run: |
-          $archive = Join-Path $env:RUNNER_TEMP 'python-arm64.zip'
-          Invoke-WebRequest 'https://www.python.org/ftp/python/3.13.7/python-3.13.7-embed-arm64.zip' -OutFile $archive
-          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '2DDCF25E71F7205E652EBB57439F22FD2BAB37D7F5C9152DBE32867BF2C77A50') { throw 'Python archive checksum mismatch' }
-          $directory = Join-Path $env:RUNNER_TEMP 'python-arm64'
-          Expand-Archive -LiteralPath $archive -DestinationPath $directory
-          & "$directory/python.exe" -c "import platform, struct; assert platform.machine().lower() == 'arm64'; assert struct.calcsize('P') == 8; import multiprocessing, ctypes, socket"
-          if ($LASTEXITCODE) { throw 'ARM64 Python runtime verification failed' }
-          $directory >> $env:GITHUB_PATH
-      - name: Resolve architecture and installed Visual Studio generator
-        run: |
-          node .github/workflows/scripts/ci.cjs environment win32 '${{ matrix.arch }}'
-          if ($LASTEXITCODE) { throw '目标 Node.js 架构不匹配' }
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          $installed = & $vswhere -latest -products '*' -property installationVersion
-          if ($LASTEXITCODE -or -not $installed) { throw '缺少 Visual Studio C++ 工具链' }
-          $major = ($installed -split '\.')[0]
-          $capabilities = cmake -E capabilities | ConvertFrom-Json
-          if ($LASTEXITCODE) { throw '无法读取 CMake 生成器' }
-          $generator = $capabilities.generators.name | Where-Object { $_ -match "^Visual Studio $major " } | Select-Object -First 1
-          if (-not $generator) { throw 'CMake 不支持当前 Visual Studio 版本' }
-          "CMAKE_GENERATOR=$generator" >> $env:GITHUB_ENV
-      - name: Install locked desktop dependencies
-        run: |
-          if ('${{ matrix.arch }}' -eq 'ia32') {
-            # 只安装锁定依赖；ia32 使用下面显式下载的兼容 runtime。
-            npm ci --prefix apps/desktop --ignore-scripts
-          } else {
-            npm ci --prefix apps/desktop
-          }
-          if ($LASTEXITCODE) { throw 'npm ci 失败' }
-      - name: Download pinned official ia32 runtime with checksum verification
-        if: matrix.arch == 'ia32'
-        id: ia32_runtime
-        run: node .github/workflows/scripts/install-electron-ia32.cjs download
-      - name: Activate Electron 43 compatibility runtime for ia32 fixture tests
-        if: matrix.arch == 'ia32'
-        env:
-          ELECTRON_ARCHIVE: ${{ steps.ia32_runtime.outputs.archive }}
-          ELECTRON_DIRECTORY: ${{ steps.ia32_runtime.outputs.directory }}
-        run: |
-          # 用 runner 的原生 PowerShell 解包，避免 Electron 44 解包器缺少 ia32 native binding。
-          Expand-Archive -LiteralPath $env:ELECTRON_ARCHIVE -DestinationPath $env:ELECTRON_DIRECTORY -Force
-          node .github/workflows/scripts/install-electron-ia32.cjs activate $env:ELECTRON_DIRECTORY
-      - name: Configure, build and run all native backend tests
-        run: |
-          cmake -S backend -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -A '${{ matrix.cmake_arch }}' -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON
-          if ($LASTEXITCODE) { throw 'CMake 配置失败' }
-          cmake --build $env:BUILD_DIR --config Release --parallel 2
-          if ($LASTEXITCODE) { throw '后端构建失败' }
-          ctest --test-dir $env:BUILD_DIR --output-on-failure --no-tests=error -C Release
-          if ($LASTEXITCODE) { throw '后端测试失败' }
-          node .github/workflows/scripts/ci.cjs backend win32 '${{ matrix.arch }}' "$env:BUILD_DIR/app"
-      - name: Require actual native ETW capture
-        # ARM64 与 ia32 也必须执行；非管理员、Wine、runner 能力不足均失败。
-        run: python backend/tests/windows_app_capture_smoke.py "$env:BUILD_DIR/app/wifimeter-app-capture.exe" --require-native
-      - name: Require actual native TCP EStats capture
-        run: |
-          & (Join-Path $env:GITHUB_WORKSPACE "$env:BUILD_DIR/tests/Release/windows_estats_smoke_test.exe")
-          if ($LASTEXITCODE -ne 0) { throw 'TCP EStats must pass with native administrator permissions; a skip is not a pass.' }
-      - name: Desktop unit tests against the native backend
-        run: npm --prefix apps/desktop run test:unit
-      - name: Full fixture UI tests on the actual runner
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-development.json
-        run: |
-          npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-development"
-          if ($LASTEXITCODE) { throw 'UI 无法运行或测试失败；不能跳过当作成功' }
-          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
-      - name: Build NSIS and portable packages
-        run: node packaging/windows/build.cjs --arch '${{ matrix.arch }}' --formats nsis,portable
-      - name: Verify packaged architecture, backend version and external control module
-        run: |
-          node .github/workflows/scripts/ci.cjs directory win32 '${{ matrix.arch }}' $env:UNPACKED_DIR
-          if ($LASTEXITCODE) { throw '随包程序或资源验证失败' }
-          node --test apps/desktop/tests/windows-packaging.test.js
-      - name: Packaged Electron fixture smoke test
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-packaging.json
-        run: |
-          $env:WIFIMETER_EXECUTABLE = Join-Path $env:UNPACKED_DIR 'WiFiMeter.exe'
-          $env:WIFIMETER_BACKEND = Join-Path $env:UNPACKED_DIR 'resources/wifimeter-backend.exe'
-          npm --prefix apps/desktop run test:ui -- desktop.spec.js --grep '@packaged-smoke' --reporter=list,json --output "$env:RUNNER_TEMP/playwright-packaging"
-          if ($LASTEXITCODE) { throw '打包应用 UI 验证失败' }
-          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
-      - name: Verify automatic packaged backend discovery
-        run: node .github/workflows/scripts/smoke-discovery.cjs
-      - name: Stage only fully verified release assets
-        id: stage
-        run: node .github/workflows/scripts/ci.cjs stage win32 '${{ matrix.arch }}'
+          node packaging/windows/build-backend.mjs --tests
+          npm --prefix apps/desktop run build:frontend
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-gnu --features test-fixture --no-run --message-format=json > .cross-build/windows-rust-tests.jsonl
+          node .github/scripts/windows-rust-tests.mjs stage .cross-build/windows-rust-tests .cross-build/windows-rust-tests.jsonl
+          cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-gnu --features custom-protocol,test-fixture --bin WiFiMeter
+      - name: Build NSIS and portable ZIP
+        run: node packaging/build-windows.cjs --skip-rebuild
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: release-windows-${{ matrix.arch }}
+          name: windows-cross-build
+          include-hidden-files: true
+          path: |
+            dist/windows/
+            build/windows/app/*.exe
+            build/windows/tests/*.exe
+            .cross-build/windows-rust-tests/
+            apps/desktop/src-tauri/target/x86_64-pc-windows-gnu/debug/WiFiMeter.exe
+            apps/desktop/src-tauri/target/x86_64-pc-windows-gnu/debug/WebView2Loader.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  native:
+    name: Test Linux-built Windows binaries
+    needs: cross
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.19.0
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: windows-cross-build
+          path: .
+      - run: |
+          npm ci --prefix apps/desktop
+          if ($LASTEXITCODE) { throw 'npm ci failed' }
+          node .github/scripts/ci.cjs environment win32 x64
+      - name: Native C++ and Rust tests, including real collector tests
+        run: |
+          $env:WIFIMETER_BACKEND_BINARY = $env:WIFIMETER_BACKEND
+          node packaging/windows/run-windows-tests.mjs
+          if ($LASTEXITCODE) { throw 'Native backend tests failed' }
+          node .github/scripts/windows-rust-tests.mjs run .cross-build/windows-rust-tests
+          if ($LASTEXITCODE) { throw 'Native Rust tests failed' }
+          npm run test:unit
+          if ($LASTEXITCODE) { throw 'Desktop unit tests failed' }
+      - name: Real WebView2 UI and native input tests
+        run: |
+          $env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/x86_64-pc-windows-gnu/debug/WiFiMeter.exe').Path
+          node apps/desktop/tests/e2e/smoke-windows.mjs
+          if ($LASTEXITCODE) { throw 'WebView2 test failed; an unavailable input desktop is not a pass' }
+      - name: Verify final portable archive with bundled collector
+        run: |
+          $version = node -p "require('./apps/desktop/package.json').version"
+          $archive = "dist/windows/WiFiMeter-$version-windows-x64-Portable.zip"
+          $directory = Join-Path $env:RUNNER_TEMP 'portable'
+          Expand-Archive $archive $directory
+          $env:WIFIMETER_EXECUTABLE = Join-Path $directory 'win-unpacked/WiFiMeter.exe'
+          $env:WIFIMETER_BACKEND = Join-Path $directory 'win-unpacked/wifimeter-backend.exe'
+          node apps/desktop/tests/e2e/smoke-package-windows.mjs
+          if ($LASTEXITCODE) { throw 'Packaged WebView2 test failed' }
+          node .github/scripts/ci.cjs directory win32 x64 "$directory/win-unpacked"
+          if ($LASTEXITCODE) { throw 'Packaged resources failed' }
+      - name: Stage verified assets
+        id: stage
+        run: node .github/scripts/ci.cjs stage win32 x64
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-windows-x64
           path: ${{ steps.stage.outputs.directory }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-      - name: Upload failure diagnostics separately from release assets
-        if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: diagnostics-windows-${{ matrix.arch }}
-          path: |
-            ${{ runner.temp }}/ui-*.json
-            ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
-            ${{ runner.temp }}/playwright-*/
-          if-no-files-found: ignore
-          retention-days: 7

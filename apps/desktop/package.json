@@ -1,18 +1,16 @@
 {
-  "name": "wifimeter-linux",
+  "name": "wifimeter-desktop",
   "version": "1.2.2",
   "description": "Cross-platform network traffic monitoring with local storage",
   "private": true,
   "type": "module",
-  "main": "electron/main.cjs",
   "author": "WiFiMeter contributors",
   "license": "MIT",
   "scripts": {
     "build:frontend": "node scripts/build-frontend.mjs",
     "tauri": "tauri",
-    "dev:windows": "tauri dev",
-    "start": "electron .",
-    "test": "node --test tests/*.test.js && playwright test",
+    "start": "node scripts/dev.mjs",
+    "test": "npm run test:unit && npm run test:rust && npm run test:ui",
     "test:unit": "node --test tests/*.test.js",
     "test:ui": "playwright test",
     "test:tauri:windows": "node tests/e2e/smoke-windows.mjs",
@@ -20,30 +18,14 @@
     "dist:linux": "node ../../packaging/build-linux.cjs",
     "dist:windows": "node ../../packaging/build-windows.cjs",
     "dist:all": "node ../../packaging/build-all.cjs",
-    "build:backend": "node ../../packaging/build-backend.cjs"
+    "build:backend": "node ../../packaging/build-backend.cjs",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --features test-fixture"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
-    "@tauri-apps/cli": "2.12.1",
-    "electron": "44.4.5",
-    "electron-builder": "26.15.3"
-  },
-  "build": {
-    "appId": "io.wifimeter.linux",
-    "productName": "WiFiMeter",
-    "directories": {
-      "buildResources": "assets"
-    },
-    "files": [
-      "electron/**/*",
-      "renderer/**/*",
-      "assets/icon.png",
-      "assets/icon.ico",
-      "LICENSE"
-    ]
+    "@tauri-apps/cli": "2.12.1"
   },
   "homepage": "https://github.com/chronicle12345/WiFiMeter",
-  "desktopName": "wifimeter.desktop",
   "dependencies": {
     "dompurify": "3.4.16",
     "marked": "18.0.14"

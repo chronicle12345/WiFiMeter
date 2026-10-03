@@ -27,9 +27,9 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22.22.0
+          node-version: 24.19.0
       - name: Validate workflow helpers
-        run: node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs
+        run: node --test .github/scripts/ci.test.cjs
       - name: Check workflow syntax with pinned actionlint
         shell: bash
         run: |
@@ -41,7 +41,7 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
       - id: metadata
         name: Read package version and require matching tag notes
-        run: node .github/workflows/scripts/ci.cjs metadata
+        run: node .github/scripts/ci.cjs metadata
 
   windows:
     name: Windows matrix
@@ -63,63 +63,52 @@ jobs:
             arch: x64
           - runner: ubuntu-24.04-arm
             arch: arm64
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22.22.0
+          node-version: 24.19.0
           architecture: ${{ matrix.arch }}
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: 3.13.7
-          architecture: ${{ matrix.arch }}
       - name: Resolve native paths
-        run: node .github/workflows/scripts/ci.cjs environment linux "${{ matrix.arch }}"
+        run: node .github/scripts/ci.cjs environment linux "${{ matrix.arch }}"
       - name: Install dependencies from the fixed Ubuntu snapshot
-        run: bash .github/workflows/scripts/linux-deps.sh
+        run: bash .github/scripts/linux-deps.sh
       - name: Install locked desktop dependencies
         run: npm ci --prefix apps/desktop
-      - name: Validate real Linux package metadata and artifact naming
-        run: node --test .github/workflows/scripts/linux-package-contract.test.cjs
-      - name: Build and test with the Ubuntu 22.04 compatibility baseline
+      - name: Build native collectors and Tauri test host
         run: |
-          docker run --rm --env HOST_UID="$(id -u)" --env HOST_GID="$(id -g)" --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" --workdir "$GITHUB_WORKSPACE" ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02 bash .github/workflows/scripts/linux-build-baseline.sh "${{ matrix.arch }}"
-      - name: Re-run backend tests on the native host
-        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+          cmake -S backend -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_LINUX_APP_CAPTURE=ON -DWIFIMETER_BPF_CLANG=clang-18
+          cmake --build "$BUILD_DIR" --parallel 2
           ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error -E '^linux_app_capture_smoke$'
-          node .github/workflows/scripts/ci.cjs backend linux "${{ matrix.arch }}" "$BUILD_DIR/app"
-      - name: Require actual native eBPF capture
-        # 不把 CTest 的 SKIP_RETURN_CODE=77 当成原生采集验证成功。
-        run: sudo "$(command -v python)" backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
-      - name: Desktop unit tests with the native backend
-        run: npm --prefix apps/desktop run test:unit
-      - name: Full fixture UI tests
+          sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
+          npm --prefix apps/desktop run build:frontend
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --features test-fixture -- --include-ignored
+          cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol,test-fixture --bin WiFiMeter
+      - name: Unit and browser regression tests
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/ui-development.json
         run: |
-          node -e "const fs=require('node:fs'); const path=require('node:path'); const exe=require('./apps/desktop/node_modules/electron'); if (!fs.existsSync(exe)) throw Error('Electron runtime is missing'); if (!fs.existsSync(path.join(path.dirname(exe),'chrome-sandbox'))) throw Error('Electron sandbox helper is missing');"
-          sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
-          node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
-      - name: Build deb, rpm and AppImage
-        run: node packaging/linux/build.cjs --arch "${{ matrix.arch }}" --formats deb,rpm,AppImage --skip-rebuild
-      - name: Extract every package and verify native backend and fixture UI
-        run: bash .github/workflows/scripts/linux-packages.sh "${{ matrix.arch }}"
-      - name: Verify the packaged directory without a backend path override
+          npm run test:unit
+          npm --prefix apps/desktop exec -- playwright install chromium
+          npm --prefix apps/desktop run test:ui -- --reporter=list,json
+          node .github/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
+      - name: Real WebKitGTK test
         run: |
-          sudo chown root:root "$UNPACKED_DIR/chrome-sandbox"
-          sudo chmod 4755 "$UNPACKED_DIR/chrome-sandbox"
-          dbus-run-session -- xvfb-run -a node .github/workflows/scripts/smoke-discovery.cjs
+          export WIFIMETER_EXECUTABLE="$GITHUB_WORKSPACE/apps/desktop/src-tauri/target/debug/WiFiMeter"
+          dbus-run-session -- xvfb-run -a node apps/desktop/tests/e2e/smoke-linux.mjs
+      - name: Build and verify the final deb package
+        run: |
+          node packaging/build-linux.cjs --arch "${{ matrix.arch }}" --formats deb --skip-rebuild
+          bash .github/scripts/linux-packages.sh "${{ matrix.arch }}"
       - name: Stage only fully verified release assets
         id: stage
-        run: node .github/workflows/scripts/ci.cjs stage linux "${{ matrix.arch }}"
+        run: node .github/scripts/ci.cjs stage linux "${{ matrix.arch }}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-linux-${{ matrix.arch }}
@@ -139,17 +128,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  legacy-powershell:
-    name: Original 1.1.1 PowerShell attachment
-    needs: metadata
-    uses: ./.github/workflows/legacy-powershell.yml
-    permissions:
-      contents: read
-
   required:
     name: Required integration checks
     if: ${{ always() }}
-    needs: [metadata, windows, linux, legacy-powershell]
+    needs: [metadata, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -158,16 +140,14 @@ jobs:
           METADATA_RESULT: ${{ needs.metadata.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           LINUX_RESULT: ${{ needs.linux.result }}
-          LEGACY_RESULT: ${{ needs.legacy-powershell.result }}
         run: |
           test "$METADATA_RESULT" = success
           test "$WINDOWS_RESULT" = success
           test "$LINUX_RESULT" = success
-          test "$LEGACY_RESULT" = success
 
   publish:
     name: Publish verified v1.2 release
-    needs: [metadata, windows, linux, legacy-powershell, required]
+    needs: [metadata, windows, linux, required]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.2.') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -179,23 +159,15 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 22.22.0
+          node-version: 24.19.0
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: release-*
           path: ${{ runner.temp }}/release-artifacts
           merge-multiple: false
-      - name: Require all five matrices, twelve assets and matching SHA-256
+      - name: Require all three matrices, four assets and matching SHA-256
         id: assets
-        run: node .github/workflows/scripts/ci.cjs release-files "$RUNNER_TEMP/release-artifacts"
-      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
-        with:
-          name: legacy-powershell-1.1.1
-          path: ${{ runner.temp }}/legacy-powershell
-      - name: Verify fixed 1.1.1 PowerShell attachment and append to upload list
-        env:
-          ASSETS_FILE: ${{ steps.assets.outputs.assets_file }}
-        run: node .github/workflows/scripts/legacy-powershell.cjs "$RUNNER_TEMP/legacy-powershell" "$ASSETS_FILE"
+        run: node .github/scripts/ci.cjs release-files "$RUNNER_TEMP/release-artifacts"
       - name: Publish using only this workflow's GITHUB_TOKEN
         env:
           GH_TOKEN: ${{ github.token }}
@@ -209,7 +181,6 @@ jobs:
           combined_notes="$RUNNER_TEMP/release-notes.md"
           cat "$notes_file" > "$combined_notes"
           printf '\n\n' >> "$combined_notes"
-          cat docs/releases/powershell-1.1.1-attachment.md >> "$combined_notes"
           mapfile -t assets < "$ASSETS_FILE"
           # 先完整上传草稿，再公开；失败时不公开部分产物，也不覆盖已有 release。
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$combined_notes" "${assets[@]}"

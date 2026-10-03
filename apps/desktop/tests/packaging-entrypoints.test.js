@@ -6,21 +6,23 @@ import os from 'node:os';
 import path from 'node:path';
 
 async function fixture(t) {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'wifimeter package entries '));
-    t.after(() => rm(root, { recursive: true, force: true }));
-    for (const target of ['windows', 'linux']) {
-        await mkdir(path.join(root, 'packaging', target), { recursive: true });
-        await writeFile(path.join(root, 'packaging', target, 'build.cjs'), `
-            require('node:fs').appendFileSync(process.env.TEST_LOG, JSON.stringify({ target: '${target}', args: process.argv.slice(2) }) + '\\n');
-            if (process.env.TEST_FAIL === '${target}') process.exitCode = 7;
-        `);
-    }
+    const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'wifimeter package entries '));
+    t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+    await mkdir(path.join(fixtureRoot, 'packaging'), { recursive: true });
+    // 替身只写入 mkdtemp 创建的目录，正式 packaging/tauri.cjs 不参与编辑。
+    await writeFile(path.join(fixtureRoot, 'packaging', 'tauri.cjs'), `
+        exports.buildDesktop = async platform => {
+            const target = platform === 'win32' ? 'windows' : 'linux';
+            require('node:fs').appendFileSync(process.env.TEST_LOG, JSON.stringify({ target, args: process.argv.slice(2) }) + '\\n');
+            if (process.env.TEST_FAIL === target) process.exitCode = 7;
+        };
+    `);
     for (const file of ['build-windows.cjs', 'build-linux.cjs', 'build-all.cjs', 'targets.cjs', 'build-failure.cjs']) {
-        await copyFile(new URL(`../../../packaging/${file}`, import.meta.url), path.join(root, 'packaging', file));
+        await copyFile(new URL(`../../../packaging/${file}`, import.meta.url), path.join(fixtureRoot, 'packaging', file));
     }
-    const log = path.join(root, 'calls.jsonl');
+    const log = path.join(fixtureRoot, 'calls.jsonl');
     return {
-        run: (entry, args = [], fail = '') => spawnSync(process.execPath, [path.join(root, 'packaging', entry), ...args], {
+        run: (entry, args = [], fail = '') => spawnSync(process.execPath, [path.join(fixtureRoot, 'packaging', entry), ...args], {
             cwd: os.tmpdir(), encoding: 'utf8', env: { ...process.env, TEST_LOG: log, TEST_FAIL: fail }
         }),
         calls: async () => (await readFile(log, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; })).trim().split('\n').filter(Boolean).map(JSON.parse)

@@ -1,195 +1,86 @@
-# Windows and Linux Tauri migration
+# WiFiMeter 桌面应用
 
-This directory contains the shared renderer and Tauri host. `scripts/build-frontend.mjs` copies the
-renderer, styles, floating-window assets and the two browser dependencies without
-bundling Electron or changing the page layout. The HTML entry script, CSP and host-dialog stylesheet are adapted. `src-tauri` contains the Rust host and the existing C++ collector's
-JSON-lines client. No Node.js runtime is required by that host.
+Windows 和 Linux 共用原有页面，Tauri/Rust 提供窗口、托盘、双语弹窗、文件操作、自启动、通知和更新；C++ 子进程负责采集及 SQLite 存储。运行时不需要 Node.js。
 
-The migration is in progress. Packaging commands now build Tauri from Linux;
-see [packaging instructions](../../packaging/README.md). The default development
-launcher remains Electron until the remaining acceptance checks and repository
-cleanup are complete. Windows and Linux Release directories have passed real
-WebView2 / WebKitGTK tests with their bundled collectors. Installed upgrades,
-notifications and the complete Linux platform acceptance are still pending.
-Automatic and manual legacy imports are connected: collection starts
-after migration, failed imports keep it paused, and overlapping dates require an
-explicit decision. Recovery backups preserve the original JSON text and counters.
-If the collector crashes, its replacement restores the last confirmed pause and
-application-collection settings before serving requests. Rejected changes do not
-replace those settings, and a process still saving during shutdown is never restarted.
-Windows autostart uses the existing `io.wifimeter.demo` login item and reads back
-the applied state. Legacy imports inherit only the enabled current executable;
-unmatched portable paths and failed migrations preserve existing entries until
-an explicit preference change. Isolated profiles do not modify real login items.
-Linux keeps Electron's `$XDG_CONFIG_HOME/WiFiMeter` profile (`~/.config/WiFiMeter`
-by default). Autostart uses `autostart/wifimeter.desktop` under that config root,
-quotes executable paths and uses the persistent AppImage launcher when available.
-Quota alerts use the official Tauri notification plugin, with the existing language,
-notification preference and application icon. Isolated profiles record dispatches
-to stderr instead of posting real notifications. Windows notification identity must
-still be verified with an installed release package, as required by the plugin.
-Tray activation, close preferences, remembered choices and the renderer's existing
-unsaved-change checks are connected to the native window lifecycle. Close, exit,
-resume and import confirmations use the existing UI tokens and follow its theme
-and language. Native dialogs remain available before the page is ready.
-The floating window reuses the original renderer and supports all shapes/palettes,
-physical-pixel placement with monitor DPI, edge snapping, idle collapse/hover
-expansion, live speed units, reopening the main window and independent close.
-Application icons are extracted with Windows Shell on background IPC workers and
-returned as transparent PNG data URLs to the unchanged renderer. Only executable
-paths present in backend application records are used; historical lookups,
-bounded caches, concurrent request sharing and missing-icon fallbacks are preserved.
-Application network control reuses the existing Windows policy module, embedded
-in the host and extracted under the profile's `native/windows` directory. The
-hidden runner validates local executable headers, preserves cancellation and
-partial policy states, and retains the existing decimal upload-rate conversion.
-Only the helper's PowerShell sessions set their execution policy; no registry
-execution policy is changed. Drawer messages and picker titles follow the app
-language; original provider diagnostics remain in detail fields.
-Linux uses GIO/GTK file icons, GTK fallback confirmations and `xdg-open` for
-validated update links. Per-application network controls remain unsupported on
-Linux, as in the existing host, with localized feedback. Linux updates open the
-release download page for manual installation.
-The existing update page now uses the Rust update service, with persisted preferences,
-automatic-check rate limits, release asset selection, streamed SHA-256 verification
-and phase progress. Confirmation dialogs follow the UI theme and language. The
-Windows helper locks and rechecks the installer, accepts a READY/GO handshake and
-waits for the host to exit. Preparation checks unsaved changes and gracefully stops
-collection; failures restore the original pause and application-collection states.
-Pending shutdown or failed recovery keeps data operations blocked until recovery
-succeeds. Automatic checks run only in non-debug, non-isolated builds. Actual release
-installer upgrades still require package acceptance testing.
+## 目录
 
-## Development on Linux
+| 目录 | 职责 |
+| --- | --- |
+| `renderer/` | 页面、样式、数据模型及渲染客户端 |
+| `renderer/host/` | 桌面桥、退出检查、跟随主题和语言的弹窗 |
+| `renderer/mini/` | 与主界面共享样式和速率格式的浮窗 |
+| `src-tauri/src/collection/` | 后端协议、采集会话与旧数据迁移 |
+| `src-tauri/src/desktop/` | IPC、主窗口、浮窗、托盘和对话框 |
+| `src-tauri/src/update/` | 版本判断、下载校验与安装流程 |
+| `src-tauri/src/platform/` | Windows / Linux 系统能力 |
+| `native/windows/` | 嵌入 Rust 宿主的应用网络控制模块 |
+| `scripts/` | 开发入口及前端构建 |
+| `tests/` | 页面与桥接测试；`e2e/` 为系统 WebView 测试，`support/` 为夹具 |
 
-Install the [Linux Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux)
-and `webkit2gtk-driver` for the real WebKitGTK test. Use a graphical session (or
-`xvfb-run` in CI), a session D-Bus, and fonts for the UI language.
+整体数据流及职责见[架构说明](../../docs/ARCHITECTURE.md)。构建输出进入 `dist/tauri/` 和 `src-tauri/target/`，发布包进入仓库根目录 `dist/`。
+
+## 开发与测试
+
+安装 Node.js 24、Rust 和[平台依赖](../../packaging/README.md)，在仓库根目录运行：
 
 ```sh
-node apps/desktop/scripts/build-frontend.mjs
+npm ci --prefix apps/desktop
+npm run build:backend
+npm start
+```
+
+开发入口选择 `build/app/wifimeter-backend`（Linux）或 `build/windows/app/wifimeter-backend.exe`（Windows）。`WIFIMETER_BACKEND` 可覆盖路径；`WIFIMETER_USER_DATA` 可指定独立数据目录。打包只在 Linux 执行，见[三个打包入口](../../packaging/README.md)。
+
+```sh
+npm --prefix apps/desktop exec -- playwright install chromium
+npm run test:unit
+npm run test:rust
+npm run test:ui
+```
+
+测试分层见 [tests/README.md](tests/README.md)。Rust 核心测试不依赖 GTK；需要真实后端的测试显式启用：
+
+```sh
+WIFIMETER_BACKEND="$PWD/build/app/wifimeter-backend" \
+  cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features test-fixture -- --include-ignored
+```
+
+Linux 原生界面测试需要图形会话、会话 D-Bus、中文字体及 `webkit2gtk-driver`：
+
+```sh
+npm --prefix apps/desktop run build:frontend
 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol,test-fixture --bin WiFiMeter
 WIFIMETER_EXECUTABLE="$PWD/apps/desktop/src-tauri/target/debug/WiFiMeter" \
 WIFIMETER_BACKEND="$PWD/build/app/wifimeter-backend" \
-dbus-run-session -- node apps/desktop/tests/e2e/smoke-linux.mjs
+  dbus-run-session -- node apps/desktop/tests/e2e/smoke-linux.mjs
 ```
 
-The test starts WebKitWebDriver directly using the same native capabilities as
-tauri-driver, a temporary profile and the existing real-backend fixtures. It checks
-pages, SQLite data, pause/resume, native file icons, language changes through the
-settings UI, manual-update confirmations, and floating-window creation/IPC/close.
-`WEBKIT_WEBDRIVER` can override the driver path; `WIFIMETER_SCREENSHOT` optionally
-saves a screenshot. It never changes real login items or launches an installer.
-
-For a Release directory, run this script with `--packaged` and point
-`WIFIMETER_EXECUTABLE` at `dist/linux/linux-unpacked/bin/wifimeter`.
-`WIFIMETER_BACKEND` is used only to seed test data, then removed from the application's
-environment so resource lookup is exercised. Release mode skips the debug-only
-update transport fixture. On Windows, `tests/e2e/smoke-package-windows.mjs` applies the same
-resource check, validates the vendor Markdown modules and optionally records
-process-tree metrics at `WIFIMETER_METRICS`; these measurements include CDP.
-
-## Development on Windows
-
-Install Rust, the Visual Studio C++ build tools and WebView2, then run:
-
-```powershell
-npm ci --prefix apps/desktop
-npm run build:backend
-$env:WIFIMETER_BACKEND = (Resolve-Path 'build/windows/app/wifimeter-backend.exe').Path
-# Use an isolated profile while the migration is incomplete.
-$env:WIFIMETER_USER_DATA = Join-Path $env:TEMP 'wifimeter-tauri-development'
-npm --prefix apps/desktop run dev:windows
-```
-
-The production profile remains `%APPDATA%\WiFiMeter Demo`, including `wifimeter.db`
-and `window-preferences.json`. The test override also isolates WebView2 storage.
-
-## Tests
+Windows 调试宿主也在 Linux 交叉编译：
 
 ```sh
-npm --prefix apps/desktop run test:unit
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features test-fixture
-```
-
-The protocol fixture is a separate Rust executable enabled only for tests. Run
-the real collector test after building C++, with `WIFIMETER_BACKEND` set to the
-absolute executable path:
-
-```sh
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test real_backend -- --ignored
-```
-
-Core tests can run on Linux without GTK. Windows-only behavior and WebView2
-rendering are tested by running the cross-built binaries on Windows.
-
-The Windows WebView2 smoke test uses the existing C++ network fixtures and a
-temporary profile. It checks navigation, collection controls, exact counters and
-preference events, isolated autostart changes, bilingual quota notification
-dispatch and its off switch, floating-window shapes/palettes, real native dragging,
-native application icons displayed by the existing application list,
-read-only application policy queries and bilingual picker cancellation,
-edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
-themed close choices in light/dark mode, keyboard focus,
-import/resume localization, tray hiding, single-instance activation and canceling
-an exit with unsaved changes. Update checks use local release/download fixtures;
-the tests cover preference persistence, bilingual confirmation, verified download,
-handoff failure and real collector recovery, unsaved-change cancellation, stale
-error clearing and the manual release-page fallback. It then closes the native window and
-waits for a clean exit:
-
-Build the smoke-test host on Linux with the Windows cross compiler configured:
-
-```sh
-node apps/desktop/scripts/build-frontend.mjs
 cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-gnu --features custom-protocol,test-fixture --bin WiFiMeter
 ```
 
-The update fixture is enabled only when `test-fixture`, debug assertions, test
-isolation, and the profile's `update-fixture` directory are all present. That path
-rejects installer handoff and records external-link requests instead of executing
-them. Release builds do not contain the fixture transport. Point the Windows test
-runner at that cross-built executable:
+随后用 Windows Node 运行测试：
 
 ```powershell
 $env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/x86_64-pc-windows-gnu/debug/WiFiMeter.exe').Path
 $env:WIFIMETER_BACKEND = (Resolve-Path 'build/windows/app/wifimeter-backend.exe').Path
-npm --prefix apps/desktop run test:tauri:windows
+node apps/desktop/tests/e2e/smoke-windows.mjs
 ```
 
-Run this test with Windows Node.js. CDP is enabled only in that test process;
-the normal application does not open a debugging port. Native drag/hover checks
-require a Windows input desktop that accepts cursor positioning.
-`--skip-native-input` explicitly skips only drag/snap/hover checks on a locked
-desktop; its output reports that omission and is not full input acceptance.
+Windows 拖拽和悬停检查需要可接受鼠标定位的输入桌面。`--skip-native-input` 明确跳过这三项并在输出中标记；不能把该结果算作完整输入验收。CDP 只在测试进程启用。更新夹具只存在于启用 `test-fixture` 的隔离调试构建中，不执行安装器。隔离测试不会修改真实登录项或发送真实通知。
 
-API references: [Tauri commands](https://v2.tauri.app/develop/calling-rust/),
-[events](https://v2.tauri.app/develop/calling-frontend/),
-[Windows prerequisites](https://v2.tauri.app/start/prerequisites/).
+发布目录测试使用 Linux 脚本的 `--packaged` 参数，或 Windows 的 `e2e/smoke-package-windows.mjs`。两者都清除被测应用的后端路径覆盖，验证随包资源。安装、升级和卸载的人工检查见 [Windows 验收](../../packaging/windows/ACCEPTANCE.md)。
 
-## Directory and data contracts
+## 数据与接口
 
-- `renderer/`: main UI; `host/` adapts the desktop bridge and themed dialogs;
-  `mini/` contains the floating window; `data/` owns renderer models and clients.
-- `src-tauri/`: Rust host, grouped by collection, desktop, updates and platform.
-- `native/windows/`: the Windows application network-control provider.
-- `scripts/`: frontend asset preparation.
-- `tests/`: unit tests; `e2e/` drives real WebView2/WebKitGTK windows;
-  `support/` supplies isolated, real C++ backend fixtures.
+Windows 沿用 `%APPDATA%\WiFiMeter Demo` 与 `io.wifimeter.demo`，Linux 沿用 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。产品显示名称统一为 WiFiMeter。宿主始终向采集器传入明确的 `--db` 路径；已有数据库和窗口偏好可继续读取。
 
-`renderer/data/client.js` selects the host-backed client or browser mock. The
-`window.desktop` bridge provides backend requests/events, file save/open,
-preferences and platform actions; cancellation remains an explicit result.
-The collector receives an explicit `--db` path and owns `wifimeter.db`.
-Full JSON backups carry the `wifimeter-backend-backup` marker; CSV is an export,
-not a restorable backup. Restore pauses collection before replacing stored data.
+`renderer/data/client.js` 选择真实后端客户端或浏览器 mock。`window.desktop` 保留原有请求、事件、文件保存/打开及偏好接口；取消仍作为独立结果返回。后端错误保留错误码，页面按当前语言显示文案。浮窗只能调用自身窗口操作，不能直接访问后端或文件接口。
 
-Displayed byte units use decimal or IEC scaling, at most two decimal places and
-no trailing zeros. Missing data is shown as `—`, distinct from a measured zero.
-Charts share one unit selected from their peak; CSV uses the selected GB/GiB unit
-with six decimal places.
+全量 JSON 备份带 `wifimeter-backend-backup` 标记；CSV 用于导出，不能作为完整备份恢复。恢复前暂停采集。旧数据导入保留原文和恢复备份，重叠日期需明确选择；后端异常重启会恢复最后确认的暂停及应用采集状态。
 
-Per-application collection is opt-in for each session. Disabling it preserves
-history; permission failures and capture gaps remain separate from total traffic.
-See [Linux capture](../../docs/LINUX_APP_CAPTURE.md) and
-[Windows capture](../../docs/WINDOWS_APP_CAPTURE.md).
+显示单位使用十进制或 IEC 自动缩放，最多两位小数并去掉尾零；测量值 0 与缺失 `—` 区分。图表共用按峰值选择的单位，CSV 使用所选 GB/GiB 单位和六位小数。
+
+应用采集每次会话需要启用，关闭不会删除历史。权限失败及采集缺失与总流量分别记录。Windows 应用防火墙/上传限速复用原有 PowerShell 模块，Linux 仍不支持此功能；Linux 更新通过发布页手动安装。见 [Linux 采集](../../docs/LINUX_APP_CAPTURE.md)和 [Windows 采集](../../docs/WINDOWS_APP_CAPTURE.md)。

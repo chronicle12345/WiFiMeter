@@ -1,3 +1,5 @@
+> Historical plan for the Electron 1.2 integration. Current Tauri validation is documented in [PACKAGING-MATRIX.md](PACKAGING-MATRIX.md).
+
 # Version 1.2 integration acceptance plan
 
 Retain the Electron interface and C++ sampling/storage backend. JavaScript handles UI and operating-system integration; SQLite stores counters transactionally.

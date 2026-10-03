@@ -1,15 +1,9 @@
-# Linux 打包
+# Linux 包
 
-从仓库根目录执行 `npm run dist:linux`。需要 Ubuntu x64、桌面应用的 npm 依赖和系统命令 `dpkg-deb`。
+在对应架构的 Linux 中运行 `node packaging/build-linux.cjs`，默认生成 deb。编译依赖、格式参数及三个入口见[统一打包说明](../README.md)。
 
-流程：确保 Electron 已下载 → electron-builder 组装应用目录 → 本目录的 `build-deb.mjs` 封装 deb。复用应用目录中的 Electron，不额外下载 fpm 打包器。
+程序安装到 `/usr/bin/wifimeter`，后端与 eBPF 采集资源在 `/usr/lib/WiFiMeter/`。运行目录保持相同的 `bin/`、`lib/` 结构。GTK/WebKit 使用系统依赖，用户数据在 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。
 
-输出目录为根目录 `dist/linux/`，包含 `linux-unpacked/` 和 `WiFiMeter-<版本>-linux-amd64.deb`。脚本从自身位置定位仓库，不依赖调用者的工作目录。
+deb 的运行库最低版本由实际二进制计算，须在最老的目标发行版上构建。CI 使用 Ubuntu 24.04；本机 Debian 13 产物不代表 Ubuntu 兼容性。rpm/AppImage 提供生成参数，但尚未完成发布验收。
 
-deb 安装到 `/opt/WiFiMeter/`，同时提供命令入口、桌面菜单和图标。构建命令只生成文件，不安装到系统。
-
-## 多架构入口
-
-从根目录执行 `node packaging/linux/build.cjs --arch x64 --formats deb,rpm,AppImage`，ARM64 主机可执行 `node packaging/linux/build.cjs --arch arm64 --formats deb`。新增入口包含后端编译和打包前后架构检查。原 npm 脚本保留给既有 x64 流程。
-
-工具链、输出目录、系统依赖和未验证项目见 [打包总说明](../README.md)。
+使用 `apps/desktop/tests/e2e/smoke-linux.mjs --packaged` 验证解包程序和随包后端，具体环境变量见[桌面说明](../../apps/desktop/README.md)。

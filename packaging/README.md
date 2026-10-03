@@ -64,4 +64,28 @@ node apps/desktop/tests/tauri-assets.test.js
 
 资源检查包括主程序、两个采集程序、Windows WebView2 加载器的架构，以及 Linux eBPF 对象。发布包运行验证须清除 `WIFIMETER_BACKEND` 覆盖，确认应用确实使用随包后端。
 
-2026-10-03 在 Linux x64 上生成的 Windows Tauri NSIS 包约 **3.45 MiB**，解压运行文件约 **9.9 MiB**；这不包含目标机共享的 WebView2 安装体积。Linux deb 约 **4.77 MiB**，系统 GTK / WebKit 等依赖单独安装。两端运行目录已通过真实 WebView 的发布构建测试；安装、升级及无调试连接的内存测量仍待验收。此前 Electron 的约 104 MB 安装包、约 391 MiB 工作集求和属于旧架构基准，不代表 Tauri。
+2026-10-03 在 Linux x64 上构建并测试的 1.2.2 发布产物：
+
+| 平台 | 安装包 | 便携包 | 运行文件合计 |
+| --- | --- | --- | --- |
+| Windows x64 | NSIS **3.45 MiB**（3,613,388 字节） | ZIP **4.55 MiB** | **9.80 MiB** |
+| Linux x64 | deb **4.77 MiB**（5,005,108 字节） | — | **11.11 MiB** |
+
+以上不包含共享 WebView2 或系统 GTK / WebKit 依赖。最终 ZIP、deb 解包后已通过真实系统 WebView 测试，使用的是随包采集器。安装、升级、卸载仍需人工验收；完整验证范围见[构建矩阵](../docs/PACKAGING-MATRIX.md)。
+
+## 运行内存
+
+在目标系统的图形会话运行以下脚本；默认使用 `dist/` 中的发布运行目录，也可通过 `WIFIMETER_EXECUTABLE` 指定。夹具初始化使用 `WIFIMETER_BACKEND` 或开发后端路径，被测应用启动时会清除此覆盖以使用随包后端。
+
+```bash
+node packaging/measure-runtime.mjs
+```
+
+脚本使用隔离配置、一个网络累计 3.6 GB 流量的测试数据、可见主窗口和关闭的浮窗；启动 10 秒后间隔 2 秒采样三次。结果包含宿主、系统 WebView 及采集后端的完整进程树，不连接 WebDriver/CDP，写入 `artifacts/runtime-<平台>.json`。
+
+| 本地环境 | 三次采样范围 |
+| --- | --- |
+| Windows / WebView2 | 工作集求和 **396–397 MiB**；私有提交 **202–203 MiB** |
+| Linux / WSLg X11 / WebKitGTK | PSS **412.5–413.1 MiB**；RSS 求和 **634–635 MiB**；私有物理内存 **263–264 MiB** |
+
+Linux 本次通过本地运行库包装程序启动，数字含其约 0.8 MiB PSS。RSS / 工作集求和会重复计算共享页，PSS 按比例分摊共享页；Windows 私有提交也不是物理内存。这些口径不能跨系统直接比较，WSLg 结果也不代表所有 Linux 桌面。旧 Electron 约 391 MiB 的测试使用隐藏窗口且未计入采集器，条件不同；当前能确认安装包明显缩小，不能据此认定运行内存下降。

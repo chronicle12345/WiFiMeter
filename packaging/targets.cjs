@@ -78,38 +78,4 @@ function checkBackend(directory, platform, arch) {
     }
 }
 
-function checkPackaged(directory, platform, arch) {
-    assertArchitecture(path.join(directory, platform === 'win32' ? 'WiFiMeter.exe' : 'wifimeter'), platform, arch);
-    checkBackend(path.join(directory, 'resources'), platform, arch);
-}
-
-function packagingConfig({ platform, arch }) {
-    const root = path.resolve(__dirname, '..');
-    const base = require(platform === 'win32' ? './windows/electron-builder.cjs' : './linux/electron-builder.cjs');
-    const paths = buildPaths(platform, arch);
-    let installedVersion = '';
-    try { installedVersion = require('../apps/desktop/node_modules/electron/package.json').version; } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
-    const selectedVersion = platform === 'win32' && arch === 'ia32' ? '43.7.7' : require('../apps/desktop/package.json').devDependencies.electron;
-    const localRuntime = path.join(root, 'apps/desktop/node_modules/electron/dist');
-    let runtime = {};
-    const localExecutable = path.join(localRuntime, platform === 'win32' ? 'electron.exe' : 'electron');
-    if (platform === process.platform && installedVersion === selectedVersion && fs.existsSync(localExecutable)) {
-        const actual = binaryArchitecture(localExecutable);
-        if (actual.platform === platform && actual.arch === arch) runtime = { electronDist: localRuntime };
-    }
-    return {
-        ...base,
-        ...runtime,
-        // Electron 44 no longer publishes Windows ia32; use the maintained 43 branch for that target.
-        ...(platform === 'win32' && arch === 'ia32' ? { electronVersion: '43.7.7' } : {}),
-        directories: { ...base.directories, output: path.join(root, paths.output) },
-        extraResources: base.extraResources.map(resource => ({
-            ...resource,
-            from: resource.from.startsWith('../../build/')
-                ? path.join(root, paths.backend, 'app', path.basename(resource.from)) : resource.from
-        })),
-        afterPack: async context => checkPackaged(context.appOutDir, platform, arch)
-    };
-}
-
-module.exports = { buildOptions, buildPaths, binaryArchitecture, assertArchitecture, checkBackend, checkPackaged, packagingConfig };
+module.exports = { buildOptions, buildPaths, binaryArchitecture, assertArchitecture, checkBackend };

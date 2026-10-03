@@ -1,26 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
 import { createDesktopBridge } from '../renderer/host/bridge.js';
 
-function electronBridge(file, platform = 'win32') {
-    let api;
-    const calls = [];
-    const events = new Map();
-    const electron = {
-        contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
-        ipcRenderer: {
-            invoke: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); },
-            on: (channel, listener) => events.set(channel, listener),
-            removeListener: channel => events.delete(channel)
-        }
-    };
-    vm.runInNewContext(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-        require: name => { assert.equal(name, 'electron'); return electron; }, process: { platform }
-    });
-    return { api, calls, events };
-}
+// Frozen public desktop interface retained from the pre-migration host.
+const desktopContract = {
+    "appName": "WiFiMeter",
+    "platform": "win32",
+    "windowPreferences": {
+        "read": "function",
+        "update": "function",
+        "onChanged": "function"
+    },
+    "onVisibility": "function",
+    "updates": {
+        "openLink": "function",
+        "status": "function",
+        "setCheckOnStartup": "function",
+        "check": "function",
+        "install": "function",
+        "onStatus": "function"
+    },
+    "appIcons": {
+        "get": "function"
+    },
+    "appControl": {
+        "chooseProgram": "function",
+        "request": "function"
+    },
+    "legacy": {
+        "status": "function",
+        "importDirectory": "function"
+    },
+    "saveFile": "function",
+    "openBackup": "function",
+    "backend": {
+        "request": "function",
+        "onEvent": "function"
+    }
+};
 
 async function tauriBridge(platform = 'win32') {
     const calls = [], removed = [], events = new Map();
@@ -41,43 +58,44 @@ function shape(value) {
 }
 const get = (api, name) => name.split('.').reduce((object, key) => object[key], api);
 
-test('Tauri 主窗口和小窗与现有 preload 暴露相同接口', async () => {
+test('主窗口与小窗保持既有桌面接口契约', async () => {
     const tauri = await tauriBridge();
-    assert.deepEqual(shape(tauri.desktop), shape(electronBridge('../electron/preload.cjs').api));
-    assert.deepEqual(shape(tauri.miniDesktop), shape(electronBridge('../electron/mini/preload.cjs').api));
+    assert.deepEqual(shape(tauri.desktop), desktopContract);
+    assert.deepEqual(shape(tauri.miniDesktop), { openMain: 'function', close: 'function', onLive: 'function', onPreferences: 'function', onState: 'function' });
     tauri.dispose();
 });
 
-test('Linux Tauri 保留 Linux preload 的平台标识与接口', async () => {
+test('Linux 桌面桥使用 Linux 平台标识并保留共用接口', async () => {
     const tauri = await tauriBridge('linux');
-    assert.deepEqual(shape(tauri.desktop), shape(electronBridge('../electron/preload.cjs', 'linux').api));
+    assert.deepEqual(shape(tauri.desktop), { ...desktopContract, platform: 'linux' });
     tauri.dispose();
 });
 
 test('所有桌面操作保留通道、参数和结果，包括 false 与大整数字符串', async () => {
     const tauri = await tauriBridge();
-    const electron = electronBridge('../electron/preload.cjs');
     const cases = [
-        ['windowPreferences.read', []], ['windowPreferences.update', [{ miniWindow: false }]],
-        ['updates.openLink', ['https://github.com/chronicle12345/WiFiMeter/releases']],
-        ['updates.status', []], ['updates.setCheckOnStartup', [false]], ['updates.check', []], ['updates.install', []],
-        ['appIcons.get', [{ appIds: ['a'] }]], ['appControl.chooseProgram', []],
-        ['appControl.request', [{ action: 'block', path: 'C:\\应用\\test.exe' }]],
-        ['legacy.status', []], ['legacy.importDirectory', []],
-        ['saveFile', [{ content: '9007199254740993' }]], ['openBackup', []],
-        ['backend.request', ['hello']], ['backend.request', ['updateSettings', { settings: { interval: 5 } }]]
+        ['windowPreferences.read', [], 'window-preferences:read', null],
+        ['windowPreferences.update', [{ miniWindow: false }], 'window-preferences:update', { miniWindow: false }],
+        ['updates.openLink', ['https://github.com/chronicle12345/WiFiMeter/releases'], 'updates:open-link', 'https://github.com/chronicle12345/WiFiMeter/releases'],
+        ['updates.status', [], 'updates:status', null],
+        ['updates.setCheckOnStartup', [false], 'updates:setting', false],
+        ['updates.check', [], 'updates:check', null], ['updates.install', [], 'updates:install', null],
+        ['appIcons.get', [{ appIds: ['a'] }], 'app-icons:get', { appIds: ['a'] }],
+        ['appControl.chooseProgram', [], 'app-control:choose', null],
+        ['appControl.request', [{ action: 'block', path: 'C:\\应用\\test.exe' }], 'app-control:request', { action: 'block', path: 'C:\\应用\\test.exe' }],
+        ['legacy.status', [], 'legacy:status', null], ['legacy.importDirectory', [], 'legacy:import', null],
+        ['saveFile', [{ content: '9007199254740993' }], 'files:save', { content: '9007199254740993' }],
+        ['openBackup', [], 'files:open-backup', null],
+        ['backend.request', ['hello'], 'backend:request', { method: 'hello', params: undefined }],
+        ['backend.request', ['updateSettings', { settings: { interval: 5 } }], 'backend:request', { method: 'updateSettings', params: { settings: { interval: 5 } } }]
     ];
-    for (const [name, args] of cases) {
-        assert.deepEqual(await get(tauri.desktop, name)(...args), await get(electron.api, name)(...args));
-        const [channel, payload = null] = electron.calls.at(-1);
-        assert.deepEqual(JSON.parse(JSON.stringify(tauri.calls.at(-1))),
-            JSON.parse(JSON.stringify(['desktop_request', { channel, payload }])));
+    for (const [name, args, channel, payload] of cases) {
+        assert.deepEqual(await get(tauri.desktop, name)(...args), { ok: true });
+        assert.deepEqual(tauri.calls.at(-1), ['desktop_request', { channel, payload }]);
     }
-    const mini = electronBridge('../electron/mini/preload.cjs');
-    for (const name of ['openMain', 'close']) {
+    for (const [name, channel] of [['openMain', 'mini:open-main'], ['close', 'mini:close']]) {
         await tauri.miniDesktop[name]();
-        await mini.api[name]();
-        assert.deepEqual(tauri.calls.at(-1), ['desktop_request', { channel: mini.calls.at(-1)[0], payload: null }]);
+        assert.deepEqual(tauri.calls.at(-1), ['desktop_request', { channel, payload: null }]);
     }
     tauri.dispose();
 });

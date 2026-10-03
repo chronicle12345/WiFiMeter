@@ -12,6 +12,7 @@
     "dist:windows": "node packaging/build-windows.cjs",
     "dist:all": "node packaging/build-all.cjs",
     "build:backend": "npm --prefix apps/desktop run build:backend",
-    "build:backend:windows": "node packaging/windows/build-backend.mjs"
+    "build:backend:windows": "node packaging/windows/build-backend.mjs",
+    "test:rust": "npm --prefix apps/desktop run test:rust"
   }
 }

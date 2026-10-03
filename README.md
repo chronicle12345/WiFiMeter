@@ -3,14 +3,14 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0" /></a>
+  <a href="docs/releases/v1.2.2.md"><img src="https://img.shields.io/badge/version-1.2.2-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.2" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/platforms-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="apps/desktop/README.md"><img src="https://img.shields.io/badge/UI-Electron-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Electron interface" /></a>
+  <a href="apps/desktop/README.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Tauri interface" /></a>
   <a href="docs/MIGRATION.md"><img src="https://img.shields.io/badge/storage-SQLite-2563EB?style=for-the-badge&amp;labelColor=182033" alt="SQLite storage" /></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
 </p>
@@ -24,7 +24,7 @@
 
 <p align="center"><strong>English</strong> &nbsp;|&nbsp; <a href="README.zh-CN.md">简体中文</a></p>
 
-A desktop network-usage meter for Windows and Linux. The interface uses Electron; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. This source tree targets version 1.2.0; published builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
+A desktop network-usage meter for Windows and Linux. The interface uses Tauri; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. This source tree targets version 1.2.2; published builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
 
 The following overview and application history use synthetic data.
 
@@ -47,40 +47,41 @@ On Windows, the app discovers the file-based version's default directory at `%LO
 
 Migration preserves original files, creates a recovery backup and imports eligible records in one database transaction. Repeating the same import does not add the bytes again. Conflicting records are rejected instead of silently replacing an existing database. Ambiguous application-cache entries and unrepresentable legacy settings remain archived and are listed in the import report.
 
-Existing cross-platform SQLite profiles keep their location. Windows continues to use `%APPDATA%\WiFiMeter Demo\wifimeter.db` for compatibility. Linux uses the existing Electron user-data location. Uninstalling does not remove these data directories.
+Existing cross-platform SQLite profiles keep their location. Windows continues to use `%APPDATA%\WiFiMeter Demo\wifimeter.db` for compatibility. Linux uses `$XDG_CONFIG_HOME/WiFiMeter` (`~/.config/WiFiMeter` by default). Uninstalling does not remove these data directories.
 
 See the [migration guide](docs/MIGRATION.md) for recovery, retained originals and backup scope. The file-based [v1.1.1 release](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) remains available.
 
 ## Packages
 
-The release pipeline verifies Windows x64, ARM64 and x86 compatibility packages, and Linux x64/ARM64 packages. Windows offers NSIS installation and portable executables; Linux offers deb, rpm and AppImage formats. A format name alone does not guarantee compatibility with every distribution or kernel: see the [tested build matrix](docs/PACKAGING-MATRIX.md).
-
-Windows x86 uses the Electron 43 compatibility runtime; other targets use Electron 44. The backend and frontend executable architectures are checked together. macOS and Linux 32-bit are not release targets.
+All packages are built on Linux: Windows x64 offers an NSIS installer and portable ZIP; Linux x64/ARM64 defaults to deb. Local builds have been verified on Windows x64 and Linux x64. See the [validation matrix](docs/PACKAGING-MATRIX.md) for ARM64, rpm/AppImage and distribution limits. The application uses system WebView2 on Windows and GTK/WebKit on Linux.
 
 Application capture requires supported native facilities and permission. Linux eBPF has additional kernel requirements; see [Linux capture](docs/LINUX_APP_CAPTURE.md) and [Windows capture](docs/WINDOWS_APP_CAPTURE.md). Network controls request administrator approval. Firewall/QoS policies can persist after exit or uninstall; remove unwanted policies in the application before uninstalling.
 
 ## Build and test
 
-Install Node.js, CMake and a C++20 compiler, then:
+Install Node.js 24, Rust, CMake, a C++20 compiler and the [platform dependencies](packaging/README.md), then:
 
 ```sh
 npm ci --prefix apps/desktop
 npm run build:backend
+npm --prefix apps/desktop exec -- playwright install chromium
 npm run test:unit
+npm run test:rust
 npm run test:ui
 ```
 
 Backend tests are built with CMake and run with CTest. Platform dependencies and package commands are documented in [packaging](packaging/README.md):
 
 ```sh
-node packaging/windows/build.cjs --arch x64 --formats nsis,portable
-node packaging/linux/build.cjs --arch x64 --formats deb,rpm,AppImage
+node packaging/build-windows.cjs
+node packaging/build-linux.cjs
+node packaging/build-all.cjs
 ```
 
 Tests use synthetic fixtures and isolated profiles. Builds, runtime data, traces and local credentials are excluded from Git. The release workflow publishes a release only after the required architecture, migration, backend, UI and package checks succeed.
 
 ## Performance and license
 
-The native backend handles sampling, counters and storage. The UI queries selected date ranges; unchanged login settings are not rewritten, contiguous coverage gaps are coalesced, and large IPC frames are scanned incrementally. Distributed Electron language resources are limited to English and Simplified Chinese. Electron still has more baseline memory and disk overhead than the earlier WPF application; measurements must distinguish that overhead from native-backend and IPC improvements.
+The native backend handles sampling, counters and storage. The UI queries selected date ranges; unchanged login settings are not rewritten, contiguous coverage gaps are coalesced, and large IPC frames are scanned incrementally. Tauri packages reuse the system browser runtime, substantially reducing package size. Runtime memory still includes WebView processes; a smaller installer does not establish lower memory use. See [measured package results](packaging/README.md).
 
 The application is under the [MIT license](LICENSE). Third-party components and the separately licensed Linux BPF program are described in [third-party notices](backend/third_party/README.md).

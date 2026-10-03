@@ -3,14 +3,14 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.2.0.md"><img src="https://img.shields.io/badge/version-1.2.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.0" /></a>
+  <a href="docs/releases/v1.2.2.md"><img src="https://img.shields.io/badge/version-1.2.2-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.2.2" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/platforms-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="apps/desktop/README.md"><img src="https://img.shields.io/badge/UI-Electron-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Electron interface" /></a>
+  <a href="apps/desktop/README.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Tauri interface" /></a>
   <a href="docs/MIGRATION.md"><img src="https://img.shields.io/badge/storage-SQLite-2563EB?style=for-the-badge&amp;labelColor=182033" alt="SQLite storage" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
 </p>
@@ -24,7 +24,7 @@
 
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
-适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Electron，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.0，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
+适用于 Windows 和 Linux 的桌面流量统计工具。界面使用 Tauri，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。当前源码目标版本为 1.2.2，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
 以下总览和应用历史截图均使用虚构数据。
 
@@ -47,40 +47,41 @@ Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，�
 
 迁移保留原文件，先生成恢复备份，再用数据库事务导入符合条件的记录。重复导入同一份数据不会再次累计流量。遇到冲突会拒绝导入，不会直接覆盖现有数据库。无法确定归属的应用缓存，以及不能精确转换的旧设置，会保留原文并列在导入报告中。
 
-已有跨平台 SQLite 配置目录保持不变。Windows 继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，以便读取之前的数据；Linux 沿用已有的 Electron 用户数据目录。卸载不会删除这些数据目录。
+已有跨平台 SQLite 配置目录保持不变。Windows 继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，以便读取之前的数据；Linux 沿用 `$XDG_CONFIG_HOME/WiFiMeter`（默认 `~/.config/WiFiMeter`）。卸载不会删除这些数据目录。
 
 恢复方法、原文件保留方式和备份范围见[迁移说明](docs/MIGRATION.md)。原文件版 [v1.1.1](https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.1.1) 仍可下载。
 
 ## 安装包
 
-发布流程分别验证 Windows x64、ARM64 和 x86 兼容包，以及 Linux x64、ARM64 包。Windows 提供 NSIS 安装程序和便携程序；Linux 提供 deb、rpm 和 AppImage。包格式相同不代表所有发行版和内核都兼容，具体范围见[构建与验证矩阵](docs/PACKAGING-MATRIX.md)。
-
-Windows x86 使用 Electron 43 兼容运行时，其余目标使用 Electron 44。构建会核对前端、后端与采集程序的架构。macOS 和 32 位 Linux 暂不在发布目标中。
+全部打包在 Linux 完成：Windows x64 提供 NSIS 安装器和便携 ZIP，Linux x64/ARM64 默认提供 deb。Windows 和 Linux x64 已有本地构建验证；ARM64、rpm/AppImage 的验证范围及系统兼容性见[构建与验证矩阵](docs/PACKAGING-MATRIX.md)。Windows 使用系统 WebView2，Linux 使用 GTK/WebKit。
 
 应用采集需要系统支持和相应权限。Linux eBPF 另有内核要求，详见 [Linux 采集](docs/LINUX_APP_CAPTURE.md)及 [Windows 采集](docs/WINDOWS_APP_CAPTURE.md)。应用网络控制会请求管理员授权。防火墙和 QoS 规则可能在退出或卸载后保留，不再需要时请先在应用内移除。
 
 ## 构建与测试
 
-安装 Node.js、CMake 和支持 C++20 的编译器后运行：
+安装 Node.js 24、Rust、CMake、C++20 编译器及[平台依赖](packaging/README.md)后运行：
 
 ```sh
 npm ci --prefix apps/desktop
 npm run build:backend
+npm --prefix apps/desktop exec -- playwright install chromium
 npm run test:unit
+npm run test:rust
 npm run test:ui
 ```
 
 后端测试由 CMake 构建，通过 CTest 执行。平台依赖及打包命令见[打包说明](packaging/README.md)：
 
 ```sh
-node packaging/windows/build.cjs --arch x64 --formats nsis,portable
-node packaging/linux/build.cjs --arch x64 --formats deb,rpm,AppImage
+node packaging/build-windows.cjs
+node packaging/build-linux.cjs
+node packaging/build-all.cjs
 ```
 
 测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。发布流程仅在相应架构、迁移、后端、界面和安装包检查通过后发布标签对应的版本。
 
 ## 性能与许可
 
-采样、计数和存储放在原生后端；界面按所选日期查询，避免反复加载全部历史。不重复写入未变的自启动设置，连续缺失区间合并保存，大型 IPC 消息按新增分段扫描。分发的 Electron 语言资源只保留英文和简体中文。Electron 的基础内存和磁盘占用仍高于之前的 WPF 版本，测量时会区分这部分开销与后端、IPC 的优化收益。
+采样、计数和存储放在原生后端；界面按所选日期查询，避免反复加载全部历史。不重复写入未变的自启动设置，连续缺失区间合并保存，大型 IPC 消息按新增分段扫描。Tauri 安装包不捆绑浏览器运行时，包大小显著缩小；运行内存仍包含系统 WebView 进程，不能仅凭安装包变小推断内存降低。实测范围见[打包说明](packaging/README.md)。
 
 应用采用 [MIT 许可证](LICENSE)。第三方组件及 Linux BPF 程序的独立许可见[第三方说明](backend/third_party/README.md)。

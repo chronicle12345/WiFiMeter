@@ -5,24 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
-const root = path.resolve(__dirname, '../../..');
+const root = path.resolve(__dirname, '../..');
 const targets = require(path.join(root, 'packaging/targets.cjs'));
-const matrices = [['win32', 'x64'], ['win32', 'ia32'], ['win32', 'arm64'], ['linux', 'x64'], ['linux', 'arm64']];
+const matrices = [['win32', 'x64'], ['linux', 'x64'], ['linux', 'arm64']];
 
 function metadata() {
     const data = JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8'));
     assert.match(data.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, '版本必须来自有效的 package metadata');
     return data;
-}
-
-function expectedElectronVersion(platform, arch) {
-    return platform === 'win32' && arch === 'ia32' ? '43.7.7' : metadata().devDependencies.electron;
-}
-
-function assertElectronRuntime(runtime, platform, arch) {
-    assert.equal(runtime.platform, platform, '打包 runtime 平台不匹配');
-    assert.equal(runtime.arch, arch, '必须实际启动目标架构的打包 runtime');
-    assert.equal(runtime.electron, expectedElectronVersion(platform, arch), '打包 Electron 版本不匹配');
 }
 
 function validateTag(version, tag) {
@@ -38,8 +28,8 @@ function assertUiReport(report) {
 
 function expectedFiles(platform, arch, version) {
     assert.ok(matrices.some(([p, a]) => p === platform && a === arch), '不支持的发布矩阵');
-    if (platform === 'win32') return [`WiFiMeter-${version}-windows-${arch}-Setup.exe`, `WiFiMeter-${version}-windows-${arch}-Portable.exe`];
-    return [`WiFiMeter-${version}-linux-${arch === 'x64' ? 'amd64' : arch}.deb`, `WiFiMeter-${version}-linux-${arch === 'x64' ? 'x86_64' : 'aarch64'}.rpm`, `WiFiMeter-${version}-linux-${arch === 'x64' ? 'x86_64' : 'arm64'}.AppImage`];
+    if (platform === 'win32') return [`WiFiMeter-${version}-windows-${arch}-Setup.exe`, `WiFiMeter-${version}-windows-${arch}-Portable.zip`];
+    return [`WiFiMeter-${version}-linux-${arch}.deb`];
 }
 
 function output(name, value, file = process.env.GITHUB_OUTPUT) {
@@ -57,16 +47,8 @@ function verifyBackend(directory, platform, arch) {
 }
 
 function verifyDirectory(directory, platform, arch) {
-    targets.checkPackaged(directory, platform, arch);
-    verifyBackend(path.join(directory, 'resources'), platform, arch);
-    if (platform === 'win32') {
-        assert.deepEqual(fs.readFileSync(path.join(directory, 'resources/native/windows/AppNetworkControl.psm1')),
-            fs.readFileSync(path.join(root, 'apps/desktop/native/windows/AppNetworkControl.psm1')));
-    } else {
-        for (const resource of ['wifimeter-app-capture.bpf.o', 'licenses/libbpf.BSD-2-Clause', 'licenses/wifimeter-app-capture.GPL-2.0']) {
-            assert.ok(fs.statSync(path.join(directory, 'resources', resource)).size > 0, `缺少 ${resource}`);
-        }
-    }
+    require(path.join(root, 'packaging/tauri.cjs')).checkDistribution(directory, platform, arch);
+    verifyBackend(platform === 'win32' ? directory : path.join(directory, 'lib/WiFiMeter'), platform, arch);
 }
 
 async function digest(file) {
@@ -79,7 +61,7 @@ async function stage(platform, arch) {
     const version = metadata().version;
     const directory = path.join(process.env.RUNNER_TEMP, `release-${platform}-${arch}`);
     fs.mkdirSync(directory, { recursive: true });
-    const manifest = { platform, arch, version, electronVersion: expectedElectronVersion(platform, arch), files: [] };
+    const manifest = { platform, arch, version, framework: 'tauri', files: [] };
     for (const name of expectedFiles(platform, arch, version)) {
         const source = path.join(root, targets.buildPaths(platform, arch).output, name);
         const size = fs.statSync(source).size;
@@ -100,7 +82,7 @@ async function releaseFiles(directory, version) {
         const folder = path.join(directory, entry.name);
         const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'));
         assert.equal(manifest.version, version);
-        assert.equal(manifest.electronVersion, expectedElectronVersion(manifest.platform, manifest.arch));
+        assert.equal(manifest.framework, 'tauri');
         assert.ok(remaining.delete(`${manifest.platform}-${manifest.arch}`), '重复或未知矩阵产物');
         assert.deepEqual(manifest.files.map(file => file.name).sort(), expectedFiles(manifest.platform, manifest.arch, version).sort());
         for (const file of manifest.files) {
@@ -129,8 +111,6 @@ async function main([command, ...args]) {
         const paths = targets.buildPaths(platform, arch);
         for (const [key, value] of Object.entries({ BUILD_DIR: paths.backend, OUTPUT_DIR: paths.output,
             UNPACKED_DIR: path.join(root, paths.output, paths.unpacked), WIFIMETER_PACKAGE_ARCH: arch,
-            ELECTRON_CACHE: path.join(process.env.RUNNER_TEMP, 'electron-cache'),
-            ELECTRON_BUILDER_CACHE: path.join(process.env.RUNNER_TEMP, 'electron-builder-cache'),
             XDG_CACHE_HOME: path.join(process.env.RUNNER_TEMP, 'cache'),
             WIFIMETER_BACKEND: path.join(root, paths.backend, 'app', `wifimeter-backend${platform === 'win32' ? '.exe' : ''}`) })) {
             output(key, value, process.env.GITHUB_ENV);
@@ -148,5 +128,5 @@ async function main([command, ...args]) {
     } else throw new Error(`未知 CI 命令：${command}`);
 }
 
-module.exports = { expectedElectronVersion, assertElectronRuntime, validateTag, assertUiReport, expectedFiles, digest, releaseFiles, matrices };
+module.exports = { validateTag, assertUiReport, expectedFiles, digest, releaseFiles, matrices };
 if (require.main === module) main(process.argv.slice(2)).catch(error => { console.error(error); process.exitCode = 1; });

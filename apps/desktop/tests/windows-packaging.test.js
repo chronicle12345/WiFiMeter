@@ -82,46 +82,6 @@ test('读取 PE 和 ELF 架构，拒绝混合架构、截断文件和伪造文�
     assert.throws(() => binaryArchitecture(bad), /文件|格式/);
 });
 
-test('打包配置按架构选择本地资源，afterPack 检查 Electron 和两个辅助程序', async t => {
-    const { packagingConfig } = require('../../../packaging/targets.cjs');
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-package-check-'));
-    t.after(() => rmSync(directory, { recursive: true, force: true }));
-    const { mkdirSync } = await import('node:fs');
-    mkdirSync(path.join(directory, 'resources'));
-    const pe = machine => {
-        const header = Buffer.alloc(256);
-        header.write('MZ'); header.writeUInt32LE(128, 0x3c);
-        header.write('PE\0\0', 128); header.writeUInt16LE(machine, 132);
-        return header;
-    };
-    const config = packagingConfig({ platform: 'win32', arch: 'arm64' });
-    assert.match(config.directories.output, /windows-arm64$/);
-    assert.ok(config.extraResources.filter(resource => resource.to.endsWith('.exe')).every(resource => resource.from.includes('windows-arm64')));
-    for (const name of ['WiFiMeter.exe', 'resources/wifimeter-backend.exe', 'resources/wifimeter-app-capture.exe']) {
-        writeFileSync(path.join(directory, name), pe(0xaa64));
-    }
-    await config.afterPack({ appOutDir: directory });
-    writeFileSync(path.join(directory, 'resources/wifimeter-app-capture.exe'), pe(0x8664));
-    await assert.rejects(config.afterPack({ appOutDir: directory }), /架构不匹配/);
-    writeFileSync(path.join(directory, 'resources/wifimeter-app-capture.exe'), pe(0xaa64));
-    writeFileSync(path.join(directory, 'WiFiMeter.exe'), pe(0x8664));
-    await assert.rejects(config.afterPack({ appOutDir: directory }), /架构不匹配/);
-    const linux = packagingConfig({ platform: 'linux', arch: 'arm64' });
-    assert.match(linux.extraResources[0].from, /linux-arm64/);
-    assert.ok(linux.extraResources.some(resource => resource.to.endsWith('.bpf.o')));
-    assert.ok(linux.extraResources.some(resource => resource.to.startsWith('licenses/')));
-});
-
-test('Windows 控制模块固定放在 asar 外，所有架构使用同一资源路径', () => {
-    const { packagingConfig } = require('../../../packaging/targets.cjs');
-    for (const arch of ['x64', 'arm64', 'ia32']) {
-        const resource = packagingConfig({ platform: 'win32', arch }).extraResources.find(item => item.to === 'native/windows/AppNetworkControl.psm1');
-        assert.ok(resource, '应通过 extraResources 复制控制模块');
-        assert.equal(resource.from, 'native/windows/AppNetworkControl.psm1');
-        assert.ok(existsSync(path.join(repositoryRoot, 'apps/desktop', resource.from)));
-    }
-});
-
 test('Windows 编译复用缓存生成器，新目录选择已安装的 Visual Studio', () => {
     const { windowsGeneratorOptions } = require('../../../packaging/build-backend.cjs');
     assert.deepEqual(windowsGeneratorOptions({ arch: 'x64', hostArch: 'x64', cachedArch: 'x64', cache: 'CMAKE_GENERATOR:INTERNAL=Ninja\n' }), []);

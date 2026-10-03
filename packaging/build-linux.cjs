@@ -1,3 +1,3 @@
 'use strict';
-// Linux 安装包入口；参数由平台构建器统一解析。
-require('./linux/build.cjs');
+require('./tauri.cjs').buildDesktop('linux')
+    .catch(error => require('./build-failure.cjs').reportBuildFailure(error));
