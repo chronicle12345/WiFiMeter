@@ -16,6 +16,7 @@ pub enum UpdateError {
     Network,
     Download,
     Install,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -227,6 +228,18 @@ pub fn redirect_allowed(value: &str, original: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         })
+}
+
+pub fn external_url(value: &str) -> Result<String, UpdateError> {
+    let url = Url::parse(value).map_err(|_| UpdateError::Release)?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(UpdateError::Release);
+    }
+    Ok(url.into())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

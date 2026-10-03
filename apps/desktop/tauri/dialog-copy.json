@@ -1,4 +1,16 @@
 {
+  "update-install": {
+    "zh": ["安装 WiFiMeter 更新", "是否安装 WiFiMeter {version}？\n\n下载并校验成功后将保存数据、退出应用，再启动安装程序。", ["下载并安装", "取消"]],
+    "en": ["Install WiFiMeter update", "Install WiFiMeter {version}?\n\nAfter download and verification, the application will save your data and exit before starting the installer.", ["Download and install", "Cancel"]],
+    "default": 1,
+    "primary": 0
+  },
+  "update-manual": {
+    "zh": ["打开更新下载页", "是否打开 WiFiMeter {version} 的官方发布页？\n\n请在发布页选择适合当前系统和安装方式的软件包。", ["打开发布页", "取消"]],
+    "en": ["Open update downloads", "Open the official release page for WiFiMeter {version}?\n\nChoose a package for your system and installation type on the release page.", ["Open release page", "Cancel"]],
+    "default": 1,
+    "primary": 0
+  },
   "close": {
     "zh": [
       "关闭 WiFiMeter",

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::{cmp::Ordering, fs, sync::Arc};
 use wifimeter_desktop::updates::{
-    redirect_allowed, select_release, Preferences, UpdateError, Version, REPOSITORY,
+    external_url, redirect_allowed, select_release, Preferences, UpdateError, Version, REPOSITORY,
 };
 
 fn asset(version: &str, arch: &str, modern: bool) -> Value {
@@ -203,6 +203,24 @@ fn redirects_accept_only_official_asset_storage() {
         "https://github.com/elsewhere/Setup.exe",
     ] {
         assert!(!redirect_allowed(rejected, &original), "{rejected}");
+    }
+}
+
+#[test]
+fn release_note_links_allow_https_but_never_local_commands_or_credentials() {
+    assert_eq!(
+        external_url("https://github.com/chronicle12345/WiFiMeter#releases").unwrap(),
+        "https://github.com/chronicle12345/WiFiMeter#releases"
+    );
+    for value in [
+        "file:///C:/Windows/notepad.exe",
+        "javascript:alert(1)",
+        "http://example.com",
+        "https://user:secret@example.com",
+        "cmd.exe",
+        "https://",
+    ] {
+        assert!(external_url(value).is_err(), "{value}");
     }
 }
 

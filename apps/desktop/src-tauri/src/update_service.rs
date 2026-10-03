@@ -40,7 +40,7 @@ impl Snapshot {
             "currentVersion":self.current_version,"latestVersion":self.latest_version,
             "notes":self.notes,"url":self.url,"canInstall":self.can_install,
             "checkOnStartup":self.check_on_startup,"manual":self.manual,
-            "progress":self.progress,"busy":self.busy,"recoveryRequired":self.recovery_required});
+            "progress":self.progress,"busy":self.busy,"recoveryRequired":self.recovery_required,"error":null});
         if let Some(error) = self.error {
             let message = match (error, english) {
                 (Failure::Preferences, false) => "无法读写更新偏好设置，请修复更新偏好文件后重试。",
@@ -50,7 +50,7 @@ impl Snapshot {
                 (Failure::Install, false) => "安装更新失败，下载或文件校验未完成，或安装程序无法启动。",
                 (Failure::Install, true) => "Could not install the update. Download or verification failed, or the installer could not start.",
                 (Failure::Recovery, false) => "更新已取消，但未能恢复采集。数据操作保持暂停，请稍后点击“恢复采集”重试。",
-                (Failure::Recovery, true) => "The update was cancelled, but collection could not be restored. Data operations remain paused. Select Restore collection to retry.",
+                (Failure::Recovery, true) => "The update was cancelled, but collection could not be restored. Data operations remain paused. Select Resume collection to retry.",
             };
             value["error"] = json!(message);
         }
@@ -285,8 +285,12 @@ impl UpdateService {
         }
         if self.snapshot().recovery_required {
             self.recover(host, "recovered", None);
-        } else if self.install_now(host).is_err() {
-            self.recover(host, "error", Some(Failure::Install));
+        } else {
+            match self.install_now(host) {
+                Err(UpdateError::Cancelled) => self.recover(host, "cancelled", None),
+                Err(_) => self.recover(host, "error", Some(Failure::Install)),
+                Ok(()) => (),
+            }
         }
         drop(guard);
         self.publish()

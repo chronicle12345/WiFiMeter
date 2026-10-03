@@ -23,6 +23,33 @@ pub trait Transport: Send + Sync {
     fn get(&self, url: &str, timeout: Duration) -> Result<Response, UpdateError>;
 }
 
+// 仅显式测试构建使用本地夹具；正式发布不包含此路径。
+#[cfg(all(feature = "test-fixture", debug_assertions))]
+pub(crate) struct FixtureTransport(pub std::path::PathBuf);
+
+#[cfg(all(feature = "test-fixture", debug_assertions))]
+impl Transport for FixtureTransport {
+    fn get(&self, url: &str, _: Duration) -> Result<Response, UpdateError> {
+        let file = fs::File::open(self.0.join(if url == API {
+            "release.json"
+        } else {
+            "installer.exe"
+        }))
+        .map_err(|_| UpdateError::Network)?;
+        let length = file
+            .metadata()
+            .map_err(|_| UpdateError::Network)?
+            .len()
+            .to_string();
+        Ok(Response {
+            status: 200,
+            location: None,
+            length: Some(length),
+            body: Box::new(file),
+        })
+    }
+}
+
 pub struct HttpTransport(Client);
 
 impl HttpTransport {

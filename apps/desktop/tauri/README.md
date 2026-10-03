@@ -6,8 +6,9 @@ bundling Electron or changing the page layout. The HTML entry script, CSP and ho
 JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
-remain until the Windows feature and package acceptance tests pass. Do not publish
-the intermediate Tauri host: updates still need integration.
+remain until the Windows and Linux feature and package acceptance tests pass.
+Do not publish the intermediate Tauri host: Linux shell and release packaging
+acceptance are still pending. All final packaging entry points will run on Linux.
 Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
@@ -37,6 +38,15 @@ partial policy states, and retains the existing decimal upload-rate conversion.
 Only the helper's PowerShell sessions set their execution policy; no registry
 execution policy is changed. Drawer messages and picker titles follow the app
 language; original provider diagnostics remain in detail fields.
+The existing update page now uses the Rust update service, with persisted preferences,
+automatic-check rate limits, release asset selection, streamed SHA-256 verification
+and phase progress. Confirmation dialogs follow the UI theme and language. The
+Windows helper locks and rechecks the installer, accepts a READY/GO handshake and
+waits for the host to exit. Preparation checks unsaved changes and gracefully stops
+collection; failures restore the original pause and application-collection states.
+Pending shutdown or failed recovery keeps data operations blocked until recovery
+succeeds. Automatic checks run only in non-debug, non-isolated builds. Actual release
+installer upgrades still require package acceptance testing.
 
 ## Development on Windows
 
@@ -82,11 +92,27 @@ read-only application policy queries and bilingual picker cancellation,
 edge snapping, idle collapse/hover expansion, close/reopen and live speed units,
 themed close choices in light/dark mode, keyboard focus,
 import/resume localization, tray hiding, single-instance activation and canceling
-an exit with unsaved changes. It then closes the native window and
+an exit with unsaved changes. Update checks use local release/download fixtures;
+the tests cover preference persistence, bilingual confirmation, verified download,
+handoff failure and real collector recovery, unsaved-change cancellation, stale
+error clearing and the manual release-page fallback. It then closes the native window and
 waits for a clean exit:
 
+Build the smoke-test host on Linux with the Windows cross compiler configured:
+
+```sh
+node apps/desktop/tauri/build-frontend.mjs
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-gnu --features custom-protocol,test-fixture --bin WiFiMeter
+```
+
+The update fixture is enabled only when `test-fixture`, debug assertions, test
+isolation, and the profile's `update-fixture` directory are all present. That path
+rejects installer handoff and records external-link requests instead of executing
+them. Release builds do not contain the fixture transport. Point the Windows test
+runner at that cross-built executable:
+
 ```powershell
-$env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/debug/WiFiMeter.exe').Path
+$env:WIFIMETER_EXECUTABLE = (Resolve-Path 'apps/desktop/src-tauri/target/x86_64-pc-windows-gnu/debug/WiFiMeter.exe').Path
 $env:WIFIMETER_BACKEND = (Resolve-Path 'build/windows/app/wifimeter-backend.exe').Path
 npm --prefix apps/desktop run test:tauri:windows
 ```

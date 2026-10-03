@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict';
 import { spawn, execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { rm } from 'node:fs/promises';
+import { rm, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +23,16 @@ await new Promise(resolve => server.close(resolve));
 
 const iconExecutable = `${process.env.SystemRoot}\\explorer.exe`;
 const harness = await createHarness({ appId: iconExecutable });
+// Requires a debug build with --features custom-protocol,test-fixture.
+const updateFixture = join(harness.directory, 'update-fixture');
+await mkdir(updateFixture);
+const installer = Buffer.from('smoke installer fixture; never execute');
+const updateName = 'WiFiMeter-1.3.0-windows-x64-Setup.exe';
+const updateRelease = { tag_name: 'v1.3.0', body: 'Fixture release notes', assets: [{ name: updateName,
+    digest: `sha256:${createHash('sha256').update(installer).digest('hex')}`,
+    browser_download_url: `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/${updateName}` }] };
+await writeFile(join(updateFixture, 'release.json'), JSON.stringify(updateRelease));
+await writeFile(join(updateFixture, 'installer.exe'), installer);
 const child = spawn(process.env.WIFIMETER_EXECUTABLE, [], {
     env: { ...process.env, ...harness.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -243,8 +255,8 @@ try {
     await expect(dialog).toHaveCount(0);
     for (const language of ['zh-CN', 'en']) {
         await page.evaluate(async language => (await import('/renderer/i18n.js')).setLanguage(language), language);
-        for (const kind of ['close', 'discard', 'resume', 'overlap']) {
-            await page.evaluate(kind => window.receiveTestDialog({ payload: { id: 100002, kind } }), kind);
+        for (const kind of ['close', 'discard', 'resume', 'overlap', 'update-install', 'update-manual']) {
+            await page.evaluate(kind => window.receiveTestDialog({ payload: { id: 100002, kind, version: '1.3.0' } }), kind);
             await expect(dialog).toBeVisible();
             const text = await dialog.innerText();
             const accessibleClose = await dialog.locator('.desktop-dialog-close').getAttribute('aria-label');
@@ -259,6 +271,91 @@ try {
         }
     }
     await page.evaluate(() => window.removeTestDialogs());
+    await page.evaluate(() => {
+        window.updateEvents = [];
+        window.desktop.updates.onStatus(status => window.updateEvents.push(status));
+    });
+    const updateState = () => page.evaluate(async () => (await window.desktop.updates.status()).state);
+    for (const language of ['zh-CN', 'en']) {
+        await page.evaluate(async language => {
+            await window.desktop.backend.request('updateSettings', { settings: { language } });
+            (await import('/renderer/i18n.js')).setLanguage(language);
+        }, language);
+        await page.locator('.nav [data-page="settings"]').click();
+        await page.locator('[data-action="settings-category"][data-category="about"]').click();
+        const check = page.locator('[data-action="check-updates"]');
+        const install = page.locator('[data-action="install-update"]');
+        await page.locator('#checkUpdatesOnStartup').uncheck();
+        await expect.poll(async () => {
+            try { return JSON.parse(await readFile(join(harness.directory, 'update-preferences.json'), 'utf8')).checkOnStartup; }
+            catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
+        }).toBe(false);
+        await page.locator('#checkUpdatesOnStartup').check();
+        await check.click();
+        await expect.poll(updateState).toBe('available');
+        await install.click();
+        await expect(dialog).toHaveAttribute('data-kind', 'update-install');
+        await expect(dialog).toContainText('1.3.0');
+        await expect(dialog.locator('footer button').nth(1)).toBeFocused();
+        await page.keyboard.press('Escape');
+        await expect.poll(updateState).toBe('cancelled');
+        await check.click();
+        await expect.poll(updateState).toBe('available');
+        const paused = language === 'en';
+        await page.evaluate(async paused => {
+            await window.desktop.backend.request('setPaused', { paused });
+            await window.desktop.backend.request('setAppCollection', { enabled: true });
+        }, paused);
+        await install.click();
+        await expect(dialog).toHaveAttribute('data-kind', 'update-install');
+        await dialog.locator('footer button').first().click();
+        await expect.poll(updateState, { timeout: 20000 }).toBe('error');
+        const recovered = await page.evaluate(() => window.desktop.backend.request('hello'));
+        assert.equal(recovered.ok, true);
+        assert.equal(recovered.result.paused, paused);
+        assert.equal(recovered.result.appCollection.enabled, true);
+        const failed = await page.evaluate(() => window.desktop.updates.status());
+        assert.equal(failed.busy, false);
+        assert.equal(failed.recoveryRequired, false);
+        assert.equal(failed.progress, null);
+        if (language === 'zh-CN') assert.doesNotMatch(failed.error, /[A-Za-z]/);
+        else assert.doesNotMatch(failed.error, /[\u3400-\u9fff]/);
+        assert.deepEqual(await readdir(join(harness.directory, 'updates')), []);
+        await check.click();
+        await expect.poll(updateState).toBe('available');
+        await expect(page.locator('#updateStatusRegion')).not.toContainText(failed.error);
+    }
+    assert.equal((log.match(/\[updates:test\] handoff rejected/g) || []).length, 2);
+    const phases = await page.evaluate(() => [...new Set(window.updateEvents.map(event => event.state))]);
+    for (const phase of ['checking', 'downloading', 'verifying', 'preparing', 'installing', 'error']) assert.ok(phases.includes(phase), phase);
+    // An unsaved-change cancellation after download must not stop collection or authorize handoff.
+    await page.evaluate(async () => {
+        await window.desktop.backend.request('updateSettings', { settings: { language: 'zh-CN' } });
+        await window.desktop.backend.request('setPaused', { paused: false });
+        (await import('/renderer/i18n.js')).setLanguage('zh-CN');
+        window.testDirtyHandler = event => event.preventDefault();
+        window.addEventListener('beforeunload', window.testDirtyHandler);
+    });
+    await page.locator('[data-action="install-update"]').click();
+    await expect(dialog).toHaveAttribute('data-kind', 'update-install');
+    await dialog.locator('footer button').first().click();
+    await expect(dialog).toHaveAttribute('data-kind', 'discard');
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await expect.poll(updateState).toBe('cancelled');
+    await page.evaluate(() => window.removeEventListener('beforeunload', window.testDirtyHandler));
+    assert.equal((await page.evaluate(() => window.desktop.backend.request('hello'))).result.paused, false);
+    assert.equal((log.match(/\[updates:test\] handoff rejected/g) || []).length, 2);
+    assert.deepEqual(await readdir(join(harness.directory, 'updates')), []);
+    await writeFile(join(updateFixture, 'release.json'), JSON.stringify({ ...updateRelease, assets: [] }));
+    await page.locator('[data-action="check-updates"]').click();
+    await expect.poll(updateState).toBe('available');
+    await page.locator('[data-action="install-update"]').click();
+    await expect(dialog).toHaveAttribute('data-kind', 'update-manual');
+    await dialog.locator('footer button').first().click();
+    await expect.poll(updateState).toBe('manual');
+    assert.ok(log.includes('[updates:test] open-link https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.3.0'));
+    assert.equal(await page.evaluate(async () => { try { await window.desktop.updates.openLink('javascript:alert(1)'); return false; } catch { return true; } }), true);
+    console.log('Update UI, bilingual confirmation, preferences, verified download, handoff failure recovery, unsaved cancellation and manual fallback passed');
     assert.deepEqual(errors, []);
     if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT });
     console.log('PASS: Windows WebView2 pages, backend, preferences, isolated autostart, bilingual quota notification dispatch and off switch, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');

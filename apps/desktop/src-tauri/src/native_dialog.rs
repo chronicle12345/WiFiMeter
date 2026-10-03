@@ -10,7 +10,7 @@ fn wide(text: &str) -> Vec<u16> {
 
 // Tauri dialog 当前没有 defaultId；使用同样的 Windows TaskDialog，保留按钮顺序和默认取消。
 // 仅从阻塞工作线程调用，所有字符串和按钮数组在同步调用返回前保持存活。
-fn choose(window: &WebviewWindow, kind: &str) -> Option<(usize, bool)> {
+fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(usize, bool)> {
     // The fallback and themed dialogs share exactly the same localized text and button order.
     let copy: serde_json::Value =
         serde_json::from_str(include_str!("../../tauri/dialog-copy.json")).ok()?;
@@ -18,7 +18,9 @@ fn choose(window: &WebviewWindow, kind: &str) -> Option<(usize, bool)> {
     let language = crate::shell::localized(window.app_handle(), "zh", "en");
     let content = &config[language];
     let title = content[0].as_str()?;
-    let message = content[1].as_str()?;
+    let message = content[1]
+        .as_str()?
+        .replace("{version}", version.unwrap_or(""));
     let labels: Vec<_> = content[2]
         .as_array()?
         .iter()
@@ -28,11 +30,11 @@ fn choose(window: &WebviewWindow, kind: &str) -> Option<(usize, bool)> {
     let verification = (kind == "close").then(|| {
         crate::shell::localized(window.app_handle(), "记住我的选择", "Remember my choice")
     });
-    if let Some(answer) = crate::shell::themed_dialog(window, kind, labels.len()) {
+    if let Some(answer) = crate::shell::themed_dialog(window, kind, labels.len(), version) {
         return answer;
     }
     let title = wide(title);
-    let message = wide(message);
+    let message = wide(&message);
     let labels: Vec<_> = labels.iter().map(|label| wide(label)).collect();
     let buttons: Vec<_> = labels
         .iter()
@@ -70,7 +72,7 @@ fn choose(window: &WebviewWindow, kind: &str) -> Option<(usize, bool)> {
 }
 
 pub fn close_action(window: &WebviewWindow) -> Option<(&'static str, bool)> {
-    match choose(window, "close") {
+    match choose(window, "close", None) {
         Some((1, remember)) => Some(("tray", remember)),
         Some((2, remember)) => Some(("exit", remember)),
         _ => None,
@@ -78,13 +80,26 @@ pub fn close_action(window: &WebviewWindow) -> Option<(&'static str, bool)> {
 }
 
 pub fn confirm_discard(window: &WebviewWindow) -> bool {
-    choose(window, "discard").is_some_and(|(index, _)| index == 0)
+    choose(window, "discard", None).is_some_and(|(index, _)| index == 0)
 }
 
 pub fn confirm_resume(window: &WebviewWindow) -> bool {
-    choose(window, "resume").is_some_and(|(index, _)| index == 0)
+    choose(window, "resume", None).is_some_and(|(index, _)| index == 0)
 }
 
 pub fn confirm_overlap(window: &WebviewWindow) -> bool {
-    choose(window, "overlap").is_some_and(|(index, _)| index == 0)
+    choose(window, "overlap", None).is_some_and(|(index, _)| index == 0)
+}
+
+pub fn confirm_update(window: &WebviewWindow, version: &str, install: bool) -> bool {
+    choose(
+        window,
+        if install {
+            "update-install"
+        } else {
+            "update-manual"
+        },
+        Some(version),
+    )
+    .is_some_and(|(index, _)| index == 0)
 }

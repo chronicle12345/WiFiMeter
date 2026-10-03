@@ -8,9 +8,13 @@ use crate::{
     files, identity, ipc_policy, mini, native_dialog, notifications,
     preferences::Preferences,
     tray,
-    windows_login::WindowsLogin,
-    windows_icons,
+    update_download::{HttpTransport, Transport},
+    update_service::{InstallHost, Snapshot, UpdateService},
+    updates::UpdateError,
     windows_control::WindowsControl,
+    windows_icons,
+    windows_login::WindowsLogin,
+    windows_update,
 };
 use serde_json::{json, Value};
 use std::{
@@ -26,6 +30,8 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 struct Desktop {
+    profile: PathBuf,
+    updates: OnceLock<Result<UpdateService, UpdateError>>,
     collector: Collector,
     preferences: Preferences,
     last_live: Mutex<Option<Value>>,
@@ -44,6 +50,121 @@ struct Desktop {
     notification_icon: PathBuf,
     app_icons: AppIcons,
     app_control: WindowsControl,
+}
+
+impl Desktop {
+    fn update_fixture(&self) -> Option<PathBuf> {
+        #[cfg(all(feature = "test-fixture", debug_assertions))]
+        if self.isolated && std::env::var("WIFIMETER_TEST_ISOLATION").as_deref() == Ok("1") {
+            let directory = self.profile.join("update-fixture");
+            if directory.is_dir() {
+                return Some(directory);
+            }
+        }
+        None
+    }
+
+    fn updates(&self, app: &tauri::AppHandle) -> Result<&UpdateService, String> {
+        self.updates
+            .get_or_init(|| {
+                let transport: Arc<dyn Transport> = {
+                    #[cfg(all(feature = "test-fixture", debug_assertions))]
+                    if let Some(directory) = self.update_fixture() {
+                        Arc::new(crate::update_download::FixtureTransport(directory))
+                    } else {
+                        Arc::new(HttpTransport::new()?)
+                    }
+                    #[cfg(not(all(feature = "test-fixture", debug_assertions)))]
+                    Arc::new(HttpTransport::new()?)
+                };
+                let handle = app.clone();
+                UpdateService::new(
+                    env!("CARGO_PKG_VERSION"),
+                    "win32",
+                    match std::env::consts::ARCH {
+                        "x86_64" => "x64",
+                        "x86" => "ia32",
+                        "aarch64" => "arm64",
+                        arch => arch,
+                    },
+                    self.profile.clone(),
+                    transport,
+                    Arc::new(move |snapshot| {
+                        handle
+                            .emit(
+                                "updates:status",
+                                snapshot.value(localized(&handle, "zh", "en") == "en"),
+                            )
+                            .map_err(|error| error.to_string())
+                    }),
+                )
+            })
+            .as_ref()
+            .map_err(|_| {
+                localized(
+                    app,
+                    "无法初始化更新服务，请重新打开应用后重试。",
+                    "Could not initialize updates. Reopen the application and try again.",
+                )
+                .into()
+            })
+    }
+}
+
+struct UpdateHost<'a> {
+    app: &'a tauri::AppHandle,
+    window: &'a WebviewWindow,
+}
+
+impl InstallHost for UpdateHost<'_> {
+    fn confirm(&self, snapshot: &Snapshot) -> Result<bool, UpdateError> {
+        let snapshot = snapshot.value(false);
+        Ok(native_dialog::confirm_update(
+            self.window,
+            snapshot["latestVersion"].as_str().unwrap_or(""),
+            snapshot["canInstall"] == true,
+        ))
+    }
+    fn open_link(&self, url: &str) -> Result<(), UpdateError> {
+        if self.app.state::<Desktop>().update_fixture().is_some() {
+            eprintln!("[updates:test] open-link {url}");
+            return Ok(());
+        }
+        windows_update::open_link(url)
+    }
+    fn prepare(&self) -> Result<(), UpdateError> {
+        if self.app.state::<Desktop>().closing.load(Ordering::SeqCst) {
+            return Err(UpdateError::Cancelled);
+        }
+        if !can_quit(self.app).map_err(|_| UpdateError::Install)? {
+            return Err(UpdateError::Cancelled);
+        }
+        self.app
+            .state::<Desktop>()
+            .collector
+            .prepare_update(Duration::from_secs(30))
+            .map_err(|_| UpdateError::Install)
+    }
+    fn launch(&self, file: &std::path::Path, digest: &str) -> Result<(), UpdateError> {
+        let state = self.app.state::<Desktop>();
+        if state.update_fixture().is_some() {
+            eprintln!("[updates:test] handoff rejected");
+            return Err(UpdateError::Install);
+        }
+        windows_update::launch(
+            file,
+            &state.profile,
+            digest,
+            localized(self.app, "zh", "en") == "en",
+        )
+    }
+    fn recover(&self) -> Result<(), UpdateError> {
+        self.app
+            .state::<Desktop>()
+            .collector
+            .recover_update(Duration::from_secs(30))
+            .map_err(|_| UpdateError::Install)
+    }
 }
 
 fn notify(app: &tauri::AppHandle, alert: &Value) {
@@ -115,6 +236,12 @@ fn apply_runtime_settings(
 ) -> Option<Value> {
     let state = app.state::<Desktop>();
     *state.settings.lock().unwrap() = settings.clone();
+    if let Some(Ok(updates)) = state.updates.get() {
+        let _ = app.emit(
+            "updates:status",
+            updates.snapshot().value(settings["language"] == "en"),
+        );
+    }
     let tray_ready = ensure_tray(app)
         .map_err(|error| eprintln!("[tray] {error}"))
         .is_ok();
@@ -234,6 +361,7 @@ pub(crate) fn themed_dialog(
     window: &WebviewWindow,
     kind: &str,
     buttons: usize,
+    version: Option<&str>,
 ) -> Option<crate::dialog_requests::Answer> {
     let state = window.state::<Desktop>();
     if !state.main_ready.load(Ordering::SeqCst) {
@@ -242,7 +370,10 @@ pub(crate) fn themed_dialog(
     let (id, response) = state.dialogs.begin(buttons);
     show_main(window.app_handle());
     if window
-        .emit("desktop:dialog", json!({"id":id,"kind":kind}))
+        .emit(
+            "desktop:dialog",
+            json!({"id":id,"kind":kind,"version":version}),
+        )
         .is_err()
     {
         state.dialogs.reply(id, None, false);
@@ -289,10 +420,70 @@ async fn desktop_request(
         if matches!(
             channel.as_str(),
             "backend:request" | "legacy:status" | "legacy:import"
-        ) {
+        ) || channel.starts_with("updates:")
+        {
             initialize_runtime(&app);
         }
         match channel.as_str() {
+            "updates:status" => Ok(state
+                .updates(&app)?
+                .status()
+                .value(localized(&app, "zh", "en") == "en")),
+            "updates:setting" => {
+                let enabled = payload.as_bool().ok_or_else(|| {
+                    localized(
+                        &app,
+                        "更新检查设置无效。",
+                        "Invalid update check preference.",
+                    )
+                    .to_string()
+                })?;
+                Ok(state
+                    .updates(&app)?
+                    .set_enabled(enabled)
+                    .value(localized(&app, "zh", "en") == "en"))
+            }
+            "updates:check" => Ok(state
+                .updates(&app)?
+                .check(false)
+                .value(localized(&app, "zh", "en") == "en")),
+            "updates:install" => {
+                let result = state
+                    .updates(&app)?
+                    .install(&UpdateHost {
+                        app: &app,
+                        window: &window,
+                    })
+                    .value(localized(&app, "zh", "en") == "en");
+                if result["state"] == "installing" {
+                    state.quitting.store(true, Ordering::SeqCst);
+                    state.mini.stop();
+                    app.exit(0);
+                }
+                Ok(result)
+            }
+            "updates:open-link" => {
+                let url = payload.as_str().ok_or_else(|| {
+                    localized(&app, "更新链接无效。", "Invalid update link.").to_string()
+                })?;
+                crate::updates::external_url(url)
+                    .and_then(|url| {
+                        UpdateHost {
+                            app: &app,
+                            window: &window,
+                        }
+                        .open_link(&url)
+                    })
+                    .map_err(|_| {
+                        localized(
+                            &app,
+                            "无法打开更新链接。",
+                            "Could not open the update link.",
+                        )
+                        .to_string()
+                    })?;
+                Ok(Value::Null)
+            }
             "app-control:request" => Ok(crate::app_control::localize(
                 state.app_control.request(&payload),
                 state.settings.lock().unwrap()["language"] == "en",
@@ -568,6 +759,8 @@ pub fn run() {
                 }),
             ));
             app.manage(Desktop {
+                profile: profile.clone(),
+                updates: OnceLock::new(),
                 collector: Collector::new(backend, profile.clone(), legacy_directory()),
                 preferences: Preferences::load(profile.clone()),
                 last_live: Mutex::new(None),
@@ -626,6 +819,14 @@ pub fn run() {
                     eprintln!("[mini] {error}");
                 }
                 initialize_runtime(&handle);
+                if !cfg!(debug_assertions)
+                    && !state.isolated
+                    && std::env::var_os("WIFIMETER_TEST_ISOLATION").is_none()
+                {
+                    if let Ok(updates) = state.updates(&handle) {
+                        updates.check(true);
+                    }
+                }
                 let migration = state.collector.migration_status();
                 if let Some(error) = migration["error"]
                     .as_str()
@@ -694,6 +895,10 @@ pub fn run() {
                     return;
                 }
                 api.prevent_exit();
+                if state.collector.update_pending() {
+                    show_main(app);
+                    return;
+                }
                 if state.closing.swap(true, Ordering::SeqCst) {
                     return;
                 }
