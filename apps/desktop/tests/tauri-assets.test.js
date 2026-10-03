@@ -15,12 +15,17 @@ test('Tauri 构建复用全部页面代码与样式，适配启动入口、CSP �
         await buildFrontend(output);
         const files = await readdir(output, { recursive: true });
         assert.ok(!files.includes('stale.js'));
+        assert.ok(!files.some(file => file.split(path.sep).includes('node_modules')));
         assert.ok(!files.some(file => /preload|main\.cjs|electron\.asar/.test(file)));
         for (const file of files) {
             if (!(await stat(path.join(output, file))).isFile()) continue;
             const relative = file.split(path.sep).join('/');
             const built = await readFile(path.join(output, file), 'utf8');
-            const source = await readFile(path.join(appDirectory, file), 'utf8');
+            const original = {
+                'vendor/marked.esm.js': 'node_modules/marked/lib/marked.esm.js',
+                'vendor/purify.es.mjs': 'node_modules/dompurify/dist/purify.es.mjs'
+            }[relative] || file;
+            const source = await readFile(path.join(appDirectory, original), 'utf8');
             if (relative.endsWith('index.html')) {
                 const main = relative === 'renderer/index.html';
                 const styled = main ? source.replace('</head>', '<link rel="stylesheet" href="../tauri/dialogs.css">\n</head>') : source;
@@ -28,10 +33,14 @@ test('Tauri 构建复用全部页面代码与样式，适配启动入口、CSP �
                     .replace(main ? 'src="./app.js"' : 'src="renderer.js"',
                         main ? 'src="../tauri/bootstrap.js"' : 'src="../../tauri/bootstrap.js"');
                 assert.equal(built, normalized, relative);
+            } else if (relative === 'renderer/ui/release-notes.js') {
+                assert.equal(built, source
+                    .replace('../../node_modules/marked/lib/marked.esm.js', '../../vendor/marked.esm.js')
+                    .replace('../../node_modules/dompurify/dist/purify.es.mjs', '../../vendor/purify.es.mjs'));
             } else {
                 assert.equal(built, source, `${relative} 必须保持不变`);
             }
-            if (relative.startsWith('node_modules/')) continue;
+            if (relative.startsWith('vendor/')) continue;
             // 验证实际输出中的 HTML、JS 和 CSS 相对依赖，尤其是小窗的共享速率和 token。
             const imports = [...built.matchAll(/(?:from\s+|import\s*\(|(?:src|href)=|url\()["']([^"']+)["']/g)];
             for (const [, target] of imports) {
