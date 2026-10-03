@@ -9,6 +9,8 @@ pub mod files;
 pub mod identity;
 pub mod ipc_policy;
 pub mod legacy;
+#[cfg(target_os = "linux")]
+pub mod linux_login;
 #[cfg(all(windows, feature = "desktop-shell"))]
 mod mini;
 pub mod mini_geometry;

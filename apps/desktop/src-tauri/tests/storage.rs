@@ -12,11 +12,11 @@ fn windows_identity_keeps_existing_profile_and_test_isolation() {
     assert_eq!(PRODUCT_NAME, "WiFiMeter");
     assert_eq!(WINDOWS_APP_ID, "io.wifimeter.demo");
     assert_eq!(
-        profile_directory(app_data, None),
+        profile_directory(app_data, None, true),
         app_data.join("WiFiMeter Demo")
     );
     assert_eq!(
-        profile_directory(app_data, Some(Path::new("isolated"))),
+        profile_directory(app_data, Some(Path::new("isolated")), true),
         Path::new("isolated")
     );
     assert_eq!(
@@ -29,6 +29,15 @@ fn windows_identity_keeps_existing_profile_and_test_isolation() {
         legacy_directory(Some(app_data), true, Some(Path::new("legacy-test"))),
         Some("legacy-test".into())
     );
+}
+
+#[test]
+fn linux_identity_keeps_electron_config_directory_and_test_isolation() {
+    for config in ["/home/user/.config", "/home/user/custom config"] {
+        let config = Path::new(config);
+        assert_eq!(profile_directory(config, None, false), config.join("WiFiMeter"));
+        assert_eq!(profile_directory(config, Some(Path::new("/tmp/isolated")), false), Path::new("/tmp/isolated"));
+    }
 }
 
 #[test]

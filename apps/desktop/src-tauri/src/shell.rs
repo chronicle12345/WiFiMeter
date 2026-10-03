@@ -714,8 +714,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let override_directory = std::env::var_os("WIFIMETER_USER_DATA").map(PathBuf::from);
-            let app_data = app.path().data_dir()?;
-            let profile = identity::profile_directory(&app_data, override_directory.as_deref());
+            let app_data = app.path().config_dir()?;
+            let profile = identity::profile_directory(&app_data, override_directory.as_deref(), cfg!(windows));
             std::fs::create_dir_all(&profile)?;
             let notification_icon = profile.join("notification-icon.png");
             if let Err(error) =

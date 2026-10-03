@@ -3,11 +3,21 @@ use std::path::{Path, PathBuf};
 pub const PRODUCT_NAME: &str = "WiFiMeter";
 pub const WINDOWS_APP_ID: &str = "io.wifimeter.demo";
 
-pub fn profile_directory(app_data: &Path, override_directory: Option<&Path>) -> PathBuf {
+pub fn profile_directory(
+    app_data: &Path,
+    override_directory: Option<&Path>,
+    windows: bool,
+) -> PathBuf {
     // Tauri 默认使用 identifier 目录；必须显式沿用 Electron 目录以保留数据库及窗口偏好。
     override_directory
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| app_data.join("WiFiMeter Demo"))
+        .unwrap_or_else(|| {
+            app_data.join(if windows {
+                "WiFiMeter Demo"
+            } else {
+                PRODUCT_NAME
+            })
+        })
 }
 
 pub fn legacy_directory(
