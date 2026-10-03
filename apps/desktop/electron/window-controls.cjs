@@ -20,7 +20,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     logger = () => {}, fileSystem = fs, backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1',
     timers = { setInterval, clearInterval, now: Date.now } }) {
     const file = path.join(userData, 'window-preferences.json');
-    const miniFile = path.join(__dirname, 'mini', 'index.html');
+    const miniFile = path.join(__dirname, '../renderer/mini/index.html');
     const miniURL = pathToFileURL(miniFile).href;
     const mainURL = pathToFileURL(path.join(__dirname, '../renderer/index.html')).href;
     let preferences = { ...DEFAULTS };

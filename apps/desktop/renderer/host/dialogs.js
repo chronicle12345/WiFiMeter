@@ -1,4 +1,4 @@
-import { getLanguage } from '../renderer/i18n.js';
+import { getLanguage } from '../i18n.js';
 
 export async function installDialogs({ listen, invoke, document = window.document }) {
     const copy = await (await fetch(new URL('./dialog-copy.json', import.meta.url))).json();

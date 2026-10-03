@@ -8,7 +8,7 @@ pub fn authorize(
 ) -> Result<(), String> {
     let expected = match label {
         "main" => "/renderer/index.html",
-        "mini" => "/electron/mini/index.html",
+        "mini" => "/renderer/mini/index.html",
         _ => return Err("不支持的页面请求。".into()),
     };
     if !local_page(scheme, host, path, expected) {
@@ -46,7 +46,7 @@ mod tests {
             "mini",
             "tauri",
             Some("localhost"),
-            "/electron/mini/index.html",
+            "/renderer/mini/index.html",
             Some("mini:close")
         )
         .is_ok());
@@ -54,7 +54,7 @@ mod tests {
             "mini",
             "tauri",
             Some("localhost"),
-            "/electron/mini/index.html",
+            "/renderer/mini/index.html",
             Some("files:save")
         )
         .is_err());
@@ -99,7 +99,7 @@ mod tests {
                 "mini",
                 "http",
                 Some("tauri.localhost"),
-                "/electron/mini/index.html",
+                "/renderer/mini/index.html",
                 channel
             )
             .is_ok());
@@ -114,7 +114,7 @@ mod tests {
                 "mini",
                 "http",
                 Some("tauri.localhost"),
-                "/electron/mini/index.html",
+                "/renderer/mini/index.html",
                 Some(channel)
             )
             .is_err());

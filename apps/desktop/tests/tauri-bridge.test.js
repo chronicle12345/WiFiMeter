@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { createDesktopBridge } from '../tauri/bridge.js';
+import { createDesktopBridge } from '../renderer/host/bridge.js';
 
 function electronBridge(file, platform = 'win32') {
     let api;

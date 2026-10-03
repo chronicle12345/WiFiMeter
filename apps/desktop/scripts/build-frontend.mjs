@@ -7,7 +7,6 @@ const vendorFiles = {
     'node_modules/marked/lib/marked.esm.js': 'vendor/marked.esm.js',
     'node_modules/dompurify/dist/purify.es.mjs': 'vendor/purify.es.mjs'
 };
-const miniFiles = ['index.html', 'renderer.js', 'style.css', 'rates.js'];
 
 export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri')) {
     // 先检查依赖，避免安装缺失时生成不完整的可发布目录。
@@ -16,8 +15,7 @@ export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri
     await mkdir(output, { recursive: true });
     await cp(path.join(appDirectory, 'renderer'), path.join(output, 'renderer'), { recursive: true });
     for (const file of [
-        ...Object.keys(vendorFiles), ...miniFiles.map(file => `electron/mini/${file}`),
-        'tauri/bridge.js', 'tauri/bootstrap.js', 'tauri/close-guard.js', 'tauri/dialogs.js', 'tauri/dialogs.css', 'tauri/dialog-copy.json', 'assets/icon.png'
+        ...Object.keys(vendorFiles), 'assets/icon.png'
     ]) {
         const destination = path.join(output, vendorFiles[file] || file);
         await mkdir(path.dirname(destination), { recursive: true });
@@ -31,12 +29,12 @@ export async function buildFrontend(output = path.join(appDirectory, 'dist/tauri
     }
     await writeFile(notesFile, notes);
     for (const [file, entry, bootstrap] of [
-        ['renderer/index.html', './app.js', '../tauri/bootstrap.js'],
-        ['electron/mini/index.html', 'renderer.js', '../../tauri/bootstrap.js']
+        ['renderer/index.html', './app.js', './host/bootstrap.js'],
+        ['renderer/mini/index.html', 'renderer.js', '../host/bootstrap.js']
     ]) {
         const source = await readFile(path.join(output, file), 'utf8');
         // CSP 由 Tauri 配置统一注入。Electron 的 connect-src 'none' 会阻止 Tauri IPC。
-        const styled = file === 'renderer/index.html' ? source.replace('</head>', '<link rel="stylesheet" href="../tauri/dialogs.css">\n</head>') : source;
+        const styled = file === 'renderer/index.html' ? source.replace('</head>', '<link rel="stylesheet" href="./host/dialogs.css">\n</head>') : source;
         const html = styled.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
             .replace(`src="${entry}"`, `src="${bootstrap}"`);
         await writeFile(path.join(output, file), html);

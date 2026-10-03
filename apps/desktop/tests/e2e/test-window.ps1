@@ -25,6 +25,8 @@ public static class TestWindow {
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     public delegate bool WindowCallback(IntPtr window, IntPtr parameter);
@@ -66,19 +68,31 @@ if ($Action -in @('bounds','move','cursor','drag')) {
     $cursor = New-Object TestWindow+Point
     [void][TestWindow]::GetCursorPos([ref]$cursor)
     if ($Action -eq 'cursor') {
-        [void][TestWindow]::SetCursorPos($X,$Y)
+        if (-not [TestWindow]::SetCursorPos($X,$Y)) { throw 'Windows rejected cursor positioning; an interactive input desktop is required.' }
         @{ x=$cursor.X; y=$cursor.Y } | ConvertTo-Json -Compress
     } elseif ($Action -eq 'move') {
         [void][TestWindow]::SetWindowPos($script:main,[IntPtr]::Zero,$X,$Y,0,0,21)
     } elseif ($Action -eq 'drag') {
+        $pressed = $false
         try {
-            [void][TestWindow]::SetCursorPos($rect.Left+35,$rect.Top+22)
+            if (-not [TestWindow]::SetCursorPos($rect.Left+35,$rect.Top+22)) { throw 'Windows rejected cursor positioning; an interactive input desktop is required.' }
+            $hit = New-Object TestWindow+Point
+            [void][TestWindow]::GetCursorPos([ref]$hit)
+            $hitRoot = [TestWindow]::GetAncestor([TestWindow]::WindowFromPoint($hit),2)
+            if ($hitRoot -ne $script:main) {
+                [uint32]$hitOwner = 0
+                [void][TestWindow]::GetWindowThreadProcessId($hitRoot,[ref]$hitOwner)
+                throw "Drag hit a different window: expected=$script:main actual=$hitRoot owner=$hitOwner cursor=$($hit.X),$($hit.Y) target=$($rect.Left+35),$($rect.Top+22)"
+            }
             [TestWindow]::mouse_event(2,0,0,0,[UIntPtr]::Zero)
+            $pressed = $true
             Start-Sleep -Milliseconds 150
-            [void][TestWindow]::SetCursorPos($X+35,$Y+22)
+            if (-not [TestWindow]::SetCursorPos($X+35,$Y+22)) { throw 'Windows rejected cursor positioning during drag.' }
             Start-Sleep -Milliseconds 150
-            [TestWindow]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
-        } finally { [void][TestWindow]::SetCursorPos($cursor.X,$cursor.Y) }
+        } finally {
+            if ($pressed) { [TestWindow]::mouse_event(4,0,0,0,[UIntPtr]::Zero) }
+            [void][TestWindow]::SetCursorPos($cursor.X,$cursor.Y)
+        }
     } else {
         $monitor = New-Object TestWindow+MonitorInfo
         $monitor.Size = [System.Runtime.InteropServices.Marshal]::SizeOf($monitor)

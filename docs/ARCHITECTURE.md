@@ -15,6 +15,10 @@ renderer/app.js → data/backend-client.js → Tauri bridge → Rust 宿主 → 
 
 Rust 宿主用 `src-tauri/src/collection/backend.rs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端的失败以 `{ ok: false, error }` 形式回给页面，而不是抛异常，因为跨进程只保留错误消息、会丢掉页面用来决定文案的错误码。历史、额度和网络设置以 C++ 后端为准。
 
+## 桌面目录
+
+`renderer/host/` 提供桌面桥接与统一弹窗，`renderer/mini/` 是浮窗页面，与主页面共用 `renderer/shared/` 的样式。`scripts/` 放前端构建，`tests/e2e/` 驱动真实系统 WebView，`tests/support/` 提供后端夹具。构建输出位于 `apps/desktop/dist/tauri/`，不混入源代码目录。
+
 ## Rust 宿主
 
 `apps/desktop/src-tauri/` 保持 Tauri 标准工程入口，`src/` 按职责组织：

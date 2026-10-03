@@ -116,7 +116,7 @@ test('dispose 后未完成的关闭对话框不再退出；非 Windows 不创建
 });
 
 import { createSystemIntegration } from '../electron/system.cjs';
-import { liveRates } from '../electron/mini/rates.js';
+import { liveRates } from '../renderer/mini/rates.js';
 
 test('hideToTray 确认托盘可用后才隐藏，不访问登录启动项', () => {
     for (const failure of ['none', 'constructor', 'menu']) {

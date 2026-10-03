@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const copy = JSON.parse(await readFile(new URL('../tauri/dialog-copy.json', import.meta.url), 'utf8'));
+const copy = JSON.parse(await readFile(new URL('../renderer/host/dialog-copy.json', import.meta.url), 'utf8'));
 
 test('所有宿主确认弹窗中英文完整对应，不混排，并默认选择取消', () => {
     assert.deepEqual(Object.keys(copy).sort(), ['close', 'discard', 'overlap', 'resume', 'update-install', 'update-manual']);

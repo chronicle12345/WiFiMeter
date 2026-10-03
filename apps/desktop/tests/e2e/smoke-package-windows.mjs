@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { rm, writeFile } from 'node:fs/promises';
 import { chromium, expect } from '@playwright/test';
-import { createHarness } from '../tests/support/backend-harness.mjs';
+import { createHarness } from '../support/backend-harness.mjs';
 
 assert.equal(process.platform, 'win32');
 assert.ok(process.env.WIFIMETER_EXECUTABLE, 'Set WIFIMETER_EXECUTABLE to the packaged executable');

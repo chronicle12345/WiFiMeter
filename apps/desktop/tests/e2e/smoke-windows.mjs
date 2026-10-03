@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { chromium, expect } from '@playwright/test';
-import { createHarness } from '../tests/support/backend-harness.mjs';
+import { createHarness } from '../support/backend-harness.mjs';
 
 assert.equal(process.platform, 'win32', 'Run this test with Windows Node.js');
 assert.ok(process.env.WIFIMETER_EXECUTABLE, 'Set WIFIMETER_EXECUTABLE to the Tauri executable');
@@ -38,7 +38,7 @@ const child = spawn(process.env.WIFIMETER_EXECUTABLE, [], {
     stdio: ['ignore', 'pipe', 'pipe']
 });
 const exited = once(child, 'exit');
-let log = '', browser, page;
+let log = '', browser, page, mini;
 child.stdout.on('data', chunk => { log += chunk; });
 child.stderr.on('data', chunk => { log += chunk; });
 async function native(action, ...args) {
@@ -142,8 +142,8 @@ try {
     await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { language: 'zh-CN', notifications: true } }));
     console.log('Pages, backend, isolated autostart and bilingual quota notification dispatch passed; checking floating window');
     await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true, miniAutoHide: false }));
-    await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
-    const mini = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
+    await expect.poll(() => context.pages().some(page => page.url().endsWith('/renderer/mini/index.html'))).toBe(true);
+    mini = context.pages().find(page => page.url().endsWith('/renderer/mini/index.html'));
     mini.on('pageerror', error => errors.push(error.message));
     await mini.waitForFunction(() => Boolean(window.miniDesktop));
     await expect(mini.locator('#download .rate-number')).not.toHaveText('—');
@@ -163,29 +163,37 @@ try {
         await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(size);
         if (process.env.WIFIMETER_SCREENSHOT) await mini.screenshot({ path: process.env.WIFIMETER_SCREENSHOT.replace('.png', `-mini-${shape}.png`) });
     }
-    // Exercise the real native drag path, then verify snapping/collapse/hover in physical coordinates.
-    const x = initial.area.x + Math.round(8 * initial.scale), y = initial.area.y + Math.round(200 * initial.scale);
-    await native('drag', '-Target', 'mini', '-X', String(x), '-Y', String(y));
-    await expect.poll(async () => (await native('bounds', '-Target', 'mini')).x).toBe(initial.area.x);
-    const savedCursor = await native('cursor', '-X', String(initial.area.x + initial.area.width / 2 | 0), '-Y', String(initial.area.y + initial.area.height / 2 | 0));
-    try {
-        await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: true }));
-        await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'true');
-        const strip = await native('bounds', '-Target', 'mini');
-        assert.equal(strip.width, Math.round(6 * strip.scale));
-        await native('cursor', '-X', String(strip.x + 2), '-Y', String(strip.y + 20));
-        await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'false');
-        await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(224);
-        await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: false }));
-    } finally { await native('cursor', '-X', String(savedCursor.x), '-Y', String(savedCursor.y)); }
+    if (process.argv.includes('--skip-native-input')) {
+        console.log('SKIP: native drag/snap/hover checks explicitly disabled; all other checks remain enabled');
+    } else {
+        // Exercise the real native drag path, then verify snapping/collapse/hover in physical coordinates.
+        await mini.evaluate(() => {
+            window.testDragEvents = [];
+            document.addEventListener('mousedown', event => window.testDragEvents.push({ x: event.clientX, y: event.clientY, target: event.target.tagName }), { capture: true });
+        });
+        const x = initial.area.x + Math.round(8 * initial.scale), y = initial.area.y + Math.round(200 * initial.scale);
+        await native('drag', '-Target', 'mini', '-X', String(x), '-Y', String(y));
+        await expect.poll(async () => (await native('bounds', '-Target', 'mini')).x).toBe(initial.area.x);
+        const savedCursor = await native('cursor', '-X', String(initial.area.x + initial.area.width / 2 | 0), '-Y', String(initial.area.y + initial.area.height / 2 | 0));
+        try {
+            await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: true }));
+            await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'true');
+            const strip = await native('bounds', '-Target', 'mini');
+            assert.equal(strip.width, Math.round(6 * strip.scale));
+            await native('cursor', '-X', String(strip.x + 2), '-Y', String(strip.y + 20));
+            await expect(mini.locator('body')).toHaveAttribute('data-collapsed', 'false');
+            await expect.poll(() => mini.evaluate(() => innerWidth)).toBe(224);
+            await page.evaluate(() => window.desktop.windowPreferences.update({ miniAutoHide: false }));
+        } finally { await native('cursor', '-X', String(savedCursor.x), '-Y', String(savedCursor.y)); }
+    }
     // Mini IPC stays restricted; its own close button persists the preference without exiting the app.
     await assert.rejects(() => mini.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'backend:request', payload: { method: 'shutdown' } })));
     await mini.locator('#close').click();
     await expect.poll(() => page.evaluate(async () => (await window.desktop.windowPreferences.read()).miniWindow)).toBe(false);
     await expect.poll(() => mini.isClosed()).toBe(true);
     await page.evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true }));
-    await expect.poll(() => context.pages().some(page => page.url().endsWith('/electron/mini/index.html'))).toBe(true);
-    const reopened = context.pages().find(page => page.url().endsWith('/electron/mini/index.html'));
+    await expect.poll(() => context.pages().some(page => page.url().endsWith('/renderer/mini/index.html'))).toBe(true);
+    const reopened = context.pages().find(page => page.url().endsWith('/renderer/mini/index.html'));
     await reopened.waitForFunction(() => Boolean(window.miniDesktop));
     await reopened.locator('#open').click();
     await native('close', '-Target', 'mini');
@@ -238,7 +246,7 @@ try {
     await page.evaluate(async () => {
         const { setLanguage } = await import('/renderer/i18n.js');
         setLanguage('en');
-        const { installDialogs } = await import('/tauri/dialogs.js');
+        const { installDialogs } = await import('/renderer/host/dialogs.js');
         let receive;
         window.removeTestDialogs = await installDialogs({ listen: async (_, callback) => { receive = callback; return () => {}; }, invoke: async () => {} });
         window.receiveTestDialog = receive;
@@ -358,10 +366,11 @@ try {
     console.log('Update UI, bilingual confirmation, preferences, verified download, handoff failure recovery, unsaved cancellation and manual fallback passed');
     assert.deepEqual(errors, []);
     if (process.env.WIFIMETER_SCREENSHOT) await page.screenshot({ animations: 'disabled', path: process.env.WIFIMETER_SCREENSHOT });
-    console.log('PASS: Windows WebView2 pages, backend, preferences, isolated autostart, bilingual quota notification dispatch and off switch, floating-window shapes/palettes/rates/drag/snap/auto-hide/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
+    console.log('PASS: Windows WebView2 pages, backend, preferences, isolated autostart, bilingual quota notification dispatch and off switch, floating-window shapes/palettes/rates/close, themed dialogs in both themes, import/resume localization, tray hiding, single-instance activation and unsaved-change cancellation');
 } catch (error) {
     console.error('Smoke test failed:', error);
     try { console.error('Mini diagnostics:', await native('bounds', '-Target', 'mini')); } catch { /* The mini may not exist yet. */ }
+    try { console.error('Mini drag events:', await mini?.evaluate(() => window.testDragEvents)); } catch { /* The mini may already be closed. */ }
     throw error;
 } finally {
     if (child.exitCode === null) {

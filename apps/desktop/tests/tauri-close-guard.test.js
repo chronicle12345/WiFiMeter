@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { installCloseGuard } from '../tauri/close-guard.js';
+import { installCloseGuard } from '../renderer/host/close-guard.js';
 
 test('Tauri 退出检查沿用 beforeunload，并把请求编号和未保存状态回给宿主', async () => {
     let listener, removed = false;

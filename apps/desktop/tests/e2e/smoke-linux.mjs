@@ -6,7 +6,7 @@ import { createServer } from 'node:net';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createHarness } from '../tests/support/backend-harness.mjs';
+import { createHarness } from '../support/backend-harness.mjs';
 
 assert.equal(process.platform, 'linux');
 const packaged = process.argv.includes('--packaged');
@@ -130,7 +130,7 @@ try {
     const handles = await poll(() => request(`/session/${session}/window/handles`), values => values.length === 2);
     await request(`/session/${session}/window`, { handle: handles.find(handle => handle !== main) });
     await poll(() => evaluate('return Boolean(window.miniDesktop);'));
-    assert.match(await evaluate('return location.href;'), /electron\/mini\/index.html/);
+    assert.match(await evaluate('return location.href;'), /renderer\/mini\/index.html/);
     await evaluateAsync('return window.miniDesktop.openMain();');
     await request(`/session/${session}/window`, { handle: main });
     await evaluateAsync('return window.desktop.windowPreferences.update({miniWindow:false,closeAction:"exit"});');

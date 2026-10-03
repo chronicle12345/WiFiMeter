@@ -1,4 +1,4 @@
-import { formatSpeedParts } from '../../renderer/data/speed.js';
+import { formatSpeedParts } from '../data/speed.js';
 export function formatSpeed(value, mode = 'auto') {
     const parts = formatSpeedParts(value, mode);
     return parts.value === '—' ? '—' : `${parts.value} ${parts.unit}`;

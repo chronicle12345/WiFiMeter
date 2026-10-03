@@ -85,7 +85,7 @@ impl Controller {
         let window = WebviewWindowBuilder::new(
             app,
             "mini",
-            WebviewUrl::App("electron/mini/index.html".into()),
+            WebviewUrl::App("renderer/mini/index.html".into()),
         )
         .title("WiFiMeter")
         .inner_size(width as f64 / scale, height as f64 / scale)
@@ -107,7 +107,7 @@ impl Controller {
                 url.scheme(),
                 url.host_str(),
                 url.path(),
-                "/electron/mini/index.html",
+                "/renderer/mini/index.html",
             )
         })
         .build()

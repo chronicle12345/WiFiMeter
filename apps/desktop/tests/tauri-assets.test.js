@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promise
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildFrontend } from '../tauri/build-frontend.mjs';
+import { buildFrontend } from '../scripts/build-frontend.mjs';
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 
@@ -28,10 +28,10 @@ test('Tauri 构建复用全部页面代码与样式，适配启动入口、CSP �
             const source = await readFile(path.join(appDirectory, original), 'utf8');
             if (relative.endsWith('index.html')) {
                 const main = relative === 'renderer/index.html';
-                const styled = main ? source.replace('</head>', '<link rel="stylesheet" href="../tauri/dialogs.css">\n</head>') : source;
+                const styled = main ? source.replace('</head>', '<link rel="stylesheet" href="./host/dialogs.css">\n</head>') : source;
                 const normalized = styled.replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\r?\n/, '')
                     .replace(main ? 'src="./app.js"' : 'src="renderer.js"',
-                        main ? 'src="../tauri/bootstrap.js"' : 'src="../../tauri/bootstrap.js"');
+                        main ? 'src="./host/bootstrap.js"' : 'src="../host/bootstrap.js"');
                 assert.equal(built, normalized, relative);
             } else if (relative === 'renderer/ui/release-notes.js') {
                 assert.equal(built, source
