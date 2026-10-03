@@ -11,7 +11,7 @@ pub fn authorize(
         "mini" => "/electron/mini/index.html",
         _ => return Err("不支持的页面请求。".into()),
     };
-    if !matches!(scheme, "http" | "https") || host != Some("tauri.localhost") || path != expected {
+    if !local_page(scheme, host, path, expected) {
         return Err("不支持的页面请求。".into());
     }
     if label == "mini"
@@ -22,9 +22,51 @@ pub fn authorize(
     Ok(())
 }
 
+pub fn local_page(scheme: &str, host: Option<&str>, path: &str, expected: &str) -> bool {
+    (matches!(scheme, "http" | "https") && host == Some("tauri.localhost")
+        || scheme == "tauri" && host == Some("localhost"))
+        && path == expected
+}
+
 #[cfg(test)]
 mod tests {
     use super::authorize;
+
+    #[test]
+    fn linux_protocol_has_the_same_window_and_channel_boundaries() {
+        assert!(authorize(
+            "main",
+            "tauri",
+            Some("localhost"),
+            "/renderer/index.html",
+            Some("backend:request")
+        )
+        .is_ok());
+        assert!(authorize(
+            "mini",
+            "tauri",
+            Some("localhost"),
+            "/electron/mini/index.html",
+            Some("mini:close")
+        )
+        .is_ok());
+        assert!(authorize(
+            "mini",
+            "tauri",
+            Some("localhost"),
+            "/electron/mini/index.html",
+            Some("files:save")
+        )
+        .is_err());
+        for (scheme, host) in [
+            ("http", "localhost"),
+            ("tauri", "tauri.localhost"),
+            ("tauri", "localhost.evil"),
+            ("file", "localhost"),
+        ] {
+            assert!(authorize("main", scheme, Some(host), "/renderer/index.html", None).is_err());
+        }
+    }
 
     #[test]
     fn main_window_can_use_desktop_api_but_remote_pages_cannot() {

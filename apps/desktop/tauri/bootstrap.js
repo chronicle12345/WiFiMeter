@@ -3,7 +3,7 @@ import { installDialogs } from './dialogs.js';
 import { installCloseGuard } from './close-guard.js';
 
 const { core, event, window: windows } = window.__TAURI__;
-const bridge = await createDesktopBridge({ invoke: core.invoke, listen: event.listen });
+const bridge = await createDesktopBridge({ invoke: core.invoke, listen: event.listen, platform: window.__WIFIMETER_PLATFORM__ });
 window.addEventListener('unload', () => bridge.dispose(), { once: true });
 
 if (location.pathname.endsWith('/electron/mini/index.html')) {

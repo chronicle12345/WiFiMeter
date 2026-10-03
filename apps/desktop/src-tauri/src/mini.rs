@@ -13,6 +13,7 @@ use tauri::{
     Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder,
 };
+#[cfg(windows)]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
 
 struct Instance {
@@ -99,9 +100,15 @@ impl Controller {
         .background_color(tauri::window::Color(0, 0, 0, 0))
         .shadow(false)
         .focusable(false)
-        .data_directory(self.profile.join("WebView2"))
+        .data_directory(self.profile.join(crate::identity::WEBVIEW_DIRECTORY))
+        .initialization_script(crate::identity::platform_script())
         .on_navigation(|url| {
-            url.host_str() == Some("tauri.localhost") && url.path() == "/electron/mini/index.html"
+            crate::ipc_policy::local_page(
+                url.scheme(),
+                url.host_str(),
+                url.path(),
+                "/electron/mini/index.html",
+            )
         })
         .build()
         .map_err(|error| error.to_string())?;
@@ -214,7 +221,10 @@ fn track(
         } else {
             let expected = layout.bounds(display.map_or(scale, |(_, scale)| scale));
             let moved = actual != expected;
+            #[cfg(windows)]
             let dragging = moved && unsafe { GetAsyncKeyState(VK_LBUTTON as i32) < 0 };
+            #[cfg(target_os = "linux")]
+            let dragging = moved && crate::linux_desktop::left_button_down(window.app_handle());
             if !dragging && (!shown || resize || changed_snap || moved) {
                 let base = if layout.collapsed {
                     layout.expanded

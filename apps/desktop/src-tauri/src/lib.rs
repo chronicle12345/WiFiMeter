@@ -11,19 +11,21 @@ pub mod ipc_policy;
 pub mod legacy;
 #[cfg(target_os = "linux")]
 pub mod linux_login;
-#[cfg(all(windows, feature = "desktop-shell"))]
+#[cfg(all(target_os = "linux", feature = "desktop-shell"))]
+mod linux_desktop;
+#[cfg(all(any(windows, target_os = "linux"), feature = "desktop-shell"))]
 mod mini;
 pub mod mini_geometry;
 pub mod notifications;
-#[cfg(all(windows, feature = "desktop-shell"))]
+#[cfg(all(any(windows, target_os = "linux"), feature = "desktop-shell"))]
 mod native_dialog;
 pub mod preferences;
 pub mod updates;
 pub mod update_download;
 pub mod update_service;
-#[cfg(all(windows, feature = "desktop-shell"))]
+#[cfg(all(any(windows, target_os = "linux"), feature = "desktop-shell"))]
 pub mod shell;
-#[cfg(all(windows, feature = "desktop-shell"))]
+#[cfg(all(any(windows, target_os = "linux"), feature = "desktop-shell"))]
 mod tray;
 
 #[cfg(windows)]

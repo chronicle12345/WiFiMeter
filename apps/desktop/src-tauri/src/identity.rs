@@ -2,6 +2,12 @@ use std::path::{Path, PathBuf};
 
 pub const PRODUCT_NAME: &str = "WiFiMeter";
 pub const WINDOWS_APP_ID: &str = "io.wifimeter.demo";
+pub const PLATFORM: &str = if cfg!(windows) { "win32" } else { "linux" };
+pub const WEBVIEW_DIRECTORY: &str = if cfg!(windows) { "WebView2" } else { "WebKit" };
+
+pub fn platform_script() -> String {
+    format!("window.__WIFIMETER_PLATFORM__ = '{PLATFORM}';")
+}
 
 pub fn profile_directory(
     app_data: &Path,

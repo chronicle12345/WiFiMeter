@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createDesktopBridge } from '../tauri/bridge.js';
 
-function electronBridge(file) {
+function electronBridge(file, platform = 'win32') {
     let api;
     const calls = [];
     const events = new Map();
@@ -17,14 +17,15 @@ function electronBridge(file) {
         }
     };
     vm.runInNewContext(readFileSync(new URL(file, import.meta.url), 'utf8'), {
-        require: name => { assert.equal(name, 'electron'); return electron; }, process: { platform: 'win32' }
+        require: name => { assert.equal(name, 'electron'); return electron; }, process: { platform }
     });
     return { api, calls, events };
 }
 
-async function tauriBridge() {
+async function tauriBridge(platform = 'win32') {
     const calls = [], removed = [], events = new Map();
     const bridge = await createDesktopBridge({
+        platform,
         invoke: (...args) => { calls.push(args); return Promise.resolve({ ok: true }); },
         listen: async (channel, listener) => {
             events.set(channel, listener);
@@ -44,6 +45,12 @@ test('Tauri 主窗口和小窗与现有 preload 暴露相同接口', async () =>
     const tauri = await tauriBridge();
     assert.deepEqual(shape(tauri.desktop), shape(electronBridge('../electron/preload.cjs').api));
     assert.deepEqual(shape(tauri.miniDesktop), shape(electronBridge('../electron/mini/preload.cjs').api));
+    tauri.dispose();
+});
+
+test('Linux Tauri 保留 Linux preload 的平台标识与接口', async () => {
+    const tauri = await tauriBridge('linux');
+    assert.deepEqual(shape(tauri.desktop), shape(electronBridge('../electron/preload.cjs', 'linux').api));
     tauri.dispose();
 });
 

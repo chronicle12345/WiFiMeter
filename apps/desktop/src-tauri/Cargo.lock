@@ -4621,6 +4621,7 @@ name = "wifimeter-desktop"
 version = "1.2.2"
 dependencies = [
  "base64 0.22.1",
+ "gtk",
  "png 0.18.1",
  "reqwest",
  "serde",

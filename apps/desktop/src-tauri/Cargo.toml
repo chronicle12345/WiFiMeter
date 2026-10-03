@@ -3,12 +3,12 @@ name = "wifimeter-desktop"
 version = "1.2.2"
 edition = "2021"
 license = "MIT"
-description = "WiFiMeter Windows desktop shell"
+description = "WiFiMeter desktop shell for Windows and Linux"
 default-run = "WiFiMeter"
 
 [features]
 test-fixture = []
-desktop-shell = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-notification"]
+desktop-shell = ["dep:tauri", "dep:tauri-plugin-dialog", "dep:tauri-plugin-single-instance", "dep:tauri-plugin-notification", "dep:gtk"]
 custom-protocol = ["desktop-shell", "tauri/custom-protocol"]
 
 [dependencies]
@@ -20,11 +20,15 @@ base64 = "0.22"
 url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "native-tls", "system-proxy"] }
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
 tauri = { version = "2", optional = true, features = ["tray-icon", "image-png"] }
 tauri-plugin-dialog = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-notification = { version = "2", optional = true }
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_System_Com", "Win32_Graphics_Gdi", "Win32_UI_Shell", "Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 png = "0.18"
 

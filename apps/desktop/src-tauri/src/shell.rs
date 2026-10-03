@@ -11,10 +11,10 @@ use crate::{
     update_download::{HttpTransport, Transport},
     update_service::{InstallHost, Snapshot, UpdateService},
     updates::UpdateError,
-    windows_control::WindowsControl,
-    windows_icons,
-    windows_login::WindowsLogin,
-    windows_update,
+};
+#[cfg(windows)]
+use crate::{
+    windows_control::WindowsControl, windows_icons, windows_login::WindowsLogin, windows_update,
 };
 use serde_json::{json, Value};
 use std::{
@@ -49,6 +49,7 @@ struct Desktop {
     isolated: bool,
     notification_icon: PathBuf,
     app_icons: AppIcons,
+    #[cfg(windows)]
     app_control: WindowsControl,
 }
 
@@ -80,7 +81,7 @@ impl Desktop {
                 let handle = app.clone();
                 UpdateService::new(
                     env!("CARGO_PKG_VERSION"),
-                    "win32",
+                    identity::PLATFORM,
                     match std::env::consts::ARCH {
                         "x86_64" => "x64",
                         "x86" => "ia32",
@@ -130,7 +131,14 @@ impl InstallHost for UpdateHost<'_> {
             eprintln!("[updates:test] open-link {url}");
             return Ok(());
         }
-        windows_update::open_link(url)
+        #[cfg(windows)]
+        {
+            windows_update::open_link(url)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_desktop::open_link(url)
+        }
     }
     fn prepare(&self) -> Result<(), UpdateError> {
         if self.app.state::<Desktop>().closing.load(Ordering::SeqCst) {
@@ -151,12 +159,20 @@ impl InstallHost for UpdateHost<'_> {
             eprintln!("[updates:test] handoff rejected");
             return Err(UpdateError::Install);
         }
-        windows_update::launch(
-            file,
-            &state.profile,
-            digest,
-            localized(self.app, "zh", "en") == "en",
-        )
+        #[cfg(windows)]
+        {
+            windows_update::launch(
+                file,
+                &state.profile,
+                digest,
+                localized(self.app, "zh", "en") == "en",
+            )
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let _ = (file, digest);
+            Err(UpdateError::Install)
+        }
     }
     fn recover(&self) -> Result<(), UpdateError> {
         self.app
@@ -484,10 +500,17 @@ async fn desktop_request(
                     })?;
                 Ok(Value::Null)
             }
+            #[cfg(target_os = "linux")]
+            "app-control:request" | "app-control:choose" => Ok(crate::app_control::localize(
+                crate::app_control::failure(BackendError::new("unsupported", "")),
+                state.settings.lock().unwrap()["language"] == "en",
+            )),
+            #[cfg(windows)]
             "app-control:request" => Ok(crate::app_control::localize(
                 state.app_control.request(&payload),
                 state.settings.lock().unwrap()["language"] == "en",
             )),
+            #[cfg(windows)]
             "app-control:choose" => {
                 let selected = app
                     .dialog()
@@ -520,9 +543,18 @@ async fn desktop_request(
                 .app_icons
                 .get(
                     &payload,
-                    true,
+                    cfg!(windows),
                     |params| state.collector.request("snapshot", params, || false).ok(),
-                    windows_icons::extract,
+                    |path| {
+                        #[cfg(windows)]
+                        {
+                            windows_icons::extract(path)
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            crate::linux_desktop::extract_icon(&app, path)
+                        }
+                    },
                 )
                 .map(Value::String)
                 .unwrap_or(Value::Null)),
@@ -715,7 +747,11 @@ pub fn run() {
         .setup(|app| {
             let override_directory = std::env::var_os("WIFIMETER_USER_DATA").map(PathBuf::from);
             let app_data = app.path().config_dir()?;
-            let profile = identity::profile_directory(&app_data, override_directory.as_deref(), cfg!(windows));
+            let profile = identity::profile_directory(
+                &app_data,
+                override_directory.as_deref(),
+                cfg!(windows),
+            );
             std::fs::create_dir_all(&profile)?;
             let notification_icon = profile.join("notification-icon.png");
             if let Err(error) =
@@ -726,10 +762,11 @@ pub fn run() {
             let executable = std::env::var_os("WIFIMETER_BACKEND")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
-                    app.path()
-                        .resource_dir()
-                        .unwrap()
-                        .join("wifimeter-backend.exe")
+                    app.path().resource_dir().unwrap().join(if cfg!(windows) {
+                        "wifimeter-backend.exe"
+                    } else {
+                        "wifimeter-backend"
+                    })
                 });
             let handle = app.handle().clone();
             let backend = Arc::new(Backend::new(
@@ -780,9 +817,20 @@ pub fn run() {
                     let login: Box<dyn crate::autostart::LoginItems> = if isolated {
                         Box::new(IsolatedLogin::default())
                     } else {
-                        Box::new(WindowsLogin::new(
-                            std::env::current_exe()?.to_string_lossy().into_owned(),
-                        ))
+                        #[cfg(windows)]
+                        {
+                            Box::new(WindowsLogin::new(
+                                std::env::current_exe()?.to_string_lossy().into_owned(),
+                            ))
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            Box::new(crate::linux_login::LinuxLogin::new(
+                                &app_data,
+                                &std::env::current_exe()?,
+                                std::env::var_os("APPIMAGE").map(PathBuf::from).as_deref(),
+                            )?)
+                        }
                     };
                     Autostart::new(login, !isolated || fixture, !isolated)
                 },
@@ -790,13 +838,15 @@ pub fn run() {
                 isolated: override_directory.is_some(),
                 notification_icon,
                 app_icons: AppIcons::default(),
+                #[cfg(windows)]
                 app_control: WindowsControl::new(&profile),
             });
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("renderer/index.html".into()))
                 .title(identity::PRODUCT_NAME)
                 .inner_size(1280.0, 900.0)
                 .min_inner_size(900.0, 650.0)
-                .data_directory(profile.join("WebView2"))
+                .data_directory(profile.join(identity::WEBVIEW_DIRECTORY))
+                .initialization_script(identity::platform_script())
                 .on_page_load(|window, payload| {
                     if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                         let state = window.state::<Desktop>();
@@ -805,8 +855,12 @@ pub fn run() {
                     }
                 })
                 .on_navigation(|url| {
-                    url.host_str() == Some("tauri.localhost")
-                        && url.path() == "/renderer/index.html"
+                    ipc_policy::local_page(
+                        url.scheme(),
+                        url.host_str(),
+                        url.path(),
+                        "/renderer/index.html",
+                    )
                 })
                 .build()?;
             if let Err(error) = ensure_tray(app.handle()) {

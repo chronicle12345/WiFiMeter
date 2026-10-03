@@ -1,9 +1,11 @@
 use tauri::{Manager, WebviewWindow};
+#[cfg(windows)]
 use windows_sys::Win32::UI::Controls::{
     TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
     TDF_SIZE_TO_CONTENT,
 };
 
+#[cfg(windows)]
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
@@ -33,6 +35,25 @@ fn choose(window: &WebviewWindow, kind: &str, version: Option<&str>) -> Option<(
     if let Some(answer) = crate::shell::themed_dialog(window, kind, labels.len(), version) {
         return answer;
     }
+    #[cfg(target_os = "linux")]
+    {
+        crate::linux_desktop::choose(window, title, &message, &labels, default, verification)
+    }
+    #[cfg(windows)]
+    {
+        fallback(window, title, &message, &labels, default, verification)
+    }
+}
+
+#[cfg(windows)]
+fn fallback(
+    window: &WebviewWindow,
+    title: &str,
+    message: &str,
+    labels: &[&str],
+    default: usize,
+    verification: Option<&str>,
+) -> Option<(usize, bool)> {
     let title = wide(title);
     let message = wide(&message);
     let labels: Vec<_> = labels.iter().map(|label| wide(label)).collect();

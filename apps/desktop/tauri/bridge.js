@@ -1,5 +1,5 @@
 // 保持 preload 暴露的接口不变；Tauri 的异步监听在页面启动前注册完成。
-export async function createDesktopBridge({ invoke, listen }) {
+export async function createDesktopBridge({ invoke, listen, platform = 'win32' }) {
     const channels = [
         'window-preferences:changed', 'window:visibility', 'updates:status',
         'backend:event', 'mini:live', 'mini:state'
@@ -30,7 +30,7 @@ export async function createDesktopBridge({ invoke, listen }) {
     };
     const desktop = {
         appName: 'WiFiMeter',
-        platform: 'win32',
+        platform,
         windowPreferences: {
             read: () => request('window-preferences:read'),
             update: patch => request('window-preferences:update', patch),

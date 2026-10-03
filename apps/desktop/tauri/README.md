@@ -1,4 +1,4 @@
-# Windows Tauri migration
+# Windows and Linux Tauri migration
 
 This directory adapts the existing renderer to Tauri. `build-frontend.mjs` copies the
 renderer, styles, floating-window assets and the two browser dependencies without
@@ -7,7 +7,7 @@ JSON-lines client. No Node.js runtime is required by that host.
 
 The migration is in progress. The default Electron launch and packaging commands
 remain until the Windows and Linux feature and package acceptance tests pass.
-Do not publish the intermediate Tauri host: Linux shell and release packaging
+Do not publish the intermediate Tauri host: full Linux platform and release package
 acceptance are still pending. All final packaging entry points will run on Linux.
 Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
@@ -16,6 +16,9 @@ Windows autostart uses the existing `io.wifimeter.demo` login item and reads bac
 the applied state. Legacy imports inherit only the enabled current executable;
 unmatched portable paths and failed migrations preserve existing entries until
 an explicit preference change. Isolated profiles do not modify real login items.
+Linux keeps Electron's `$XDG_CONFIG_HOME/WiFiMeter` profile (`~/.config/WiFiMeter`
+by default). Autostart uses `autostart/wifimeter.desktop` under that config root,
+quotes executable paths and uses the persistent AppImage launcher when available.
 Quota alerts use the official Tauri notification plugin, with the existing language,
 notification preference and application icon. Isolated profiles record dispatches
 to stderr instead of posting real notifications. Windows notification identity must
@@ -38,6 +41,10 @@ partial policy states, and retains the existing decimal upload-rate conversion.
 Only the helper's PowerShell sessions set their execution policy; no registry
 execution policy is changed. Drawer messages and picker titles follow the app
 language; original provider diagnostics remain in detail fields.
+Linux uses GIO/GTK file icons, GTK fallback confirmations and `xdg-open` for
+validated update links. Per-application network controls remain unsupported on
+Linux, as in the existing host, with localized feedback. Linux updates open the
+release download page for manual installation.
 The existing update page now uses the Rust update service, with persisted preferences,
 automatic-check rate limits, release asset selection, streamed SHA-256 verification
 and phase progress. Confirmation dialogs follow the UI theme and language. The
@@ -47,6 +54,27 @@ collection; failures restore the original pause and application-collection state
 Pending shutdown or failed recovery keeps data operations blocked until recovery
 succeeds. Automatic checks run only in non-debug, non-isolated builds. Actual release
 installer upgrades still require package acceptance testing.
+
+## Development on Linux
+
+Install the [Linux Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux)
+and `webkit2gtk-driver` for the real WebKitGTK test. Use a graphical session (or
+`xvfb-run` in CI), a session D-Bus, and fonts for the UI language.
+
+```sh
+node apps/desktop/tauri/build-frontend.mjs
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol,test-fixture --bin WiFiMeter
+WIFIMETER_EXECUTABLE="$PWD/apps/desktop/src-tauri/target/debug/WiFiMeter" \
+WIFIMETER_BACKEND="$PWD/build/app/wifimeter-backend" \
+dbus-run-session -- node apps/desktop/tauri/smoke-linux.mjs
+```
+
+The test starts WebKitWebDriver directly using the same native capabilities as
+tauri-driver, a temporary profile and the existing real-backend fixtures. It checks
+pages, SQLite data, pause/resume, native file icons, language changes through the
+settings UI, manual-update confirmations, and floating-window creation/IPC/close.
+`WEBKIT_WEBDRIVER` can override the driver path; `WIFIMETER_SCREENSHOT` optionally
+saves a screenshot. It never changes real login items or launches an installer.
 
 ## Development on Windows
 
@@ -117,8 +145,9 @@ $env:WIFIMETER_BACKEND = (Resolve-Path 'build/windows/app/wifimeter-backend.exe'
 npm --prefix apps/desktop run test:tauri:windows
 ```
 
-Run this test with Windows Node.js. CDP is enabled only in that test process; the
-normal application does not open a debugging port.
+Run this test with Windows Node.js. CDP is enabled only in that test process;
+the normal application does not open a debugging port. Native drag/hover checks
+require a Windows input desktop that accepts cursor positioning.
 
 API references: [Tauri commands](https://v2.tauri.app/develop/calling-rust/),
 [events](https://v2.tauri.app/develop/calling-frontend/),

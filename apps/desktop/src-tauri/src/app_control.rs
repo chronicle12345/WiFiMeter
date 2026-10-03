@@ -168,6 +168,7 @@ pub fn localize(mut reply: Value, english: bool) -> Value {
         "FirewallQueryFailed" => text("无法查询应用防火墙规则，当前状态未知。", "Unable to query the application's firewall rules. The current state is unknown."),
         "QosUnsupported" => text("当前系统不支持按程序路径设置上传限速。", "This system does not support upload throttling by executable path."),
         "QosQueryFailed" => text("无法查询应用上传限速策略，当前状态未知。", "Unable to query the application's upload policy. The current state is unknown."),
+        "unsupported" => text("当前系统暂不支持按应用阻断联网或上传限速。", "This system does not support per-application network blocking or upload throttling."),
         "dialogFailed" => text("无法选择程序，请重试。", "Unable to select an application. Try again."),
         _ => text("应用联网操作未完成，可能存在部分修改，请查询当前状态。", "The application network operation did not finish. Partial changes may exist; query the current state."),
     }
@@ -226,6 +227,19 @@ pub fn response(stdout: &str, path: &str) -> Result<Value, BackendError> {
 mod tests {
     use super::*;
     const PATH: &str = "C:\\Program Files\\Example\\app.exe";
+
+    #[test]
+    fn unsupported_platform_returns_a_localized_failure_without_policy_changes() {
+        for english in [false, true] {
+            let reply = localize(failure(BackendError::new("unsupported", "")), english);
+            assert_eq!(reply["ok"], false);
+            assert_eq!(reply["error"]["code"], "unsupported");
+            let text = reply["error"]["message"].as_str().unwrap();
+            assert!(!text.is_empty());
+            assert_eq!(text.chars().any(|c| ('\u{3400}'..='\u{9fff}').contains(&c)), !english);
+            if !english { assert!(!text.chars().any(|c| c.is_ascii_alphabetic())); }
+        }
+    }
 
     #[test]
     fn drawer_copy_follows_app_language_and_preserves_provider_diagnostics() {
