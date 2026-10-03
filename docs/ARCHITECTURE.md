@@ -79,7 +79,7 @@ platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注
 
 根目录 npm 命令转发到桌面应用，锁文件与依赖保留在应用目录。
 
-三个发布入口 `packaging/build-windows.cjs`、`build-linux.cjs`、`build-all.cjs` 均在 Linux 中运行，复用 `packaging/tauri.cjs`。Windows 使用 Zig 构建 C++ 后端、MinGW 构建 Rust，再由 NSIS 生成安装器；Linux 构建本机采集器及 Tauri 宿主，再组装安装包。具体依赖与输出见 [打包说明](../packaging/README.md)。
+三个发布入口 `packaging/build-windows.sh`、`build-linux.sh`、`build-all.sh` 均在 Linux 中运行，复用 `packaging/tauri.cjs`。Windows 使用 Zig 构建 C++ 后端、MinGW 构建 Rust，再由 NSIS 生成安装器；Linux 构建本机采集器及 Tauri 宿主，再组装安装包。具体依赖与输出见 [打包说明](../packaging/README.md)。
 
 C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
 

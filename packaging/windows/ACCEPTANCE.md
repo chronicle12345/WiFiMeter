@@ -7,7 +7,7 @@
 在 Linux 构建：
 
 ```sh
-node packaging/build-windows.cjs
+./packaging/build-windows.sh
 ```
 
 在 Windows 图形会话验证完整解压的便携包：

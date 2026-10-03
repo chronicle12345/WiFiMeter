@@ -1,6 +1,6 @@
 # Windows 包
 
-在 Linux x64 上运行 `node packaging/build-windows.cjs`，生成 NSIS 安装器与便携 ZIP。Rust 宿主使用 MinGW，C++ 后端使用校验下载的 Zig，NSIS 也在 Linux 执行。依赖、参数和三个入口见[统一打包说明](../README.md)。
+在 Linux x64 上运行 `./packaging/build-windows.sh`，生成 NSIS 安装器与便携 ZIP。Rust 宿主使用 MinGW，C++ 后端使用校验下载的 Zig，NSIS 也在 Linux 执行。依赖、参数和三个入口见[统一打包说明](../README.md)。
 
 产物位于 `dist/windows/`，运行目录为 `win-unpacked/`；主程序、两个采集程序与 `WebView2Loader.dll` 位于同一目录。程序复用系统 WebView2，未安装时 NSIS 在线获取。
 

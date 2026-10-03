@@ -73,9 +73,9 @@ npm run test:ui
 Backend tests are built with CMake and run with CTest. Platform dependencies and package commands are documented in [packaging](packaging/README.md):
 
 ```sh
-node packaging/build-windows.cjs
-node packaging/build-linux.cjs
-node packaging/build-all.cjs
+./packaging/build-windows.sh
+./packaging/build-linux.sh
+./packaging/build-all.sh
 ```
 
 Tests use synthetic fixtures and isolated profiles. Builds, runtime data, traces and local credentials are excluded from Git. The release workflow publishes a release only after the required architecture, migration, backend, UI and package checks succeed.

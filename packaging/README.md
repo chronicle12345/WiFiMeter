@@ -3,12 +3,14 @@
 三个入口均在 Linux 中运行，使用 Tauri + Rust 桌面壳及 C++ 采集后端：
 
 ```bash
-node packaging/build-windows.cjs  # Windows x64：NSIS 安装包 + 便携 ZIP
-node packaging/build-linux.cjs    # 当前 Linux 架构：deb
-node packaging/build-all.cjs      # 依次构建 Windows 和 Linux，任一失败即停止
+./packaging/build-windows.sh  # Windows x64：NSIS 安装包 + 便携 ZIP
+./packaging/build-linux.sh    # 当前 Linux 架构：deb
+./packaging/build-all.sh      # 依次构建 Windows 和 Linux，任一失败即停止
 ```
 
 可从任意工作目录调用脚本。默认输出到仓库 `dist/windows/` 与 `dist/linux/`；Windows 交叉构建要求 Linux x64，Linux 不跨 CPU 架构。Linux arm64 的入口已提供，但尚未实机验证。
+
+三个 `.sh` 已设置可执行权限，也可用 `bash packaging/build-all.sh` 调用。它们复用现有 Node.js 构建器，仍需安装 Node.js；原有 `.cjs` 和 npm 入口保持可用。
 
 ## 编译依赖
 
@@ -30,11 +32,11 @@ Windows C++ 后端沿用校验下载的 Zig 工具链；Rust 使用 MinGW 链接
 ## 参数和产物
 
 ```bash
-node packaging/build-windows.cjs --formats nsis
-node packaging/build-windows.cjs --formats portable,dir
-node packaging/build-linux.cjs --formats deb,dir
-node packaging/build-linux.cjs --formats rpm,AppImage
-node packaging/build-all.cjs --arch x64 --skip-rebuild
+./packaging/build-windows.sh --formats nsis
+./packaging/build-windows.sh --formats portable,dir
+./packaging/build-linux.sh --formats deb,dir
+./packaging/build-linux.sh --formats rpm,AppImage
+./packaging/build-all.sh --arch x64 --skip-rebuild
 ```
 
 `--skip-rebuild` 仅跳过 C++ 后端编译；仍构建当前 Rust / 前端代码，并检查已有两个采集程序的系统和架构。两端一起打包通常不传 `--formats`，以采用各自默认格式；`--formats dir` 可只输出两端运行目录。

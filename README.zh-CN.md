@@ -73,9 +73,9 @@ npm run test:ui
 后端测试由 CMake 构建，通过 CTest 执行。平台依赖及打包命令见[打包说明](packaging/README.md)：
 
 ```sh
-node packaging/build-windows.cjs
-node packaging/build-linux.cjs
-node packaging/build-all.cjs
+./packaging/build-windows.sh
+./packaging/build-linux.sh
+./packaging/build-all.sh
 ```
 
 测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。发布流程仅在相应架构、迁移、后端、界面和安装包检查通过后发布标签对应的版本。
