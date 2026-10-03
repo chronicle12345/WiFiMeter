@@ -13,6 +13,9 @@ pub enum UpdateError {
     Version,
     Release,
     Preferences,
+    Network,
+    Download,
+    Install,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
