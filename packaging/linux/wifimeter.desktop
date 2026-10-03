@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+Comment=Network traffic monitor
+Comment[zh_CN]=网络流量统计
+Exec={{exec}}
+Icon={{icon}}
+Terminal=false
+Categories=Network;Monitor;

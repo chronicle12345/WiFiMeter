@@ -5,10 +5,12 @@ renderer, styles, floating-window assets and the two browser dependencies withou
 bundling Electron or changing the page layout. The HTML entry script, CSP and host-dialog stylesheet are adapted. `src-tauri` contains the Rust host and the existing C++ collector's
 JSON-lines client. No Node.js runtime is required by that host.
 
-The migration is in progress. The default Electron launch and packaging commands
-remain until the Windows and Linux feature and package acceptance tests pass.
-Do not publish the intermediate Tauri host: full Linux platform and release package
-acceptance are still pending. All final packaging entry points will run on Linux.
+The migration is in progress. Packaging commands now build Tauri from Linux;
+see [packaging instructions](../../../packaging/README.md). The default development
+launcher remains Electron until the remaining acceptance checks and repository
+cleanup are complete. Windows and Linux Release directories have passed real
+WebView2 / WebKitGTK tests with their bundled collectors. Installed upgrades,
+notifications and the complete Linux platform acceptance are still pending.
 Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
@@ -78,6 +80,14 @@ pages, SQLite data, pause/resume, native file icons, language changes through th
 settings UI, manual-update confirmations, and floating-window creation/IPC/close.
 `WEBKIT_WEBDRIVER` can override the driver path; `WIFIMETER_SCREENSHOT` optionally
 saves a screenshot. It never changes real login items or launches an installer.
+
+For a Release directory, run this script with `--packaged` and point
+`WIFIMETER_EXECUTABLE` at `dist/linux/linux-unpacked/bin/wifimeter`.
+`WIFIMETER_BACKEND` is used only to seed test data, then removed from the application's
+environment so resource lookup is exercised. Release mode skips the debug-only
+update transport fixture. On Windows, `smoke-package-windows.mjs` applies the same
+resource check, validates the vendor Markdown modules and optionally records
+process-tree metrics at `WIFIMETER_METRICS`; these measurements include CDP.
 
 ## Development on Windows
 

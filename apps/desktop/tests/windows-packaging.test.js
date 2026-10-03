@@ -28,43 +28,7 @@ const require = createRequire(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const metadata = JSON.parse(readFileSync(path.join(repositoryRoot, 'apps/desktop/package.json'), 'utf8'));
 
-for (const arch of ['x64', 'arm64', 'ia32']) {
-    const output = path.join(repositoryRoot, arch === 'x64' ? 'dist/windows' : `dist/windows-${arch}`);
-    const unpacked = path.join(output, arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`);
-    const applicationBinary = path.join(unpacked, 'WiFiMeter.exe');
-    const bundledBackend = path.join(unpacked, 'resources/wifimeter-backend.exe');
-    const bundledCapture = path.join(unpacked, 'resources/wifimeter-app-capture.exe');
-    const installer = path.join(output, `WiFiMeter-${metadata.version}-windows-${arch}-Setup.exe`);
-
-    test(`Windows ${arch} 打包产物`, { skip: !existsSync(applicationBinary) && `未构建 Windows ${arch} 产物` }, () => {
-        require('../../../packaging/targets.cjs').checkPackaged(unpacked, 'win32', arch);
-        assert.ok(existsSync(applicationBinary), '解包目录里应当有应用可执行文件');
-        assert.ok(existsSync(bundledBackend), '解包目录里应当有随包分发的后端');
-        assert.ok(existsSync(bundledCapture), '解包目录里应当有应用流量采集辅助进程');
-        assert.equal(path.basename(bundledBackend), 'wifimeter-backend.exe');
-        assert.deepEqual(readFileSync(path.join(unpacked, 'resources/native/windows/AppNetworkControl.psm1')), readFileSync(path.join(repositoryRoot, 'apps/desktop/native/windows/AppNetworkControl.psm1')), 'asar 外应包含完整控制模块');
-        assert.ok(statSync(bundledBackend).size > 100 * 1024, '后端体积明显偏小，可能复制失败');
-
-        // 引导程序只校验 PE 标记；应用架构由上面的 checkPackaged 检查。
-        for (const artifact of [installer, path.join(output, `WiFiMeter-${metadata.version}-windows-${arch}-Portable.exe`)]) {
-            if (!existsSync(artifact)) continue;
-            const descriptor = openSync(artifact, 'r');
-            try {
-                const header = Buffer.alloc(2);
-                readSync(descriptor, header, 0, 2, 0);
-                assert.equal(header.toString('ascii'), 'MZ', '安装/便携启动器应当是 PE 文件');
-            } finally {
-                closeSync(descriptor);
-            }
-        }
-    });
-}
-
-// 手工确认随包后端可用（需要 Wine 或 Windows）：
-//
-//   wine dist/windows/win-unpacked/resources/wifimeter-backend.exe --version
-//   echo '{"id":1,"protocol":1,"method":"hello","params":{}}' | wine dist/windows/win-unpacked/resources/wifimeter-backend.exe --paused
-
+// Tauri 发布产物与资源布局由 tauri-packaging.test.js 验证。
 
 test('打包参数限制架构、格式和交叉编译范围', () => {
     const { buildOptions } = require('../../../packaging/targets.cjs');

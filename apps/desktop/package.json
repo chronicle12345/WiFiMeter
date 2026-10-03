@@ -17,9 +17,9 @@
     "test:ui": "playwright test",
     "test:tauri:windows": "node tauri/smoke-windows.mjs",
     "test:tauri:linux": "node tauri/smoke-linux.mjs",
-    "dist:linux": "node ../../packaging/linux/build.cjs",
-    "predist:linux": "node -e \"require('electron')\"",
-    "dist:windows": "node ../../packaging/windows/build.cjs",
+    "dist:linux": "node ../../packaging/build-linux.cjs",
+    "dist:windows": "node ../../packaging/build-windows.cjs",
+    "dist:all": "node ../../packaging/build-all.cjs",
     "build:backend": "node ../../packaging/build-backend.cjs"
   },
   "devDependencies": {

@@ -33,7 +33,7 @@ windows-sys = { version = "0.61", features = ["Win32_System_Registry", "Win32_Sy
 png = "0.18"
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [[bin]]
 name = "WiFiMeter"

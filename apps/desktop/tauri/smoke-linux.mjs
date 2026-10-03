@@ -9,18 +9,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createHarness } from '../tests/support/backend-harness.mjs';
 
 assert.equal(process.platform, 'linux');
-assert.ok(process.env.WIFIMETER_EXECUTABLE, 'Set WIFIMETER_EXECUTABLE to a debug Tauri build with custom-protocol,test-fixture');
+const packaged = process.argv.includes('--packaged');
+assert.ok(process.env.WIFIMETER_EXECUTABLE, 'Set WIFIMETER_EXECUTABLE to a Tauri build; use --packaged for Release validation');
 const harness = await createHarness({ appId: '/usr/bin/sh' });
-await mkdir(join(harness.directory, 'update-fixture'));
-await writeFile(join(harness.directory, 'update-fixture/release.json'), JSON.stringify({ tag_name: 'v1.3.0', body: 'Fixture notes', assets: [] }));
+if (!packaged) {
+    await mkdir(join(harness.directory, 'update-fixture'));
+    await writeFile(join(harness.directory, 'update-fixture/release.json'), JSON.stringify({ tag_name: 'v1.3.0', body: 'Fixture notes', assets: [] }));
+}
 const server = createServer();
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const port = server.address().port;
 await new Promise(resolve => server.close(resolve));
+const env = { ...process.env, ...harness.env, TAURI_WEBVIEW_AUTOMATION: 'true' };
+if (packaged) delete env.WIFIMETER_BACKEND;
 const driver = spawn(process.env.WEBKIT_WEBDRIVER || 'WebKitWebDriver', ['-p', String(port)], {
     detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...harness.env, TAURI_WEBVIEW_AUTOMATION: 'true' }
+    env
 });
 let output = '', startError, session;
 driver.on('error', error => { startError = error; });
@@ -70,6 +75,9 @@ try {
     const snapshot = await evaluateAsync('return window.desktop.backend.request("snapshot");');
     assert.equal(snapshot.ok, true);
     assert.equal(snapshot.result.records[0].rxBytes, '3100000000');
+    const notes = await evaluateAsync('return (await import("./ui/release-notes.js")).releaseNotes("**release**<script>bad()</script>");');
+    assert.match(notes, /<strong>release<\/strong>/);
+    assert.ok(!notes.includes('<script>'));
     for (const page of ['networks', 'history', 'settings', 'overview']) {
         await click(`.nav [data-page="${page}"]`);
         await poll(() => evaluate('return document.querySelector("#content").textContent.trim();'));
@@ -99,6 +107,8 @@ try {
             assert.equal(result.error.code, 'unsupported');
             assert.equal(/[\u4e00-\u9fff]/.test(result.error.message), language !== 'en');
         }
+        // 发布构建不提供更新夹具传输；真实更新服务由独立集成测试覆盖。
+        if (packaged) continue;
         const update = await evaluateAsync('return window.desktop.updates.check();');
         assert.equal(update.state, 'available');
         assert.equal(update.canInstall, false);
@@ -113,7 +123,7 @@ try {
         await click('.desktop-dialog footer button:last-child');
         await poll(() => evaluate('return window.installResult;'));
     }
-    console.log('Native icons, unsupported controls and bilingual update dialogs passed');
+    console.log(packaged ? 'Native icons and bilingual unsupported controls passed' : 'Native icons, unsupported controls and bilingual update dialogs passed');
 
     const main = await request(`/session/${session}/window`);
     await evaluateAsync('return window.desktop.windowPreferences.update({miniWindow:true});');
@@ -130,7 +140,7 @@ try {
         await writeFile(process.env.WIFIMETER_SCREENSHOT, Buffer.from(await request(`/session/${session}/screenshot`), 'base64'));
     }
     await request(`/session/${session}/window`, undefined, 'DELETE');
-    console.log('PASS: Linux WebKitGTK desktop smoke test');
+    console.log(`PASS: Linux WebKitGTK ${packaged ? 'packaged Release with bundled backend' : 'desktop'} smoke test`);
 } catch (error) {
     console.error(output);
     throw error;
