@@ -10,7 +10,7 @@
 
 可从任意工作目录调用脚本。默认输出到仓库 `dist/windows/` 与 `dist/linux/`；Windows 交叉构建要求 Linux x64，Linux 不跨 CPU 架构。Linux arm64 的入口已提供，但尚未实机验证。
 
-三个 `.sh` 已设置可执行权限，也可用 `bash packaging/build-all.sh` 调用。它们复用现有 Node.js 构建器，仍需安装 Node.js；原有 `.cjs` 和 npm 入口保持可用。
+三个 `.sh` 已设置可执行权限，也可用 `bash packaging/build-all.sh` 调用。它们共用 `tauri.cjs` 构建器，仍需安装 Node.js；npm 打包命令也调用这三个 Shell 入口。
 
 ## 编译依赖
 

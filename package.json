@@ -8,9 +8,9 @@
     "test:ui": "npm --prefix apps/desktop run test:ui",
     "test:backend": "cmake -S backend -B build && cmake --build build && ctest --test-dir build --output-on-failure",
     "test:windows": "node packaging/windows/build-backend.mjs --tests --run",
-    "dist:linux": "node packaging/build-linux.cjs",
-    "dist:windows": "node packaging/build-windows.cjs",
-    "dist:all": "node packaging/build-all.cjs",
+    "dist:linux": "./packaging/build-linux.sh",
+    "dist:windows": "./packaging/build-windows.sh",
+    "dist:all": "./packaging/build-all.sh",
     "build:backend": "npm --prefix apps/desktop run build:backend",
     "build:backend:windows": "node packaging/windows/build-backend.mjs",
     "test:rust": "npm --prefix apps/desktop run test:rust"

@@ -15,9 +15,9 @@
     "test:ui": "playwright test",
     "test:tauri:windows": "node tests/e2e/smoke-windows.mjs",
     "test:tauri:linux": "node tests/e2e/smoke-linux.mjs",
-    "dist:linux": "node ../../packaging/build-linux.cjs",
-    "dist:windows": "node ../../packaging/build-windows.cjs",
-    "dist:all": "node ../../packaging/build-all.cjs",
+    "dist:linux": "../../packaging/build-linux.sh",
+    "dist:windows": "../../packaging/build-windows.sh",
+    "dist:all": "../../packaging/build-all.sh",
     "build:backend": "node ../../packaging/build-backend.cjs",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --features test-fixture"
   },

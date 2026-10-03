@@ -104,7 +104,7 @@ jobs:
           dbus-run-session -- xvfb-run -a node apps/desktop/tests/e2e/smoke-linux.mjs
       - name: Build and verify the final deb package
         run: |
-          node packaging/build-linux.cjs --arch "${{ matrix.arch }}" --formats deb --skip-rebuild
+          ./packaging/build-linux.sh --arch "${{ matrix.arch }}" --formats deb --skip-rebuild
           bash .github/scripts/linux-packages.sh "${{ matrix.arch }}"
       - name: Stage only fully verified release assets
         id: stage

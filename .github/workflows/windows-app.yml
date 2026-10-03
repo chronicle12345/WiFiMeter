@@ -36,7 +36,7 @@ jobs:
           node .github/scripts/windows-rust-tests.mjs stage .cross-build/windows-rust-tests .cross-build/windows-rust-tests.jsonl
           cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --target x86_64-pc-windows-gnu --features custom-protocol,test-fixture --bin WiFiMeter
       - name: Build NSIS and portable ZIP
-        run: node packaging/build-windows.cjs --skip-rebuild
+        run: ./packaging/build-windows.sh --skip-rebuild
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-cross-build

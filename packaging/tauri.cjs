@@ -161,3 +161,12 @@ async function buildDesktop(platform, args = process.argv.slice(2)) {
 }
 
 module.exports = { targetTriple, bundleConfig, checkDistribution, buildDesktop };
+
+if (require.main === module) {
+    buildDesktop(process.argv[2], process.argv.slice(3)).catch(error => {
+        console.error(error.stack || error.message || String(error));
+        process.exitCode = 1;
+        // 清理监听器不能把失败的构建变成成功。
+        process.on('exit', () => { process.exitCode = 1; });
+    });
+}

@@ -2,4 +2,4 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec node "$script_dir/build-windows.cjs" "$@"
+exec node "$script_dir/tauri.cjs" win32 "$@"

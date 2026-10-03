@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,6 +10,14 @@ const require = createRequire(import.meta.url);
 const { targetTriple, bundleConfig, checkDistribution } = require('../../../packaging/tauri.cjs');
 const { buildOptions, buildPaths } = require('../../../packaging/targets.cjs');
 const root = path.resolve(import.meta.dirname, '../../..');
+
+test('共用构建器命令行解析平台和参数，编译前拒绝错误格式并返回失败', { skip: process.platform !== 'linux' }, () => {
+    const result = spawnSync(process.execPath, [path.join(root, 'packaging/tauri.cjs'), 'linux', '--formats', 'nsis'], {
+        cwd: os.tmpdir(), encoding: 'utf8'
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /不支持的格式：nsis/);
+});
 
 test('Linux 打包计划覆盖 Windows x64 与 Linux 本机架构，资源匹配宿主查找路径', () => {
     assert.equal(targetTriple('win32', 'x64'), 'x86_64-pc-windows-gnu');
