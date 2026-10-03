@@ -102,6 +102,7 @@ export const english = Object.fromEntries(`
 请先保存或取消当前更改。|Save or cancel the current changes first.
 代理流量估算|Proxy traffic estimates
 代理端口|Proxy ports
+多个端口用英文逗号分隔，例如 7890, 1080。端口范围为 1 到 65535，留空清除。|Separate multiple ports with English commas, for example 7890, 1080. Ports must be from 1 to 65535. Leave blank to clear.
 代理进程名（可选）|Proxy process names (optional)
 使用逗号分隔，留空清除配置。|Separate entries with commas. Leave blank to clear the configuration.
 保存代理配置|Save proxy configuration
