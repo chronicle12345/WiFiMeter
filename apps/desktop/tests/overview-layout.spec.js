@@ -36,7 +36,14 @@ for (const language of ['zh-CN', 'en']) {
                     const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
                     return {
                         bottomGap: innerHeight - document.querySelector('#content').lastElementChild.getBoundingClientRect().bottom,
-                        quotaHeight: document.querySelector('.quota-card').getBoundingClientRect().height,
+                        cards: [...document.querySelectorAll('.chart-row>.panel')].map(el => {
+                            const rect = el.getBoundingClientRect();
+                            return { top: rect.top, bottom: rect.bottom };
+                        }),
+                        controls: ['#networkFilter', '[data-action="refresh"]', '[data-action="export"]'].map(selector => {
+                            const rect = document.querySelector(`.toolbar-actions ${selector}`).getBoundingClientRect();
+                            return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+                        }),
                         height: innerHeight, scrollHeight: root.scrollHeight,
                         width: innerWidth, scrollWidth: root.scrollWidth,
                         outside: selectors.filter(selector => {
@@ -54,7 +61,13 @@ for (const language of ['zh-CN', 'en']) {
                 expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
                 expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
                 expect(layout.bottomGap).toBeLessThanOrEqual(24);
-                if (quotaState === 'unset') expect(layout.quotaHeight).toBeLessThanOrEqual(240);
+                expect(Math.abs(layout.cards[0].top - layout.cards[1].top)).toBeLessThan(1);
+                expect(Math.abs(layout.cards[0].bottom - layout.cards[1].bottom)).toBeLessThan(1);
+                for (const control of layout.controls.slice(1)) {
+                    expect(Math.abs(control.top - layout.controls[0].top)).toBeLessThan(1);
+                    expect(Math.abs(control.bottom - layout.controls[0].bottom)).toBeLessThan(1);
+                }
+                expect(layout.controls[1].left - layout.controls[0].right).toBeLessThanOrEqual(12);
                 expect(layout.outside).toEqual([]);
                 expect(layout.clipping).toEqual([]);
             });

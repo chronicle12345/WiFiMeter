@@ -137,7 +137,10 @@ input:disabled,select:disabled,textarea:disabled {background:var(--surface-2);co
 .autosave-feedback:has(span:empty):has(button[hidden]){display:none}
 .autosave-feedback [data-state="error"]{color:var(--red)}
 .quota-form>.autosave-feedback{padding:0}
-.toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.toolbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto;flex-shrink:0}
+.toolbar-start{flex:1;min-width:0;row-gap:6px}
+.network-filter{display:flex;min-width:0;max-width:180px}
+.network-filter .select.compact{height:40px;min-height:40px;font-size:12px;padding:8px 28px 8px 12px;width:100%;text-overflow:ellipsis}
 .toolbar{flex-wrap:wrap}
 @media(max-width:650px){.toolbar-actions{width:100%;justify-content:flex-end}.setting-row select{min-width:0;max-width:100%}}
 /* One continuous settings card; category links follow the current scroll section. */
@@ -208,9 +211,16 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .app-avatar img { width:100%; height:100%; object-fit:contain; }
 .app-avatar.app-avatar--compact { width:24px; height:24px; display:inline-grid; margin-right:8px; vertical-align:middle; }
 
-/* 总览将剩余视口高度分配给趋势图，内容增多时仍允许文档自然滚动。 */
+/* 总览将剩余视口高度分配给趋势图和额度卡片，内容增多时允许文档自然滚动。 */
 html[data-page="overview"] #content>.panel,
 html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
+.quota-card .panel-head{align-items:flex-start}
+.quota-card .panel-head>.icon-btn{background:var(--accent-soft);color:var(--accent);flex-shrink:0}
+.quota-card .panel-sub{line-height:1.7;overflow-wrap:anywhere}
+.quota-summary{display:flex;flex-direction:column;justify-content:center;flex:1;padding:20px 0}
+.quota-usage{margin-top:auto;flex-shrink:0}
+.quota-card .progress{height:8px}
+.quota-card .progress-meta{line-height:1.7;flex-wrap:wrap}
 @media(min-width:761px){
  html[data-page="overview"] .main{padding:16px 22px 20px;min-height:100dvh;display:flex;flex-direction:column}
  html[data-page="overview"] #content{display:flex;flex-direction:column;flex:1}
@@ -231,13 +241,16 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content>.chart-row:last-child{margin-bottom:0}
  html[data-page="overview"] #content .chart-row>.panel:first-child{display:flex;flex-direction:column}
  html[data-page="overview"] #content .chart-wrap{display:flex;flex:1;min-height:125px}
- html[data-page="overview"] #content .quota-card:not(:has(.quota-foot)){align-self:start}
+ html[data-page="overview"] #content .quota-card{align-self:stretch}
  html[data-page="overview"] #content .chart-row .panel-head{padding:12px 18px 8px}
  html[data-page="overview"] #content .chart{height:100%;min-height:120px;flex:1}
  html[data-page="overview"] #content .chart-caption{padding:0 18px 10px}
- html[data-page="overview"] #content .quota-body{padding:6px 18px 12px}
- html[data-page="overview"] #content .quota-main{font-size:30px;line-height:1.25;margin:2px 0 8px}
- html[data-page="overview"] #content .quota-foot{padding-top:10px}
+ html[data-page="overview"] #content .quota-body{padding:0 18px 18px}
+ html[data-page="overview"] #content .quota-label{font-size:12px}
+ html[data-page="overview"] #content .quota-main{font-size:42px;line-height:1.25;margin:8px 0 0;font-weight:550;letter-spacing:-1.2px}
+ html[data-page="overview"] #content .quota-main span{font-size:14px}
+ html[data-page="overview"] #content .quota-foot{padding-top:14px;margin-top:14px;border-top:1px solid var(--line);line-height:1.8;align-items:flex-start}
+ html[data-page="overview"] #content .quota-foot svg{margin-top:2px}
  html[data-page="overview"] #content .notice-line{padding:8px 18px}
 }
 @media(max-width:760px){
@@ -268,6 +281,10 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content>.metrics,
  html[data-page="overview"] #content>.total-quota-card,
  html[data-page="overview"] #content>.chart-row{margin-bottom:6px}
+ html[data-page="overview"] #content .quota-summary{padding:8px 0}
+ html[data-page="overview"] #content .quota-main{font-size:34px;margin-top:6px}
+ html[data-page="overview"] #content .quota-body{padding-bottom:12px}
+ html[data-page="overview"] #content .quota-foot{padding-top:8px;margin-top:8px}
 }
 .release-notes{margin:20px 23px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .release-notes>summary{padding:14px 16px;cursor:pointer;font-weight:600;background:var(--surface-2)}
