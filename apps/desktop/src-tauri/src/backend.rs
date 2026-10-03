@@ -66,6 +66,38 @@ impl Drop for Running {
     }
 }
 
+#[derive(Default)]
+struct ResumeState {
+    paused: Option<bool>,
+    apps_enabled: Option<bool>,
+}
+
+struct Call {
+    id: u64,
+    pending: Arc<Mutex<Pending>>,
+    receiver: mpsc::Receiver<Reply>,
+}
+
+impl Call {
+    fn wait(self, method: &str, timeout: Duration) -> Reply {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(error) => {
+                self.pending.lock().unwrap().requests.remove(&self.id);
+                let code = if error == mpsc::RecvTimeoutError::Timeout {
+                    "timeout"
+                } else {
+                    "unavailable"
+                };
+                Err(BackendError::new(
+                    code,
+                    format!("后端没有响应 {method}：{error}"),
+                ))
+            }
+        }
+    }
+}
+
 pub struct Backend {
     executable: PathBuf,
     database: PathBuf,
@@ -73,6 +105,7 @@ pub struct Backend {
     on_event: EventHandler,
     next_id: AtomicU64,
     running: Mutex<Option<Running>>,
+    resume: Mutex<ResumeState>,
 }
 
 impl Backend {
@@ -89,6 +122,7 @@ impl Backend {
             on_event,
             next_id: AtomicU64::new(1),
             running: Mutex::new(None),
+            resume: Mutex::new(ResumeState::default()),
         }
     }
 
@@ -161,14 +195,45 @@ impl Backend {
         })
     }
 
+    fn enqueue(
+        &self,
+        running: &mut Running,
+        method: &str,
+        params: Value,
+    ) -> Result<Call, BackendError> {
+        let (sender, receiver) = mpsc::channel();
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let pending = running.pending.clone();
+        {
+            let mut entries = pending.lock().unwrap();
+            if entries.closed {
+                return Err(BackendError::new("unavailable", "后端进程已断开。"));
+            }
+            entries.requests.insert(id, sender);
+        }
+        if method == "shutdown" {
+            running.stopping = true;
+        }
+        let payload = json!({ "id": id, "protocol": 1, "method": method, "params": params });
+        if let Err(error) = writeln!(running.stdin, "{payload}") {
+            pending.lock().unwrap().requests.remove(&id);
+            return Err(error.into());
+        }
+        Ok(Call {
+            id,
+            pending,
+            receiver,
+        })
+    }
+
     pub fn request(&self, method: &str, params: Value, timeout: Duration) -> Reply {
         if method.is_empty() {
             return Err(BackendError::new("badRequest", "缺少方法名。"));
         }
-        let (sender, receiver) = mpsc::channel();
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let pending;
-        {
+        // Keep state-changing replies ordered with process creation. Other requests release
+        // this gate immediately after enqueueing, retaining concurrent response handling.
+        let mut resume = self.resume.lock().unwrap();
+        let call = {
             let mut slot = self.running.lock().unwrap();
             if let Some(running) = slot.as_mut() {
                 if running.stopping {
@@ -179,40 +244,34 @@ impl Backend {
                 }
             }
             if slot.is_none() {
-                *slot = Some(self.spawn()?);
-            }
-            let running = slot.as_mut().unwrap();
-            pending = running.pending.clone();
-            {
-                let mut entries = pending.lock().unwrap();
-                if entries.closed {
-                    return Err(BackendError::new("unavailable", "后端进程已断开。"));
+                let mut running = self.spawn()?;
+                // A replacement starts paused. Restore application collection before resuming,
+                // and do not expose a partially restored process to other requests.
+                if let Some(enabled) = resume.apps_enabled {
+                    self.enqueue(&mut running, "setAppCollection", json!({"enabled":enabled}))?
+                        .wait("setAppCollection", timeout)?;
                 }
-                entries.requests.insert(id, sender);
+                if let Some(paused) = resume.paused {
+                    self.enqueue(&mut running, "setPaused", json!({"paused":paused}))?
+                        .wait("setPaused", timeout)?;
+                }
+                *slot = Some(running);
             }
-            if method == "shutdown" {
-                running.stopping = true;
+            self.enqueue(slot.as_mut().unwrap(), method, params)?
+        };
+        if matches!(method, "setPaused" | "setAppCollection") {
+            let result = call.wait(method, timeout)?;
+            if method == "setPaused" {
+                if let Some(paused) = result["paused"].as_bool() {
+                    resume.paused = Some(paused);
+                }
+            } else if let Some(enabled) = result["appCollection"]["enabled"].as_bool() {
+                resume.apps_enabled = Some(enabled);
             }
-            let payload = json!({ "id": id, "protocol": 1, "method": method, "params": params });
-            if let Err(error) = writeln!(running.stdin, "{payload}") {
-                pending.lock().unwrap().requests.remove(&id);
-                return Err(error.into());
-            }
-        }
-        match receiver.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(error) => {
-                pending.lock().unwrap().requests.remove(&id);
-                let code = if error == mpsc::RecvTimeoutError::Timeout {
-                    "timeout"
-                } else {
-                    "unavailable"
-                };
-                Err(BackendError::new(
-                    code,
-                    format!("后端没有响应 {method}：{error}"),
-                ))
-            }
+            Ok(result)
+        } else {
+            drop(resume);
+            call.wait(method, timeout)
         }
     }
 
@@ -262,5 +321,70 @@ impl Backend {
             self.request("shutdown", json!({}), timeout)?;
         }
         self.wait_for_shutdown(timeout.saturating_sub(start.elapsed()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collector::Collector;
+
+    #[test]
+    #[ignore = "requires WIFIMETER_BACKEND pointing to a built C++ collector"]
+    fn real_crashed_collector_restores_session_state_and_keeps_database() {
+        let executable =
+            PathBuf::from(std::env::var_os("WIFIMETER_BACKEND").expect("set WIFIMETER_BACKEND"));
+        for paused in [false, true] {
+            let profile = tempfile::tempdir().unwrap();
+            let apps = profile.path().join("apps.json");
+            std::fs::write(
+                &apps,
+                r#"{"state":"running","generation":"one","samples":[]}"#,
+            )
+            .unwrap();
+            let backend = Arc::new(Backend::new(
+                executable.clone(),
+                profile.path().join("wifimeter.db"),
+                vec![
+                    "--paused".into(),
+                    "--fake-apps".into(),
+                    apps.into_os_string(),
+                ],
+                Arc::new(|_| {}),
+            ));
+            let collector = Collector::new(backend.clone(), profile.path().into(), None);
+            collector
+                .request(
+                    "updateSettings",
+                    json!({"settings":{"unit":"GiB","retention":30}}),
+                    || false,
+                )
+                .unwrap();
+            collector
+                .request("setAppCollection", json!({"enabled":true}), || false)
+                .unwrap();
+            collector
+                .request("setPaused", json!({"paused":paused}), || false)
+                .unwrap();
+            let pid = {
+                let mut slot = backend.running.lock().unwrap();
+                let child = &mut slot.as_mut().unwrap().child;
+                let pid = child.id();
+                child.kill().unwrap();
+                child.wait().unwrap();
+                pid
+            };
+            let hello = collector.request("hello", json!({}), || false).unwrap();
+            assert_eq!(hello["paused"], paused);
+            assert_eq!(hello["settings"]["unit"], "GiB");
+            assert_eq!(hello["settings"]["retention"], 30);
+            assert_ne!(
+                backend.running.lock().unwrap().as_ref().unwrap().child.id(),
+                pid
+            );
+            let snapshot = collector.request("snapshot", json!({}), || false).unwrap();
+            assert_eq!(snapshot["appCollection"]["enabled"], true);
+            collector.stop_gracefully(Duration::from_secs(30)).unwrap();
+        }
     }
 }

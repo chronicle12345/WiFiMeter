@@ -11,13 +11,29 @@ fn reply(value: Value) {
 
 fn main() {
     let mut shutdown_delay = 0;
+    let mut paused = std::env::args().any(|arg| arg == "--paused");
+    let mut apps_enabled = false;
     for line in io::stdin().lock().lines() {
         let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
         let id = request["id"].clone();
         assert_eq!(request["protocol"], 1);
         let result = match request["method"].as_str().unwrap() {
             "hello" => {
-                json!({ "protocol": 1, "pid": std::process::id(), "args": std::env::args().collect::<Vec<_>>() })
+                json!({ "protocol": 1, "pid": std::process::id(), "args": std::env::args().collect::<Vec<_>>(), "paused":paused, "appCollection":{"enabled":apps_enabled} })
+            }
+            "setPaused" | "setAppCollection" if request["params"]["reject"] == true => {
+                reply(
+                    json!({"id":id,"ok":false,"error":{"code":"fixtureRejected","message":"rejected"}}),
+                );
+                continue;
+            }
+            "setPaused" => {
+                paused = request["params"]["paused"].as_bool().unwrap();
+                json!({"paused":paused})
+            }
+            "setAppCollection" => {
+                apps_enabled = request["params"]["enabled"].as_bool().unwrap();
+                json!({"appCollection":{"enabled":apps_enabled}})
             }
             "echo" => request["params"].clone(),
             "fail" => {

@@ -155,6 +155,46 @@ fn shutdown_timeout_never_kills_or_restarts_saving_collector() {
 }
 
 #[test]
+fn crash_restart_restores_pause_and_application_collection_before_replying() {
+    for (paused, enabled) in [(false, false), (false, true), (true, true), (true, false)] {
+        let (backend, _, _dir) = fixture();
+        backend
+            .request("setPaused", json!({"paused":paused}), TIMEOUT)
+            .unwrap();
+        backend
+            .request("setAppCollection", json!({"enabled":enabled}), TIMEOUT)
+            .unwrap();
+        assert!(backend
+            .request(
+                "setPaused",
+                json!({"paused":!paused,"reject":true}),
+                TIMEOUT
+            )
+            .is_err());
+        assert!(backend
+            .request(
+                "setAppCollection",
+                json!({"enabled":!enabled,"reject":true}),
+                TIMEOUT
+            )
+            .is_err());
+        assert!(backend.request("crash", json!({}), TIMEOUT).is_err());
+        let mut restored = None;
+        for _ in 0..100 {
+            if let Ok(value) = backend.request("hello", json!({}), TIMEOUT) {
+                restored = Some(value);
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let restored = restored.expect("backend restarts after exit");
+        assert_eq!(restored["paused"], paused);
+        assert_eq!(restored["appCollection"]["enabled"], enabled);
+        backend.stop_gracefully(TIMEOUT).unwrap();
+    }
+}
+
+#[test]
 fn missing_executable_and_empty_method_fail_without_hanging() {
     let dir = tempfile::tempdir().unwrap();
     let backend = Backend::new(

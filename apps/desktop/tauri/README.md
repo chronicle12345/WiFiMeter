@@ -12,6 +12,9 @@ acceptance are still pending. All final packaging entry points will run on Linux
 Automatic and manual legacy imports are connected: collection starts
 after migration, failed imports keep it paused, and overlapping dates require an
 explicit decision. Recovery backups preserve the original JSON text and counters.
+If the collector crashes, its replacement restores the last confirmed pause and
+application-collection settings before serving requests. Rejected changes do not
+replace those settings, and a process still saving during shutdown is never restarted.
 Windows autostart uses the existing `io.wifimeter.demo` login item and reads back
 the applied state. Legacy imports inherit only the enabled current executable;
 unmatched portable paths and failed migrations preserve existing entries until
