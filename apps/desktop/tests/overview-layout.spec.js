@@ -45,12 +45,18 @@ for (const language of ['zh-CN', 'en']) {
                 await resizeWindow(width, height);
                 await expect(page.locator('.quota-body')).toBeVisible();
                 await expect(page.locator('.notice-line')).toHaveCount(quotaState === 'notice' ? 1 : 0);
+                await expect(page.locator('.overview-summary')).toHaveCount(1);
                 await page.screenshot({ path: testInfo.outputPath('overview.png'), fullPage: true });
                 const layout = await page.evaluate(() => {
                     const root = document.scrollingElement;
+                    const summary = document.querySelector('.overview-summary');
+                    const ranking = document.querySelector('.live-ranking-panel');
                     const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
                     return {
-                        bottomGap: innerHeight - document.querySelector('#content').lastElementChild.getBoundingClientRect().bottom,
+                        bottomGap: innerHeight - summary.getBoundingClientRect().bottom,
+                        summaryBottom: summary.getBoundingClientRect().bottom,
+                        rankingTop: ranking.getBoundingClientRect().top,
+                        summaryFollowedByRanking: summary.nextElementSibling === ranking,
                         cards: [...document.querySelectorAll('.chart-row>.panel')].map(element => {
                             const rect = element.getBoundingClientRect();
                             return { top: rect.top, bottom: rect.bottom, height: rect.height };
@@ -67,15 +73,17 @@ for (const language of ['zh-CN', 'en']) {
                             const rect = element.getBoundingClientRect();
                             return rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth;
                         }),
-                        clipping: [document.documentElement, document.body, document.querySelector('.main'), document.querySelector('#content'), ...document.querySelectorAll('#content .panel')]
+                        clipping: [document.documentElement, document.body, document.querySelector('.main'), document.querySelector('#content'), summary, ...document.querySelectorAll('#content .panel')]
                             .filter(el => ['hidden', 'clip'].includes(getComputedStyle(el).overflowY)).map(el => el.className || el.tagName)
                     };
                 });
                 console.log(`${language} ${width}x${height}: ${JSON.stringify(layout)}`);
-                expect(layout.scrollHeight).toBeLessThanOrEqual(layout.height);
+                expect(layout.scrollHeight).toBeGreaterThan(layout.height);
                 expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
                 expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
                 expect(layout.bottomGap).toBeLessThanOrEqual(24);
+                expect(layout.summaryFollowedByRanking).toBe(true);
+                expect(layout.rankingTop).toBeGreaterThanOrEqual(layout.summaryBottom);
                 expect(Math.abs(layout.cards[0].top - layout.cards[1].top)).toBeLessThan(1);
                 expect(Math.abs(layout.cards[0].bottom - layout.cards[1].bottom)).toBeLessThan(1);
                 for (const control of layout.controls.slice(1)) {
@@ -85,6 +93,9 @@ for (const language of ['zh-CN', 'en']) {
                 expect(layout.controls[1].left - layout.controls[0].right).toBeLessThanOrEqual(12);
                 expect(layout.outside).toEqual([]);
                 expect(layout.clipping).toEqual([]);
+                await page.locator('.live-ranking-panel .applications-content').scrollIntoViewIfNeeded();
+                await expect(page.locator('.live-ranking-panel .applications-content')).toBeInViewport();
+                expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
                 expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
             });
         }

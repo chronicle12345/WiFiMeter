@@ -1,7 +1,7 @@
 import { formatSpeedParts } from './speed.js';
 
 // Live sockets are grouped only within their measured scope; loopback never joins Wi-Fi totals.
-export function applicationLiveRows(processes, { networkId = 'all', search = '' } = {}) {
+export function applicationLiveRows(processes, { networkId = 'all', search = '', sort = 'total' } = {}) {
     const groups = new Map();
     for (const process of processes || []) {
         if (networkId !== 'all' && process.networkId !== networkId) continue;
@@ -24,8 +24,15 @@ export function applicationLiveRows(processes, { networkId = 'all', search = '' 
     return [...groups.values()].map(row => ({ ...row,
         processIds: [...row.processIds],
         rxPerSecond: row.measurementAvailable ? row.rxPerSecond.toString() : null,
-        txPerSecond: row.measurementAvailable ? row.txPerSecond.toString() : null
-    })).filter(row => String(row.name || row.appId).toLocaleLowerCase().includes(needle));
+        txPerSecond: row.measurementAvailable ? row.txPerSecond.toString() : null,
+        totalPerSecond: row.measurementAvailable ? (row.rxPerSecond + row.txPerSecond).toString() : null
+    })).filter(row => String(row.name || row.appId).toLocaleLowerCase().includes(needle))
+        .sort((a, b) => {
+            if (a.measurementAvailable !== b.measurementAvailable) return a.measurementAvailable ? -1 : 1;
+            const field = sort === 'rx' ? 'rxPerSecond' : sort === 'tx' ? 'txPerSecond' : 'totalPerSecond';
+            const left = BigInt(a[field] || '0'), right = BigInt(b[field] || '0');
+            return left > right ? -1 : left < right ? 1 : a.key.localeCompare(b.key);
+        });
 }
 
 export function measuredRate(value, mode) {

@@ -54,7 +54,7 @@ try {
         $state = Get-MeterAppNetworkState -Path $data.Path
         $result = [pscustomobject]@{ Status = 'Succeeded'; Path = $data.Path; State = $state; Warning = $state.Warning; Error = $null; ErrorCode = $null }
     } else {
-        $result = Invoke-MeterAppNetworkAction -Path $data.Path -Action $data.Action -UploadKbps ([long]$data.UploadKbps)
+        $result = Invoke-MeterAppNetworkAction -Path $data.Path -Action $data.Action -UploadKbps ([long]$data.UploadKbps) -DownloadKbps ([long]$data.DownloadKbps) -Direction $data.Direction -OwnerPid ([int]$data.OwnerPid)
         $clock = [Diagnostics.Stopwatch]::StartNew()
         while ($result.Status -eq 'Running' -and $clock.ElapsedMilliseconds -lt 120000) {
             $result = Receive-MeterAppNetworkAction -Operation $result -WaitMilliseconds 1000
@@ -77,8 +77,9 @@ try {
 }
 
 /**
- * 主进程 API：chooseProgram() / request({ action, path, uploadKBps })，均返回 Promise。
- * uploadKBps 为十进制 KB/s，须能精确换算成整数 Kbit/s（最小 0.125，最大 125000000）。
+ * 主进程 API：chooseProgram() / request({ action, path, uploadKBps?, downloadKBps?, direction? })。
+ * 速率为十进制 KB/s，须能精确换算成整数 Kbit/s（最小 0.125，最大 125000000）。
+ * throttle 只修改所给方向；unthrottle 的 direction 为 upload/download/both，缺省 both。
  * 返回 { ok, canceled, result?, error? }；result 为 { status, path, state, warning }。
  * state 保留 helper 字段及 null 查询状态，UploadKbps 为 Kbit/s；查询成功不代表联网被阻断。
  * runner(executable, args, options) => Promise<{ stdout, stderr? }>，默认使用 execFile。
@@ -92,29 +93,41 @@ function createAppControl({ platform = process.platform, dialog, getWindow = () 
         ? path.join(resourcesPath, 'native', 'windows', 'AppNetworkControl.psm1')
         : path.join(__dirname, '..', 'native', 'windows', 'AppNetworkControl.psm1');
     const powershell = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    const unsupported = () => fail('unsupported', `${platform} 暂不支持按应用阻断联网或上传限速。`);
+    const unsupported = () => fail('unsupported', `${platform} 暂不支持按应用阻断联网或上传、下载限速。`);
 
     async function request(input) {
         if (platform !== 'win32') return unsupported();
         let target;
-        let rate = 0;
+        let uploadRate = 0;
+        let downloadRate = 0;
+        let direction = 'both';
         try {
             if (!input || typeof input !== 'object' || Array.isArray(input)
                 || !Object.hasOwn(actions, input.action)
-                || Object.keys(input).some(key => !['action', 'path', 'uploadKBps'].includes(key))) throw Error('应用联网请求无效。');
+                || Object.keys(input).some(key => !['action', 'path', 'uploadKBps', 'downloadKBps', 'direction'].includes(key))) throw Error('应用联网请求无效。');
             target = localExePath(input.path);
             if (input.action === 'throttle') {
-                rate = input.uploadKBps * 8;
-                if (typeof input.uploadKBps !== 'number' || !Number.isSafeInteger(rate) || rate < 1 || rate > 1000000000) {
-                    throw Error('uploadKBps 必须在 0.125 到 125000000 KB/s 之间，并能换算为整数 Kbit/s。');
+                if (!Object.hasOwn(input, 'uploadKBps') && !Object.hasOwn(input, 'downloadKBps')) throw Error('请至少提供一个方向的限速值。');
+                for (const key of ['uploadKBps', 'downloadKBps']) {
+                    if (!Object.hasOwn(input, key)) continue;
+                    const rate = input[key] * 8;
+                    if (typeof input[key] !== 'number' || !Number.isSafeInteger(rate) || rate < 1 || rate > 1000000000) {
+                        throw Error(`${key} 必须在 0.125 到 125000000 KB/s 之间，并能换算为整数 Kbit/s。`);
+                    }
+                    if (key === 'uploadKBps') uploadRate = rate;
+                    else downloadRate = rate;
                 }
-            } else if (Object.hasOwn(input, 'uploadKBps')) throw Error('仅 throttle 动作允许 uploadKBps。');
+            } else if (Object.hasOwn(input, 'uploadKBps') || Object.hasOwn(input, 'downloadKBps')) throw Error('仅 throttle 动作允许上传、下载限速值。');
+            if (Object.hasOwn(input, 'direction')) {
+                if (input.action !== 'unthrottle' || !['upload', 'download', 'both'].includes(input.direction)) throw Error('仅 unthrottle 动作允许 direction，值为 upload、download 或 both。');
+                direction = input.direction;
+            }
         } catch (error) { return fail('invalidRequest', error.message); }
         try { target = await executablePath(target, io); }
         catch (error) { return fail('invalidProgram', error.message); }
         let stdout;
         try {
-            ({ stdout } = await runner(powershell, command({ Module: modulePath, Path: target, Action: actions[input.action], UploadKbps: rate }), {
+            ({ stdout } = await runner(powershell, command({ Module: modulePath, Path: target, Action: actions[input.action], UploadKbps: uploadRate, DownloadKbps: downloadRate, Direction: direction, OwnerPid: process.pid }), {
                 shell: false, windowsHide: true, encoding: 'utf8', timeout: 180000, maxBuffer: 1024 * 1024
             }));
         } catch (error) {

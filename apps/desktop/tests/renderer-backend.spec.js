@@ -20,6 +20,10 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
             backup.settings={...backup.settings,language:'zh-CN',retention:0};
             backup.records=[{date:'2020-01-01',networkId,rxBytes:'520000',txBytes:'1'},{date:'2020-02-01',networkId,rxBytes:'1000',txBytes:'2'}];
             backup.appRecords=[{date:'2020-01-01',networkId,appId:'browser',name:'Browser',rxBytes:'520000',txBytes:'1'}];
+            backup.hourlyRecords=[{date:'2020-01-01',networkId,hour:'7',rxBytes:'500000',txBytes:'0'},
+                {date:'2020-01-01',networkId,hour:'8',rxBytes:'20000',txBytes:'1'},
+                {date:'2020-02-01',networkId,hour:'9',rxBytes:'1000',txBytes:'2'}];
+            backup.minuteRecords=[];backup.appMinuteRecords=[];
             return window.desktop.backend.request('restore',{backup});
         });
         expect(response.ok).toBe(true);await page.reload();
@@ -30,9 +34,39 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
         await expect(page.locator('.metric.featured')).toContainText('520');
         const file=path.join(profile,'old-history.csv');
         await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file});},file);
-        await page.getByRole('button',{name:'导出数据',exact:true}).click();await page.getByRole('button',{name:'导出记录',exact:true}).click();
+        await page.getByRole('button',{name:'导出数据',exact:true}).click();
+        await expect(page.locator('#exportGrouping')).toHaveValue('day');
+        await page.getByRole('button',{name:'导出记录',exact:true}).click();
         await expect(page.locator('.modal')).toHaveCount(0);const csv=await readFile(file,'utf8');
         expect(csv).toContain('"2020-01-01"');expect(csv).toContain('"520000","1","520001"');expect(csv).not.toContain('2020-02-01');
+        const hoursFile=path.join(profile,'old-hours.json');
+        await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file});},hoursFile);
+        await page.getByRole('button',{name:'导出数据',exact:true}).click();
+        await page.locator('#exportGrouping').selectOption('hour');await page.locator('#exportFormat').selectOption('json');
+        await page.getByRole('button',{name:'导出记录',exact:true}).click();
+        await expect(page.locator('.modal')).toHaveCount(0);
+        const hours=JSON.parse(await readFile(hoursFile,'utf8'));
+        expect(hours.records.map(row=>[row.date,row.time,row.minute,row.rxBytes,row.txBytes])).toEqual([
+            ['2020-01-01','07:00',0,'500000','0'],['2020-01-01','08:00',0,'20000','1']]);
+        expect(hours.records.every(row=>row.ssid&&row.alias!==undefined)).toBe(true);
+        const minutesRestored=await page.evaluate(async()=>{
+            const {result}=await window.desktop.backend.request('backup');const backup=result.backup,networkId=backup.networks[0].key;
+            backup.minuteRecords=[14,15,16,17].map(minute=>({date:'2020-01-01',networkId,hour:'8',minute:String(minute),
+                rxBytes:minute===15?'10':minute===16?'20':'999',txBytes:minute===15?'1':minute===16?'2':'99'}));
+            return window.desktop.backend.request('restore',{backup});
+        });
+        expect(minutesRestored.ok).toBe(true);
+        const partialFile=path.join(profile,'partial-hour.json');
+        await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:file});},partialFile);
+        await page.getByRole('button',{name:'导出数据',exact:true}).click();
+        await page.locator('#exportEnd').fill('2020-01-01');
+        await page.locator('#exportStartTime').fill('08:15');await page.locator('#exportEndTime').fill('08:16');
+        await page.locator('#exportGrouping').selectOption('hour');await page.locator('#exportFormat').selectOption('json');
+        await page.getByRole('button',{name:'导出记录',exact:true}).click();
+        await expect(page.locator('.modal')).toHaveCount(0);
+        const partial=JSON.parse(await readFile(partialFile,'utf8'));
+        expect(partial.records.map(row=>[row.date,row.time,row.minute,row.rxBytes,row.txBytes])).toEqual([
+            ['2020-01-01','08:00',0,'30','3']]);
         await page.locator('.nav [data-page="settings"]').click();await page.locator('select[name="language"]').selectOption('en');
         await expect.poll(() => page.evaluate(async () => (await window.desktop.backend.request('snapshot')).result.settings.language)).toBe('en');await expect(page).toHaveTitle(new RegExp('Preferences'));
         await page.reload();await expect(page).toHaveTitle(new RegExp('Preferences'));

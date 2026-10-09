@@ -29,6 +29,7 @@ LocalStamp localStampOf(std::chrono::system_clock::time_point at)
     stamp.month = time.tm_mon + 1;
     stamp.day = time.tm_mday;
     stamp.hour = time.tm_hour;
+    stamp.minute = time.tm_min;
     return stamp;
 }
 

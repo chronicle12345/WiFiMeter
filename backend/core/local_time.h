@@ -23,6 +23,7 @@ struct LocalStamp
     int month = 1;  // 1..12
     int day = 1;    // 1..31
     int hour = 0;   // 0..23
+    int minute = 0; // 0..59
 };
 
 // 转换为本地时间分量。线程安全，遵循进程的时区设置。

@@ -47,6 +47,32 @@ struct AppUsageRow
     core::ByteCount txBytes = 0;
 };
 
+struct MinuteUsageRow
+{
+    std::string networkKey;
+    std::string day;
+    int hour = 0;
+    int minute = 0;
+    core::ByteCount rxBytes = 0;
+    core::ByteCount txBytes = 0;
+};
+
+struct AppMinuteUsageRow
+{
+    std::string networkKey;
+    std::string day;
+    int hour = 0;
+    int minute = 0;
+    std::string appId;
+    std::string name;
+    core::ByteCount rxBytes = 0;
+    core::ByteCount txBytes = 0;
+};
+
+// 按采样区间的秒数分配到各分钟，余数字节留给后续区间，保持总量不变。
+std::vector<MinuteUsageRow> minuteUsageOf(const std::string& networkKey, core::TimePoint at,
+    std::chrono::seconds span, core::ByteCount rx, core::ByteCount tx);
+
 enum class CoverageReason
 {
     paused,           // 用户暂停统计
@@ -98,6 +124,13 @@ public:
     Status addApp(const AppUsageRow& row);
     Status setApp(const AppUsageRow& row);
     std::vector<AppUsageRow> appRange(const std::string& networkKey, const std::string& fromDay, const std::string& toDay, Status& status) const;
+
+    Status addMinute(const MinuteUsageRow& row);
+    Status addAppMinute(const AppMinuteUsageRow& row);
+    std::vector<MinuteUsageRow> minuteRange(const std::string& networkKey, const std::string& fromDay,
+        const std::string& toDay, Status& status, int fromMinute = 0, int toMinute = 1439) const;
+    std::vector<AppMinuteUsageRow> appMinuteRange(const std::string& networkKey, const std::string& fromDay,
+        const std::string& toDay, Status& status, int fromMinute = 0, int toMinute = 1439) const;
 
     Status addGap(const CoverageGap& gap);
     std::vector<CoverageGap> gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status, bool application = false) const;

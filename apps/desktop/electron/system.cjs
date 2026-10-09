@@ -46,7 +46,7 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
             return false;
         }
         // 打包后 execPath 就是 /opt/WiFiMeter/wifimeter；开发态是 electron 本体。
-        const command = process.env.APPIMAGE ?? process.execPath;
+        const command = process.env.APPIMAGE ?? process.env.WIFIMETER_APP_EXE ?? process.execPath;
         const content = `[Desktop Entry]
 Type=Application
 Name=WiFiMeter
@@ -86,7 +86,6 @@ X-GNOME-Autostart-enabled=true
             {
                 label: settings.language === 'en' ? 'Quit' : '退出',
                 click: () => {
-                    quitting = true;
                     app.quit();
                 }
             }

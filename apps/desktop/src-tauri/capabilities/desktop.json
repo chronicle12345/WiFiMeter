@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Local desktop pages may invoke the validated worker bridge and subscribe to desktop events.",
+  "windows": ["main", "mini"],
+  "permissions": ["allow-desktop-request", "core:event:allow-listen", "core:event:allow-unlisten"]
+}

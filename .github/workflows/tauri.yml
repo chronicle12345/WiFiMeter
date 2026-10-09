@@ -1,0 +1,111 @@
+name: Tauri desktop validation and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v1.3.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  windows:
+    name: Windows x64 Tauri
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.14.1
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Require matching desktop versions and release tag notes
+        id: metadata
+        run: node packaging/tauri/release.cjs metadata
+      - name: Install dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Validate packaging and release helpers
+        run: npm run test:packaging:tauri
+      - name: Build and test native backend
+        run: |
+          cmake -S backend -B build/windows -A x64 -DWIFIMETER_BUILD_TESTS=ON
+          if ($LASTEXITCODE) { throw 'Backend configuration failed' }
+          cmake --build build/windows --config Release --parallel 2
+          if ($LASTEXITCODE) { throw 'Backend build failed' }
+          ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
+          if ($LASTEXITCODE) { throw 'Backend tests failed' }
+      - name: Desktop unit and renderer regression tests
+        run: |
+          npm run test:unit
+          if ($LASTEXITCODE) { throw 'Unit tests failed' }
+          npm run test:ui
+          if ($LASTEXITCODE) { throw 'Renderer tests failed' }
+      - name: Build Tauri installer and portable package
+        run: npm run dist:windows
+      - name: Rust host tests
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --locked
+      - name: Validate installer and portable WebView integration
+        run: node packaging/tauri/verify-windows.cjs
+      - name: Stage exactly three verified release attachments
+        id: stage
+        run: node packaging/tauri/release.cjs stage dist/windows
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: tauri-windows-x64
+          path: ${{ steps.stage.outputs.directory }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish:
+    name: Publish verified Windows x64 Tauri v1.3 release
+    needs: windows
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.14.1
+      - name: Recheck the tag, versions and release notes
+        id: metadata
+        run: node packaging/tauri/release.cjs metadata
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: tauri-windows-x64
+          path: ${{ runner.temp }}/tauri-release-artifacts
+      - name: Require the exact release attachments and matching SHA-256
+        id: assets
+        run: node packaging/tauri/release.cjs release-files "$RUNNER_TEMP/tauri-release-artifacts"
+      - name: Upload a complete draft before publishing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.windows.outputs.version }}
+          NOTES_FILE: ${{ steps.metadata.outputs.notes_file }}
+          ASSETS_FILE: ${{ steps.assets.outputs.assets_file }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < "$ASSETS_FILE"
+          # Creation fails if this tag already has a release, including a draft.
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$NOTES_FILE" "${assets[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false

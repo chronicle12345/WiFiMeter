@@ -4,7 +4,7 @@ const SIZES = { bar: { width: 224, height: 92 }, square: { width: 152, height: 1
 const SNAP_DISTANCE = 20;
 const STRIP_SIZE = 6;
 
-function miniSize(shape) { return { ...(SIZES[shape] || SIZES.bar) }; }
+function miniSize(shape, expanded = false) { return expanded ? { width: 360, height: 420 } : { ...(SIZES[shape] || SIZES.bar) }; }
 
 function clampBounds(bounds, area) {
     const width = Math.min(bounds.width, area.width), height = Math.min(bounds.height, area.height);

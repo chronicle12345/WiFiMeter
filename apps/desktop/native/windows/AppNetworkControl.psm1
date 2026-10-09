@@ -2,7 +2,8 @@
 Set-StrictMode -Version Latest
 $script:MeterNetworkModulePath = $PSCommandPath
 $script:MeterNetworkGroup = 'WiFiMeter.AppNetwork.v1'
-$script:MeterNetworkWarning = 'Windows Firewall 对本地代理环回连接不一定可靠；规则状态不代表彻底阻断联网。QoS 仅限制匹配进程的上传，不限制下载或代理进程。'
+$script:MeterNetworkWarning = 'Windows Firewall 对本地代理环回连接不一定可靠；规则状态不代表彻底阻断联网。上传通过 QoS 限速，下载通过 WinDivert 限速并在 WiFiMeter 运行时生效；两者只作用于匹配的 exe，不限制另一个代理进程。'
+. (Join-Path $PSScriptRoot 'DownloadNetworkControl.ps1')
 
 function Resolve-MeterAppPath {
     param([Parameter(Mandatory)][string]$Path)
@@ -81,6 +82,7 @@ function Get-MeterAppNetworkState {
         Path = $Path; Blocked = $null; InboundBlocked = $null; OutboundBlocked = $null
         FirewallRuleCount = $null; FirewallError = $null; FirewallErrorCode = $null; QosSupported = $false
         ExactPathQosVerified = $false; Throttled = $null; UploadKbps = $null; QosError = $null; QosErrorCode = $null
+        DownloadSupported = $false; DownloadThrottled = $null; DownloadKbps = $null; DownloadError = $null; DownloadErrorCode = $null
         Scope = 'LocalConfiguredPolicy'; Warning = $script:MeterNetworkWarning
     }
     try {
@@ -106,11 +108,21 @@ function Get-MeterAppNetworkState {
             $state.UploadKbps = $rate / 1000.0
         }
     } catch { $state.QosError = $_.Exception.Message; $state.Throttled = $null; $state.QosErrorCode = if ($state.QosSupported) { 'QosQueryFailed' } else { 'QosUnsupported' } }
+    try {
+        $download = Get-MeterDownloadState $Path
+        $state.DownloadSupported = $download.Supported
+        $state.DownloadThrottled = $download.Throttled
+        $state.DownloadKbps = $download.Kbps
+        $state.DownloadError = $download.Error
+        $state.DownloadErrorCode = $download.ErrorCode
+    } catch { $state.DownloadError = $_.Exception.Message; $state.DownloadErrorCode = 'DownloadQueryFailed' }
     return $state
 }
 
 function Invoke-MeterNetworkMutation {
-    param([string]$Path, [ValidateSet('Block','Unblock','Throttle','Unthrottle')][string]$Action, [long]$UploadKbps)
+    param([string]$Path, [ValidateSet('Block','Unblock','Throttle','Unthrottle')][string]$Action, [long]$UploadKbps,
+        [long]$DownloadKbps = 0, [ValidateSet('upload','download','both')][string]$Direction = 'both', [int]$OwnerPid = 0,
+        [string]$OwnerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
     $Path = Resolve-MeterAppPath $Path
     $id = Get-MeterNetworkIdentity $Path
     if ($Action -in @('Block', 'Unblock')) {
@@ -128,6 +140,14 @@ function Invoke-MeterNetworkMutation {
             }
         }
         return
+    }
+    if ($Action -eq 'Throttle') {
+        if ($UploadKbps -lt 0 -or $UploadKbps -gt 1000000000 -or $DownloadKbps -lt 0 -or $DownloadKbps -gt 1000000000 -or ($UploadKbps -eq 0 -and $DownloadKbps -eq 0)) { throw '请提供至少一个方向的限速值，范围为 1 到 1000000000 Kbit/s。' }
+        if ($DownloadKbps -gt 0) { Invoke-MeterDownloadMutation -Path $Path -DownloadKbps $DownloadKbps -OwnerPid $OwnerPid -OwnerSid $OwnerSid }
+        if ($UploadKbps -eq 0) { return }
+    } else {
+        if ($Direction -in @('download', 'both')) { Invoke-MeterDownloadMutation -Path $Path -DownloadKbps 0 -OwnerPid $OwnerPid -OwnerSid $OwnerSid }
+        if ($Direction -eq 'download') { return }
     }
     if (-not (Invoke-MeterNetworkProvider QosSupport)) { throw '系统不支持按 exe 路径配置 NetQos。' }
     if ($Action -eq 'Throttle' -and ($UploadKbps -lt 1 -or $UploadKbps -gt 1000000000)) { throw 'UploadKbps 必须在 1 到 1000000000 之间，单位为千比特每秒。' }
@@ -156,18 +176,19 @@ function Invoke-MeterNetworkMutation {
 }
 
 function Start-MeterNetworkHelper {
-    param([string]$Path, [string]$Action, [long]$UploadKbps)
+    param([string]$Path, [string]$Action, [long]$UploadKbps, [long]$DownloadKbps, [string]$Direction, [int]$OwnerPid, [string]$OwnerSid)
     # Only this module is loaded: no caller-selected script/command or result file.
     # JSON is base64 data inside a fixed script; quotes in paths never become code.
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
         Module = $script:MeterNetworkModulePath; Path = $Path; Action = $Action; UploadKbps = $UploadKbps
+        DownloadKbps = $DownloadKbps; Direction = $Direction; OwnerPid = $OwnerPid; OwnerSid = $OwnerSid
     } | ConvertTo-Json -Compress)))
     $template = @(
         '$ErrorActionPreference = ''Stop'''
         'try {'
         '    $data = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''__PAYLOAD__'')) | ConvertFrom-Json'
         '    $module = Import-Module -Name $data.Module -Force -PassThru'
-        '    & $module { param($p, $a, $r) Invoke-MeterNetworkMutation -Path $p -Action $a -UploadKbps $r } $data.Path $data.Action ([long]$data.UploadKbps)'
+        '    & $module { param($p, $a, $u, $d, $direction, $owner, $sid) Invoke-MeterNetworkMutation -Path $p -Action $a -UploadKbps $u -DownloadKbps $d -Direction $direction -OwnerPid $owner -OwnerSid $sid } $data.Path $data.Action ([long]$data.UploadKbps) ([long]$data.DownloadKbps) $data.Direction ([int]$data.OwnerPid) $data.OwnerSid'
         '    exit 0'
         '} catch { exit 1 }'
     ) -join "`n"
@@ -191,15 +212,25 @@ function Invoke-MeterAppNetworkAction {
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][ValidateSet('Block','Unblock','Throttle','Unthrottle')][string]$Action,
         [long]$UploadKbps = 0,
+        [long]$DownloadKbps = 0,
+        [ValidateSet('upload','download','both')][string]$Direction = 'both',
+        [int]$OwnerPid = 0,
         [ValidateRange(0,5000)][int]$WaitMilliseconds = 0
     )
-    $operation = [pscustomobject]@{ Id = [guid]::NewGuid().ToString('N'); Path = $Path; Action = $Action; UploadKbps = $UploadKbps; Status = 'Running'; Error = $null; ErrorCode = $null; State = $null; Process = $null; Warning = $script:MeterNetworkWarning }
+    $operation = [pscustomobject]@{ Id = [guid]::NewGuid().ToString('N'); Path = $Path; Action = $Action; UploadKbps = $UploadKbps; DownloadKbps = $DownloadKbps; Direction = $Direction; Status = 'Running'; Error = $null; ErrorCode = $null; State = $null; Process = $null; Warning = $script:MeterNetworkWarning }
     try {
         $operation.ErrorCode = 'InvalidRequest'
         $operation.Path = Resolve-MeterAppPath $Path
-        if ($Action -eq 'Throttle' -and ($UploadKbps -lt 1 -or $UploadKbps -gt 1000000000)) { throw 'UploadKbps 必须在 1 到 1000000000 之间。' }
+        if ($Action -eq 'Throttle' -and ($UploadKbps -lt 0 -or $UploadKbps -gt 1000000000 -or $DownloadKbps -lt 0 -or $DownloadKbps -gt 1000000000 -or ($UploadKbps -eq 0 -and $DownloadKbps -eq 0))) { throw '请提供至少一个方向的限速值，范围为 1 到 1000000000 Kbit/s。' }
+        if ($Action -eq 'Throttle' -and $DownloadKbps -gt 0) {
+            $support = Get-MeterDownloadSupport
+            if (-not $support.Supported) { $operation.ErrorCode = $support.Code; throw $support.Error }
+            if ($OwnerPid -le 0) { throw '下载限速需要有效的 WiFiMeter 主进程。' }
+        }
         $operation.ErrorCode = 'HelperLaunchFailed'
-        $operation.Process = Start-MeterNetworkHelper $operation.Path $Action $UploadKbps
+        # Preserve the caller's SID when UAC uses another administrator's credentials.
+        $ownerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $operation.Process = Start-MeterNetworkHelper $operation.Path $Action $UploadKbps $DownloadKbps $Direction $OwnerPid $ownerSid
         $operation.ErrorCode = $null
         return Receive-MeterAppNetworkAction $operation -WaitMilliseconds $WaitMilliseconds
     } catch {
@@ -227,13 +258,26 @@ function Receive-MeterAppNetworkAction {
         $Operation.Process.Dispose()
         $Operation.Process = $null
         $Operation.State = Get-MeterAppNetworkState $Operation.Path
-        if ($exitCode -ne 0) { $Operation.ErrorCode = 'HelperFailed'; throw "权限提升 helper 失败 (exit $exitCode)，可能存在部分修改；请查看 State 中的策略状态和查询错误。" }
+        if ($exitCode -ne 0) {
+            $Operation.ErrorCode = 'HelperFailed'
+            $detail = ''
+            $downloadRequested = ($Operation.Action -eq 'Throttle' -and $Operation.DownloadKbps -gt 0) -or
+                ($Operation.Action -eq 'Unthrottle' -and $Operation.Direction -ne 'upload')
+            if ($downloadRequested -and $Operation.State.DownloadError) { $detail = ' ' + $Operation.State.DownloadError }
+            throw "权限提升 helper 失败 (exit $exitCode)。$detail 可能存在部分修改；请查看 State 中的策略状态和查询错误。"
+        }
         $s = $Operation.State
         $ok = switch ($Operation.Action) {
             Block { $null -eq $s.FirewallError -and $s.Blocked }
             Unblock { $null -eq $s.FirewallError -and $s.FirewallRuleCount -eq 0 }
-            Throttle { $null -eq $s.QosError -and $s.ExactPathQosVerified -and $s.UploadKbps -eq $Operation.UploadKbps }
-            Unthrottle { $null -eq $s.QosError -and $s.Throttled -eq $false }
+            Throttle {
+                ($Operation.UploadKbps -eq 0 -or ($null -eq $s.QosError -and $s.ExactPathQosVerified -and $s.UploadKbps -eq $Operation.UploadKbps)) -and
+                ($Operation.DownloadKbps -eq 0 -or ($null -eq $s.DownloadError -and $s.DownloadThrottled -and $s.DownloadKbps -eq $Operation.DownloadKbps))
+            }
+            Unthrottle {
+                ($Operation.Direction -eq 'download' -or ($null -eq $s.QosError -and $s.Throttled -eq $false)) -and
+                ($Operation.Direction -eq 'upload' -or (-not $s.DownloadSupported) -or ($null -eq $s.DownloadError -and $s.DownloadThrottled -eq $false))
+            }
         }
         if (-not $ok) { $Operation.ErrorCode = 'VerificationFailed'; throw '策略回读未确认请求的配置，不能报告成功。请检查 State 的查询错误。' }
         $Operation.Status = 'Succeeded'

@@ -181,7 +181,8 @@ void multipleQuotaThresholdsRoundTripAndNotify()
 {
     wifimeter::test::useTimeZone("UTC");
     Harness source;
-    const auto now = utcTime(2026, 10, 1);
+    // 5 秒样本覆盖当日 00:00:00 到 00:00:05，按当日用量验证多档提醒。
+    const auto now = utcTime(2026, 10, 1, 0, 0, 5);
     NetworkRecord network;
     network.key = kUuid;
     network.ssid = "Multiple";
@@ -230,8 +231,9 @@ void multipleQuotaThresholdsRoundTripAndNotify()
     const auto repeated = restored.service->collectOnce(now);
     WIFIMETER_CHECK_EQ(count(repeated, ""), 0);
     WIFIMETER_CHECK_EQ(count(repeated, "total"), 0);
-    add(restored, now, 200);
-    const auto limit = restored.service->collectOnce(now + std::chrono::seconds(5));
+    const auto later = now + std::chrono::seconds(5);
+    add(restored, later, 200);
+    const auto limit = restored.service->collectOnce(later);
     WIFIMETER_CHECK_EQ(count(limit, ""), 1);
     WIFIMETER_CHECK_EQ(count(limit, "total"), 1);
     const auto tomorrow = now + std::chrono::hours(24);
@@ -1231,10 +1233,139 @@ void completeBackupRoundTrip()
     WIFIMETER_CHECK(oldHours && oldHours->size() == 0);
 }
 
+
+void minuteHistoryPreservesBoundariesAndBackups()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness source;
+    if (!source.service) { WIFIMETER_CHECK(false); return; }
+    FakeApps apps;
+    source.service = std::make_unique<BackendService>(BackendService::Deps{*source.store, source.network, &apps});
+    const auto start = utcTime(2026, 9, 30, 23, 59, 55);
+    const auto end = start + std::chrono::seconds(10);
+    auto enabled = JsonValue::makeObject(); enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(source.call(method::kSetAppCollection, enabled, start).ok());
+    source.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 200));
+    apps.report.state = platform::AppCollectorState::running;
+    apps.report.generation = "minute-test";
+    apps.report.samples.push_back({"wlan0", "browser", "Browser", "42:1", 42, 100, 20});
+    WIFIMETER_CHECK(source.service->collectOnce(start).error.code.empty());
+    source.network.sampleReport.samples[0].rxBytes += 101;
+    source.network.sampleReport.samples[0].txBytes += 21;
+    apps.report.samples[0].rxBytes += 81;
+    apps.report.samples[0].txBytes += 11;
+    const auto events = source.service->collectOnce(end);
+    WIFIMETER_CHECK(events.error.code.empty());
+    auto params = JsonValue::makeObject();
+    params.set("includeMinutes", JsonValue::makeBool(true));
+    params.set("from", JsonValue::makeString("2026-09-30"));
+    params.set("to", JsonValue::makeString("2026-10-01"));
+    auto allDates = JsonValue::makeObject(); allDates.set("from", JsonValue::makeString("0001-01-01"));
+    WIFIMETER_CHECK(source.call(method::kSnapshot, allDates, end).ok());
+    const auto defaultSnapshot = source.call(method::kSnapshot, end);
+    WIFIMETER_CHECK(!defaultSnapshot.result.boolOr("minuteRecordsIncluded"));
+    WIFIMETER_CHECK_EQ(defaultSnapshot.result.find("minuteRecords")->size(), std::size_t{0});
+    auto snapshot = source.call(method::kSnapshot, params, end);
+    WIFIMETER_CHECK(snapshot.ok());
+    for (const auto* field : {"minuteRecords", "appMinuteRecords"})
+    {
+        const auto* rows = snapshot.result.find(field);
+        WIFIMETER_CHECK(rows != nullptr && rows->size() == 2);
+        if (!rows || rows->size() != 2) continue;
+        WIFIMETER_CHECK_EQ(rows->at(0).stringOr("date"), std::string("2026-09-30"));
+        WIFIMETER_CHECK_EQ(rows->at(0).stringOr("time"), std::string("23:59"));
+        WIFIMETER_CHECK_EQ(rows->at(1).stringOr("time"), std::string("00:00"));
+        WIFIMETER_CHECK_EQ(rows->at(0).stringOr("rxBytes"), std::string(field == std::string("minuteRecords") ? "50" : "40"));
+        WIFIMETER_CHECK_EQ(rows->at(1).stringOr("rxBytes"), std::string(field == std::string("minuteRecords") ? "51" : "41"));
+    }
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->size(), std::size_t{2});
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("50"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(1).stringOr("rxBytes"), std::string("51"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("40"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(1).stringOr("rxBytes"), std::string("41"));
+    WIFIMETER_CHECK_EQ(snapshot.result.stringOr("usageRevision"), std::string("2"));
+    bool networkMinutes = false, appMinutes = false;
+    for (std::size_t i = 0; i < events.names.size(); ++i)
+    {
+        if (events.names[i] != event::kUsage && events.names[i] != event::kAppUsage) continue;
+        WIFIMETER_CHECK_EQ(events.items[i].stringOr("usageRevision"), snapshot.result.stringOr("usageRevision"));
+        const auto* minutes = events.items[i].find("minuteRecords");
+        if (events.names[i] == event::kUsage) networkMinutes = minutes && minutes->size() == 2;
+        else appMinutes = minutes && minutes->size() == 2;
+    }
+    WIFIMETER_CHECK(networkMinutes); WIFIMETER_CHECK(appMinutes);
+    params.set("fromTime", JsonValue::makeString("23:59"));
+    params.set("toTime", JsonValue::makeString("00:00"));
+    snapshot = source.call(method::kSnapshot, params, end);
+    WIFIMETER_CHECK(snapshot.ok());
+    if (snapshot.ok()) WIFIMETER_CHECK_EQ(snapshot.result.find("records")->size(), std::size_t{2});
+    params.set("from", JsonValue::makeString("2026-10-01"));
+    params.set("fromTime", JsonValue::makeString("00:00"));
+    snapshot = source.call(method::kSnapshot, params, end);
+    WIFIMETER_CHECK(snapshot.ok());
+    if (snapshot.ok())
+    {
+        WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("51"));
+        WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("41"));
+    }
+    params.set("toTime", JsonValue::makeString("25:00"));
+    WIFIMETER_CHECK(!source.call(method::kSnapshot, params, end).ok());
+    params.set("fromTime", JsonValue::makeString("00:01"));
+    params.set("toTime", JsonValue::makeString("00:00"));
+    WIFIMETER_CHECK(!source.call(method::kSnapshot, params, end).ok());
+    params.set("fromTime", JsonValue::makeString("00:00"));
+    params.set("grouping", JsonValue::makeString("minute"));
+    const auto exported = source.call(method::kExportUsage, params, end);
+    WIFIMETER_CHECK(exported.ok());
+    if (exported.ok())
+    {
+        WIFIMETER_CHECK_EQ(exported.result.find("records")->size(), std::size_t{1});
+        WIFIMETER_CHECK_EQ(exported.result.find("records")->at(0).stringOr("time"), std::string("00:00"));
+        WIFIMETER_CHECK_EQ(exported.result.find("records")->at(0).stringOr("rxBytes"), std::string("51"));
+    }
+    const auto backup = source.call(method::kBackup, end);
+    WIFIMETER_CHECK(backup.ok());
+    Harness target(true);
+    auto restore = JsonValue::makeObject(); restore.set("backup", *backup.result.find("backup"));
+    WIFIMETER_CHECK(target.call(method::kRestore, restore, end).ok());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup, end).result.find("backup")->dump(), backup.result.find("backup")->dump());
+    auto malformed = *backup.result.find("backup");
+    auto invalidRows = JsonValue::makeArray();
+    auto badMinute = malformed.find("minuteRecords")->at(0);
+    badMinute.set("minute", JsonValue::makeString("60")); invalidRows.push(badMinute);
+    malformed.set("minuteRecords", invalidRows); restore.set("backup", malformed);
+    WIFIMETER_CHECK(!target.call(method::kRestore, restore, end).ok());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup, end).result.find("backup")->dump(), backup.result.find("backup")->dump());
+    auto oldBackup = JsonValue::makeObject();
+    for (const auto& entry : backup.result.find("backup")->fields())
+        if (entry.first != "minuteRecords" && entry.first != "appMinuteRecords") oldBackup.set(entry.first, entry.second);
+    Harness oldTarget(true); restore.set("backup", oldBackup);
+    WIFIMETER_CHECK(oldTarget.call(method::kRestore, restore, end).ok());
+    const auto oldSnapshot = oldTarget.call(method::kSnapshot, end);
+    WIFIMETER_CHECK_EQ(oldSnapshot.result.find("minuteRecords")->size(), std::size_t{0});
+    WIFIMETER_CHECK_EQ(oldSnapshot.result.find("appMinuteRecords")->size(), std::size_t{0});
+
+    Status status;
+    auto settings = target.store->settings().load(status);
+    settings.retentionDays = 1;
+    WIFIMETER_CHECK(target.store->settings().save(settings).ok);
+    std::size_t daily = 0, hourly = 0;
+    WIFIMETER_CHECK(target.store->pruneByRetention(end, daily, hourly).ok);
+    auto allMinutes = JsonValue::makeObject(); allMinutes.set("includeMinutes", JsonValue::makeBool(true));
+    const auto pruned = target.call(method::kSnapshot, allMinutes, end);
+    for (const auto* field : {"minuteRecords", "appMinuteRecords"})
+        if (const auto* rows = pruned.result.find(field)) WIFIMETER_CHECK_EQ(rows->size(), std::size_t{1});
+    WIFIMETER_CHECK(target.store->clearUsage().ok);
+    const auto cleared = target.call(method::kSnapshot, allMinutes, end);
+    for (const auto* field : {"minuteRecords", "appMinuteRecords"})
+        if (const auto* rows = cleared.result.find(field)) WIFIMETER_CHECK_EQ(rows->size(), std::size_t{0});
+}
+
 }  // namespace
 
 int main()
 {
+    minuteHistoryPreservesBoundariesAndBackups();
     pausedRefreshPreservesLegacyNetworkIdentity();
     pausedRequestsRefreshWithoutRecordingUsage();
     pausedStartupAndQueryFailureAreVisible();

@@ -38,7 +38,8 @@ test.beforeEach(async({},testInfo)=>{
             if(method!=='snapshot')return {ok:true,result:{}};
             if(f.failRange)return {ok:false,error:{message:'range query failed'}};
             const from=params.from||'2026-01-01',to=params.to||'2026-12-31';
-            return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to)}};
+            const includeMinutes=params.includeMinutes===true||params.fromTime!=null||params.toTime!=null;
+            return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to),minuteRecordsIncluded:includeMinutes,minuteRecords:includeMinutes?(f.snapshot.minuteRecords||[]).filter(r=>r.date>=from&&r.date<=to):[],appMinuteRecords:includeMinutes?(f.snapshot.appMinuteRecords||[]).filter(r=>r.date>=from&&r.date<=to):[]}};
         });
         ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
         ipcMain.removeHandler('app-control:request');ipcMain.handle('app-control:request',(_event,input)=>{
@@ -54,6 +55,68 @@ test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(cons
 
 async function allHistory(){await page.locator('[data-action="period"][data-value="all"]').click();await expect(page.locator('.date-text')).toHaveText('全部已保留历史');}
 async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
+
+test('自定义时分筛选网络和应用分钟明细，包含结束分钟并可按小时汇总',async()=>{
+    await app.evaluate(()=>{
+        const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
+        s.minuteRecords=['10:00','10:01','10:02','10:03'].map((time,index)=>({networkId:id,date:'2020-01-01',time,hour:10,minute:index,rxBytes:String((index+1)*1000),txBytes:'100'}));
+        s.appMinuteRecords=s.minuteRecords.map(r=>({...r,appId:'C:\\Apps\\Browser.exe',name:'Browser'}));
+    });
+    await page.locator('[data-value="custom"]').click();
+    await page.locator('#rangeStart').fill('2020-01-01');await page.locator('#rangeEnd').fill('2020-01-01');
+    await page.locator('#rangeStartTime').fill('10:01');await page.locator('#rangeEndTime').fill('10:02');
+    await page.getByRole('button',{name:'应用筛选',exact:true}).click();
+    await expect(page.locator('.date-text')).toContainText('10:01');
+    await expect(page.locator('.metric.featured')).toContainText('5.2');
+    expect((await app.evaluate(()=>globalThis.rendererFixture.calls)).some(c=>c.method==='snapshot'&&c.params.fromTime==='10:01'&&c.params.toTime==='10:02')).toBeTruthy();
+    await page.locator('.nav [data-page="history"]').click();
+    await expect(page.locator('#historyGrouping')).toHaveValue('minute');
+    await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(2);
+    await expect(page.locator('[data-history-details]')).toContainText('2020-01-01 10:02');
+    await page.locator('#historyGrouping').selectOption('hour');
+    await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(1);
+    await page.locator('.nav [data-page="apps"]').click();await page.locator('#appGrouping').selectOption('minute');
+    await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
+    await page.locator('#appGrouping').selectOption('hour');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
+    await expect(page.locator('#appListRegion')).toContainText('5.2 KB');
+});
+
+test('同日结束时间早于开始时间时保留弹窗并给出错误',async()=>{
+    await page.locator('[data-value="custom"]').click();
+    await page.locator('#rangeStart').fill('2020-01-01');await page.locator('#rangeEnd').fill('2020-01-01');
+    await page.locator('#rangeStartTime').fill('10:02');await page.locator('#rangeEndTime').fill('10:01');
+    await page.getByRole('button',{name:'应用筛选',exact:true}).click();
+    await expect(page.locator('#rangeError')).toContainText('结束时间不早于开始时间');
+    await expect(page.locator('.modal')).toBeVisible();
+});
+
+test('切换预设范围后返回历史和应用页继续显示已选分钟分组',async()=>{
+    const day=await page.evaluate(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;});
+    await app.evaluate((_electron,day)=>{
+        const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
+        s.minuteRecords=['10:01','10:02'].map((time,index)=>({networkId:id,date:day,time,hour:10,minute:index+1,rxBytes:'1000',txBytes:'100'}));
+        s.appMinuteRecords=s.minuteRecords.map(r=>({...r,appId:'C:\\Apps\\Browser.exe',name:'Browser'}));
+    },day);
+    await page.locator('.nav [data-page="history"]').click();
+    await page.locator('#historyGrouping').selectOption('minute');
+    await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(2);
+    await page.locator('.nav [data-page="overview"]').click();
+    await page.locator('[data-value="week"]').click();
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='snapshot').at(-1).params.includeMinutes)).toBe(false);
+    await page.locator('.nav [data-page="history"]').click();
+    await expect(page.locator('#historyGrouping')).toHaveValue('minute');
+    await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(2);
+    await page.locator('.nav [data-page="apps"]').click();
+    await page.locator('#appGrouping').selectOption('hour');
+    await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
+    await page.locator('.nav [data-page="overview"]').click();
+    await page.locator('[data-value="month"]').click();
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='snapshot').at(-1).params.includeMinutes)).toBe(false);
+    await page.locator('.nav [data-page="apps"]').click();
+    await expect(page.locator('#appGrouping')).toHaveValue('hour');
+    await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
+    await expect(page.locator('#appListRegion')).toContainText('2.2 KB');
+});
 
 test('全部与旧日期实际查询；失败保留上次结果和筛选',async()=>{
     await allHistory();await expect(page.locator('.metric.featured')).toContainText('1.57');

@@ -10,6 +10,9 @@
 /node_modules/
 /.cross-build/
 /artifacts/
+/apps/desktop/src-tauri/target/
+/apps/desktop/src-tauri/resources/
+/apps/desktop/src-tauri/ui/
 
 # Local data, credentials and agent/editor session state never belong in releases.
 /.zcode/

@@ -1,15 +1,21 @@
 {
   "name": "wifimeter-repository",
+  "version": "1.3.0",
   "private": true,
   "scripts": {
     "start": "npm --prefix apps/desktop start",
+    "start:electron": "npm --prefix apps/desktop run start:electron",
     "test": "npm --prefix apps/desktop test",
     "test:unit": "npm --prefix apps/desktop run test:unit",
     "test:ui": "npm --prefix apps/desktop run test:ui",
     "test:backend": "cmake -S backend -B build && cmake --build build && ctest --test-dir build --output-on-failure",
     "test:windows": "node packaging/windows/build-backend.mjs --tests --run",
-    "dist:linux": "node packaging/linux/build.cjs",
-    "dist:windows": "node packaging/windows/build.cjs",
+    "dist:linux": "node packaging/tauri/build.cjs --platform linux",
+    "dist:windows": "node packaging/tauri/build.cjs --platform win32",
+    "dist:linux:electron": "node packaging/linux/build.cjs",
+    "dist:windows:electron": "node packaging/windows/build.cjs",
+    "prepare:tauri": "node packaging/tauri/prepare.cjs",
+    "test:packaging:tauri": "node --test packaging/tauri/*.test.cjs",
     "build:backend": "npm --prefix apps/desktop run build:backend",
     "build:backend:windows": "node packaging/windows/build-backend.mjs"
   }

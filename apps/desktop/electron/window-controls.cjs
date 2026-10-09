@@ -6,9 +6,11 @@ const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 
 const { miniSize, snapBounds, collapsedBounds, isNear } = require('./mini-geometry.cjs');
+const { miniRange, miniApplicationRows } = require('./mini-usage.cjs');
 
 const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system',
-    miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true };
+    miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
+    miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 const SHAPES = ['bar', 'square', 'circle'];
 const PALETTES = ['indigo', 'dark', 'light'];
 const THEMES = ['light', 'dark', 'system'];
@@ -18,13 +20,41 @@ const ACTIONS = ['ask', 'tray', 'exit'];
 function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData, getWindow,
     hideToTray, requestQuit, isQuitting = () => false, platform = process.platform,
     logger = () => {}, fileSystem = fs, backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1',
-    timers = { setInterval, clearInterval, now: Date.now } }) {
+    timers = { setInterval, clearInterval, now: Date.now }, requestMiniSnapshot = null }) {
     const file = path.join(userData, 'window-preferences.json');
     const miniFile = path.join(__dirname, 'mini', 'index.html');
     const miniURL = pathToFileURL(miniFile).href;
     const mainURL = pathToFileURL(path.join(__dirname, '../renderer/index.html')).href;
     let preferences = { ...DEFAULTS };
     let mini = null, loaded = false, lastLive = null, disposed = false, closeFlight = null;
+    let miniSnapshot = null, miniFlight = null, miniRefreshedAt = 0, miniRevision = 0, miniSnapshotRevision = -1;
+
+    async function applicationUsage(force = false) {
+        const canQuery = () => !disposed && mini && !mini.isDestroyed() && preferences.miniExpanded;
+        if (canQuery() && requestMiniSnapshot && (force || !miniSnapshot || timers.now() - miniRefreshedAt >= 5000)) {
+            do {
+                if (!miniFlight) {
+                    const revision = miniRevision, range = miniRange(preferences, timers.now());
+                    const { minutes, ...query } = range;
+                    const flight = { revision, promise: null };
+                    flight.promise = Promise.resolve().then(() => requestMiniSnapshot({ ...query, includeMinutes: true }))
+                        .then(result => { if (!disposed && revision === miniRevision) { miniSnapshot = result; miniSnapshotRevision = revision; miniRefreshedAt = timers.now(); } })
+                        .finally(() => { if (miniFlight === flight) miniFlight = null; });
+                    miniFlight = flight;
+                }
+                const flight = miniFlight;
+                try { await flight.promise; }
+                catch (error) {
+                    // 旧时段失败后继续读取当前选择；当前时段的失败仍交给页面提示。
+                    if (flight.revision === miniRevision) throw error;
+                }
+            } while (canQuery() && miniSnapshotRevision !== miniRevision);
+        }
+        const range = miniRange(preferences, timers.now());
+        const model = miniApplicationRows(miniSnapshot, lastLive, range);
+        if (mini && !mini.isDestroyed() && loaded && preferences.miniExpanded) mini.webContents.send('mini:applications', model);
+        return model;
+    }
 
     let hoverTimer = null, expanded = null, edge = null, collapsed = false, moving = false;
     let applyingBounds = false, lastActivity = 0;
@@ -59,7 +89,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     function placeMini({ resize = false, snap = true } = {}) {
         if (!mini || backgroundTest) return;
         const current = collapsed && expanded ? expanded : mini.getBounds();
-        const desired = resize ? { ...current, ...miniSize(preferences.miniShape) } : current;
+        const desired = resize ? { ...current, ...miniSize(preferences.miniShape, preferences.miniExpanded) } : current;
         const area = workArea(current);
         // 改形状时保留吸附侧，尤其是右侧和底部。
         if (resize && edge === 'right') desired.x = area.x + area.width - desired.width;
@@ -106,14 +136,14 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
         if (!preferences.miniWindow || platform !== 'win32') { destroyMini(); return; }
         if (mini && !mini.isDestroyed()) { sendPreferences(); syncHover(); return; }
         const area = screen.getPrimaryDisplay().workArea;
-        const { width, height } = miniSize(preferences.miniShape), margin = 12;
+        const { width, height } = miniSize(preferences.miniShape, preferences.miniExpanded), margin = 12;
         const window = new BrowserWindow({
             width, height, x: Math.max(area.x, area.x + area.width - width - margin),
             y: Math.max(area.y, area.y + area.height - height - margin),
             ...(backgroundTest ? { x: -32000, y: -32000 } : {}),
             title: 'WiFiMeter', frame: false, resizable: false, maximizable: false,
             minimizable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
-            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: false,
+            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: preferences.miniExpanded,
             webPreferences: { preload: path.join(__dirname, 'mini', 'preload.cjs'),
                 contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false }
         });
@@ -137,6 +167,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             loaded = true;
             sendPreferences();
             if (lastLive) window.webContents.send('mini:live', lastLive);
+            if (preferences.miniExpanded) applicationUsage().catch(error => logger(`小窗应用查询失败：${error.message}`));
             window.showInactive();
         });
         window.on('close', event => {
@@ -159,7 +190,9 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (THEMES.includes(saved?.theme)) preferences.theme = saved.theme;
             if (SHAPES.includes(saved?.miniShape)) preferences.miniShape = saved.miniShape;
             if (PALETTES.includes(saved?.miniPalette)) preferences.miniPalette = saved.miniPalette;
-            for (const key of ['miniSnap', 'miniAutoHide']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
+            for (const key of ['miniSnap', 'miniAutoHide', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
+            if (['1m', '5m', '1h', 'custom'].includes(saved?.miniRange)) preferences.miniRange = saved.miniRange;
+            if (Number.isInteger(saved?.miniCustomMinutes) && saved.miniCustomMinutes >= 1 && saved.miniCustomMinutes <= 10080) preferences.miniCustomMinutes = saved.miniCustomMinutes;
         } catch (error) {
             if (error.code !== 'ENOENT') logger(`读取窗口偏好失败：${error.message}`);
         }
@@ -186,7 +219,9 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
             || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
             || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
-            || ['miniSnap', 'miniAutoHide'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')) {
+            || ['miniSnap', 'miniAutoHide', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
+            || (Object.hasOwn(patch, 'miniRange') && !['1m', '5m', '1h', 'custom'].includes(patch.miniRange))
+            || (Object.hasOwn(patch, 'miniCustomMinutes') && (!Number.isInteger(patch.miniCustomMinutes) || patch.miniCustomMinutes < 1 || patch.miniCustomMinutes > 10080))) {
             return Promise.reject(new TypeError('窗口偏好无效。'));
         }
         const changes = { ...patch };
@@ -196,11 +231,16 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             await persist(next);
             const previous = preferences;
             preferences = next;
-            if (mini && (previous.miniShape !== next.miniShape || previous.miniSnap !== next.miniSnap)) {
-                if (backgroundTest) setBounds({ ...mini.getBounds(), ...miniSize(next.miniShape) });
+            mini?.setFocusable?.(next.miniExpanded);
+            if (mini && (previous.miniShape !== next.miniShape || previous.miniSnap !== next.miniSnap || previous.miniExpanded !== next.miniExpanded)) {
+                if (backgroundTest) setBounds({ ...mini.getBounds(), ...miniSize(next.miniShape, next.miniExpanded) });
                 else placeMini({ resize: true });
             }
             syncMini();
+            if (previous.miniRange !== next.miniRange || previous.miniCustomMinutes !== next.miniCustomMinutes) {
+                miniSnapshot = null; miniRefreshedAt = 0; miniRevision++;
+            }
+            if (next.miniExpanded) applicationUsage(true).catch(error => logger(`小窗应用查询失败：${error.message}`));
             const window = getWindow();
             if (window && !window.isDestroyed() && !window.webContents.isDestroyed()
                 && window.webContents.mainFrame.url.split(/[?#]/)[0] === mainURL) {
@@ -229,6 +269,13 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
         },
         'mini:close': event => { trustedMini(event); return update({ miniWindow: false }); }
     };
+    handlers['mini:preferences-read'] = event => { trustedMini(event); return read(); };
+    handlers['mini:preferences-update'] = (event, patch) => {
+        trustedMini(event);
+        if (!patch || Object.keys(patch).some(key => !['miniExpanded', 'miniRange', 'miniCustomMinutes'].includes(key))) throw Error('小窗设置无效。');
+        return update(patch);
+    };
+    handlers['mini:applications'] = event => { trustedMini(event); return applicationUsage(); };
     for (const [channel, handler] of Object.entries(handlers)) ipcMain.handle(channel, handler);
 
     function onMainClose(event) {
@@ -271,6 +318,10 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (disposed || event?.event !== 'live') return;
             lastLive = event;
             if (mini && !mini.isDestroyed() && loaded) mini.webContents.send('mini:live', event);
+            if (mini && loaded && preferences.miniExpanded) applicationUsage().catch(error => {
+                logger(`小窗应用查询失败：${error.message}`);
+                if (!disposed && mini && loaded) mini.webContents.send('mini:applications', { rows: [], status: 'error', detail: error.message, range: miniRange(preferences, timers.now()) });
+            });
         },
         dispose() {
             if (disposed) return;

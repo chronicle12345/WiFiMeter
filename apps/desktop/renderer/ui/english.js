@@ -1,5 +1,34 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+实时流量排行|Live traffic ranking
+排名|Rank
+总速度|Total speed
+全部已采集应用 · 按当前速度排序|All collected applications · Sorted by current speed
+实时排行排序|Live ranking sort
+按总速度|Total speed
+按下载速度|Download speed
+按上传速度|Upload speed
+按分钟|By minute
+开始时间|Start time
+结束时间|End time
+明细分组|Detail grouping
+每小时明细|Hourly details
+每分钟明细|Minute details
+记录数|Records
+本机采集 · 时间按本地时间归档|Local collection · Grouped by local time
+分钟明细从升级后开始记录，旧记录保留原有时间精度。|Minute details are recorded after upgrading. Earlier records retain their original precision.
+图表按数据量汇总，分钟明细保留各分钟记录。|The chart groups larger ranges. Minute details retain individual minutes.
+按本地时间选择起止日期和时分，包含结束分钟。分钟明细从升级后开始记录。|Select local dates and times. The ending minute is included. Minute details are recorded after upgrading.
+导出所选日期和时分内的本机记录，包含结束分钟。|Export local records for the selected dates and times, including the ending minute.
+导出分组|Export grouping
+请确认起止日期和时间有效，结束时间不早于开始时间，且日期不晚于今天。|Choose valid dates and times. The end must be on or after the start, with no date after today.
+下载限速|Download limit
+下载限速 KB/s|Download limit (KB/s)
+设置下载限速|Set download limit
+取消下载限速|Remove download limit
+下载限速在 WiFiMeter 运行期间生效，退出后自动停止。|Download limits apply while WiFiMeter is running and stop automatically on exit.
+当前平台暂不支持应用防火墙与上传、下载限速。|Application firewall and upload/download limits are not supported on this platform.
+限速须为 0.125 到 125000000 KB/s，且为 0.125 的整数倍。|The limit must be 0.125 to 125000000 KB/s in multiples of 0.125.
 采集详情|Collection details
 正在下载安装包…|Downloading installer…
 正在校验安装包…|Verifying installer…

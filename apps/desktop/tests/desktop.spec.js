@@ -120,14 +120,15 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
 });
 
 test('总览保留用量、连接、趋势与额度，网络明细只在网络页展示', async () => {
-    await expect(page.locator('#content table')).toHaveCount(0);
+    await expect(page.locator('.overview-summary table, #networkTableRegion')).toHaveCount(0);
+    await expect(page.locator('.live-ranking-panel')).toHaveCount(1);
     await expect(page.getByRole('heading', { name: '网络用量', exact: true })).toHaveCount(0);
     await expect(page.locator('.collector-sub')).toHaveCount(0);
     await expect(page.locator('#collector')).toContainText('正在采集');
     await expect(page.getByRole('button', { name: '暂停统计', exact: true })).toBeEnabled();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');
-    const metrics = page.locator('#content > .metrics .metric-number');
+    const metrics = page.locator('.overview-summary > .metrics .metric-number');
     await expect(metrics).toHaveCount(3);
     await expect(metrics.nth(0)).toHaveText(/3\.6\s*GB/);
     await expect(metrics.nth(1)).toHaveText(/3\.1\s*GB/);
@@ -208,7 +209,7 @@ async function smallUsageSnapshot(rxBytes, txBytes, unit = 'GB') {
 
 test('小流量在所有用量入口使用自动单位，图表可见且 CSV 保留固定单位', async () => {
     await smallUsageSnapshot('520000', '1');
-    const metrics = page.locator('#content > .metrics .metric-number');
+    const metrics = page.locator('.overview-summary > .metrics .metric-number');
     await expect(metrics.nth(0)).toHaveText(/520\s*KB/);
     await expect(metrics.nth(1)).toHaveText(/520\s*KB/);
     await expect(metrics.nth(2)).toHaveText(/1\s*B/);
@@ -262,7 +263,7 @@ test('小流量在所有用量入口使用自动单位，图表可见且 CSV 保
 test('自动单位沿用二进制偏好，图表与额度明确标注单位', async () => {
     await smallUsageSnapshot('1048576', '1024', 'GiB');
     await expect(page.locator('.metric.featured .metric-number')).toHaveText(/1\s*MiB/);
-    await expect(page.locator('#content > .metrics .metric-number').nth(2)).toHaveText(/1\s*KiB/);
+    await expect(page.locator('.overview-summary > .metrics .metric-number').nth(2)).toHaveText(/1\s*KiB/);
     await expect(page.locator('.chart-caption')).toContainText('单位：MiB');
     await expect(page.locator('.progress-meta').first()).toContainText('已用 1 MiB / 9.31 GiB');
     const csv = path.join(profile, 'binary-usage.csv');
@@ -280,7 +281,9 @@ test('自动单位沿用二进制偏好，图表与额度明确标注单位', as
 
 test('零用量显示 0 B，无记录仍显示破折号', async () => {
     await smallUsageSnapshot('0', '0');
-    for (const metric of await page.locator('#content > .metrics .metric-number').all())
+    const metrics = page.locator('.overview-summary > .metrics .metric-number');
+    await expect(metrics).toHaveCount(3);
+    for (const metric of await metrics.all())
         await expect(metric).toHaveText(/0\s*B/);
     await navigate('网络');
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
@@ -288,7 +291,8 @@ test('零用量显示 0 B，无记录仍显示破折号', async () => {
     await expect(page.locator('#appTotal')).toHaveText(/0\s*B/);
     await page.keyboard.press('Escape');
     await displaySnapshot(snapshot => { snapshot.records = []; snapshot.hourly = []; snapshot.appRecords = []; });
-    for (const metric of await page.locator('#content > .metrics .metric-number').all())
+    await expect(metrics).toHaveCount(3);
+    for (const metric of await metrics.all())
         await expect(metric).toHaveText('—');
     await expect(page.locator('.chart-wrap')).toContainText('所选时段暂无流量记录');
 });

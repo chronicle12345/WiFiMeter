@@ -217,7 +217,10 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             const newer = compareVersions(latest, current) > 0;
             const url = `${REPOSITORY}/releases/tag/${encodeURIComponent(release.tag_name)}`;
             if (newer && platform === 'win32' && ['x64', 'ia32', 'arm64'].includes(arch)) {
-                const names = [`WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`];
+                // Tauri 更新仅选择对应安装包，避免升级后切回旧桌面运行时。
+                const names = process.env.WIFIMETER_DESKTOP_RUNTIME === 'tauri'
+                    ? [`WiFiMeter-${latest.version}-windows-${arch}-Tauri-Setup.exe`]
+                    : [`WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`];
                 const assets = Array.isArray(release.assets) ? release.assets : [];
                 const name = names.find(name => assets.some(asset => asset.name === name)) || names[0];
                 const matches = assets.filter(asset =>

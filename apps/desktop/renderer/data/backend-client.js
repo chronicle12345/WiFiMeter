@@ -1,5 +1,7 @@
 import { appendCoverageGaps } from './coverage.js';
 import { proxyUsageKey } from './proxy.js';
+import { recordInRange } from './history.js';
+import { recordTime } from './model.js';
 import { t } from '../i18n.js';
 // 页面数据客户端：把后端协议包装成 app.js 需要的形状。
 //
@@ -12,7 +14,10 @@ const emptySnapshot = () => ({
     networks: [],
     records: [],
     hourly: [],
+    minuteRecordsIncluded: false,
+    minuteRecords: [],
     appRecords: [],
+    appMinuteRecords: [],
     proxyEstimatedRecords: [],
     appCollection: { enabled: false, available: false, state: 'disabled' },
     appProcesses: [],
@@ -27,6 +32,7 @@ const payloadOf = message => {
     const { event, ...rest } = message;
     return rest;
 };
+const usageRevisionOf = value => /^\d+$/.test(String(value ?? '')) ? BigInt(value) : null;
 
 export function createDataClient(handlers = {}) {
     const snapshot = emptySnapshot();
@@ -36,12 +42,13 @@ export function createDataClient(handlers = {}) {
     let eventRevision = 0;
     let pendingSnapshot = null;
 
-    // 只记录当前请求期间的全量组和字段，不重放 usage/appUsage 的字节增量。
+    // 全量字段直接恢复；字节增量只按后端提交序号恢复，避免重复累计。
     function rememberEvent(message) {
         const revision = ++eventRevision;
         if (!pendingSnapshot) return;
         const updatedAt = Date.parse(message.updatedAt);
-        const remember = (map, key, value) => map.set(key, { revision, updatedAt, value: structuredClone(value) });
+        const remember = (map, key, value) => map.set(key, { revision, updatedAt, usageRevision: usageRevisionOf(message.usageRevision), value: structuredClone(value) });
+        if (message.event === 'usage' || message.event === 'appUsage') pendingSnapshot.usage.push(structuredClone(message));
         if (message.totalQuota) remember(pendingSnapshot.fields, 'totalQuota', message.totalQuota);
         if (message.event === 'live') {
             remember(pendingSnapshot.fields, 'live', payloadOf(message));
@@ -56,29 +63,65 @@ export function createDataClient(handlers = {}) {
         }
     }
 
-    function restorePendingEvents(pending, next, params) {
+    function restorePendingEvents(pending, next) {
         const snapshotTime = Date.parse(next.live?.updatedAt);
-        // updatedAt 是采样时间，非协议序号：只能排除明确较旧的事件。
-        // 时间相同或缺失时按请求内接收 revision 保留最后值，不能保证跨通道严格顺序。
+        const snapshotRevision = usageRevisionOf(next.usageRevision);
+        // 提交序号排除快照已包含的采样；没有序号的全量字段按采样时间保留最后值。
         const fresh = entry => entry.revision > pending.revision
-            && !(Number.isFinite(snapshotTime) && Number.isFinite(entry.updatedAt) && entry.updatedAt < snapshotTime);
+            && (snapshotRevision !== null && entry.usageRevision !== null ? entry.usageRevision > snapshotRevision
+                : !(Number.isFinite(snapshotTime) && Number.isFinite(entry.updatedAt) && entry.updatedAt < snapshotTime));
         for (const [key, entry] of pending.fields) {
             if (fresh(entry)) snapshot[key] = entry.value;
         }
-        const inRange = group => (!params.networkKey || group.networkId === params.networkKey)
-            && (!params.from || group.date >= params.from) && (!params.to || group.date <= params.to);
+        const inRange = group => inActiveRange(group);
         applyProxyEstimatedUpdates([...pending.groups.values()]
             .filter(entry => fresh(entry) && inRange(entry.value)).map(entry => entry.value));
+        for (const message of pending.usage) {
+            const revision = usageRevisionOf(message.usageRevision);
+            const updatedAt = Date.parse(message.updatedAt);
+            // 旧协议没有序号时，仅能恢复采样时间明确晚于快照的事件。
+            const newer = snapshotRevision !== null && revision !== null ? revision > snapshotRevision
+                : Number.isFinite(snapshotTime) && Number.isFinite(updatedAt) && updatedAt > snapshotTime;
+            if (!newer) continue;
+            if (message.event === 'usage') applyUsageEvent(message);
+            else applyAppUsageEvent(message);
+        }
     }
 
     let activeRange = {};
     // Keep a lookup only for rows touched by live updates, not a second copy of all history.
-    const dailyRows = new Map(), appRows = new Map(), hourlyRows = new Map();
+    const dailyRows = new Map(), appRows = new Map(), hourlyRows = new Map(), minuteRows = new Map(), appMinuteRows = new Map();
     let liveDay = null;
     const keyOf = (...parts) => JSON.stringify(parts);
-    function resetLiveRows() { dailyRows.clear(); appRows.clear(); hourlyRows.clear(); liveDay = null; }
+    function resetLiveRows() { dailyRows.clear(); appRows.clear(); hourlyRows.clear(); minuteRows.clear(); appMinuteRows.clear(); liveDay = null; }
     function prepareDay(day) {
         if (liveDay !== day) { resetLiveRows(); liveDay = day; }
+    }
+    function inActiveRange(record) {
+        return recordInRange(record, { start: activeRange.from, end: activeRange.to,
+            startTime: activeRange.fromTime, endTime: activeRange.toTime, networkId: activeRange.networkKey || 'all' });
+    }
+    const hasTimeBoundary = () => (activeRange.fromTime != null && activeRange.fromTime !== '00:00')
+        || (activeRange.toTime != null && activeRange.toTime !== '23:59');
+    function addBytes(row, item) {
+        row.rxBytes = (BigInt(row.rxBytes ?? '0') + BigInt(item.rxBytes ?? '0')).toString();
+        row.txBytes = (BigInt(row.txBytes ?? '0') + BigInt(item.txBytes ?? '0')).toString();
+    }
+    function applyMinuteUpdates(items, application = false) {
+        const rows = application ? snapshot.appMinuteRecords : snapshot.minuteRecords;
+        const lookup = application ? appMinuteRows : minuteRows;
+        for (const item of items ?? []) {
+            const time = recordTime(item);
+            if (!time || !inActiveRange(item)) continue;
+            prepareDay(item.date);
+            const key = keyOf(item.date, time, item.networkId, application ? item.appId : null);
+            let row = lookup.get(key) || rows.find(candidate => candidate.date === item.date && recordTime(candidate) === time
+                && candidate.networkId === item.networkId && (!application || candidate.appId === item.appId));
+            if (!row) { row = { ...item, time, rxBytes: '0', txBytes: '0' }; rows.push(row); }
+            lookup.set(key, row);
+            if (application) { row.name = item.name; if (item.path) row.path = item.path; }
+            addBytes(row, item);
+        }
     }
 
     async function request(method, params = {}) {
@@ -101,24 +144,25 @@ export function createDataClient(handlers = {}) {
     function applyUsageEvent(message) {
         // 增量并入本地记录，避免每几秒重新拉取整份历史。
         prepareDay(message.day);
+        applyMinuteUpdates(message.minuteRecords);
+        // 新采样可能跨小时或午夜，按分钟自己的日期更新汇总；旧协议保留原有精度。
+        const deltas = Array.isArray(message.minuteRecords) ? message.minuteRecords.filter(item => recordTime(item) && inActiveRange(item))
+            : (message.networks ?? []).map(item => ({ ...item, date: message.day, hour: message.hour })).filter(inActiveRange);
+        for (const item of deltas) {
+            prepareDay(item.date);
+            const key = keyOf(item.date, item.networkId);
+            let row = dailyRows.get(key) || snapshot.records.find(record => record.date === item.date && record.networkId === item.networkId);
+            if (!row) { row = { date: item.date, networkId: item.networkId, rxBytes: '0', txBytes: '0' }; snapshot.records.push(row); }
+            dailyRows.set(key, row); addBytes(row, item);
+            const hourNumber = recordTime(item) ? Number(recordTime(item).slice(0, 2)) : item.hour;
+            if (Number.isInteger(hourNumber) && hourNumber >= 0 && hourNumber < 24) {
+                const hourKey = keyOf(item.date, hourNumber, item.networkId);
+                let hour = hourlyRows.get(hourKey) || snapshot.hourly.find(candidate => candidate.date === item.date && candidate.hour === hourNumber && candidate.networkId === item.networkId);
+                if (!hour) { hour = {date: item.date, hour: hourNumber, networkId: item.networkId, rxBytes: '0', txBytes: '0'}; snapshot.hourly.push(hour); }
+                hourlyRows.set(hourKey, hour); addBytes(hour, item);
+            }
+        }
         for (const item of message.networks ?? []) {
-            const key = keyOf(message.day, item.networkId);
-            let row = dailyRows.get(key) || snapshot.records.find(record => record.date === message.day && record.networkId === item.networkId);
-            if (!row) {
-                row = { date: message.day, networkId: item.networkId, rxBytes: '0', txBytes: '0' };
-                snapshot.records.push(row);
-            }
-            dailyRows.set(key, row);
-            row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes ?? '0')).toString();
-            row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes ?? '0')).toString();
-            if (Number.isInteger(message.hour) && message.hour >= 0 && message.hour < 24) {
-                const hourKey = keyOf(message.day, message.hour, item.networkId);
-                let hour = hourlyRows.get(hourKey) || snapshot.hourly.find(candidate => candidate.date === message.day && candidate.hour === message.hour && candidate.networkId === item.networkId);
-                if (!hour) { hour = {date: message.day, hour: message.hour, networkId: item.networkId, rxBytes: '0', txBytes: '0'}; snapshot.hourly.push(hour); }
-                hourlyRows.set(hourKey, hour);
-                hour.rxBytes = (BigInt(hour.rxBytes) + BigInt(item.rxBytes ?? '0')).toString();
-                hour.txBytes = (BigInt(hour.txBytes) + BigInt(item.txBytes ?? '0')).toString();
-            }
             // 后端在新网络的第一个增量里带上网络记录：首次见到某个网络时（新装的应用、
             // 换了新 Wi-Fi）快照里还没有它，只并增量的话用量会算不出来，界面显示成
             // “未识别网络”且一直 0，必须重启应用才恢复。
@@ -134,10 +178,27 @@ export function createDataClient(handlers = {}) {
         }
     }
 
+    function applyAppUsageEvent(message) {
+        applyMinuteUpdates(message.minuteRecords, true);
+        // 局部时间范围的日汇总必须由真实分钟增量构成，不能纳入整日字节数。
+        const items = hasTimeBoundary() ? (message.minuteRecords ?? []).filter(inActiveRange) : (message.records ?? []).filter(inActiveRange);
+        for (const item of items) {
+            prepareDay(item.date);
+            const key = keyOf(item.date, item.networkId, item.appId);
+            let row = appRows.get(key) || snapshot.appRecords.find(record => record.date === item.date && record.networkId === item.networkId && record.appId === item.appId);
+            if (!row) {
+                const { time, hour, minute, ...daily } = item;
+                row = { ...daily, rxBytes: '0', txBytes: '0' }; snapshot.appRecords.push(row);
+            }
+            appRows.set(key, row); row.name = item.name; if (item.path) row.path = item.path;
+            addBytes(row, item);
+        }
+    }
+
     // live/appUsage 只携带受影响组的完整累计值；空 records 表示撤销该组。
     function applyProxyEstimatedUpdates(updates) {
         if (!updates?.length) return;
-        const groups = new Map(updates.map(update => [proxyUsageKey(update), update.records]));
+        const groups = new Map(updates.filter(inActiveRange).map(update => [proxyUsageKey(update), update.records]));
         snapshot.proxyEstimatedRecords = snapshot.proxyEstimatedRecords
             .filter(row => !groups.has(proxyUsageKey(row)));
         for (const records of groups.values()) {
@@ -160,19 +221,7 @@ export function createDataClient(handlers = {}) {
                 return;
             }
             if (message.event === 'appUsage') {
-                for (const item of message.records ?? []) {
-                    prepareDay(item.date);
-                    const key = keyOf(item.date, item.networkId, item.appId);
-                    let row = appRows.get(key) || snapshot.appRecords.find(record => record.date === item.date && record.networkId === item.networkId && record.appId === item.appId);
-                    if (!row) {
-                        row = { ...item, rxBytes: '0', txBytes: '0' };
-                        snapshot.appRecords.push(row);
-                    }
-                    appRows.set(key, row);
-                    row.name = item.name;
-                    row.rxBytes = (BigInt(row.rxBytes) + BigInt(item.rxBytes)).toString();
-                    row.txBytes = (BigInt(row.txBytes) + BigInt(item.txBytes)).toString();
-                }
+                applyAppUsageEvent(message);
                 applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
                 appendCoverageGaps(snapshot.appGaps, message.gaps ?? []);
                 (handlers.onAppUsage ?? handlers.onUsage)?.(message);
@@ -201,7 +250,7 @@ export function createDataClient(handlers = {}) {
             return state.ready;
         },
 
-        // 首次加载：问一次后端版本，再取一份快照，然后开始接收事件。
+        // 首次加载先订阅，再查询快照，恢复查询期间在快照之后提交的采样。
         async start(params = {}) {
             if (!state.available) {
                 state.storageFailed = true;
@@ -209,9 +258,9 @@ export function createDataClient(handlers = {}) {
             }
             try {
                 await request('hello');
+                subscribe();
                 await this.queryRange(params);
                 state.ready = true;
-                subscribe();
             } catch (error) {
                 state.storageFailed = true;
                 throw error;
@@ -221,14 +270,14 @@ export function createDataClient(handlers = {}) {
 
         async queryRange(params) {
             const version = ++rangeVersion;
-            const pending = { revision: eventRevision, groups: new Map(), fields: new Map() };
+            const pending = { revision: eventRevision, groups: new Map(), fields: new Map(), usage: [] };
             pendingSnapshot = pending;
             try {
                 const next = await request('snapshot', params);
                 if (version !== rangeVersion) return false;
                 activeRange = { ...params };
                 applySnapshot(next);
-                restorePendingEvents(pending, next, activeRange);
+                restorePendingEvents(pending, next);
                 return true;
             } finally {
                 if (pendingSnapshot === pending) pendingSnapshot = null;
@@ -273,7 +322,9 @@ export function createDataClient(handlers = {}) {
             resetLiveRows();
             snapshot.records = [];
             snapshot.hourly = [];
+            snapshot.minuteRecords = [];
             snapshot.appRecords = [];
+            snapshot.appMinuteRecords = [];
             snapshot.proxyEstimatedRecords = [];
             snapshot.appGaps = [];
             snapshot.appProcesses = [];
@@ -307,12 +358,16 @@ export function createDataClient(handlers = {}) {
 
         async exportUsage(params) {
             // 与历史页使用同一查询口径，但不替换页面当前快照。
-            const result = await request('snapshot', params);
-            if (!Array.isArray(result.records)) throw Error(t('导出查询未返回流量记录。'));
-            const networks = new Map((result.networks || []).map(network => [network.id, network]));
-            return { from: params.from, to: params.to, records: result.records
-                .filter(row => row.date >= params.from && row.date <= params.to && (!params.networkKey || row.networkId === params.networkKey))
-                .map(row => ({ ...row, ssid: networks.get(row.networkId)?.ssid || '', alias: networks.get(row.networkId)?.alias || '' })) };
+            const minute = params.grouping === 'minute';
+            const hour = params.grouping === 'hour';
+            const result = await request(hour ? 'exportUsage' : 'snapshot', minute ? { ...params, includeMinutes: true } : params);
+            const records = minute ? result.minuteRecords : result.records;
+            if (!Array.isArray(records)) throw Error(t('导出查询未返回流量记录。'));
+            const networks = new Map((hour ? snapshot.networks : result.networks || []).map(network => [network.id, network]));
+            return { from: params.from, to: params.to, fromTime: params.fromTime, toTime: params.toTime, records: records
+                .filter(row => recordInRange(row, { start: params.from, end: params.to, networkId: params.networkKey || 'all',
+                    ...(minute ? { startTime: params.fromTime, endTime: params.toTime } : {}) }))
+                .map(row => ({ ...row, ssid: row.ssid ?? networks.get(row.networkId)?.ssid ?? '', alias: row.alias ?? networks.get(row.networkId)?.alias ?? '' })) };
         },
 
         async backup() {

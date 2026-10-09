@@ -3,13 +3,14 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { createSystemIntegration, autostartFile } from '../electron/system.cjs';
+import { createNativeAdapter } from '../tauri/native-adapter.cjs';
 
-function createFakes({ trayThrows = false, notificationSupported = true } = {}) {
+function createFakes({ trayThrows = false, notificationSupported = true, appOverride } = {}) {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-'));
     const state = { tray: null, trayCount: 0, destroyed: 0, notifications: [], shown: 0, hidden: 0, menu: null };
 
@@ -55,7 +56,7 @@ function createFakes({ trayThrows = false, notificationSupported = true } = {}) 
         }
     };
 
-    const app = {
+    const app = appOverride || {
         getPath: () => home,
         quit() {}
     };
@@ -236,6 +237,35 @@ test('关闭窗口时按设置隐藏或放行', async () => {
     assert.equal(quitEvent.prevented, false);
 
     rmSync(home, { recursive: true, force: true });
+});
+
+test('canceling a Tauri tray quit preserves hiding to the tray until a confirmed quit', async t => {
+    const messages = [];
+    const native = createNativeAdapter({ configuration: { userData: 'fixture' }, send: message => messages.push(message) });
+    const { home, state, integration } = createFakes({ appOverride: native.app });
+    t.after(() => { integration.dispose(); rmdirSync(home); });
+    native.app.on('before-quit', () => integration.beginQuit());
+    integration.initializeTray();
+
+    state.menu.template.find(item => item.label === '退出').click();
+    const canceled = messages.at(-1);
+    assert.equal(canceled.method, 'app:confirmQuit');
+    await native.receive({ type: 'native-result', id: canceled.id, ok: true, result: false });
+    await new Promise(setImmediate);
+    assert.equal(integration.quitting, false);
+    assert.equal(integration.hideToTray(), true);
+    assert.equal(state.hidden, 1);
+    assert.equal(messages.some(message => message.type === 'quit'), false);
+
+    state.menu.template.find(item => item.label === '退出').click();
+    const confirmed = messages.at(-1);
+    assert.equal(confirmed.method, 'app:confirmQuit');
+    assert.notEqual(confirmed.id, canceled.id);
+    await native.receive({ type: 'native-result', id: confirmed.id, ok: true, result: true });
+    await new Promise(setImmediate);
+    assert.equal(integration.quitting, true);
+    assert.equal(integration.hideToTray(), false);
+    assert.equal(messages.filter(message => message.type === 'quit').length, 1);
 });
 
 test('额度提醒按设置转成系统通知', async () => {

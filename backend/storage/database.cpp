@@ -495,6 +495,35 @@ CREATE TABLE legacy_network_keys (
         if (const auto stamped = setSchemaVersion(5); !stamped) return stamped;
         if (const auto committed = transaction.commit(); !committed) return committed;
     }
+    if (version < 6)
+    {
+        Transaction transaction(*this);
+        if (!transaction.active()) return Status::failure(lastError());
+        const auto changed = exec(R"SQL(
+CREATE TABLE minute_usage (
+ network_key TEXT NOT NULL, day TEXT NOT NULL,
+ hour INTEGER NOT NULL CHECK(hour BETWEEN 0 AND 23),
+ minute INTEGER NOT NULL CHECK(minute BETWEEN 0 AND 59),
+ rx_bytes INTEGER NOT NULL CHECK(typeof(rx_bytes)='integer' AND rx_bytes>=0),
+ tx_bytes INTEGER NOT NULL CHECK(typeof(tx_bytes)='integer' AND tx_bytes>=0),
+ PRIMARY KEY(network_key,day,hour,minute)
+) WITHOUT ROWID;
+CREATE INDEX minute_usage_by_day ON minute_usage(day,hour,minute);
+CREATE TABLE app_minute_usage (
+ network_key TEXT NOT NULL REFERENCES networks(key) ON DELETE CASCADE,
+ day TEXT NOT NULL, hour INTEGER NOT NULL CHECK(hour BETWEEN 0 AND 23),
+ minute INTEGER NOT NULL CHECK(minute BETWEEN 0 AND 59),
+ app_id TEXT NOT NULL, name TEXT NOT NULL,
+ rx_bytes INTEGER NOT NULL CHECK(typeof(rx_bytes)='integer' AND rx_bytes>=0),
+ tx_bytes INTEGER NOT NULL CHECK(typeof(tx_bytes)='integer' AND tx_bytes>=0),
+ PRIMARY KEY(network_key,day,hour,minute,app_id)
+) WITHOUT ROWID;
+CREATE INDEX app_minute_usage_by_day ON app_minute_usage(day,hour,minute);
+)SQL");
+        if (!changed) return changed;
+        if (const auto stamped = setSchemaVersion(6); !stamped) return stamped;
+        if (const auto committed = transaction.commit(); !committed) return committed;
+    }
     return exec("CREATE INDEX IF NOT EXISTS coverage_gaps_by_interval ON coverage_gaps(scope,network_key,reason,ended_at);");
 }
 

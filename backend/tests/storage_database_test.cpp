@@ -65,6 +65,7 @@ void migratesExistingUsageFromVersionOne()
             return;
         WIFIMETER_CHECK(database->exec("DROP TABLE app_usage; DROP INDEX IF EXISTS coverage_gaps_by_interval; ALTER TABLE coverage_gaps DROP COLUMN scope; INSERT INTO daily_usage VALUES('home', '2026-09-30', 123, 456);").ok);
         WIFIMETER_CHECK(database->exec("DROP TABLE legacy_imports; DROP TABLE legacy_network_keys; DROP TRIGGER settings_retention_insert; DROP TRIGGER settings_retention_update; ALTER TABLE settings DROP COLUMN language;").ok);
+        WIFIMETER_CHECK(database->exec("DROP TABLE app_minute_usage; DROP TABLE minute_usage;").ok);
         WIFIMETER_CHECK(database->setSchemaVersion(1).ok);
     }
     auto database = Database::open(directory.file("meter.db"), status);
@@ -117,6 +118,7 @@ void migratesApplicationHistoryFromVersionTwo()
             "INSERT INTO app_usage VALUES('home', '2026-09-30', 'browser', 'Browser', 123, 456);"
             "INSERT INTO coverage_gaps(reason, started_at) VALUES('paused', '2026-09-30T10:00:00Z');").ok);
         WIFIMETER_CHECK(database->exec("DROP TABLE legacy_imports; DROP TABLE legacy_network_keys; DROP TRIGGER settings_retention_insert; DROP TRIGGER settings_retention_update; ALTER TABLE settings DROP COLUMN language;").ok);
+        WIFIMETER_CHECK(database->exec("DROP TABLE app_minute_usage; DROP TABLE minute_usage;").ok);
         WIFIMETER_CHECK(database->setSchemaVersion(2).ok);
     }
     auto database = Database::open(directory.file("meter.db"), status);
@@ -270,6 +272,7 @@ void migratesLegacyArchiveFromVersionFour()
         WIFIMETER_CHECK(db.has_value());
         if (!db) return;
         WIFIMETER_CHECK(db->exec("INSERT INTO legacy_imports(source_id,state_json,imported_at,network_count,daily_count) VALUES('fixture','{\"kept\":9007199254740993}','2020-01-01T00:00:00Z',1,1); ALTER TABLE legacy_imports DROP COLUMN report_json;"));
+        WIFIMETER_CHECK(db->exec("DROP TABLE app_minute_usage; DROP TABLE minute_usage;"));
         WIFIMETER_CHECK(db->setSchemaVersion(4));
     }
     auto db=Database::open(directory.file("meter.db"),status);
@@ -284,10 +287,36 @@ void migratesLegacyArchiveFromVersionFour()
     }
 }
 
+
+void migratesVersionFiveWithoutInventingMinuteHistory()
+{
+    TempDirectory directory("db-migrate-minutes");
+    Status status;
+    {
+        auto db = Database::open(directory.file("meter.db"), status);
+        WIFIMETER_CHECK(db.has_value()); if (!db) return;
+        WIFIMETER_CHECK(db->exec("DROP TABLE app_minute_usage; DROP TABLE minute_usage; INSERT INTO daily_usage VALUES('home','2026-09-30',123,456);"));
+        WIFIMETER_CHECK(db->setSchemaVersion(5));
+    }
+    auto db = Database::open(directory.file("meter.db"), status);
+    WIFIMETER_CHECK(db.has_value()); if (!db) return;
+    WIFIMETER_CHECK_EQ(db->schemaVersion(), kSchemaVersion);
+    auto day = db->prepare("SELECT rx_bytes,tx_bytes FROM daily_usage",status);
+    WIFIMETER_CHECK(day && day->step());
+    if (day) { WIFIMETER_CHECK_EQ(day->columnInt64(0),std::int64_t{123}); WIFIMETER_CHECK_EQ(day->columnInt64(1),std::int64_t{456}); }
+    for (const auto* table : {"minute_usage","app_minute_usage"})
+    {
+        auto count = db->prepare("SELECT COUNT(*) FROM " + std::string(table),status);
+        WIFIMETER_CHECK(count && count->step());
+        if (count) WIFIMETER_CHECK_EQ(count->columnInt64(0),std::int64_t{0});
+    }
+}
+
 }  // namespace
 
 int main()
 {
+    migratesVersionFiveWithoutInventingMinuteHistory();
     migratesLegacyArchiveFromVersionFour();
     createsSchemaOnFirstOpen();
     migratesExistingUsageFromVersionOne();

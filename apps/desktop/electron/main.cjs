@@ -110,6 +110,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         userData: app.getPath('userData'), getWindow: () => window,
         hideToTray: () => system.hideToTray(), requestQuit: () => app.quit(),
         isQuitting: () => quitting || system.quitting,
+        requestMiniSnapshot: params => backend.request('snapshot', params),
         logger: message => console.log(`[window-controls] ${message}`) });
     await windowControls.read();
 
@@ -258,6 +259,7 @@ if (primaryInstance) app.whenReady().then(async () => {
                 if (updateRecovery.appsEnabled) await backend.request('setAppCollection', { enabled: true });
                 await backend.request('setPaused', { paused: updateRecovery.paused });
             }
+            app.cancelQuit?.();
             updateRecovery = null;
             installingUpdate = false;
             return { ...result, recoveryRequired: false };
@@ -298,6 +300,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         beforeInstall: async () => {
             await startup;
             if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
+            if (app.confirmExit && !await app.confirmExit()) throw Error('已取消退出，更新尚未开始。');
             installingUpdate = true;
             updateRecovery = { paused: null, pauseRequested: false };
             const original = await backend.request('hello');
@@ -361,7 +364,7 @@ app.on('window-all-closed', () => app.quit());
 
 // 退出前先让后端收尾（提交数据库、结束未完成的空档），避免计数差丢在退出瞬间。
 app.on('before-quit', event => {
-    if (installingUpdate && !quitting) { event.preventDefault(); return; }
+    if (installingUpdate && !quitting) { event.preventDefault(); app.cancelQuit?.(); return; }
     system?.beginQuit();
     if (quitting || !backend) {
         windowControls?.dispose();
@@ -374,6 +377,7 @@ app.on('before-quit', event => {
             backend = null;
             windowControls?.dispose();
             system?.dispose();
-            app.quit();
+            if (app.finishQuit) app.finishQuit();
+            else app.quit();
         });
 });

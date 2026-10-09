@@ -45,6 +45,23 @@ test('目录导入显示备份位置、重复导入和错误，不把取消当�
     assert.equal(legacyMessage({ canceled: true }), '');
 });
 
+test('下载和上传限速独立提交，取消仅移除指定方向', async () => {
+    const calls = [];
+    const model = createAppControlModel({ platform: 'win32', appControl: {
+        request: async input => { calls.push(input); return { ok: true, result: { state: {} } }; }
+    } });
+    model.select({ name: 'Browser', path: 'C:\\Apps\\browser.exe' });
+    await model.run('throttle', { downloadKBps: 256 });
+    await model.run('unthrottle', { direction: 'download' });
+    assert.deepEqual(calls, [
+        { action: 'throttle', path: model.path, downloadKBps: 256 },
+        { action: 'unthrottle', path: model.path, direction: 'download' }
+    ]);
+    await model.run('throttle', { downloadKBps: NaN });
+    assert.equal(calls.length, 2);
+    assert.ok(model.error);
+});
+
 test('首次和重复导入都保留报告警告、仅归档数量及备份路径', () => {
     const report={warnings:['未映射额度：办公室','缓存 <archive> 仅归档'],appArchivedOnlyCount:3};
     for(const flags of [{imported:true},{imported:true,alreadyImported:true},{alreadyImported:true}]){

@@ -12,6 +12,9 @@
 | `networks` | 网络标识、SSID、备注、额度与提醒设置 |
 | `records` | 按本地日期、网络归档的上传和下载字节数 |
 | `hourly` | 小时明细 |
+| `minuteRecords` | 网络分钟用量，包含 `date`、`time`、`hour`、`minute`、`networkId` 和双向字节数 |
+| `appMinuteRecords` | 应用分钟用量，在网络分钟字段基础上增加 `appId` 和 `name` |
+| `usageRevision` | 本次会话的采样提交序号，以十进制字符串传递 |
 | `appRecords` | 从 SQLite 查询的独立应用每日用量，不与网卡总量相加 |
 | `appCollection` | `enabled`、`available`、`state` 与错误说明 `detail` |
 | `appProcesses` | 最近采样的进程实例、PID、所属网络和下载/上传速率 |
@@ -69,3 +72,15 @@ Windows 原生源也默认不采集，通过专用管道连接授权辅助进程
 
 完整备份保存两种设置字段与账本的 `notifiedWarnPercents`。旧备份及旧版导入的标量自动升级；
 旧总额度 `warningNotified: true` 升级为对应单档的通知记录，避免恢复后再次提示同一档。
+
+
+## 分钟查询
+
+数据库结构版本 6 新增 `minute_usage` 和 `app_minute_usage`，升级不会把已有每日或小时记录分配到分钟。分钟统计从升级后的实际采集开始。跨分钟采样按各分钟覆盖的秒数分配，整数余数保留到后续分钟，所有分钟之和等于原采样增量；新增采样的每日、小时、分钟统计使用同一分配结果，已有每日与小时记录保持原值。
+
+`snapshot` 和 `exportUsage` 可传 `fromTime`、`toTime`，格式为 `HH:mm`，默认分别为 `00:00`、`23:59`。跨日期查询只裁剪起始日与结束日，结束分钟整体包含。部分日期区间的 `records` 与 `appRecords` 按真实分钟数据汇总；完整日期区间继续返回原每日统计。`exportUsage` 的 `grouping` 可为 `minute`、`hour` 或默认的 `day`，分组明细位于 `records`，分钟明细同时位于 `minuteRecords`。
+
+`usage` 与 `appUsage` 事件新增 `minuteRecords` 和 `usageRevision`，应用事件中的分钟行包含应用字段。同一轮采样的两个事件共用序号。采样与请求在同一服务线程执行，快照读取不会插入到网络与应用提交之间；客户端只重放序号大于快照序号的后续增量。完整备份包含两类分钟数据，恢复也接受缺少分钟字段的旧备份。保留期裁剪、清空和删除网络同步处理分钟记录。
+
+
+为避免日、月、全部统计自动读取大量应用分钟行，`snapshot` 默认不读取分钟表，返回空分钟数组及 `minuteRecordsIncluded: false`。需要分钟图表或明细时传 `includeMinutes: true`；带有 `fromTime` 或 `toTime` 的查询自动读取分钟，返回 `minuteRecordsIncluded: true`。分钟增量事件始终包含真实分钟行。默认每日导出也不读取分钟表。

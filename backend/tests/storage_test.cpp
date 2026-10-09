@@ -255,13 +255,37 @@ void rollsTheQuotaLedgerAtThePeriodBoundary()
     WIFIMETER_CHECK(store->applyUsage(crossed, october, summary).ok);
     WIFIMETER_CHECK_EQ(summary.rolledPeriods.size(), std::size_t{1});
 
-    const auto ledger = store->networks().ledger("uuid-1", status);
+    auto ledger = store->networks().ledger("uuid-1", status);
+    WIFIMETER_CHECK(status.ok);
     WIFIMETER_CHECK(ledger.has_value());
     if (ledger)
     {
         WIFIMETER_CHECK_EQ(ledger->periodKey, std::string("2026-10"));
-        WIFIMETER_CHECK_EQ(ledger->usedBytes, ByteCount{300});  // 200 + 100，跨周期归零后重记
+        WIFIMETER_CHECK_EQ(ledger->usedBytes, ByteCount{0});  // 零点结束的采样区间全部属于上个月。
     }
+    const auto previous = store->usage().dailyRange(home.key, "2026-09-30", "2026-09-30", status);
+    WIFIMETER_CHECK(status.ok);
+    WIFIMETER_CHECK_EQ(previous.size(), std::size_t{1});
+    if (!previous.empty())
+        WIFIMETER_CHECK_EQ(previous.front().rxBytes + previous.front().txBytes, ByteCount{300});
+
+    const auto next = october + std::chrono::seconds(5);
+    const auto current = accumulator.accumulate(reportOf(sample(1400, 1200)), next);
+    WIFIMETER_CHECK(store->applyUsage(current, next, summary).ok);
+    WIFIMETER_CHECK(summary.rolledPeriods.empty());
+    ledger = store->networks().ledger(home.key, status);
+    WIFIMETER_CHECK(status.ok);
+    WIFIMETER_CHECK(ledger.has_value());
+    if (ledger)
+    {
+        WIFIMETER_CHECK_EQ(ledger->periodKey, std::string("2026-10"));
+        WIFIMETER_CHECK_EQ(ledger->usedBytes, ByteCount{300});
+    }
+    const auto currentRows = store->usage().dailyRange(home.key, "2026-10-01", "2026-10-01", status);
+    WIFIMETER_CHECK(status.ok);
+    WIFIMETER_CHECK_EQ(currentRows.size(), std::size_t{1});
+    if (!currentRows.empty())
+        WIFIMETER_CHECK_EQ(currentRows.front().rxBytes + currentRows.front().txBytes, ByteCount{300});
 }
 
 void prunesByRetention()

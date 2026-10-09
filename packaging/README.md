@@ -1,6 +1,31 @@
 # 多架构打包与后台性能验证
 
-以下是构建入口支持的目标，不代表这些目标已经完成安装或实机验收。性能基准环境为 Windows x64、Node.js 24.14.1。当前 npm ci 已完成，Electron 可运行；本机已有 VS18 和 Ninja/MinGW 工具链，build/windows 已构建。新增架构和安装格式仍需分别验证。
+## 1.3.0：Windows x64 Tauri
+
+本轮验收与发布范围仅为 Windows x64 Tauri。Linux、Windows ia32 和 Windows ARM64 本轮未验收、未发布。当前入口为 `packaging/tauri/build.cjs`；在 Windows x64 上准备 Node.js x64、Rust MSVC 工具链、CMake 和支持 C++20 的编译器后，从仓库根目录运行：
+
+```powershell
+npm ci --prefix apps/desktop
+npm run dist:windows
+```
+
+默认生成 NSIS 安装版、便携 ZIP 和 SHA-256 校验清单：
+
+```text
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Portable.zip
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-SHA256SUMS.txt
+```
+
+Tauri 包随附 Node 业务进程、C++ 后端与采集器，使用系统 WebView2。NSIS 安装版会在缺少 WebView2 时下载并安装运行时；便携版要求系统已有 WebView2，解压后运行 `WiFiMeter.exe`，并保留同级的 `resources` 目录。
+
+Electron 1.2.x 用户需从 [GitHub Releases](https://github.com/chronicle12345/WiFiMeter/releases) 手动下载 Windows x64 Tauri 安装版迁移。安装版与便携版都沿用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，已有 SQLite 数据可直接读取；Tauri 后续更新选择对应的 Tauri 安装包。
+
+构建与检查入口见 [Windows 打包说明](windows/README.md)，本轮工作流为 [tauri.yml](../.github/workflows/tauri.yml)。本地安装包约 25.56 MB、便携 ZIP 约 37.79 MB；测试总数、解包运行验证和实机验收范围见 [1.3.0 发布说明](../docs/releases/v1.3.0.md)。
+
+## Electron 历史构建与性能参考
+
+下文保留 Electron 1.2.x 的构建流程、旧产物路径、验收与性能记录，仅供历史参考。以下构建入口支持的目标不代表已完成安装或实机验收。历史性能基准环境为 Windows x64、Node.js 24.14.1；当时已完成 npm ci，Electron 可运行，本机已有 VS18 和 Ninja/MinGW 工具链，build/windows 已构建。新增架构和安装格式仍需分别验证。
 
 ## 构建入口
 
@@ -57,7 +82,7 @@ npx playwright test tests/packaging.spec.js
 
 测试还覆盖残缺 IPC 消息后的进程重启、完整 Unicode 内容、CRLF、连续消息、超时和退出、托盘、通知、Windows 登录项，以及架构不一致时拒绝打包。未构建的实际包检查会明确跳过。Linux 图形测试、本机后端集成测试、Windows ARM64/ia32 和 Linux 各格式的安装运行测试仍需在具备依赖的对应环境执行。
 
-已在本地生成 Windows x64 安装包和便携包，单个约 104 MB。运行时只分发英文与简体中文语言资源，不删除业务数据或旧数据迁移逻辑。尚未完成 Linux 全部格式的本地安装验证，不能把 Windows 结果套用到 Linux。
+此前生成的 Electron Windows x64 安装包和便携包单个约 104 MB，该体积仅对应旧 Electron 产物。运行时只分发英文与简体中文语言资源，不删除业务数据或旧数据迁移逻辑。尚未完成 Linux 全部格式的本地安装验证，不能把 Windows 结果套用到 Linux。
 
 窗口渲染使用统一调度：同一帧内的连续事件合并，原生窗口隐藏或最小化后暂停视觉刷新，仍接收采样增量，恢复后显示最新状态。2026-10-01 在同一虚构数据集的单次 Windows 测量中，隐藏窗口时 Electron 进程 CPU 合计从约 0.289% 降至 0.062%，工作集求和由约 405 MiB 降至 391 MiB。数字存在运行波动，工作集求和可能重复计算共享页，也不包含原生后端；不作为跨设备保证。可使用 `node packaging/measure-runtime.cjs` 复测。
 

@@ -1,4 +1,32 @@
-# Windows 安装包：本机构建与在 Linux 上交叉编译
+# Windows 安装包
+
+## 1.3.0：Windows x64 Tauri
+
+本轮验收与发布范围仅为 Windows x64 Tauri，Linux、Windows ia32 和 Windows ARM64 本轮未验收、未发布。当前打包入口为 `packaging/tauri/build.cjs`，要求在 Windows x64 上使用 Node.js x64、Rust MSVC 工具链、CMake 和支持 C++20 的编译器。其他环境依赖见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。从仓库根目录运行：
+
+```powershell
+npm ci --prefix apps/desktop
+npm run dist:windows
+```
+
+默认产物为 NSIS 安装版、便携 ZIP 和 SHA-256 校验清单，文件名跟随桌面应用版本：
+
+```text
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Portable.zip
+dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-SHA256SUMS.txt
+dist/windows/tauri-portable/WiFiMeter.exe
+```
+
+包内提供 Node 业务进程、C++ 后端与采集器，界面使用系统 WebView2。NSIS 安装版采用当前用户安装，并在缺少 WebView2 时下载、安装运行时。便携版需系统已有 WebView2，解压后运行 `WiFiMeter.exe`，保留同级的 `resources` 目录。
+
+Electron 1.2.x 用户需从 [GitHub Releases](https://github.com/chronicle12345/WiFiMeter/releases) 手动下载 Windows x64 Tauri 安装版迁移；Tauri 后续更新选择对应的 Tauri 安装包。两种 Tauri 产物都继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，已有 SQLite 数据无需重新导入。
+
+打包辅助脚本可用 `npm run test:packaging:tauri` 检查。`node packaging/tauri/verify-windows.cjs` 会分别解包安装版和便携 ZIP，核对每个运行资源的 SHA-256，并对两个解包目录运行真实 WebView2 集成检查。检查使用独立数据目录，验证后端发现、悬浮窗、备份恢复与关闭保存。单独检查程序目录可运行 `node apps/desktop/tests/tauri-smoke.mjs`。验证记录见 [1.3.0 发布说明](../../docs/releases/v1.3.0.md)。
+
+## Electron 历史构建与验收参考
+
+下文保留旧 Electron 构建流程、产物路径和验收记录，仅供历史参考。旧入口使用 `npm run dist:windows:electron`；其中的 Wine 测试、Electron 解包检查与实机清单属于原流程。
 
 生成带向导的 NSIS `.exe` 安装包。两条路径产出同一个产品 **WiFiMeter**（64 位、未签名），
 安装包里包含 Electron 应用与真正的采集后端 `wifimeter-backend.exe`。不使用 Docker。
@@ -8,13 +36,13 @@
 ### 在 Windows 10/11 x64 上
 
 1. 安装 Node.js 22.12 或更新的受支持版本（x64，包含 npm）。
-2. 安装 CMake 与支持 C++20 的编译器（Visual Studio 2022 或更新版本的“使用 C++ 的桌面开发”组件即可）。
+2. 安装 CMake 与支持 C++20 的编译器（Visual Studio 2022 或更新版本的使用 C++ 的桌面开发组件即可）。
    后端在 Windows 上使用仓库内置的 SQLite，不需要额外安装 SQLite 开发包。
 3. 在项目根目录打开 PowerShell：
 
 ```powershell
 npm ci --prefix apps/desktop
-npm run dist:windows
+npm run dist:windows:electron
 ```
 
 如果 PowerShell 提示不能运行 `npm.ps1`，把上面的 `npm` 换成 `npm.cmd`。
@@ -26,7 +54,7 @@ npm run dist:windows
 
 ```bash
 npm ci --prefix apps/desktop
-npm run dist:windows
+npm run dist:windows:electron
 ```
 
 首次运行需要下载约 130 MB（Zig 50 MB、Wine 95 MB）以及 Electron 的 Windows 运行组件。
@@ -41,7 +69,7 @@ dist/windows/win-unpacked/resources/wifimeter-backend.exe
 ```
 
 安装包文件名跟随桌面应用 `package.json` 中的版本号变化。构建期间的中间包名为
-`wifimeter-1.0.0-x64.nsis.7z`，成功生成安装包后会清理。也可在 `apps/desktop/` 下执行 `npm run dist:windows`。
+`wifimeter-1.0.0-x64.nsis.7z`，成功生成安装包后会清理。也可在 `apps/desktop/` 下执行 `npm run dist:windows:electron`。
 
 ## 安装行为
 
@@ -54,7 +82,7 @@ dist/windows/win-unpacked/resources/wifimeter-backend.exe
   `%LOCALAPPDATA%\WiFiMeter\wifimeter.db` 这个缺省值。
 - 采集真实网络：网卡状态与身份来自 WLAN API，累计流量来自 IP Helper；数据留在本机。
 - 开机启动写入系统登录启动项，托盘与额度提醒按设置生效。
-- 当前构建不签名、不自动发布。Windows 可能显示“未知发布者”或 SmartScreen 提示。
+- 当前构建不签名、不自动发布。Windows 可能显示未知发布者或 SmartScreen 提示。
 
 ## 自动化验证
 
@@ -102,25 +130,25 @@ node packaging/windows/acceptance.mjs
 下面是需要人工确认的部分提纲，在 Windows 10/11 x64 上：
 
 1. 运行安装包，确认安装路径可选，并出现独立的快捷方式；安装完成后应用能启动。
-2. 打开应用，确认总览页显示“正在采集”，历史与额度来自真实采集而不是示例数据。
-3. 点击“采集状态”，确认列出本机无线网卡的名称、信号与状态（中文网卡名不应是乱码）。
+2. 打开应用，确认总览页显示正在采集，历史与额度来自真实采集而不是示例数据。
+3. 点击采集状态，确认列出本机无线网卡的名称、信号与状态（中文网卡名不应是乱码）。
 4. 连接/断开 Wi-Fi，确认网络页与总览页的当前网络随之变化；切换网络期间的流量不应计入旧网络。
 5. 修改网络备注与单位，退出再打开，确认设置保留；确认数据文件位于
    `%APPDATA%\WiFiMeter Demo\wifimeter.db`。
 6. 导出 CSV/JSON，备份并恢复数据；取消保存时不应提示成功。
-7. 打开“开机启动”并注销重登，确认应用自动启动；关闭后确认登录启动项被移除
-   （任务管理器的“启动”页或 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`）。
+7. 打开开机启动并注销重登，确认应用自动启动；关闭后确认登录启动项被移除
+   （任务管理器的启动页或 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`）。
 8. 打开托盘开关，确认关闭窗口只隐藏、托盘图标可恢复窗口、右键可退出。
 9. 设置一个很小的额度上限，确认收到系统通知；若开启超额断开，确认应用真的断开了那个网络，
-   并在“采集状态”里能看到断开结果。
+   并在采集状态里能看到断开结果。
 10. 需要与旧版 WiFiMeter 共存时，选择不同的安装目录，确认快捷方式和数据互不覆盖。
 11. 从 Windows 应用列表卸载示例版，确认旧版仍可用，示例版用户数据保留。
 
-已知限制：频段显示为“未知”，因为 Win32 不通过 WLAN API 暴露当前信道。
+已知限制：频段显示为未知，因为 Win32 不通过 WLAN API 暴露当前信道。
 
 ## 构建边界与实现要点
 
-`build.cjs` 是唯一入口：Windows 上用本机 CMake 构建后端，其他系统上用 `build-backend.mjs`
+旧 Electron 流程以 `build.cjs` 为入口：Windows 上用本机 CMake 构建后端，其他系统上用 `build-backend.mjs`
 （Zig + `toolchain-mingw.cmake`）交叉编译；两者都显式使用 x64 NSIS、禁止自动发布与证书自动发现，
 并把缓存改到 `.cross-build/`（`HOME` 只读时也能构建）。`electron-builder.cjs` 覆盖共享配置中的
 产品名称、标识与输出路径，并把 `build/windows/app/wifimeter-backend.exe` 作为 extraResources

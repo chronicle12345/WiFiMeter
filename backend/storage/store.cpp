@@ -63,13 +63,6 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
         if (const Status observed = networks_.observe(delta.network, seenAt, created); !observed)
             return observed;
 
-        if (const Status total = totalQuota_.addUsage(delta); !total)
-            return total;
-
-        if (const Status added = usage_.add(delta.network, core::localStampOf(delta.at), delta.rxBytes, delta.txBytes); !added)
-            return added;
-
-        // 额度账本按网络自己的周期滚动。
         Status findStatus;
         const auto record = networks_.find(delta.network.key, findStatus);
         if (!findStatus)
@@ -84,6 +77,27 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
             quotaSettings.period = record->quotaPeriod;
         }
 
+        const std::string periodKey = core::periodKeyFor(quotaSettings.period, delta.at);
+        core::ByteCount quotaIncrement = 0;
+        for (const auto& minute : minuteUsageOf(delta.network.key, delta.at, delta.span, delta.rxBytes, delta.txBytes))
+        {
+            core::TimePoint minuteDay;
+            core::parseDayKey(minute.day, minuteDay);
+            const core::UsageDelta minuteDelta{delta.network, delta.interfaceId, minute.rxBytes,
+                minute.txBytes, minuteDay, std::chrono::seconds(0)};
+            // 总额度按分钟所属日期入账；先初始化账本，再写历史，避免首次读取历史时重复计入。
+            if (const Status total = totalQuota_.addUsage(minuteDelta); !total)
+                return total;
+
+            auto stamp = core::localStampOf(minuteDay);
+            stamp.hour = minute.hour; stamp.minute = minute.minute;
+            if (const auto added = usage_.add(delta.network, stamp, minute.rxBytes, minute.txBytes); !added) return added;
+            if (const auto added = usage_.addMinute(minute); !added) return added;
+            if (core::periodKeyFor(quotaSettings.period, minuteDay) == periodKey)
+                quotaIncrement += minute.rxBytes + minute.txBytes;
+        }
+
+        // 单网络账本只累加当前周期的分钟分量，跨周期时保留同网络其他网卡已记入的用量。
         Status ledgerStatus;
         const auto stored = networks_.ledger(delta.network.key, ledgerStatus);
         if (!ledgerStatus)
@@ -95,7 +109,7 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
             ledger.periodKey = stored->periodKey;
             ledger.usedBytes = stored->usedBytes;
         }
-        const bool rolled = core::addToLedger(ledger, quotaSettings, delta.rxBytes + delta.txBytes, delta.at);
+        const bool rolled = core::addToLedger(ledger, quotaSettings, quotaIncrement, delta.at);
         if (rolled)
             summary.rolledPeriods.push_back(delta.network.key);
 

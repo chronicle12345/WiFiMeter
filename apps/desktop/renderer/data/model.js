@@ -36,6 +36,13 @@ const niceDate = key => new Intl.DateTimeFormat(getLocale(),{month:'short',day:'
 const defaults = {unit:'GB', speedUnit:'auto', interval:5, retention:90, autoStart:false, minimizeToTray:false, notifications:true};
 function totalOf(rows) {let rx=0n,tx=0n;for(const r of rows){rx+=B(r.rxBytes);tx+=B(r.txBytes);}return {rx,tx,total:rx+tx};}
 function validDate(key){return typeof key==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(key)&&!Number.isNaN(+dateOf(key))&&dayKey(dateOf(key))===key;}
+export function validTime(value) { return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value); }
+export function recordTime(record) {
+    if (validTime(record.time)) return record.time;
+    if (!Number.isInteger(record.hour) || record.hour < 0 || record.hour > 23
+        || !Number.isInteger(record.minute) || record.minute < 0 || record.minute > 59) return null;
+    return `${String(record.hour).padStart(2, '0')}:${String(record.minute).padStart(2, '0')}`;
+}
 function validateSnapshot(input, mode='demo') {
  if(!input||typeof input!=='object'||input.version!==1)throw Error(t('不支持的数据版本。'));
  if(!Array.isArray(input.networks)||input.networks.length>64||!Array.isArray(input.records)||input.records.length>100000)throw Error(t('数据结构不正确或记录数量超出限制。'));
@@ -64,6 +71,21 @@ function validateSnapshot(input, mode='demo') {
   const k=r.networkId+'|'+r.date+'|'+r.hour;if(hoursSeen.has(k))throw Error(t('小时记录重复。'));hoursSeen.add(k);
  }
  for(const r of data.appRecords){if(!ids.has(r.networkId)||!validDate(r.date)||!validString(r.appId,1024)||!validString(r.name,256)||!byteString(r.rxBytes)||!byteString(r.txBytes))throw Error(t('应用记录不合法。'));}
+ for (const field of ['minuteRecords', 'appMinuteRecords']) {
+  if (!Array.isArray(data[field])) data[field] = [];
+  if (data[field].length > 1000000) throw Error(t('明细记录过多。'));
+  const minutesSeen = new Set();
+  for (const r of data[field]) {
+   const time = recordTime(r);
+   if (!ids.has(r.networkId) || !validDate(r.date) || !time || !byteString(r.rxBytes) || !byteString(r.txBytes)
+       || !Number.isInteger(r.hour) || r.hour < 0 || r.hour > 23 || !Number.isInteger(r.minute) || r.minute < 0 || r.minute > 59
+       || (r.time !== undefined && (!validTime(r.time) || r.time !== `${String(r.hour).padStart(2, '0')}:${String(r.minute).padStart(2, '0')}`))
+       || (field === 'appMinuteRecords' && (!validString(r.appId, 1024) || !validString(r.name, 256)))) throw Error(t('流量记录不合法。'));
+   const key = JSON.stringify([r.networkId, r.date, time, field === 'appMinuteRecords' ? r.appId : null]);
+   if (minutesSeen.has(key)) throw Error(t('流量记录不合法。'));
+   minutesSeen.add(key);
+  }
+ }
  data.settings={...defaults,...data.settings};
  const s=data.settings;
  if((s.language!==undefined&&!['en','zh-CN'].includes(s.language))||!['GB','GiB'].includes(s.unit)||!['auto','MB/s','Mbps'].includes(s.speedUnit)||![2,5,10].includes(s.interval)||(!Number.isInteger(s.retention)||s.retention<0||s.retention>36500))throw Error(t('设置值不合法。'));

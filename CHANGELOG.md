@@ -4,6 +4,22 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## [1.3.0] - 2026-10-10
+
+- Migrate the desktop host to Tauri and the system WebView, with Windows x64 as the only release target for this version. Bundle the Node business worker and C++ collector while retaining the existing data directory. Electron 1.2.x users migrate with the Tauri installer from Releases; subsequent Tauri updates select Tauri installers.
+- Add custom local times with minute precision, including the ending minute, and network/application minute history, backups and exports. Earlier records retain their original precision. Reload minute records when navigating between pages after a date change.
+- Keep core overview metrics in the first screen and place the complete live application ranking in the scrolling area below.
+- Allow upload and download limits to be set or removed independently on Windows. Downloads use WinDivert while WiFiMeter runs; upload limits continue to use QoS. Clean up failed native capture and discard stale flow ownership.
+- Expand the floating window with per-application live rates and saved usage ranges: the current calendar minute, that minute plus the previous 4 or 59 minutes, or a custom 1–10080 minutes.
+- Keep daily, monthly and all-time quotas consistent across midnight, prevent concurrent legacy and Tauri collection of the same profile, and reset exit confirmation after a canceled quit or failed update.
+
+- 桌面宿主迁移到 Tauri 和系统 WebView，本轮发布仅面向 Windows x64。随包提供 Node 业务进程与 C++ 采集器，沿用已有数据目录；Electron 1.2.x 用户从 Releases 下载 Tauri 安装版迁移，后续更新选择 Tauri 安装包。
+- 自定义范围支持本地时分并包含结束分钟，网络与应用提供分钟明细并纳入备份和导出，旧数据保留原有精度；切换日期后进入明细页会自动重新加载。
+- 总览首屏保留核心指标，完整应用实时排行位于下方滚动区。
+- Windows 上传和下载限速可独立设置、取消。下载通过 WinDivert 在 WiFiMeter 运行期间生效，上传继续使用 QoS；修复原生捕获失效后的清理与旧连接归属缓存问题。详见[发布说明](docs/releases/v1.3.0.md)。
+- 悬浮窗新增应用实时速度与分钟累计用量，范围自动保存；1 分钟为当前日历分钟，5 分钟、1 小时分别包含当前分钟及之前 4 个、59 个分钟，自定义支持 1 到 10080 分钟。
+- 跨午夜采样的日、月和累计额度保持一致；新旧宿主不能同时采集同一数据目录，取消退出或更新失败恢复后重新确认退出。
+
 ## [1.2.3] - 2026-10-03
 
 - Fix Windows installer handoff readiness and keep the update helper running after the application exits; report failures by update stage.
@@ -79,3 +95,4 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 
 [1.2.3]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.3
 [1.2.2]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.2
+[1.3.0]: docs/releases/v1.3.0.md

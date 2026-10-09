@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 
 #include <array>
+#include <algorithm>
 
 namespace wifimeter::storage
 {
@@ -26,6 +27,34 @@ constexpr std::array<ReasonName, 6> kReasonNames{{
 }};
 
 }  // namespace
+
+std::vector<MinuteUsageRow> minuteUsageOf(const std::string& networkKey, core::TimePoint at,
+    std::chrono::seconds span, core::ByteCount rx, core::ByteCount tx)
+{
+    std::vector<MinuteUsageRow> rows;
+    auto append = [&](core::TimePoint bucket, core::ByteCount partRx, core::ByteCount partTx) {
+        const auto stamp = core::localStampOf(bucket);
+        rows.push_back({networkKey, core::dayKeyOf(stamp), stamp.hour, stamp.minute, partRx, partTx});
+    };
+    if (span.count() <= 0) { append(at, rx, tx); return rows; }
+    at = core::TimePoint(std::chrono::floor<std::chrono::seconds>(at));
+    auto cursor = at - span;
+    auto remaining = static_cast<core::ByteCount>(span.count());
+    while (cursor < at)
+    {
+        const auto next = std::min(at, core::TimePoint(std::chrono::floor<std::chrono::minutes>(cursor)) + std::chrono::minutes(1));
+        const auto seconds = static_cast<core::ByteCount>(std::chrono::duration_cast<std::chrono::seconds>(next - cursor).count());
+        if (!seconds) { cursor = next; continue; }
+        const auto fraction = [&](core::ByteCount total) {
+            return total / remaining * seconds + total % remaining * seconds / remaining;
+        };
+        const auto partRx = fraction(rx), partTx = fraction(tx);
+        append(cursor, partRx, partTx);
+        rx -= partRx; tx -= partTx; remaining -= seconds;
+        cursor = next;
+    }
+    return rows;
+}
 
 std::string_view coverageReasonName(CoverageReason reason)
 {
@@ -215,6 +244,13 @@ Status UsageRepository::pruneBefore(const std::string& day, std::size_t& removed
         return ran;
     removedHourly = static_cast<std::size_t>(sqlite3_changes(database_.handle()));
 
+    for (const char* sql : {"DELETE FROM minute_usage WHERE day < ?1;", "DELETE FROM app_minute_usage WHERE day < ?1;"})
+    {
+        auto minutes = database_.prepare(sql, status);
+        if (!minutes) return status;
+        if (!minutes->bind(1, day)) return Status::failure(minutes->error());
+        if (const auto ran = minutes->run(); !ran) return ran;
+    }
     auto apps = database_.prepare("DELETE FROM app_usage WHERE day < ?1;", status);
     if (!apps)
         return status;
@@ -277,6 +313,74 @@ std::vector<AppUsageRow> UsageRepository::appRange(const std::string& networkKey
         rows.push_back({statement->columnText(0), statement->columnText(1), statement->columnText(2), statement->columnText(3), fromStoredBytes(statement->columnInt64(4)), fromStoredBytes(statement->columnInt64(5))});
     status = statement->failed() ? Status::failure(statement->error()) : Status::success();
     return status ? rows : std::vector<AppUsageRow>{};
+}
+
+Status UsageRepository::addMinute(const MinuteUsageRow& row)
+{
+    core::TimePoint at;
+    const auto rx = toStoredBytes(row.rxBytes), tx = toStoredBytes(row.txBytes);
+    if (row.networkKey.empty() || !core::parseDayKey(row.day, at) || row.hour < 0 || row.hour > 23 ||
+        row.minute < 0 || row.minute > 59 || !rx || !tx) return Status::failure("分钟流量记录无效。");
+    Status status;
+    auto statement = database_.prepare(
+        "INSERT INTO minute_usage(network_key,day,hour,minute,rx_bytes,tx_bytes) VALUES(?1,?2,?3,?4,?5,?6) "
+        "ON CONFLICT(network_key,day,hour,minute) DO UPDATE SET rx_bytes=rx_bytes+excluded.rx_bytes,tx_bytes=tx_bytes+excluded.tx_bytes;", status);
+    if (!statement) return status;
+    if (!statement->bind(1,row.networkKey) || !statement->bind(2,row.day) || !statement->bind(3,static_cast<std::int64_t>(row.hour)) ||
+        !statement->bind(4,static_cast<std::int64_t>(row.minute)) || !statement->bind(5,*rx) || !statement->bind(6,*tx)) return Status::failure(statement->error());
+    return statement->run();
+}
+
+Status UsageRepository::addAppMinute(const AppMinuteUsageRow& row)
+{
+    core::TimePoint at;
+    const auto rx = toStoredBytes(row.rxBytes), tx = toStoredBytes(row.txBytes);
+    if (row.networkKey.empty() || !core::parseDayKey(row.day, at) || row.hour < 0 || row.hour > 23 ||
+        row.minute < 0 || row.minute > 59 || row.appId.empty() || row.appId.size() > 1024 || row.name.empty() ||
+        row.name.size() > 256 || !rx || !tx) return Status::failure("应用分钟流量记录无效。");
+    Status status;
+    auto statement = database_.prepare(
+        "INSERT INTO app_minute_usage(network_key,day,hour,minute,app_id,name,rx_bytes,tx_bytes) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) "
+        "ON CONFLICT(network_key,day,hour,minute,app_id) DO UPDATE SET name=excluded.name,rx_bytes=rx_bytes+excluded.rx_bytes,tx_bytes=tx_bytes+excluded.tx_bytes;", status);
+    if (!statement) return status;
+    if (!statement->bind(1,row.networkKey) || !statement->bind(2,row.day) || !statement->bind(3,static_cast<std::int64_t>(row.hour)) ||
+        !statement->bind(4,static_cast<std::int64_t>(row.minute)) || !statement->bind(5,row.appId) || !statement->bind(6,row.name) ||
+        !statement->bind(7,*rx) || !statement->bind(8,*tx)) return Status::failure(statement->error());
+    return statement->run();
+}
+
+std::vector<MinuteUsageRow> UsageRepository::minuteRange(const std::string& networkKey, const std::string& fromDay,
+    const std::string& toDay, Status& status, int fromMinute, int toMinute) const
+{
+    std::vector<MinuteUsageRow> rows;
+    auto statement = database_.prepare(
+        "SELECT network_key,day,hour,minute,rx_bytes,tx_bytes FROM minute_usage WHERE day>=?1 AND day<=?2 "
+        "AND (?3='' OR network_key=?3) AND (day!=?1 OR hour*60+minute>=?4) AND (day!=?2 OR hour*60+minute<=?5) "
+        "ORDER BY day,hour,minute,network_key;", status);
+    if (!statement) return rows;
+    if (!statement->bind(1,fromDay) || !statement->bind(2,toDay) || !statement->bind(3,networkKey) ||
+        !statement->bind(4,static_cast<std::int64_t>(fromMinute)) || !statement->bind(5,static_cast<std::int64_t>(toMinute))) { status=Status::failure(statement->error()); return rows; }
+    while (statement->step()) rows.push_back({statement->columnText(0),statement->columnText(1),static_cast<int>(statement->columnInt64(2)),
+        static_cast<int>(statement->columnInt64(3)),fromStoredBytes(statement->columnInt64(4)),fromStoredBytes(statement->columnInt64(5))});
+    status = statement->failed() ? Status::failure(statement->error()) : Status::success();
+    return status ? rows : std::vector<MinuteUsageRow>{};
+}
+
+std::vector<AppMinuteUsageRow> UsageRepository::appMinuteRange(const std::string& networkKey, const std::string& fromDay,
+    const std::string& toDay, Status& status, int fromMinute, int toMinute) const
+{
+    std::vector<AppMinuteUsageRow> rows;
+    auto statement = database_.prepare(
+        "SELECT network_key,day,hour,minute,app_id,name,rx_bytes,tx_bytes FROM app_minute_usage WHERE day>=?1 AND day<=?2 "
+        "AND (?3='' OR network_key=?3) AND (day!=?1 OR hour*60+minute>=?4) AND (day!=?2 OR hour*60+minute<=?5) "
+        "ORDER BY day,hour,minute,network_key,app_id;", status);
+    if (!statement) return rows;
+    if (!statement->bind(1,fromDay) || !statement->bind(2,toDay) || !statement->bind(3,networkKey) ||
+        !statement->bind(4,static_cast<std::int64_t>(fromMinute)) || !statement->bind(5,static_cast<std::int64_t>(toMinute))) { status=Status::failure(statement->error()); return rows; }
+    while (statement->step()) rows.push_back({statement->columnText(0),statement->columnText(1),static_cast<int>(statement->columnInt64(2)),
+        static_cast<int>(statement->columnInt64(3)),statement->columnText(4),statement->columnText(5),fromStoredBytes(statement->columnInt64(6)),fromStoredBytes(statement->columnInt64(7))});
+    status = statement->failed() ? Status::failure(statement->error()) : Status::success();
+    return status ? rows : std::vector<AppMinuteUsageRow>{};
 }
 
 Status UsageRepository::addGap(const CoverageGap& gap)
@@ -369,6 +473,8 @@ Status UsageRepository::clearUsage()
     return database_.exec(
         "DELETE FROM daily_usage;"
         "DELETE FROM hourly_usage;"
+        "DELETE FROM minute_usage;"
+        "DELETE FROM app_minute_usage;"
         "DELETE FROM app_usage;"
         "DELETE FROM coverage_gaps;"
         "UPDATE quota_ledgers SET used_bytes = 0;");
@@ -378,7 +484,7 @@ Status UsageRepository::removeNetwork(const std::string& networkKey)
 {
     Status status;
     // 一条 SQL 字符串里放多条语句时 prepare 只会编译第一条，因此逐条准备。
-    for (const char* sql : {"DELETE FROM daily_usage WHERE network_key = ?1;", "DELETE FROM hourly_usage WHERE network_key = ?1;", "DELETE FROM app_usage WHERE network_key = ?1;", "DELETE FROM coverage_gaps WHERE network_key = ?1;"})
+    for (const char* sql : {"DELETE FROM daily_usage WHERE network_key = ?1;", "DELETE FROM hourly_usage WHERE network_key = ?1;", "DELETE FROM app_usage WHERE network_key = ?1;", "DELETE FROM minute_usage WHERE network_key = ?1;", "DELETE FROM app_minute_usage WHERE network_key = ?1;", "DELETE FROM coverage_gaps WHERE network_key = ?1;"})
     {
         auto statement = database_.prepare(sql, status);
         if (!statement)

@@ -12,7 +12,10 @@ module.exports = {
     extraResources: [
         { from: '../../build/windows/app/wifimeter-backend.exe', to: 'wifimeter-backend.exe' },
         { from: '../../build/windows/app/wifimeter-app-capture.exe', to: 'wifimeter-app-capture.exe' },
-        { from: 'native/windows/AppNetworkControl.psm1', to: 'native/windows/AppNetworkControl.psm1' }
+        { from: 'native/windows/AppNetworkControl.psm1', to: 'native/windows/AppNetworkControl.psm1' },
+        { from: 'native/windows/DownloadNetworkControl.ps1', to: 'native/windows/DownloadNetworkControl.ps1' },
+        { from: 'native/windows/DownloadLimiter.cs', to: 'native/windows/DownloadLimiter.cs' },
+        { from: 'native/windows/WinDivert', to: 'native/windows/WinDivert' }
     ],
     win: {
         target: [{ target: 'nsis', arch: ['x64'] }],

@@ -5,6 +5,7 @@
 #include "../storage/usage_repository.h"
 #include <charconv>
 #include <set>
+#include <tuple>
 #include <vector>
 
 namespace wifimeter::ipc
@@ -17,6 +18,8 @@ struct Column { const char* sql; const char* json; bool integer = false; bool nu
 struct Table { const char* table; const char* field; const char* where; std::vector<Column> columns; };
 const std::vector<Table> tables = {
     {"hourly_usage", "hourlyRecords", "", {{"network_key","networkId"},{"day","date"},{"hour","hour",true},{"rx_bytes","rxBytes",true},{"tx_bytes","txBytes",true}}},
+    {"minute_usage", "minuteRecords", "", {{"network_key","networkId"},{"day","date"},{"hour","hour",true},{"minute","minute",true},{"rx_bytes","rxBytes",true},{"tx_bytes","txBytes",true}}},
+    {"app_minute_usage", "appMinuteRecords", "", {{"network_key","networkId"},{"day","date"},{"hour","hour",true},{"minute","minute",true},{"app_id","appId"},{"name","name"},{"rx_bytes","rxBytes",true},{"tx_bytes","txBytes",true}}},
     {"coverage_gaps", "gaps", "scope='network'", {{"id","id",true},{"network_key","networkId"},{"reason","reason"},{"reason_detail","reasonDetail"},{"started_at","startedAt"},{"ended_at","endedAt"},{"span_seconds","spanSeconds",true}}},
     {"coverage_gaps", "appGaps", "scope='apps'", {{"id","id",true},{"network_key","networkId"},{"reason","reason"},{"reason_detail","reasonDetail"},{"started_at","startedAt"},{"ended_at","endedAt"},{"span_seconds","spanSeconds",true}}},
     {"legacy_imports", "legacyImports", "", {{"source_id","sourceId"},{"state_json","stateJson"},{"settings_json","settingsJson",false,true},{"app_usage_json","appUsageJson",false,true},{"imported_at","importedAt"},{"network_count","networkCount",true},{"daily_count","dailyCount",true},{"report_json","reportJson"}}},
@@ -208,6 +211,25 @@ Status validateBackupRows(const JsonValue& document)
     std::set<std::string> keys;
     for (const auto& network : document.find("networks")->items())
         if (!core::isValidNetworkKey(network.stringOr("key")) || !keys.insert(network.stringOr("key")).second) return invalid("networks");
+    for (const auto* field : {"minuteRecords", "appMinuteRecords"})
+    {
+        const auto* rows = document.find(field);
+        if (!rows) continue;
+        if (!rows->isArray()) return invalid(field);
+        const bool apps = std::string(field) == "appMinuteRecords";
+        std::set<std::tuple<std::string,std::string,std::int64_t,std::int64_t,std::string>> seen;
+        for (const auto& row : rows->items())
+        {
+            core::TimePoint at;
+            std::int64_t hour=0, minute=0, rx=0, tx=0;
+            if (!row.isObject() || !keys.count(row.stringOr("networkId")) || !core::parseDayKey(row.stringOr("date"),at) ||
+                !integer(row.find("hour"),hour) || hour>23 || !integer(row.find("minute"),minute) || minute>59 ||
+                !row.find("rxBytes") || !row.find("rxBytes")->isString() || !integer(row.find("rxBytes"),rx) ||
+                !row.find("txBytes") || !row.find("txBytes")->isString() || !integer(row.find("txBytes"),tx) ||
+                (apps && (row.stringOr("appId").empty() || row.stringOr("appId").size()>1024 || row.stringOr("name").empty() || row.stringOr("name").size()>256)) ||
+                !seen.emplace(row.stringOr("networkId"),row.stringOr("date"),hour,minute,apps ? row.stringOr("appId") : "").second) return invalid(field);
+        }
+    }
     for (const auto* field : {"records","ledgers"})
     {
         if (!document.has(field)) continue;

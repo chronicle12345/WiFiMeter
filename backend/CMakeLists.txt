@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.16)
 # C 语言用于仓库内置的 SQLite 合并源码（third_party/sqlite），其余代码都是 C++。
 # Distributable Windows binaries must not depend on a developer's compiler DLLs.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-project(wifimeter-backend LANGUAGES C CXX)
+project(wifimeter-backend VERSION 1.3.0 LANGUAGES C CXX)
 if(WIN32)
     add_compile_definitions(NOMINMAX)
 endif()

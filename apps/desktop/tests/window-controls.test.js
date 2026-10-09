@@ -8,7 +8,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { createWindowControls } from '../electron/window-controls.cjs';
 
-const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true };
+const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
+    miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 
 async function fixture(t, extra = {}) {
     const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'wifimeter-window-'));
@@ -22,6 +23,7 @@ async function fixture(t, extra = {}) {
         showInactive() { this.shown = true; }
         getBounds() { return { ...this.bounds }; }
         setBounds(bounds) { this.bounds = { ...bounds }; this.emit('move'); this.emit('moved'); }
+        setFocusable(value) { this.focusable = value; }
         destroy() { this.destroyed = true; this.emit('closed'); }
     }
     const state = { quits: 0, hides: 0, dialogs: 0, shows: 0 };
@@ -472,4 +474,129 @@ test('首次加载近边吸附，拖动期间不收起，工作区变化重新�
     assert.equal(mini.bounds.width, 224);
     now = 5300; for (const tick of tasks.values()) tick();
     assert.equal(mini.bounds.width, 6);
+});
+
+const miniEvent = mini => {
+    mini.webContents.mainFrame.url = pathToFileURL(mini.file).href;
+    return { sender: mini.webContents, senderFrame: mini.webContents.mainFrame };
+};
+const miniTick = () => new Promise(resolve => setImmediate(resolve));
+const miniSnapshot = rxBytes => ({
+    live: { state: 'connected', collector: 'running', updatedAt: '2026-10-01T12:00:00Z',
+        appCollection: { enabled: true, state: 'running' }, appProcesses: [] },
+    appMinuteRecords: [{ networkId: 'home', date: '2026-10-01', hour: 11, minute: 59,
+        appId: 'browser', name: 'Browser', rxBytes, txBytes: '1' }]
+});
+const miniTimers = now => ({ setInterval: () => 1, clearInterval() {}, now });
+
+test('收起应用列表时不读取分钟历史，展开后共享查询并在五秒后刷新', async t => {
+    let now = new Date(2026, 9, 1, 12, 0).getTime();
+    const queries = [];
+    const f = await fixture(t, { timers: miniTimers(() => now), requestMiniSnapshot: async params => {
+        queries.push(params); return miniSnapshot(String(queries.length * 100));
+    } });
+    await f.controls.update({ miniWindow: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    mini.webContents.emit('did-finish-load');
+    const applications = () => f.handlers.get('mini:applications')(event);
+    await applications();
+    assert.equal(queries.length, 0);
+    await f.controls.update({ miniExpanded: true });
+    const [first, concurrent] = await Promise.all([applications(), applications()]);
+    assert.equal(queries.length, 1);
+    assert.deepEqual(queries[0], { from: '2026-10-01', to: '2026-10-01', fromTime: '11:56', toTime: '12:00', includeMinutes: true });
+    assert.equal(first.rows[0].rxBytes, '100'); assert.deepEqual(concurrent, first);
+    now += 4999;
+    const live = { event: 'live', ...miniSnapshot('0').live, appProcesses: [{ appId: 'browser', name: 'Browser', rxPerSecond: '45', txPerSecond: '2' }] };
+    f.controls.publishLive(live);
+    assert.equal((await applications()).rows[0].rxPerSecond, '45');
+    assert.equal(queries.length, 1);
+    now += 1;
+    assert.equal((await applications()).rows[0].rxBytes, '200');
+    assert.equal(queries.length, 2);
+    await f.controls.update({ miniExpanded: false });
+    now += 5000; f.controls.publishLive(live); await applications();
+    assert.equal(queries.length, 2);
+});
+
+for (const rejectOld of [false, true]) test(`切换时段后${rejectOld ? '失败' : '迟到'}的旧请求不覆盖新分钟用量`, async t => {
+    const requests = [];
+    const f = await fixture(t, { timers: miniTimers(() => new Date(2026, 9, 1, 12, 0).getTime()),
+        requestMiniSnapshot: params => new Promise((resolve, reject) => requests.push({ params, resolve, reject })) });
+    await f.controls.update({ miniWindow: true, miniExpanded: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    mini.webContents.emit('did-finish-load');
+    const original = f.handlers.get('mini:applications')(event).then(result => ({ result }), error => ({ error }));
+    await f.controls.update({ miniRange: '1h' });
+    const current = f.handlers.get('mini:applications')(event).then(result => ({ result }), error => ({ error }));
+    assert.equal(requests.length, 1);
+    if (rejectOld) requests[0].reject(Error('old range unavailable'));
+    else requests[0].resolve(miniSnapshot('10'));
+    await miniTick();
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].params.fromTime, '11:01');
+    requests[1].resolve(miniSnapshot('1000'));
+    for (const outcome of await Promise.all([original, current])) {
+        assert.equal(outcome.error, undefined);
+        assert.equal(outcome.result.range.minutes, 60);
+        assert.equal(outcome.result.rows[0].rxBytes, '1000');
+    }
+    const published = mini.sent.filter(([channel]) => channel === 'mini:applications');
+    assert.ok(published.length > 0);
+    assert.ok(published.every(([, model]) => model.range.minutes === 60 && model.rows[0].rxBytes === '1000'));
+});
+
+test('当前时段查询失败仍向页面报告，并允许下一次请求恢复', async t => {
+    let fail = true;
+    const f = await fixture(t, { timers: miniTimers(() => new Date(2026, 9, 1, 12, 0).getTime()),
+        requestMiniSnapshot: async () => { if (fail) throw Error('current range unavailable'); return miniSnapshot('300'); } });
+    await f.controls.update({ miniWindow: true, miniExpanded: true });
+    const event = miniEvent(f.windows[0]);
+    await assert.rejects(f.handlers.get('mini:applications')(event), /current range unavailable/);
+    fail = false;
+    const recovered = await f.handlers.get('mini:applications')(event);
+    assert.equal(recovered.rows[0].rxBytes, '300');
+});
+
+test('窗口销毁后迟到的分钟查询不再发送结果或重试', async t => {
+    let finish, queries = 0;
+    const f = await fixture(t, { timers: miniTimers(() => new Date(2026, 9, 1, 12, 0).getTime()),
+        requestMiniSnapshot: () => { queries++; return new Promise(resolve => { finish = resolve; }); } });
+    await f.controls.update({ miniWindow: true, miniExpanded: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    mini.webContents.emit('did-finish-load');
+    const pending = f.handlers.get('mini:applications')(event);
+    f.controls.dispose(); const sent = mini.sent.length;
+    finish(miniSnapshot('200')); await pending;
+    assert.equal(queries, 1); assert.equal(mini.sent.length, sent);
+});
+
+test('应用列表偏好保存成功后才改变焦点和大小，合法时长可恢复且非法值不保存', async t => {
+    let fail = false;
+    const f = await fixture(t, { timers: miniTimers(() => 0), fileSystem: { ...fs,
+        rename: async (...args) => { if (fail) throw Error('save failed'); return fs.rename(...args); } } });
+    await f.controls.update({ miniWindow: true, miniShape: 'circle' });
+    const mini = f.windows[0]; mini.webContents.emit('did-finish-load');
+    const before = await f.controls.read(), sent = mini.sent.length;
+    fail = true;
+    await assert.rejects(f.controls.update({ miniExpanded: true, miniRange: 'custom', miniCustomMinutes: 10080 }), /save failed/);
+    assert.deepEqual(await f.controls.read(), before); assert.equal(mini.sent.length, sent);
+    assert.equal(mini.focusable ?? mini.options.focusable, false); assert.equal(mini.bounds.width, 168);
+    fail = false;
+    await f.controls.update({ miniExpanded: true, miniRange: 'custom', miniCustomMinutes: 10080 });
+    assert.equal(mini.focusable, true); assert.equal(mini.bounds.width, 360); assert.equal(mini.bounds.height, 420);
+    const saved = await f.controls.read();
+    for (const patch of [{ miniExpanded: 'true' }, { miniRange: '24h' }, ...[0, 10081, 1.5, NaN].map(miniCustomMinutes => ({ miniCustomMinutes }))]) {
+        await assert.rejects(f.controls.update(patch), TypeError);
+    }
+    assert.deepEqual(await f.controls.read(), saved);
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.userData, 'window-preferences.json'), 'utf8')), saved);
+    f.controls.dispose();
+    const restored = createWindowControls(f.deps); t.after(() => restored.dispose());
+    assert.deepEqual(await restored.read(), saved);
+    const reopened = f.windows.at(-1);
+    assert.equal(reopened.options.focusable, true); assert.equal(reopened.options.width, 360);
+    await restored.update({ miniExpanded: false, miniCustomMinutes: 1 });
+    assert.equal(reopened.focusable, false); assert.equal(reopened.bounds.width, 168);
+    assert.equal((await restored.read()).miniCustomMinutes, 1);
 });

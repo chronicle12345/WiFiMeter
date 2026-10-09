@@ -140,6 +140,7 @@ private:
     bool paused_ = false;
     core::TimePoint nextSampleAt_{};
     core::TimePoint lastSampleAt_{};
+    std::uint64_t usageRevision_ = 0;
     core::TimePoint liveUpdatedAt_{};
     bool hasSampled_ = false;
 

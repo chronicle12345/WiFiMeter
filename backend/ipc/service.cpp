@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include <utility>
 
@@ -61,6 +62,81 @@ JsonValue appRowsToJson(const std::vector<storage::AppUsageRow>& rows)
         records.push(std::move(record));
     }
     return records;
+}
+
+template <typename Row>
+JsonValue minuteRowsToJson(const std::vector<Row>& rows)
+{
+    auto records = JsonValue::makeArray();
+    for (const auto& row : rows)
+    {
+        auto record = JsonValue::makeObject();
+        record.set("networkId", JsonValue::makeString(row.networkKey));
+        record.set("date", JsonValue::makeString(row.day));
+        record.set("hour", JsonValue::makeInt(row.hour));
+        record.set("minute", JsonValue::makeInt(row.minute));
+        char time[8] = {};
+        std::snprintf(time, sizeof(time), "%02d:%02d", row.hour, row.minute);
+        record.set("time", JsonValue::makeString(time));
+        record.set("rxBytes", bytes(row.rxBytes));
+        record.set("txBytes", bytes(row.txBytes));
+        if constexpr (requires { row.appId; })
+        {
+            record.set("appId", JsonValue::makeString(row.appId));
+            record.set("name", JsonValue::makeString(row.name));
+        }
+        records.push(std::move(record));
+    }
+    return records;
+}
+
+bool minuteRangeParams(const JsonValue& params, const std::string& fromDay, const std::string& toDay,
+    int& fromMinute, int& toMinute)
+{
+    const auto parse = [&](const char* key, int& result) {
+        const auto* value = params.find(key);
+        if (!value) return true;
+        if (!value->isString()) return false;
+        const auto text = value->asString();
+        if (text.size() != 5 || text[2] != ':' || text[0] < '0' || text[0] > '9' || text[1] < '0' || text[1] > '9' ||
+            text[3] < '0' || text[3] > '9' || text[4] < '0' || text[4] > '9') return false;
+        const int hour = (text[0]-'0')*10 + text[1]-'0', minute = (text[3]-'0')*10 + text[4]-'0';
+        if (hour > 23 || minute > 59) return false;
+        result = hour*60 + minute;
+        return true;
+    };
+    core::TimePoint from, to;
+    return (fromDay == "0001-01-01" || core::parseDayKey(fromDay, from)) && core::parseDayKey(toDay, to) &&
+        parse("fromTime", fromMinute) && parse("toTime", toMinute) && fromDay <= toDay &&
+        (fromDay != toDay || fromMinute <= toMinute);
+}
+
+std::vector<storage::DailyUsageRow> dailyFromMinutes(const std::vector<storage::MinuteUsageRow>& rows)
+{
+    std::map<std::pair<std::string,std::string>,storage::DailyUsageRow> totals;
+    for (const auto& row : rows)
+    {
+        auto& total = totals[{row.day,row.networkKey}];
+        total.networkKey = row.networkKey; total.day = row.day;
+        total.rxBytes += row.rxBytes; total.txBytes += row.txBytes;
+    }
+    std::vector<storage::DailyUsageRow> result;
+    for (const auto& entry : totals) result.push_back(entry.second);
+    return result;
+}
+
+std::vector<storage::AppUsageRow> appsFromMinutes(const std::vector<storage::AppMinuteUsageRow>& rows)
+{
+    std::map<std::tuple<std::string,std::string,std::string>,storage::AppUsageRow> totals;
+    for (const auto& row : rows)
+    {
+        auto& total = totals[{row.day,row.networkKey,row.appId}];
+        total.networkKey = row.networkKey; total.day = row.day; total.appId = row.appId; total.name = row.name;
+        total.rxBytes += row.rxBytes; total.txBytes += row.txBytes;
+    }
+    std::vector<storage::AppUsageRow> result;
+    for (const auto& entry : totals) result.push_back(entry.second);
+    return result;
 }
 
 JsonValue appGapToJson(const storage::CoverageGap& gap)
@@ -353,23 +429,30 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         return;
     }
     std::vector<storage::AppUsageRow> rows;
+    std::vector<storage::AppMinuteUsageRow> minutes;
     JsonValue gapRecords = JsonValue::makeArray();
     for (const auto& delta : accumulated.deltas)
     {
-        storage::AppUsageRow row{delta.network.key, core::dayKeyOf(core::localStampOf(delta.at)), delta.process.appId, delta.process.name, delta.rxBytes, delta.txBytes};
-        if (const auto written = deps_.store.usage().addApp(row); !written)
+        for (const auto& minute : storage::minuteUsageOf(delta.network.key, delta.at, delta.span, delta.rxBytes, delta.txBytes))
         {
-            // 应用存储失败不撤销已提交的网卡统计，也不推送未保存的应用增量。
-            appState_ = platform::AppCollectorState::unavailable;
-            appDetail_ = written.message;
-            appAccumulator_.clear();
-        appSampledAtMs_ = 0; appSampleGeneration_.clear();
-            loopbackLive_.clear();
-            appLastAt_ = now;
-            return;
+            storage::AppUsageRow row{minute.networkKey,minute.day,delta.process.appId,delta.process.name,minute.rxBytes,minute.txBytes};
+            storage::AppMinuteUsageRow appMinute{minute.networkKey,minute.day,minute.hour,minute.minute,row.appId,row.name,minute.rxBytes,minute.txBytes};
+            auto written = deps_.store.usage().addApp(row);
+            if (written) written = deps_.store.usage().addAppMinute(appMinute);
+            if (!written)
+            {
+                // 应用写入失败仅撤销应用事务，网卡数据已经独立提交。
+                appState_ = platform::AppCollectorState::unavailable;
+                appDetail_ = written.message;
+                appAccumulator_.clear(); appSampledAtMs_ = 0; appSampleGeneration_.clear();
+                loopbackLive_.clear(); appLastAt_ = now;
+                return;
+            }
+            rows.push_back(std::move(row));
+            minutes.push_back(std::move(appMinute));
         }
-        rows.push_back(std::move(row));
     }
+
     for (const auto& missing : accumulated.gaps)
     {
         storage::CoverageGap gap;
@@ -455,6 +538,8 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
     {
         JsonValue usage = JsonValue::makeObject();
         usage.set("records", appRowsToJson(rows));
+        usage.set("minuteRecords", minuteRowsToJson(minutes));
+        usage.set("usageRevision", bytes(usageRevision_));
         usage.set("gaps", std::move(gapRecords));
         events.names.push_back(event::kAppUsage);
         events.items.push_back(std::move(usage));
@@ -497,10 +582,34 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     const std::string fromDay = params.stringOr("from", core::dayKeyOf(core::shiftLocalDays(today, -365)));
     const std::string networkKey = params.stringOr("networkKey");
     const std::string hourlyDay = params.stringOr("hourlyDay", toDay);
+    int fromMinute = 0, toMinute = 1439;
+    if (!minuteRangeParams(params, fromDay, toDay, fromMinute, toMinute))
+    {
+        response.error = Error{errorCode::kInvalidParams, "Invalid time range; use HH:mm and an ordered interval."};
+        return response;
+    }
+    const bool partial = fromMinute != 0 || toMinute != 1439;
+    const auto* include = params.find("includeMinutes");
+    if (include && !include->isBool())
+    { response.error = Error{errorCode::kInvalidParams,"includeMinutes must be boolean."}; return response; }
+    const bool includeMinutes = params.boolOr("includeMinutes") || params.has("fromTime") || params.has("toTime");
+    std::vector<storage::MinuteUsageRow> minutes;
+    std::vector<storage::AppMinuteUsageRow> appMinutes;
+    if (includeMinutes)
+    {
+        minutes = deps_.store.usage().minuteRange(networkKey, fromDay, toDay, status, fromMinute, toMinute);
+        if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
+        appMinutes = deps_.store.usage().appMinuteRange(networkKey, fromDay, toDay, status, fromMinute, toMinute);
+        if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
+    }
 
     JsonValue result = JsonValue::makeObject();
     result.set("version", JsonValue::makeInt(1));
     result.set("source", JsonValue::makeString("backend"));
+    result.set("usageRevision", bytes(usageRevision_));
+    result.set("minuteRecords", minuteRowsToJson(minutes));
+    result.set("appMinuteRecords", minuteRowsToJson(appMinutes));
+    result.set("minuteRecordsIncluded", JsonValue::makeBool(includeMinutes));
     result.set("range", [&] {
         JsonValue range = JsonValue::makeObject();
         range.set("from", JsonValue::makeString(fromDay));
@@ -533,7 +642,7 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     }
     result.set("networks", std::move(networkArray));
 
-    const std::vector<storage::DailyUsageRow> daily = deps_.store.usage().dailyRange(networkKey, fromDay, toDay, status);
+    const auto daily = partial ? dailyFromMinutes(minutes) : deps_.store.usage().dailyRange(networkKey, fromDay, toDay, status);
     if (!status)
     {
         response.error = Error{errorCode::kStorageFailure, status.message};
@@ -597,7 +706,7 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     result.set("totalQuota", totalQuotaJson(now, status));
     if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
     result.set("live", buildLive());
-    const auto apps = deps_.store.usage().appRange(networkKey, fromDay, toDay, status);
+    const auto apps = partial ? appsFromMinutes(appMinutes) : deps_.store.usage().appRange(networkKey, fromDay, toDay, status);
     if (!status)
     {
         response.error = Error{errorCode::kStorageFailure, status.message};
@@ -752,7 +861,20 @@ BackendService::Response BackendService::exportUsage(const JsonValue& params, Ti
     const std::string fromDay = params.stringOr("from", core::dayKeyOf(core::shiftLocalDays(today, -365)));
     const std::string networkKey = params.stringOr("networkKey");
 
-    const std::vector<storage::DailyUsageRow> rows = deps_.store.usage().dailyRange(networkKey, fromDay, toDay, status);
+    int fromMinute = 0, toMinute = 1439;
+    if (!minuteRangeParams(params, fromDay, toDay, fromMinute, toMinute))
+    { response.error = Error{errorCode::kInvalidParams, "Invalid time range."}; return response; }
+    const auto grouping = params.stringOr("grouping", "day");
+    if (grouping != "day" && grouping != "minute" && grouping != "hour")
+    { response.error = Error{errorCode::kInvalidParams, "Unsupported grouping."}; return response; }
+    std::vector<storage::MinuteUsageRow> minutes;
+    if (grouping == "minute" || fromMinute != 0 || toMinute != 1439)
+    {
+        minutes = deps_.store.usage().minuteRange(networkKey,fromDay,toDay,status,fromMinute,toMinute);
+        if (!status) { response.error = Error{errorCode::kStorageFailure,status.message}; return response; }
+    }
+    const auto rows = fromMinute != 0 || toMinute != 1439 ? dailyFromMinutes(minutes) :
+        deps_.store.usage().dailyRange(networkKey, fromDay, toDay, status);
     if (!status)
     {
         response.error = Error{errorCode::kStorageFailure, status.message};
@@ -761,6 +883,7 @@ BackendService::Response BackendService::exportUsage(const JsonValue& params, Ti
 
     JsonValue result = JsonValue::makeObject();
     result.set("from", JsonValue::makeString(fromDay));
+    result.set("minuteRecords", minuteRowsToJson(minutes));
     result.set("to", JsonValue::makeString(toDay));
     JsonValue records = JsonValue::makeArray();
     for (const storage::DailyUsageRow& row : rows)
@@ -774,6 +897,31 @@ BackendService::Response BackendService::exportUsage(const JsonValue& params, Ti
         entry.set("rxBytes", bytes(row.rxBytes));
         entry.set("txBytes", bytes(row.txBytes));
         records.push(std::move(entry));
+    }
+    if (grouping == "minute") records = minuteRowsToJson(minutes);
+    else if (grouping == "hour")
+    {
+        std::map<std::tuple<std::string,std::string,int>,storage::MinuteUsageRow> hours;
+        for (const auto& row : minutes)
+        {
+            auto& hour = hours[{row.day,row.networkKey,row.hour}];
+            hour.networkKey=row.networkKey; hour.day=row.day; hour.hour=row.hour;
+            hour.rxBytes+=row.rxBytes; hour.txBytes+=row.txBytes;
+        }
+        std::vector<storage::MinuteUsageRow> hourRows;
+        if (fromMinute == 0 && toMinute == 1439)
+        {
+            auto query = deps_.store.database().prepare(
+                "SELECT network_key,day,hour,rx_bytes,tx_bytes FROM hourly_usage WHERE day>=?1 AND day<=?2 "
+                "AND (?3='' OR network_key=?3) ORDER BY day,hour,network_key;",status);
+            if (!query || !query->bind(1,fromDay) || !query->bind(2,toDay) || !query->bind(3,networkKey))
+            { response.error = Error{errorCode::kStorageFailure,query ? query->error() : status.message}; return response; }
+            while (query->step()) hourRows.push_back({query->columnText(0),query->columnText(1),static_cast<int>(query->columnInt64(2)),0,
+                storage::fromStoredBytes(query->columnInt64(3)),storage::fromStoredBytes(query->columnInt64(4))});
+            if (query->failed()) { response.error = Error{errorCode::kStorageFailure,query->error()}; return response; }
+        }
+        else for (const auto& entry : hours) hourRows.push_back(entry.second);
+        records=minuteRowsToJson(hourRows);
     }
     result.set("records", std::move(records));
     response.result = std::move(result);
@@ -1418,6 +1566,8 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
         return events;
     }
 
+    // 服务请求与采样在同一线程执行，快照不会读到网络与应用提交之间的状态。
+    ++usageRevision_;
     // 速率用本次增量除以区间长度，与累计差值保持同一口径。
     collectApplications(report, now, events);
     collectProxyClients(now);
@@ -1437,6 +1587,15 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
         JsonValue usage = JsonValue::makeObject();
         usage.set("day", JsonValue::makeString(core::dayKeyOf(core::localStampOf(now))));
         usage.set("hour", JsonValue::makeInt(core::localStampOf(now).hour));
+        usage.set("minute", JsonValue::makeInt(core::localStampOf(now).minute));
+        usage.set("usageRevision", bytes(usageRevision_));
+        std::vector<storage::MinuteUsageRow> minuteDeltas;
+        for (const auto& delta : accumulated.deltas)
+        {
+            auto rows = storage::minuteUsageOf(delta.network.key,delta.at,delta.span,delta.rxBytes,delta.txBytes);
+            minuteDeltas.insert(minuteDeltas.end(), rows.begin(), rows.end());
+        }
+        usage.set("minuteRecords", minuteRowsToJson(minuteDeltas));
         JsonValue networks = JsonValue::makeArray();
         for (const auto& entry : recorded)
         {

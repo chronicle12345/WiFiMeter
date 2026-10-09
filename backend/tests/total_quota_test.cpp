@@ -35,7 +35,8 @@ void wiredTypePropagatesThroughUsage()
     auto store = Store::open(directory.file("meter.db"), status);
     WIFIMETER_CHECK(store != nullptr);
     if (!store) return;
-    const auto now = utcTime(2026, 10, 1);
+    // 5 秒样本覆盖当日 00:00:00 到 00:00:05，历史查询与采样区间属于同一天。
+    const auto now = utcTime(2026, 10, 1, 0, 0, 5);
     WIFIMETER_CHECK(add(*store, now, 90, 10).ok);
 
     // 首次采样走 observe 的 INSERT，类型必须来自 NetworkRef。
@@ -208,7 +209,8 @@ void atomicUsageAndSettings()
     auto store = Store::open(directory.file("meter.db"), status);
     WIFIMETER_CHECK(store != nullptr);
     if (!store) return;
-    const auto now = utcTime(2026, 10, 1);
+    // 将回滚验证放在同一天内，避免 5 秒样本落入前一天的历史。
+    const auto now = utcTime(2026, 10, 1, 0, 0, 5);
     WIFIMETER_CHECK(add(*store, now, 100).ok);
     // 用真实 SQLite 失败验证账本、历史和设置不会只提交一部分。
     WIFIMETER_CHECK(store->database().exec("CREATE TEMP TRIGGER reject_hour BEFORE UPDATE ON hourly_usage BEGIN SELECT RAISE(ABORT, 'test'); END;").ok);
@@ -267,7 +269,7 @@ void notificationCyclesAndRollback()
     WIFIMETER_CHECK(store->database().exec("DROP TRIGGER reject_policy;").ok);
     WIFIMETER_CHECK_EQ(view(*store, next).ledger.usedBytes, ByteCount{0});
     WIFIMETER_CHECK(!view(*store, next).ledger.warningNotified);
-    WIFIMETER_CHECK(add(*store, next, 1000).ok);
+    WIFIMETER_CHECK(add(*store, next + std::chrono::seconds(5), 1000).ok);
     WIFIMETER_CHECK(view(*store, next).warningPending);
     WIFIMETER_CHECK(view(*store, next).limitPending);
     // 保存备份时失败，不能删除原来的账本或提交新设置。
@@ -330,7 +332,7 @@ void upgradesPreviousCapConstraint()
     auto store = Store::open(directory.file("meter.db"), status);
     WIFIMETER_CHECK(store != nullptr);
     if (!store) return;
-    const auto now = utcTime(2026, 10, 1);
+    const auto now = utcTime(2026, 10, 1, 0, 0, 5);
     WIFIMETER_CHECK(add(*store, now, 123).ok);
     TotalQuotaSettings settings;
     settings.capGb = 100000;
@@ -401,7 +403,7 @@ void multipleThresholdsPersistAndReset()
 {
     TempDirectory directory("total-multiple-thresholds");
     Status status;
-    const auto now = utcTime(2026, 10, 1);
+    const auto now = utcTime(2026, 10, 1, 0, 0, 5);
     auto store = Store::open(directory.file("meter.db"), status);
     WIFIMETER_CHECK(store != nullptr);
     if (!store) return;
@@ -453,6 +455,105 @@ void allCoreDoesNotRoll()
     WIFIMETER_CHECK_EQ(ledger.periodKey, std::string("all"));
 }
 
+void minuteHistoryAndQuotaPeriodsAgree()
+{
+    struct SampleCase
+    {
+        int secondsAfterMidnight;
+        int spanSeconds;
+        ByteCount rx;
+        ByteCount tx;
+        int adapters;
+        ByteCount previousDay;
+        ByteCount currentDay;
+    };
+    for (const auto& sample : {
+        SampleCase{0, 5, 100, 20, 1, 240, 0},
+        SampleCase{5, 10, 101, 21, 1, 180, 62},
+        SampleCase{5, 10, 101, 21, 2, 240, 124},
+    })
+    {
+        TempDirectory directory("total-minute-periods");
+        Status status;
+        auto store = Store::open(directory.file("meter.db"), status);
+        WIFIMETER_CHECK(store != nullptr);
+        if (!store) continue;
+        const auto boundary = utcTime(2026, 10, 1);
+        const auto at = boundary + std::chrono::seconds(sample.secondsAfterMidnight);
+        const auto before = boundary - std::chrono::seconds(1);
+        NetworkRecord wifi;
+        wifi.key = "wifi-network";
+        wifi.quotaPeriod = QuotaPeriod::month;
+        WIFIMETER_CHECK(store->networks().replace(wifi).ok);
+        // 旧每日历史没有分钟明细，首次建立上一周期账本时仍须完整保留。
+        WIFIMETER_CHECK(store->usage().setDaily(wifi.key, "2026-09-30", 100, 20).ok);
+        WIFIMETER_CHECK(store->networks().saveLedger({wifi.key, "2026-09", 120, {80}}).ok);
+        TotalQuotaSettings settings;
+        settings.period = QuotaPeriod::day;
+        WIFIMETER_CHECK(store->totalQuota().save(settings, at).ok);
+
+        AccumulateResult increments;
+        for (int adapter = 0; adapter < sample.adapters; ++adapter)
+            increments.deltas.push_back({NetworkRef{wifi.key, "Home", "wifi"}, "adapter-" + std::to_string(adapter),
+                sample.rx, sample.tx, at, std::chrono::seconds(sample.spanSeconds)});
+        ApplySummary summary;
+        if (sample.currentDay)
+        {
+            // 第二天的分钟写入失败时，第一天的历史、初始化账本和累计量必须一起回滚。
+            WIFIMETER_CHECK(store->database().exec("CREATE TEMP TRIGGER reject_next_minute BEFORE INSERT ON minute_usage WHEN NEW.day='2026-10-01' BEGIN SELECT RAISE(ABORT, 'test'); END;").ok);
+            WIFIMETER_CHECK(!store->applyUsage(increments, at, summary).ok);
+            const auto daily = store->usage().dailyRange(wifi.key, "2026-09-30", "2026-10-01", status);
+            WIFIMETER_CHECK(status.ok);
+            WIFIMETER_CHECK_EQ(daily.size(), std::size_t{1});
+            if (!daily.empty()) WIFIMETER_CHECK_EQ(daily.front().rxBytes + daily.front().txBytes, ByteCount{120});
+            WIFIMETER_CHECK(store->usage().minuteRange(wifi.key, "2026-09-30", "2026-10-01", status).empty());
+            WIFIMETER_CHECK(status.ok);
+            const auto quotas = store->totalQuota().load(status);
+            WIFIMETER_CHECK(status.ok);
+            WIFIMETER_CHECK_EQ(quotas.ledgers.size(), std::size_t{3});
+            for (const auto& ledger : quotas.ledgers)
+                WIFIMETER_CHECK_EQ(ledger.usedBytes, ledger.period == QuotaPeriod::all ? ByteCount{120} : ByteCount{0});
+            const auto network = store->networks().ledger(wifi.key, status);
+            WIFIMETER_CHECK(network.has_value());
+            if (network)
+            {
+                WIFIMETER_CHECK_EQ(network->periodKey, std::string("2026-09"));
+                WIFIMETER_CHECK_EQ(network->usedBytes, ByteCount{120});
+                WIFIMETER_CHECK_EQ(network->notifiedWarnPercents.size(), std::size_t{1});
+            }
+            WIFIMETER_CHECK(store->database().exec("DROP TRIGGER reject_next_minute;").ok);
+        }
+
+        WIFIMETER_CHECK(store->applyUsage(increments, at, summary).ok);
+        const auto previousRows = store->usage().dailyRange(wifi.key, "2026-09-30", "2026-09-30", status);
+        WIFIMETER_CHECK(status.ok);
+        WIFIMETER_CHECK_EQ(previousRows.size(), std::size_t{1});
+        if (!previousRows.empty()) WIFIMETER_CHECK_EQ(previousRows.front().rxBytes + previousRows.front().txBytes, sample.previousDay);
+        const auto currentRows = store->usage().dailyRange(wifi.key, "2026-10-01", "2026-10-01", status);
+        WIFIMETER_CHECK(status.ok);
+        WIFIMETER_CHECK_EQ(currentRows.size(), sample.currentDay ? std::size_t{1} : std::size_t{0});
+        if (!currentRows.empty()) WIFIMETER_CHECK_EQ(currentRows.front().rxBytes + currentRows.front().txBytes, sample.currentDay);
+        WIFIMETER_CHECK_EQ(view(*store, before).ledger.usedBytes, sample.previousDay);
+        WIFIMETER_CHECK_EQ(view(*store, at).ledger.usedBytes, sample.currentDay);
+        settings.period = QuotaPeriod::month;
+        WIFIMETER_CHECK(store->totalQuota().save(settings, at).ok);
+        WIFIMETER_CHECK_EQ(view(*store, before).ledger.usedBytes, sample.previousDay);
+        WIFIMETER_CHECK_EQ(view(*store, at).ledger.usedBytes, sample.currentDay);
+        settings.period = QuotaPeriod::all;
+        WIFIMETER_CHECK(store->totalQuota().save(settings, at).ok);
+        WIFIMETER_CHECK_EQ(view(*store, at).ledger.usedBytes, sample.previousDay + sample.currentDay);
+        const auto network = store->networks().ledger(wifi.key, status);
+        WIFIMETER_CHECK(status.ok);
+        WIFIMETER_CHECK(network.has_value());
+        if (network)
+        {
+            WIFIMETER_CHECK_EQ(network->periodKey, std::string("2026-10"));
+            WIFIMETER_CHECK_EQ(network->usedBytes, sample.currentDay);
+            WIFIMETER_CHECK(network->notifiedWarnPercents.empty());
+        }
+    }
+}
+
 }  // namespace
 
 int main()
@@ -468,5 +569,6 @@ int main()
     thresholdsAndRestore();
     atomicUsageAndSettings();
     notificationCyclesAndRollback();
+    minuteHistoryAndQuotaPeriodsAgree();
     return WIFIMETER_REPORT();
 }

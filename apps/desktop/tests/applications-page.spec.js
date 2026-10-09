@@ -57,6 +57,35 @@ async function openApplications(){
     await expect(page.locator('.date-text')).toHaveText('全部已保留历史');
 }
 
+test('总览展示全部实时应用并按下载、上传速度排序',async()=>{
+    await app.evaluate(({BrowserWindow})=>{
+        const s=globalThis.rendererFixture.snapshot;
+        s.appCollection={available:true,enabled:true,state:'running'};
+        const processes=Array.from({length:12},(_,i)=>({networkId:s.networks[0].id,appId:`C:\\Apps\\App${i}.exe`,name:`App${i}`,processId:i+1,rxPerSecond:String((12-i)*1000),txPerSecond:String(i*2000)}));
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection,appProcesses:processes});
+    });
+    await expect(page.locator('#liveRankingRegion tbody tr')).toHaveCount(12);
+    await expect(page.locator('#liveRankingRegion tbody tr').first()).toContainText('App11');
+    await page.locator('#liveSort').selectOption('rx');
+    await expect(page.locator('#liveRankingRegion tbody tr').first()).toContainText('App0');
+    await page.locator('.nav [data-page="apps"]').click();await page.locator('#appGrouping').selectOption('live');
+    await expect(page.locator('#appListRegion tbody tr')).toHaveCount(12);
+    await page.locator('#appSort').selectOption('tx');await expect(page.locator('#appListRegion tbody tr').first()).toContainText('App11');
+});
+
+test('下载限速提交和取消使用独立方向',async()=>{
+    test.skip(process.platform!=='win32');
+    await openApplications();await page.locator('[data-action="application-control"]').click();
+    await page.locator('[data-action="choose-program"]').click();
+    await page.locator('#downloadKBps').fill('256');await page.locator('#appDownloadThrottleForm button[type="submit"]').click();
+    await expect(page.locator('#appControlRegion')).toContainText('partial failure');
+    await page.locator('[data-operation="unthrottle"][data-direction="download"]').click();
+    const calls=await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'));
+    expect(calls[0].params).toMatchObject({action:'throttle',downloadKBps:256});
+    expect(calls[0].params.uploadKBps).toBeUndefined();
+    expect(calls[1].params).toMatchObject({action:'unthrottle',direction:'download'});
+});
+
 test('独立应用页跨网络汇总、历史筛选及深链接',async()=>{
     await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot;
         s.networks.push({...s.networks[0],id:'second',alias:'Second'});
@@ -90,7 +119,7 @@ test('应用断网入口复用原生选择、阻止、解除及上传限速失�
     await page.locator('[data-operation="unblock"]').click();
     await expect(page.locator('#appControlRegion dt').filter({hasText:'防火墙规则'}).locator('+ dd')).toHaveText('未配置');
     await page.locator('#uploadKBps').fill('0.125');
-    await page.locator('#appThrottleForm button').click();
+    await page.locator('#appThrottleForm button[type="submit"]').click();
     await expect(page.locator('#appControlRegion')).toContainText('partial failure');
     await expect(page.locator('#appControlRegion')).toContainText('readback failed');
     const calls=await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'));

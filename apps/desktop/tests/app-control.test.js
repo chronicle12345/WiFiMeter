@@ -67,6 +67,39 @@ test('hostile but valid filename remains data, never script text', async () => {
     const { script, data } = decode(calls[0]);
     assert.equal(data.Path, path); assert.equal(script.includes('INJECTED'), false);
 });
+
+test('download and combined limits preserve independent rates in the native request', async () => {
+    const { control, calls } = harness();
+    for (const rates of [{ downloadKBps: 12.5 }, { uploadKBps: 0.125, downloadKBps: 125 }]) {
+        assert.equal((await control.request({ action: 'throttle', path: program, ...rates })).ok, true);
+        const { data, script } = decode(calls.at(-1));
+        assert.equal(data.UploadKbps, (rates.uploadKBps ?? 0) * 8);
+        assert.equal(data.DownloadKbps, rates.downloadKBps * 8);
+        assert.match(script, /-DownloadKbps/);
+    }
+});
+
+test('limits can be removed independently; the default removes both directions', async () => {
+    const { control, calls } = harness();
+    for (const direction of [undefined, 'upload', 'download', 'both']) {
+        assert.equal((await control.request({ action: 'unthrottle', path: program, ...(direction ? { direction } : {}) })).ok, true);
+        assert.equal(decode(calls.at(-1)).data.Direction, direction ?? 'both');
+    }
+});
+
+test('download validation rejects invalid rates and misplaced directions', async () => {
+    const { control, calls } = harness();
+    for (const downloadKBps of [undefined, null, '1', 0, -1, NaN, Infinity, 0.01, 125000001]) {
+        assert.equal((await control.request({ action: 'throttle', path: program, downloadKBps })).error.code, 'invalidRequest');
+    }
+    for (const request of [
+        { action: 'throttle', uploadKBps: 1, downloadKBps: 0 },
+        { action: 'read', downloadKBps: 1 },
+        { action: 'throttle', uploadKBps: 1, direction: 'download' },
+        { action: 'unthrottle', direction: 'invalid' }
+    ]) assert.equal((await control.request({ path: program, ...request })).error.code, 'invalidRequest');
+    assert.equal(calls.length, 0);
+});
 test('rejects invalid parameters before launching', async () => {
     const { control, calls } = harness();
     const bad = [null, [], {}, { action: 'Block', path: program }, { action: 'read', path: program, script: 'evil' }];

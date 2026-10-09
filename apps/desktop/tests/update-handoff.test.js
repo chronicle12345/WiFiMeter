@@ -11,12 +11,25 @@ import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
+const { createNativeAdapter } = require('../tauri/native-adapter.cjs');
 const digest = createHash('sha256').update('verified fixture').digest('hex');
 const directory = fileURLToPath(new URL('../electron/', import.meta.url));
 
-async function harness({ failure, paused = false, appsEnabled = false, updateFactory } = {}) {
+async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions } = {}) {
     let ready, window, backend, hooks, quitCount = 0, releaseReady;
-    const handlers = new Map(), calls = [], updates = [];
+    const handlers = new Map(), calls = [], updates = [], nativeMessages = [];
+    const native = nativeExitDecisions ? createNativeAdapter({
+        configuration: { userData: 'fixture' },
+        send(message) {
+            nativeMessages.push(message);
+            if (message.type === 'quit') quitCount++;
+            else if (message.type === 'native') {
+                assert.equal(message.method, 'app:confirmQuit');
+                const result = nativeExitDecisions.shift();
+                queueMicrotask(() => native.receive({ type: 'native-result', id: message.id, ok: true, result }));
+            }
+        }
+    }) : null;
     const handoffReady = new Promise(resolve => { releaseReady = resolve; });
     class Window extends EventEmitter {
         constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send(channel, value) { if (channel === 'updates:status') updates.push(value); }, session: { setPermissionRequestHandler() {} } }); }
@@ -39,16 +52,18 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
             this.running = false; this.shutdownPending = false;
         }
         async waitForShutdown() { calls.push('waitForShutdown'); if (this.shutdownPending) throw Error('still saving'); }
+        async stop() { this.running = false; }
     }
-    const app = new EventEmitter();
+    const app = native?.app || new EventEmitter();
     Object.assign(app, { isPackaged: false, getVersion: () => '1.2.0', getPath: () => 'fixture', setPath() {}, requestSingleInstanceLock: () => true,
-        whenReady: () => ({ then(fn) { ready = fn(); return ready; } }), quit() { quitCount++; app.emit('before-quit', { preventDefault() {} }); } });
+        whenReady: () => ({ then(fn) { ready = fn(); return ready; } }) });
+    if (!native) app.quit = () => { quitCount++; app.emit('before-quit', { preventDefault() {} }); };
     const imports = {
         electron: { app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
         'node:fs': { existsSync: () => true },
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
-        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, handleWindowClose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, handleWindowClose() {}, dispose() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => ({ found: false }) },
         './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
@@ -68,7 +83,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
     });
     await ready; await new Promise(setImmediate); assert.equal(calls.filter(call => call === 'tray').length, 1); backend.paused = paused; backend.appsEnabled = appsEnabled; calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { backend, calls, hooks, updates, releaseReady, get quitCount() { return quitCount; }, invoke: (name, payload) => handlers.get(name)(event, payload) };
+    return { app, backend, calls, hooks, updates, nativeMessages, releaseReady, get quitCount() { return quitCount; }, invoke: (name, payload) => handlers.get(name)(event, payload) };
 }
 
 for (const paused of [false, true]) test(`handoff failure restores original paused=${paused}`, async () => {
@@ -104,6 +119,28 @@ test('shutdown still pending keeps protection and gives an explicit recovery fai
     assert.equal(h.backend.paused, false);
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
+for (const failure of ['handoff', 'shutdown']) test(`Tauri requests a fresh exit confirmation after ${failure} recovery`, async () => {
+    const h = await harness({ failure, nativeExitDecisions: [true, false] });
+    let result = await h.invoke('updates:install');
+    assert.equal(result.state, 'error');
+    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 1);
+    if (failure === 'shutdown') {
+        assert.equal(result.recoveryRequired, true);
+        h.backend.shutdownPending = false; h.backend.running = false;
+        result = await h.invoke('updates:install');
+        assert.equal(result.state, 'recovered');
+    }
+    assert.equal(result.recoveryRequired, false);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+
+    h.app.quit();
+    await new Promise(setImmediate);
+    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 2,
+        '恢复使用后退出应再次确认，不能沿用安装更新前的确认结果');
+    assert.equal(h.quitCount, 0);
+    assert.equal(h.backend.running, true);
+});
+
 test('main quits only after handoff READY', async () => {
     const h = await harness();
     const installing = h.invoke('updates:install');
@@ -244,24 +281,28 @@ test('helper spawn error rejects without GO', async () => {
     assert.equal(h.child.stdin.read()?.toString().includes('GO'), undefined);
 });
 
-test('the download service passes its verified release digest to the handoff hook', async () => {
+for (const runtime of ['electron', 'tauri']) test(`${runtime} download passes its verified release digest to the handoff hook`, async () => {
     const module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'updates.cjs'), 'utf8'), {
-        module, AbortSignal, globalThis,
+        module, AbortSignal, globalThis, process: { env: { WIFIMETER_DESKTOP_RUNTIME: runtime } },
         require: name => name === 'node:fs/promises' ? {
             readFile: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
             mkdir: async () => {}, rename: async () => {}, unlink: async () => {}
         } : name === 'node:fs' ? { createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }) } : require(name)
     });
     let metadata;
+    const assetName = runtime === 'tauri' ? 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe' : 'WiFiMeter-1.3.0-x64-Setup.exe';
     const service = module.exports.createUpdateService({
         currentVersion: '1.2.0', platform: 'win32', arch: 'x64', userData: 'fixture',
         fetch: async url => url.includes('api.github.com') ? Response.json({ tag_name: 'v1.3.0', assets: [{
-            name: 'WiFiMeter-1.3.0-x64-Setup.exe', digest: `sha256:${digest}`,
-            browser_download_url: 'https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/WiFiMeter-1.3.0-x64-Setup.exe'
+            name: assetName, digest: `sha256:${digest}`,
+            browser_download_url: `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/${assetName}`
         }] }) : new Response('verified fixture'),
         confirm: async () => true, beforeInstall: async () => {},
-        launchInstaller: async (file, argv, verified) => { assert.equal(argv.length, 0); metadata = verified; }
+        launchInstaller: async (file, argv, verified) => {
+            assert.ok(file.endsWith(assetName));
+            assert.equal(argv.length, 0); metadata = verified;
+        }
     });
     assert.equal((await service.install()).state, 'installing');
     assert.equal(metadata.digest, digest);

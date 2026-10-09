@@ -91,5 +91,33 @@ int main()
     WIFIMETER_CHECK(store->clearUsage().ok);
     WIFIMETER_CHECK(store->usage().appRange("", "2026-01-01", "2026-09-30", status).empty());
     WIFIMETER_CHECK_EQ(store->networks().all(status).size(), std::size_t{2});
+
+    // Existing daily data cannot be reconstructed as minute measurements.
+    WIFIMETER_CHECK(store->usage().setDaily("home", "2026-09-30", 700, 300).ok);
+    WIFIMETER_CHECK(store->usage().minuteRange("home", "2026-09-30", "2026-09-30", status).empty());
+    const auto end = utcTime(2026, 9, 30, 12, 1, 5) + std::chrono::milliseconds(750);
+    const auto split = minuteUsageOf("home", end, std::chrono::seconds(10), large, 21);
+    WIFIMETER_CHECK_EQ(split.size(), std::size_t{2});
+    core::ByteCount rxSum=0, txSum=0;
+    for (const auto& row : split) { rxSum+=row.rxBytes; txSum+=row.txBytes; WIFIMETER_CHECK(store->usage().addMinute(row).ok); }
+    WIFIMETER_CHECK_EQ(rxSum, large); WIFIMETER_CHECK_EQ(txSum, core::ByteCount{21});
+    const auto minuteRows = store->usage().minuteRange("home", "2026-09-30", "2026-09-30", status, 721, 721);
+    WIFIMETER_CHECK_EQ(minuteRows.size(), std::size_t{1});
+    if (!minuteRows.empty()) WIFIMETER_CHECK_EQ(minuteRows[0].rxBytes, core::ByteCount{4503599627370497ULL});
+    const auto exact = minuteUsageOf("home",utcTime(2026,9,30,12,2,0),std::chrono::seconds(5),10,5);
+    WIFIMETER_CHECK_EQ(exact.size(), std::size_t{1});
+    if (!exact.empty()) WIFIMETER_CHECK_EQ(exact[0].minute, 1);
+    WIFIMETER_CHECK(!store->usage().addMinute({"home","2026-09-30",12,60,1,0}).ok);
+    WIFIMETER_CHECK(store->usage().addMinute({"home","2026-09-30",12,2,maximum,0}).ok);
+    WIFIMETER_CHECK(!store->usage().addMinute({"home","2026-09-30",12,2,1,0}).ok);
+    WIFIMETER_CHECK(store->usage().addAppMinute({"office","2026-09-30",12,0,"browser","Browser",large,1}).ok);
+    WIFIMETER_CHECK(!store->usage().addAppMinute({"missing","2026-09-30",12,0,"browser","Browser",1,0}).ok);
+    WIFIMETER_CHECK(store->usage().addMinute({"office","2026-09-30",12,0,1,2}).ok);
+    WIFIMETER_CHECK(store->usage().removeNetwork("office").ok);
+    WIFIMETER_CHECK(store->usage().minuteRange("office","2026-09-30","2026-09-30",status).empty());
+    WIFIMETER_CHECK(store->usage().appMinuteRange("office","2026-09-30","2026-09-30",status).empty());
+    WIFIMETER_CHECK(store->clearUsage().ok);
+    WIFIMETER_CHECK(store->usage().minuteRange("","2026-09-30","2026-09-30",status).empty());
+    WIFIMETER_CHECK(store->usage().appMinuteRange("","2026-09-30","2026-09-30",status).empty());
     return WIFIMETER_REPORT();
 }

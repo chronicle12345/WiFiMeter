@@ -178,8 +178,8 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .application-control>dl dd{margin:0;overflow-wrap:anywhere}
 .application-control .settings-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0}
 .application-control .settings-actions .btn{min-height:40px;font-size:12px}
-.application-control #appThrottleForm{padding:18px;border:1px solid var(--line);border-radius:12px;margin-top:22px}
-.application-control #appThrottleForm>.btn{width:100%;min-height:40px}
+.application-control :is(#appThrottleForm,#appDownloadThrottleForm){padding:18px;border:1px solid var(--line);border-radius:12px;margin-top:22px}
+.application-control :is(#appThrottleForm,#appDownloadThrottleForm)>.btn{width:100%;min-height:40px}
 .application-summary .kv-grid{margin-top:0}
 .drawer-head>[data-action="close-drawer"]{margin-bottom:12px}
 @media(max-width:650px){.applications-toolbar .search-box{flex-basis:100%}.application-view-switch{gap:8px}.application-control>dl{grid-template-columns:1fr;gap:5px}.application-control>dl dd{margin-bottom:8px}}
@@ -210,9 +210,13 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 /* Image icons share the existing avatar box; text fallback stays unchanged. */
 .app-avatar img { width:100%; height:100%; object-fit:contain; }
 .app-avatar.app-avatar--compact { width:24px; height:24px; display:inline-grid; margin-right:8px; vertical-align:middle; }
+.live-ranking-panel{margin-top:14px;min-width:0}
+.live-ranking-panel .applications-content{padding-top:0}
+.minute-history-note{margin:0;padding:0 22px 14px;line-height:1.8}
 
-/* 总览将剩余视口高度分配给趋势图和额度卡片，内容增多时允许文档自然滚动。 */
+/* 总览首屏将剩余高度分配给趋势图和额度卡片，实时排行在下方随文档滚动。 */
 html[data-page="overview"] #content>.panel,
+html[data-page="overview"] .overview-summary>.panel,
 html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 .quota-card .panel-head{align-items:flex-start}
 .quota-card .panel-head>.icon-btn{background:var(--accent-soft);color:var(--accent);flex-shrink:0}
@@ -223,13 +227,13 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 .quota-card .progress-meta{line-height:1.7;flex-wrap:wrap}
 @media(min-width:761px){
  html[data-page="overview"] .main{padding:16px 22px 20px;min-height:100dvh;display:flex;flex-direction:column}
- html[data-page="overview"] #content{display:flex;flex-direction:column;flex:1}
- html[data-page="overview"] #content>*{flex-shrink:0}
- html[data-page="overview"] #content>.toolbar,
- html[data-page="overview"] #content>.connection,
- html[data-page="overview"] #content>.metrics,
- html[data-page="overview"] #content>.total-quota-card,
- html[data-page="overview"] #content>.chart-row{margin-bottom:10px}
+ html[data-page="overview"] .overview-summary{display:flex;flex-direction:column;min-height:calc(100dvh - 36px)}
+ html[data-page="overview"] .overview-summary>*{flex-shrink:0}
+ html[data-page="overview"] .overview-summary>.toolbar,
+ html[data-page="overview"] .overview-summary>.connection,
+ html[data-page="overview"] .overview-summary>.metrics,
+ html[data-page="overview"] .overview-summary>.total-quota-card,
+ html[data-page="overview"] .overview-summary>.chart-row{margin-bottom:10px}
  html[data-page="overview"] #content .connection{padding:12px 18px}
  html[data-page="overview"] #content .metric{padding:12px 18px}
  html[data-page="overview"] #content .metric-number{font-size:30px;margin-top:4px;line-height:1.25}
@@ -238,7 +242,7 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] #content .total-quota-values{padding:0;gap:16px;font-size:12px}
  html[data-page="overview"] #content .total-quota-card>.progress{grid-column:1/-1;margin:0}
  html[data-page="overview"] #content .chart-row{gap:12px;grid-template-columns:minmax(0,1.8fr) minmax(250px,1fr);flex:1}
- html[data-page="overview"] #content>.chart-row:last-child{margin-bottom:0}
+ html[data-page="overview"] .overview-summary>.chart-row:last-child{margin-bottom:0}
  html[data-page="overview"] #content .chart-row>.panel:first-child{display:flex;flex-direction:column}
  html[data-page="overview"] #content .chart-wrap{display:flex;flex:1;min-height:125px}
  html[data-page="overview"] #content .quota-card{align-self:stretch}
@@ -276,11 +280,11 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 
 /* 矮窗口减少五组区块间距共 20px，保留图表和提示的完整内容。 */
 @media(min-width:761px) and (max-height:650px){
- html[data-page="overview"] #content>.toolbar,
- html[data-page="overview"] #content>.connection,
- html[data-page="overview"] #content>.metrics,
- html[data-page="overview"] #content>.total-quota-card,
- html[data-page="overview"] #content>.chart-row{margin-bottom:6px}
+ html[data-page="overview"] .overview-summary>.toolbar,
+ html[data-page="overview"] .overview-summary>.connection,
+ html[data-page="overview"] .overview-summary>.metrics,
+ html[data-page="overview"] .overview-summary>.total-quota-card,
+ html[data-page="overview"] .overview-summary>.chart-row{margin-bottom:6px}
  html[data-page="overview"] #content .quota-summary{padding:8px 0}
  html[data-page="overview"] #content .quota-main{font-size:34px;margin-top:6px}
  html[data-page="overview"] #content .quota-body{padding-bottom:12px}

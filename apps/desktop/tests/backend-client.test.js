@@ -68,6 +68,13 @@ function clientFor(executable, directory, options = {}) {
     });
 }
 
+function isolatedAdapterArgs(directory) {
+    const adapter = path.join(directory, 'adapters.json'), counters = path.join(directory, 'counters.json');
+    fs.writeFileSync(adapter, JSON.stringify({ adapters: [] }));
+    fs.writeFileSync(counters, JSON.stringify({ interfaces: [] }));
+    return ['--fake-adapter', adapter, '--fake-counters', counters];
+}
+
 test('解析可执行文件位置：环境变量优先', () => {
     const previous = process.env.WIFIMETER_BACKEND;
     process.env.WIFIMETER_BACKEND = '/tmp/自定义后端';
@@ -232,7 +239,7 @@ test('真实后端可用时协议一致', async t => {
     }
 
     const directory = temporaryDirectory('backend-real');
-    const client = clientFor(executable, directory, { requestTimeout: 20000 });
+    const client = clientFor(executable, directory, { requestTimeout: 20000, args: isolatedAdapterArgs(directory) });
     client.start();
 
     const hello = await client.request('hello');
@@ -264,7 +271,7 @@ test('数据库确实由后端写入', async t => {
 
     const directory = temporaryDirectory('backend-db');
     const databasePath = path.join(directory, 'meter.db');
-    const client = new BackendClient({ executable, databasePath, requestTimeout: 20000 });
+    const client = new BackendClient({ executable, databasePath, requestTimeout: 20000, args: isolatedAdapterArgs(directory) });
     client.start();
     await client.request('updateSettings', { settings: { unit: 'GiB', retention: 30 } });
     await client.stop();

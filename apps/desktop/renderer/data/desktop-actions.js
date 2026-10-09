@@ -12,12 +12,18 @@ export function createAppControlModel(desktop) {
             this.state = null; this.warning = ''; this.error = '';
         },
         async choose() { return operate(() => desktop.appControl.chooseProgram()); },
-        async run(action, uploadKBps) {
+        async run(action, options) {
             if (!this.path) return;
-            if (action === 'throttle' && (!Number.isFinite(uploadKBps) || !Number.isSafeInteger(uploadKBps * 8) || uploadKBps < 0.125 || uploadKBps > 125000000)) {
-                this.error = t('上传速率须为 0.125 到 125000000 KB/s，且为 0.125 的整数倍。'); return;
+            const values = typeof options === 'number' ? { uploadKBps: options } : options || {};
+            if (action === 'throttle') {
+                const rates = ['uploadKBps', 'downloadKBps'].filter(key => Object.hasOwn(values, key));
+                if (!rates.length || rates.some(key => !Number.isFinite(values[key]) || !Number.isSafeInteger(values[key] * 8) || values[key] < 0.125 || values[key] > 125000000)) {
+                    this.error = t('限速须为 0.125 到 125000000 KB/s，且为 0.125 的整数倍。'); return;
+                }
             }
-            return operate(() => desktop.appControl.request({ action, path: this.path, ...(action === 'throttle' ? { uploadKBps } : {}) }));
+            const parameters = action === 'throttle' ? Object.fromEntries(['uploadKBps', 'downloadKBps'].filter(key => Object.hasOwn(values, key)).map(key => [key, values[key]]))
+                : action === 'unthrottle' && values.direction ? { direction: values.direction } : {};
+            return operate(() => desktop.appControl.request({ action, path: this.path, ...parameters }));
         }
     };
     async function operate(call) {
