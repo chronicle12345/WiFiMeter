@@ -10,6 +10,7 @@ import { PassThrough, Readable, Writable } from 'node:stream';
 import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 const require = createRequire(import.meta.url);
 const { createNativeAdapter } = require('../tauri/native-adapter.cjs');
 const digest = createHash('sha256').update('verified fixture').digest('hex');
@@ -452,13 +453,24 @@ for (const runtime of ['Node', 'Electron', 'Electron ASAR']) test(`Windows ${run
     const packageDirectory = path.join(packageRoot, 'electron');
     const archive = path.join(root, 'app.asar');
     fs.writeFileSync(installer, 'verified fixture');
-    t.after(() => {
-        for (const file of [marker, installer, path.join(root, 'parent.cjs'), archive]) fs.rmSync(file, { force: true });
+    t.after(async () => {
+        const removeFile = async file => {
+            const deadline = Date.now() + 5000;
+            while (true) {
+                try { await fs.promises.rm(file, { force: true }); return; }
+                catch (error) {
+                    if (!['EBUSY', 'EPERM'].includes(error.code) || Date.now() >= deadline) throw error;
+                    // The launch marker is written before the detached helper releases its file lock.
+                    await delay(50);
+                }
+            }
+        };
+        for (const file of [marker, installer, path.join(root, 'parent.cjs'), archive]) await removeFile(file);
         if (fs.existsSync(packageDirectory)) {
-            for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) fs.rmSync(path.join(packageDirectory, file), { force: true });
-            fs.rmdirSync(packageDirectory); fs.rmdirSync(packageRoot);
+            for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) await removeFile(path.join(packageDirectory, file));
+            await fs.promises.rmdir(packageDirectory); await fs.promises.rmdir(packageRoot);
         }
-        fs.rmdirSync(updates); fs.rmdirSync(root);
+        await fs.promises.rmdir(updates); await fs.promises.rmdir(root);
     });
     const source = fs.readFileSync(path.join(directory, 'update-handoff.cjs'), 'utf8');
     let bundleDirectory = directory;
