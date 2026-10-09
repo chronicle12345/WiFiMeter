@@ -74,8 +74,13 @@ test('总览展示全部实时应用并按下载、上传速度排序',async()=>
 });
 
 test('下载限速提交和取消使用独立方向',async()=>{
-    test.skip(process.platform!=='win32');
     await openApplications();await page.locator('[data-action="application-control"]').click();
+    if(process.platform!=='win32'){
+        await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
+        await expect(page.locator('#downloadKBps, #appDownloadThrottleForm, [data-direction="download"]')).toHaveCount(0);
+        expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'))).toEqual([]);
+        return;
+    }
     await page.locator('[data-action="choose-program"]').click();
     await page.locator('#downloadKBps').fill('256');await page.locator('#appDownloadThrottleForm button[type="submit"]').click();
     await expect(page.locator('#appControlRegion')).toContainText('partial failure');
@@ -107,7 +112,7 @@ test('独立应用页跨网络汇总、历史筛选及深链接',async()=>{
 test('应用断网入口复用原生选择、阻止、解除及上传限速失败回读',async()=>{
     await openApplications();await page.locator('[data-action="application-control"]').click();
     if(process.platform!=='win32'){
-        await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+        await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
         await expect(page.locator('[data-action="choose-program"], [data-operation], #uploadKBps')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'))).toEqual([]);
         return;
@@ -263,7 +268,7 @@ test('measured proxy live rates appear without adding loopback bytes to history'
  if(process.platform==='win32')await page.locator('#uploadKBps').fill('96');
  else{
   await expect(page.locator('#uploadKBps')).toHaveCount(0);
-  await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+  await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
  }
  await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,appCollection:{enabled:true,available:true,state:'running'},appProcesses:[{appId:'C:\\Apps\\Browser.exe',name:'Browser',processId:42,networkId:'',scope:'loopback',rxPerSecond:'9000',txPerSecond:'1000',measurementAvailable:true}]});});
  await expect(page.locator('.application-summary')).toContainText('9.0 KB/s');

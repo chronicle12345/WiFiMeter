@@ -139,7 +139,7 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     await page.locator('[data-action="app-history-sort"][data-key="total"]').click();
     await page.locator('[data-action="select-app-row"]').first().click();
     if(process.platform==='win32')await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
-    else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+    else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
     await page.keyboard.press('Escape');
     await page.evaluate(()=>{window.savedAppRow=document.querySelector('#appListRegion tbody tr');});
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
@@ -154,7 +154,7 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
 test('应用控制展示失败回读，上传 KB/s 原样传桥且无后台轮询',async()=>{
     await allHistory();await apps();await page.locator('[data-action="application-control"]').click();
     if(process.platform!=='win32'){
-        await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传限速。');
+        await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
         await expect(page.locator('[data-action="choose-program"]')).toHaveCount(0);
         await expect(page.locator('#appThrottleForm')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control'))).toEqual([]);

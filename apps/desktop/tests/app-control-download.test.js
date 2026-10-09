@@ -9,6 +9,12 @@ const native = fileURLToPath(new URL('../native/windows/', import.meta.url));
 const source = path.join(native, 'DownloadLimiter.cs');
 const modulePath = path.join(native, 'AppNetworkControl.psm1');
 const windows = { skip: process.platform !== 'win32' };
+const nativeWindowsArchitecture = (process.env.PROCESSOR_ARCHITEW6432 || process.env.PROCESSOR_ARCHITECTURE || process.arch).toLowerCase();
+const windowsWithWinDivert = {
+    skip: process.platform !== 'win32' || !['amd64', 'x64', 'x86', 'ia32'].includes(nativeWindowsArchitecture)
+        ? `Bundled WinDivert DLLs require Windows x64/ia32; host is ${process.platform}/${nativeWindowsArchitecture}.`
+        : false
+};
 function powershell(script) {
     const command = `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)\n${script}`;
     return execFileSync(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -37,7 +43,10 @@ function mockDaemonSource() {
         WinDivertShutdown: 'private static bool WinDivertShutdown(IntPtr handle, uint how) { NativeMock.Stopped = true; return true; }',
         WinDivertSetParam: 'private static bool WinDivertSetParam(IntPtr handle, int parameter, ulong value) { return true; }'
     };
-    return `$nativeSource = [IO.File]::ReadAllText(${literal(source)})
+    // Match the product's native-architecture precedence in this child process; DLL calls below are mocked.
+    return `$env:PROCESSOR_ARCHITECTURE = 'AMD64'
+$env:PROCESSOR_ARCHITEW6432 = ''
+$nativeSource = [IO.File]::ReadAllText(${literal(source)})
 ${Object.entries(replacements).map(([name, replacement]) => {
         const declaration = String.raw`\[DllImport\([^\n]*\] private static extern [^\n]*\b${name}\([^\n]*\);`;
         return `if ([Text.RegularExpressions.Regex]::Matches($nativeSource, ${literal(declaration)}).Count -ne 1) { throw 'Mock boundary not found exactly once: ${name}' }
@@ -102,6 +111,39 @@ test('the download support script is readable by Windows PowerShell 5.1', () => 
     const bytes = readFileSync(path.join(native, 'DownloadNetworkControl.ps1'));
     assert.equal(bytes.subarray(0, 3).toString('hex'), 'efbbbf');
     assert.equal(bytes.subarray(3).toString('utf8').startsWith('#requires -Version 5.1'), true);
+});
+
+test('native and emulated Windows ARM64 reject download limits before native initialization', windows, () => {
+    const result = JSON.parse(powershell(`
+$module = Import-Module -Name ${literal(modulePath)} -Force -PassThru
+& $module {
+    function script:Initialize-MeterDownloadControl { throw 'Unexpected native initialization on ARM64' }
+    $states = @()
+    foreach ($architecture in @('ARM64', 'AMD64')) {
+        $env:PROCESSOR_ARCHITECTURE = $architecture
+        $env:PROCESSOR_ARCHITEW6432 = if ($architecture -eq 'ARM64') { '' } else { 'ARM64' }
+        $support = Get-MeterDownloadSupport
+        $state = Get-MeterDownloadState 'C:\\Apps\\limited.exe'
+        $limitError = $null
+        try { Invoke-MeterDownloadMutation -Path 'C:\\Apps\\limited.exe' -DownloadKbps 100 -OwnerPid $PID } catch { $limitError = $_.Exception.Message }
+        Invoke-MeterDownloadMutation -Path 'C:\\Apps\\limited.exe' -DownloadKbps 0 -OwnerPid $PID
+        $states += [pscustomobject]@{ Architecture=$architecture; Support=$support; State=$state; LimitError=$limitError }
+    }
+    $states
+} | ConvertTo-Json -Depth 5 -Compress
+`));
+    assert.equal(result.length, 2);
+    for (const row of result) {
+        assert.equal(row.Support.Supported, false);
+        assert.equal(row.Support.Code, 'DownloadArchitectureUnsupported');
+        assert.equal(row.Support.Dll, null);
+        assert.equal(row.State.Supported, false);
+        assert.equal(row.State.Throttled, false);
+        assert.equal(row.State.Kbps, null);
+        assert.equal(row.State.ErrorCode, 'DownloadArchitectureUnsupported');
+        assert.equal(row.State.Error, row.Support.Error);
+        assert.equal(row.LimitError, row.Support.Error);
+    }
 });
 
 test('download limiter compiles on .NET Framework and meters elapsed payload bytes', windows, () => {
@@ -189,7 +231,7 @@ $output | ConvertTo-Json -Compress
     }
 });
 
-test('the bundled WinDivert DLL compiles capture filters and uses the expected flow address ABI', windows, () => {
+test('the bundled WinDivert DLL compiles capture filters and uses the expected flow address ABI', windowsWithWinDivert, () => {
     const result = JSON.parse(powershell(`
 Add-Type -Path ${literal(source)}
 Add-Type -TypeDefinition @'
