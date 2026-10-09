@@ -39,14 +39,16 @@ const env = {
     WIFIMETER_TEST_ISOLATION: '1',
     WIFIMETER_BACKGROUND_TEST: '1',
     WIFIMETER_SOFTWARE_RENDERING: '1',
+    WIFIMETER_TAURI_TEST_PORT: String(port),
     WIFIMETER_FAKE_ADAPTER: path.join(profile, 'adapters.json'),
     WIFIMETER_FAKE_COUNTERS: path.join(profile, 'counters.json'),
-    WIFIMETER_FAKE_APPS: path.join(profile, 'apps.json'),
-    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${port} --disable-gpu --disable-renderer-backgrounding --disable-backgrounding-occluded-windows`
+    WIFIMETER_FAKE_APPS: path.join(profile, 'apps.json')
 };
-for (const key of ['ELECTRON_RUN_AS_NODE', 'WIFIMETER_BACKEND', 'WIFIMETER_RESOURCES_PATH', 'WIFIMETER_NODE', 'WEBVIEW2_USER_DATA_FOLDER']) delete env[key];
+for (const key of ['ELECTRON_RUN_AS_NODE', 'WIFIMETER_BACKEND', 'WIFIMETER_RESOURCES_PATH', 'WIFIMETER_NODE', 'WEBVIEW2_USER_DATA_FOLDER', 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']) delete env[key];
+const startedAt = new Date().toISOString();
 const child = spawn(executable, [], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let diagnostic = '', launchError, browser, exited = false;
+let lastCdpRequest = null, cdpRequests = 0;
 child.on('error', error => { launchError = error; });
 child.on('exit', () => { exited = true; });
 for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { diagnostic += chunk; });
@@ -69,14 +71,105 @@ async function runPowerShell(script) {
     return stdout;
 }
 
+const errorDetails = error => ({
+    message: error instanceof Error ? error.message : String(error),
+    code: error?.code ?? null,
+    causeCode: error?.cause?.code ?? null
+});
+
+function testProcessTreeScript() {
+    assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, 'Test host PID is unavailable.');
+    return `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$hostProcessId = ${child.pid}
+$processRecords = New-Object 'Collections.Generic.List[object]'
+$collectionErrors = New-Object 'Collections.Generic.List[object]'
+$pending = New-Object 'Collections.Generic.Queue[uint32]'
+$visited = New-Object 'Collections.Generic.HashSet[uint32]'
+$properties = @('ProcessId', 'ParentProcessId', 'Name', 'CommandLine', 'SessionId')
+try {
+    foreach ($record in @(Get-CimInstance Win32_Process -Filter "ProcessId = $hostProcessId" -Property $properties)) { $processRecords.Add($record) }
+} catch { $collectionErrors.Add([pscustomobject]@{ stage='hostProcess'; processId=$hostProcessId; message=$_.Exception.Message }) }
+$null = $visited.Add($hostProcessId)
+$pending.Enqueue($hostProcessId)
+while ($pending.Count -gt 0) {
+    $parentProcessId = $pending.Dequeue()
+    try {
+        foreach ($record in @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $parentProcessId" -Property $properties)) {
+            if ($visited.Add($record.ProcessId)) { $processRecords.Add($record); $pending.Enqueue($record.ProcessId) }
+        }
+    } catch { $collectionErrors.Add([pscustomobject]@{ stage='descendants'; processId=$parentProcessId; message=$_.Exception.Message }) }
+}
+$testProcesses = @($processRecords | Select-Object ProcessId, ParentProcessId, Name, CommandLine, SessionId)`;
+}
+
 async function workerProcesses() {
-    const result = await runPowerShell(`$ErrorActionPreference = 'Stop'
-$processes = @(Get-CimInstance Win32_Process)
-$children = @($processes | Where-Object { $_.ParentProcessId -eq ${child.pid} })
-$descendants = @($processes | Where-Object { $_.ParentProcessId -in $children.ProcessId })
-@(@($children) + @($descendants) | Where-Object { $_.Name -in @('node.exe', 'wifimeter-backend.exe') } | Select-Object ProcessId, Name) | ConvertTo-Json -Compress`);
-    const records = JSON.parse(result);
-    return Array.isArray(records) ? records : [records];
+    const result = await runPowerShell(`${testProcessTreeScript()}
+if ($collectionErrors.Count) { throw ($collectionErrors | ConvertTo-Json -Compress) }
+ConvertTo-Json -InputObject @($testProcesses | Where-Object { $_.Name -in @('node.exe', 'wifimeter-backend.exe') } | Select-Object ProcessId, Name) -Compress`);
+    return JSON.parse(result);
+}
+
+async function writeStartupDiagnostics(error) {
+    const environmentValue = name => {
+        const key = Object.keys(env).find(key => key.toUpperCase() === name);
+        return key === undefined ? null : env[key] ?? null;
+    };
+    const details = {
+        startedAt, capturedAt: new Date().toISOString(), executable,
+        failure: errorDetails(error),
+        host: { pid: child.pid ?? null, exited, exitCode: child.exitCode, signalCode: child.signalCode },
+        cdp: { endpoint, requests: cdpRequests, lastRequest: lastCdpRequest },
+        webview2Environment: Object.fromEntries([
+            'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', 'WEBVIEW2_BROWSER_EXECUTABLE_FOLDER',
+            'WEBVIEW2_RELEASE_CHANNEL_PREFERENCE', 'WEBVIEW2_USER_DATA_FOLDER'
+        ].map(name => [name, environmentValue(name)])),
+        proxyEnvironmentSet: Object.fromEntries(['NODE_USE_ENV_PROXY', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']
+            .map(name => [name, environmentValue(name) !== null]))
+    };
+    try {
+        const result = await runPowerShell(`${testProcessTreeScript()}
+$diagnosticContext = $null
+try {
+    $diagnosticProcess = [Diagnostics.Process]::GetCurrentProcess()
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        try {
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+            $diagnosticContext = [pscustomobject]@{ ProcessId=$diagnosticProcess.Id; SessionId=$diagnosticProcess.SessionId;
+                IsAdministrator=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
+        } finally { $identity.Dispose() }
+    } finally { $diagnosticProcess.Dispose() }
+} catch { $collectionErrors.Add([pscustomobject]@{ stage='diagnosticContext'; message=$_.Exception.Message }) }
+$cdpListeners = @()
+$descendantListeners = @()
+try {
+    $cdpListeners = @(Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetTCPConnection -Filter 'State = 2 AND LocalPort = ${port}' |
+        Select-Object LocalAddress, LocalPort, OwningProcess, State)
+} catch { $collectionErrors.Add([pscustomobject]@{ stage='cdpListeners'; message=$_.Exception.Message }) }
+$descendantIds = @($testProcesses | Where-Object { $_.ProcessId -ne $hostProcessId } | ForEach-Object { $_.ProcessId })
+if ($descendantIds.Count -gt 0) {
+    $ownerFilter = ($descendantIds | ForEach-Object { "OwningProcess = $_" }) -join ' OR '
+    try {
+        $descendantListeners = @(Get-CimInstance -Namespace root/StandardCimv2 -ClassName MSFT_NetTCPConnection -Filter "State = 2 AND ($ownerFilter)" |
+            Select-Object LocalAddress, LocalPort, OwningProcess, State)
+    } catch { $collectionErrors.Add([pscustomobject]@{ stage='descendantListeners'; message=$_.Exception.Message }) }
+}
+$hostWindow = $null
+try {
+    $nativeHost = Get-Process -Id $hostProcessId
+    try {
+        $nativeHost.Refresh()
+        $hostWindow = [pscustomobject]@{ ProcessId=$nativeHost.Id; MainWindowHandle=$nativeHost.MainWindowHandle.ToInt64(); Responding=$nativeHost.Responding }
+    } finally { $nativeHost.Dispose() }
+} catch { $collectionErrors.Add([pscustomobject]@{ stage='hostWindow'; message=$_.Exception.Message }) }
+[pscustomobject]@{ processes=@($testProcesses); cdpListeners=@($cdpListeners); descendantListeners=@($descendantListeners);
+    hostWindow=$hostWindow; diagnosticContext=$diagnosticContext; errors=@($collectionErrors.ToArray()) } | ConvertTo-Json -Depth 6 -Compress`);
+        details.windows = JSON.parse(result);
+    } catch (diagnosticError) {
+        details.collectionError = errorDetails(diagnosticError);
+    }
+    writeFileSync(path.join(output, 'startup-diagnostics.json'), JSON.stringify(details, null, 2));
 }
 
 function processIsAlive(id) {
@@ -119,7 +212,16 @@ try {
     await expect.poll(async () => {
         if (launchError) throw launchError;
         if (exited) throw Error(`Tauri exited during startup: ${diagnostic}`);
-        try { return (await fetch(`${endpoint}/json/version`)).ok; } catch { return false; }
+        const attemptedAt = new Date().toISOString();
+        cdpRequests++;
+        try {
+            const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(3000) });
+            lastCdpRequest = { attemptedAt, status: response.status, statusText: response.statusText };
+            return response.ok;
+        } catch (error) {
+            lastCdpRequest = { attemptedAt, error: errorDetails(error) };
+            return false;
+        }
     }, { timeout: 45000, message: 'WebView2 debugging endpoint must start' }).toBe(true);
     browser = await chromium.connectOverCDP(endpoint);
     const context = browser.contexts()[0];
@@ -234,15 +336,22 @@ try {
     writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, executable, checks }, null, 2));
     console.log(`Tauri integration passed: ${checks.length} checks. Evidence: ${output}`);
 } catch (error) {
+    let diagnosticError = null;
+    try { await writeStartupDiagnostics(error); }
+    catch (failure) { diagnosticError = errorDetails(failure); }
     const details = [
         error instanceof Error ? error.message : String(error),
         `Host process: ${JSON.stringify({ pid: child.pid ?? null, exited, exitCode: child.exitCode, signalCode: child.signalCode })}`,
+        `Last CDP request: ${JSON.stringify(lastCdpRequest)}`,
+        `Startup diagnostics: ${path.join(output, 'startup-diagnostics.json')}`,
+        ...(diagnosticError ? [`Startup diagnostics could not be saved: ${JSON.stringify(diagnosticError)}`] : []),
         `Host log: ${path.join(output, 'host.log')}`,
         `Host output (last 16384 characters):\n${diagnostic.slice(-16384) || '(no host output)'}`
     ].join('\n');
     throw new Error(details, { cause: error });
 } finally {
-    writeFileSync(path.join(output, 'host.log'), diagnostic);
+    try { writeFileSync(path.join(output, 'host.log'), diagnostic); }
+    catch (error) { console.error(`Host log could not be saved: ${JSON.stringify(errorDetails(error))}`); }
     if (browser) await browser.close().catch(() => {});
     if (!exited && child.pid) child.kill();
 }

@@ -10,6 +10,24 @@ use serde_json::Value;
 use std::sync::{atomic::Ordering, Arc};
 use tauri::{Manager, RunEvent, State, WebviewWindow, WindowEvent};
 
+struct BackgroundTestLogger;
+
+impl log::Log for BackgroundTestLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            eprintln!("[{}] {}: {}", record.level(), record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static BACKGROUND_TEST_LOGGER: BackgroundTestLogger = BackgroundTestLogger;
+
 #[tauri::command]
 async fn desktop_request(
     window: WebviewWindow,
@@ -79,6 +97,13 @@ async fn desktop_request(
 }
 
 fn main() {
+    if std::env::var("WIFIMETER_BACKGROUND_TEST").as_deref() == Ok("1") {
+        if let Err(error) = log::set_logger(&BACKGROUND_TEST_LOGGER) {
+            eprintln!("[desktop] 无法启用测试日志：{error}");
+        } else {
+            log::set_max_level(log::LevelFilter::Warn);
+        }
+    }
     #[cfg(windows)]
     unsafe {
         let app_id: Vec<u16> = "io.wifimeter.demo\0".encode_utf16().collect();

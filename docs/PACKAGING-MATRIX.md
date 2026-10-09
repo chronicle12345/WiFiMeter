@@ -6,7 +6,9 @@
 
 [tauri.yml](../.github/workflows/tauri.yml) 在 `windows-latest` 使用 Node.js 24.14.1 x64 和本机 Rust/C++ 工具链。普通 `main` push、pull request 和手动运行执行检查，`v1.3.*` 标签额外进入发布流程。它依次检查版本、构建并测试 C++ 后端、执行 Node 单元和共用页面回归、构建 Tauri 包、运行 Rust 测试及真实 WebView2 集成检查。
 
-Windows runner 在测试前检查 WebView2 Runtime；缺失时从微软官方下载 Bootstrapper，校验微软签名后静默安装并复查版本。集成检查失败时会在日志中显示宿主进程状态与输出，并单独保存诊断附件。
+Windows runner 在测试前检查 WebView2 Runtime；缺失时从微软官方下载 Bootstrapper，校验微软签名后静默安装并复查版本。集成检查失败时会保存窗口创建阶段和 Tauri 内部错误、最后一次 CDP 请求结果、测试进程树及监听端口，作为独立诊断附件。
+
+集成测试使用独立配置目录和随机本机端口，通过 WebView2 API 传递调试参数。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出，高权限进程会忽略 `WEBVIEW2_*` 环境覆盖。专用 `WIFIMETER_TAURI_TEST_PORT` 仅在后台测试和配置隔离同时启用时生效，只接受 1 到 65535 的整数，调试地址固定为 `127.0.0.1`。
 
 共用页面回归仍使用保留的 Electron 测试入口；Tauri 集成检查分别解包 NSIS 安装版和便携 ZIP，核对资源 SHA-256 后启动各自的程序，使用随包 Node、真实 SQLite 后端、WebView2 和隔离配置。资源准备与打包检查宿主、Node、后端与采集器架构，并包含驱动和许可证。Rust 集成测试通过真实 Electron 进程验证新旧宿主互斥、不同数据目录隔离和退出后锁释放。NSIS 安装/卸载及真实限速吞吐需要另行实机验收。
 

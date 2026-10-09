@@ -115,8 +115,12 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         }
         async loadFile(file) {
             this.webContents.mainFrame.url = pathToFileURL(file).href;
+            const trace = process.env.WIFIMETER_BACKGROUND_TEST === '1';
+            if (trace) console.error(`[startup] ${this.label} window:create requested`);
             await call('window:create', { label: this.label, options: this.options });
+            if (trace) console.error(`[startup] ${this.label} window:load requested`);
             await call('window:load', { label: this.label, page: this.label });
+            if (trace) console.error(`[startup] ${this.label} window:load completed`);
         }
         isDestroyed() { return this.destroyed; }
         isVisible() { return this.visible; }

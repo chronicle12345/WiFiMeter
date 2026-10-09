@@ -64,6 +64,34 @@ fn boolean(options: &Value, name: &str, fallback: bool) -> bool {
     options[name].as_bool().unwrap_or(fallback)
 }
 
+fn browser_arguments(
+    software_rendering: bool,
+    background_test: bool,
+    isolated_profile: bool,
+    test_port: Option<&str>,
+) -> Result<Option<String>, String> {
+    let mut arguments = Vec::new();
+    if software_rendering {
+        arguments.push("--disable-gpu".to_string());
+    }
+    if background_test && isolated_profile {
+        if let Some(value) = test_port {
+            let port = value
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or("测试调试端口必须为 1 到 65535 的整数。")?;
+            // Elevated WebView2 hosts ignore WEBVIEW2_* environment overrides.
+            // Pass only this validated, loopback-only test endpoint through the API.
+            arguments.push("--remote-debugging-address=127.0.0.1".to_string());
+            arguments.push(format!("--remote-debugging-port={port}"));
+            arguments.push("--disable-renderer-backgrounding".to_string());
+            arguments.push("--disable-backgrounding-occluded-windows".to_string());
+        }
+    }
+    Ok((!arguments.is_empty()).then(|| arguments.join(" ")))
+}
+
 fn create_window(app: &AppHandle, host: Arc<Host>, label: &str, page: &str) -> Reply {
     if label != page || !matches!(label, "main" | "mini") {
         return Err("窗口页面无效。".into());
@@ -134,8 +162,16 @@ fn create_window(app: &AppHandle, host: Arc<Host>, label: &str, page: &str) -> R
     if label == "mini" {
         builder = builder.background_color(tauri::window::Color(0, 0, 0, 0));
     }
-    if std::env::var("WIFIMETER_SOFTWARE_RENDERING").as_deref() == Ok("1") {
-        builder = builder.additional_browser_args("--disable-gpu");
+    let test_port = std::env::var("WIFIMETER_TAURI_TEST_PORT").ok();
+    let isolated_profile = std::env::var("WIFIMETER_TEST_ISOLATION").as_deref() == Ok("1")
+        && std::env::var_os("WIFIMETER_USER_DATA").is_some_and(|path| !path.is_empty());
+    if let Some(arguments) = browser_arguments(
+        std::env::var("WIFIMETER_SOFTWARE_RENDERING").as_deref() == Ok("1"),
+        std::env::var("WIFIMETER_BACKGROUND_TEST").as_deref() == Ok("1"),
+        isolated_profile,
+        test_port.as_deref(),
+    )? {
+        builder = builder.additional_browser_args(&arguments);
     }
     let window = builder.build().map_err(|error| error.to_string())?;
     Ok(json!({ "bounds": bounds(&window), "visible": window.is_visible().unwrap_or(false) }))
@@ -199,12 +235,26 @@ pub fn dispatch(app: &AppHandle, host: Arc<Host>, message: Value) {
     let params = message["params"].clone();
     let id = message["id"].clone();
     let app = app.clone();
+    let trace = matches!(method.as_str(), "window:create" | "window:load")
+        && std::env::var("WIFIMETER_BACKGROUND_TEST").as_deref() == Ok("1");
+    if trace {
+        eprintln!(
+            "[startup] {method} received: id={id}, label={}",
+            params["label"]
+        );
+    }
     if method == "app:confirmQuit" {
-        host.request_close(&app, json!({ "type": "native-result", "id": id, "ok": true, "result": true }));
+        host.request_close(
+            &app,
+            json!({ "type": "native-result", "id": id, "ok": true, "result": true }),
+        );
         return;
     }
     if method.starts_with("dialog:") || method == "notification:show" || method == "window:load" {
         std::thread::spawn(move || {
+            if trace {
+                eprintln!("[startup] {method} started: id={id}");
+            }
             // WebView2 must create additional windows outside a synchronous event handler.
             let reply = if method == "window:load" {
                 native_command(&app, host.clone(), &method, &params)
@@ -213,6 +263,12 @@ pub fn dispatch(app: &AppHandle, host: Arc<Host>, message: Value) {
             } else {
                 crate::dialogs::dialog(&app, &method, &params)
             };
+            if trace {
+                eprintln!(
+                    "[startup] {method} completed: id={id}, success={}",
+                    reply.is_ok()
+                );
+            }
             host.native_response(id, reply);
         });
     } else {
@@ -220,10 +276,17 @@ pub fn dispatch(app: &AppHandle, host: Arc<Host>, message: Value) {
         let error_host = host.clone();
         let error_id = id.clone();
         if let Err(error) = app.run_on_main_thread(move || {
-            host.native_response(
-                id,
-                native_command(&callback_app, host.clone(), &method, &params),
-            );
+            if trace {
+                eprintln!("[startup] {method} started: id={id}");
+            }
+            let reply = native_command(&callback_app, host.clone(), &method, &params);
+            if trace {
+                eprintln!(
+                    "[startup] {method} completed: id={id}, success={}",
+                    reply.is_ok()
+                );
+            }
+            host.native_response(id, reply);
         }) {
             error_host.native_response(error_id, Err(error.to_string()));
         }
@@ -342,4 +405,56 @@ fn native_command(app: &AppHandle, host: Arc<Host>, method: &str, params: &Value
         _ => return Err(format!("未知原生操作：{method}")),
     }
     Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::browser_arguments;
+
+    #[test]
+    fn debugging_requires_an_isolated_background_profile() {
+        for (background, isolated) in [(false, false), (false, true), (true, false)] {
+            assert_eq!(
+                browser_arguments(false, background, isolated, Some("32123")).unwrap(),
+                None
+            );
+            assert_eq!(
+                browser_arguments(true, background, isolated, Some("invalid")).unwrap(),
+                Some("--disable-gpu".into())
+            );
+        }
+    }
+
+    #[test]
+    fn isolated_debugging_is_passed_to_the_webview_api() {
+        let arguments = browser_arguments(true, true, true, Some("32123"))
+            .unwrap()
+            .unwrap();
+        assert!(arguments
+            .split_whitespace()
+            .any(|value| value == "--remote-debugging-address=127.0.0.1"));
+        assert!(arguments
+            .split_whitespace()
+            .any(|value| value == "--remote-debugging-port=32123"));
+        assert!(arguments
+            .split_whitespace()
+            .any(|value| value == "--disable-gpu"));
+    }
+
+    #[test]
+    fn debug_port_rejects_invalid_values_and_extra_switches() {
+        for port in [
+            "",
+            "0",
+            "65536",
+            "-1",
+            "32123 --no-sandbox",
+            "32123\n--no-sandbox",
+        ] {
+            assert!(
+                browser_arguments(false, true, true, Some(port)).is_err(),
+                "accepted {port:?}"
+            );
+        }
+    }
 }

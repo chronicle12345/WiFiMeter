@@ -73,6 +73,11 @@ jobs:
           }
           if (-not $runtimeVersion) { throw 'WebView2 Runtime was not detected after installation' }
           Write-Host "WebView2 Runtime version: $runtimeVersion"
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          try {
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+            Write-Host "WebView2 test launch is elevated: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+          } finally { $identity.Dispose() }
       - name: Validate packaging and release helpers
         run: npm run test:packaging:tauri
       - name: Build and test native backend
@@ -112,6 +117,7 @@ jobs:
           name: tauri-windows-x64-diagnostics-${{ github.run_attempt }}
           path: |
             build/tauri-smoke/**/host.log
+            build/tauri-smoke/**/startup-diagnostics.json
             build/tauri-smoke/**/result.json
             build/tauri-smoke/**/*.png
             build/tauri-package-check-*/result.json
