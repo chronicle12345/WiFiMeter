@@ -10,21 +10,25 @@ use std::{
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+static NEXT_PROFILE_ID: AtomicU64 = AtomicU64::new(1);
 
 struct Profile(PathBuf);
 
 impl Profile {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "wifimeter-instance-test-{}-{} 用户目录",
+            "wifimeter-instance-test-{}-{}-{} 用户目录",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT_PROFILE_ID.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&path).unwrap();
         Self(path)
