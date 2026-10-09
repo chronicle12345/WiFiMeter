@@ -233,6 +233,14 @@ try {
     assert.deepEqual(errors, [], `WebView errors: ${errors.join('\n')}`);
     writeFileSync(path.join(output, 'result.json'), JSON.stringify({ passed: true, executable, checks }, null, 2));
     console.log(`Tauri integration passed: ${checks.length} checks. Evidence: ${output}`);
+} catch (error) {
+    const details = [
+        error instanceof Error ? error.message : String(error),
+        `Host process: ${JSON.stringify({ pid: child.pid ?? null, exited, exitCode: child.exitCode, signalCode: child.signalCode })}`,
+        `Host log: ${path.join(output, 'host.log')}`,
+        `Host output (last 16384 characters):\n${diagnostic.slice(-16384) || '(no host output)'}`
+    ].join('\n');
+    throw new Error(details, { cause: error });
 } finally {
     writeFileSync(path.join(output, 'host.log'), diagnostic);
     if (browser) await browser.close().catch(() => {});

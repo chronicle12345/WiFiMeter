@@ -6,6 +6,8 @@
 
 [tauri.yml](../.github/workflows/tauri.yml) 在 `windows-latest` 使用 Node.js 24.14.1 x64 和本机 Rust/C++ 工具链。普通 `main` push、pull request 和手动运行执行检查，`v1.3.*` 标签额外进入发布流程。它依次检查版本、构建并测试 C++ 后端、执行 Node 单元和共用页面回归、构建 Tauri 包、运行 Rust 测试及真实 WebView2 集成检查。
 
+Windows runner 在测试前检查 WebView2 Runtime；缺失时从微软官方下载 Bootstrapper，校验微软签名后静默安装并复查版本。集成检查失败时会在日志中显示宿主进程状态与输出，并单独保存诊断附件。
+
 共用页面回归仍使用保留的 Electron 测试入口；Tauri 集成检查分别解包 NSIS 安装版和便携 ZIP，核对资源 SHA-256 后启动各自的程序，使用随包 Node、真实 SQLite 后端、WebView2 和隔离配置。资源准备与打包检查宿主、Node、后端与采集器架构，并包含驱动和许可证。Rust 集成测试通过真实 Electron 进程验证新旧宿主互斥、不同数据目录隔离和退出后锁释放。NSIS 安装/卸载及真实限速吞吐需要另行实机验收。
 
 Windows 安装版在缺少 WebView2 时下载运行时；便携 ZIP 需要系统已有 WebView2。两个包均使用系统 WebView，随包提供 Node 业务进程、C++ 后端及采集器、WinDivert 和许可证，发行资源不携带 Electron 或 Chromium。1.3.0 的发布目录必须恰好包含以下三个附件：

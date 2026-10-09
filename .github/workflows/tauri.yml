@@ -38,6 +38,41 @@ jobs:
         run: node packaging/tauri/release.cjs metadata
       - name: Install dependencies
         run: npm ci --prefix apps/desktop
+      - name: Ensure WebView2 Runtime for packaged integration tests
+        timeout-minutes: 5
+        run: |
+          # Detection and silent installation follow Microsoft's distribution guidance.
+          # https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+          function Get-WebView2RuntimeVersion {
+            $clientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+            $registryPaths = @(
+              "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$clientId",
+              "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$clientId"
+            )
+            foreach ($registryPath in $registryPaths) {
+              $rawVersion = (Get-ItemProperty -LiteralPath $registryPath -Name pv -ErrorAction SilentlyContinue).pv
+              [version]$parsedVersion = $null
+              if ([version]::TryParse([string]$rawVersion, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') {
+                return $parsedVersion
+              }
+            }
+            return $null
+          }
+          $runtimeVersion = Get-WebView2RuntimeVersion
+          if (-not $runtimeVersion) {
+            Write-Host 'WebView2 Runtime was not found; installing the Microsoft Evergreen Runtime.'
+            $bootstrapper = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper -TimeoutSec 120
+            $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Microsoft Corporation(,|$)') {
+              throw 'The WebView2 Bootstrapper must have a valid Microsoft Corporation signature'
+            }
+            $runtimeInstall = Start-Process -FilePath $bootstrapper -ArgumentList '/silent', '/install' -WindowStyle Hidden -Wait -PassThru
+            if ($runtimeInstall.ExitCode -ne 0) { throw "WebView2 Runtime installer exited with code $($runtimeInstall.ExitCode)" }
+            $runtimeVersion = Get-WebView2RuntimeVersion
+          }
+          if (-not $runtimeVersion) { throw 'WebView2 Runtime was not detected after installation' }
+          Write-Host "WebView2 Runtime version: $runtimeVersion"
       - name: Validate packaging and release helpers
         run: npm run test:packaging:tauri
       - name: Build and test native backend
@@ -69,6 +104,18 @@ jobs:
           path: ${{ steps.stage.outputs.directory }}
           if-no-files-found: error
           compression-level: 0
+          retention-days: 14
+      - name: Upload Tauri integration failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: tauri-windows-x64-diagnostics-${{ github.run_attempt }}
+          path: |
+            build/tauri-smoke/**/host.log
+            build/tauri-smoke/**/result.json
+            build/tauri-smoke/**/*.png
+            build/tauri-package-check-*/result.json
+          if-no-files-found: ignore
           retention-days: 14
 
   publish:
