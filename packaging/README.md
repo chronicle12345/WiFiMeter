@@ -19,7 +19,7 @@ Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。W
 
 未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式发行通过 [lean-node.cjs](tauri/lean-node.cjs) 从固定的 Node.js 22.23.3 官方源码构建精简运行时，并校验源码 SHA-256。该配置移除未使用的 inspector、内置 SQLite、Amaro、启动快照和代码缓存，保留 TLS、crypto 与中英文 ICU 数据；应用仍使用 C++ 后端的 SQLite 数据库。
 
-Windows Release 编译通过 [node-size.props](tauri/windows/node-size.props) 统一使用 MSVC `/O1 /Os`，包括 V8；JIT 和 WebAssembly 保留。构建缓存同时校验编译配置和 props 文件摘要，旧配置不能作为新配置的产物使用。NSIS 使用 64 MiB LZMA 字典。Linux RPM 与 AppImage 使用 XZ 压缩，deb 沿用 Tauri 的压缩配置。
+Windows Release 编译通过 [node-size.props](tauri/windows/node-size.props) 统一使用 MSVC `/O1 /Os`，包括 V8；JIT 和 WebAssembly 保留。构建缓存同时校验编译配置和 props 文件摘要，旧配置不能作为新配置的产物使用。NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ 压缩，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
 
 本机复现 CI 发行配置时，在仓库根目录执行以下命令。当前 Node.js 架构须与目标一致。Windows 还需 Python 3、完整 7-Zip 和 Visual Studio C++ 工具链；原生校验需 WebView2 Runtime。
 

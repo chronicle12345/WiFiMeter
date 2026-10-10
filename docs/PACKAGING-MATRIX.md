@@ -22,7 +22,7 @@ Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采�
 
 正式发行的 Node.js 22.23.3 精简配置由 [lean-node.cjs](../packaging/tauri/lean-node.cjs) 固定，源码 SHA-256 校验、保留能力与本机复现命令见[打包说明](../packaging/README.md#tauri-安装包)。
 
-Windows 使用 `/O1 /Os` 编译发行运行时，并把优化配置摘要纳入缓存校验；NSIS 使用 64 MiB LZMA 字典。Linux RPM、AppImage 使用 XZ，RPM 的摘要校验和 `bsdtar` 解包均须成功，三个格式继续逐个执行完整资源与原生界面检查。
+Windows 使用 `/O1 /Os` 编译发行运行时，并把优化配置摘要纳入缓存校验；NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ，AppImage 使用官方插件支持的 ZSTD。RPM 的摘要校验和 `bsdtar` 解包均须成功，三个格式继续逐个执行完整资源与原生界面检查。
 
 便携压缩包已取消。每组 CI artifact 保留安装包与内部 SHA-256 清单，发布任务重新验证五组的名称、数量和校验值，只把九个应用安装包上传 Release。校验 TXT 不进入公开下载附件。
 
