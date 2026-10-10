@@ -10,22 +10,26 @@ const { assertArchitecture, buildPaths } = require('../targets.cjs');
 const root = path.resolve(__dirname, '../..');
 
 function buildOptions(args = [], host = process) {
-    const options = { mode: 'build', platform: host.platform, arch: host.arch, formats: null, skipBackend: false };
+    const options = { mode: 'build', platform: host.platform, arch: host.arch, formats: null, skipBackend: false, target: null };
     for (let index = 0; index < args.length; index++) {
         const argument = args[index];
         if (index === 0 && ['dev', 'build'].includes(argument)) { options.mode = argument; continue; }
         if (['--skip-backend', '--skip-rebuild'].includes(argument)) { options.skipBackend = true; continue; }
-        if (!['--platform', '--arch', '--formats'].includes(argument) || !args[index + 1] || args[index + 1].startsWith('--')) {
-            throw new Error(`不支持的 Tauri 参数：${argument}。使用 dev/build、--platform、--arch、--formats 或 --skip-backend。`);
+        if (!['--platform', '--arch', '--formats', '--target'].includes(argument) || !args[index + 1] || args[index + 1].startsWith('--')) {
+            throw new Error(`不支持的 Tauri 参数：${argument}。使用 dev/build、--platform、--arch、--formats、--target 或 --skip-backend。`);
         }
         const value = args[++index];
         if (argument === '--platform') options.platform = value === 'windows' ? 'win32' : value;
         else if (argument === '--arch') options.arch = value;
+        else if (argument === '--target') options.target = value;
         else options.formats = [...new Set(value.split(','))];
     }
     nativeTarget(options, host);
-    options.formats ||= options.platform === 'win32' ? ['nsis', 'portable'] : ['deb', 'appimage'];
-    const allowed = options.platform === 'win32' ? ['nsis', 'portable', 'dir'] : ['deb', 'rpm', 'appimage', 'portable', 'dir'];
+    const target = { win32: { x64: 'x86_64-pc-windows-msvc', ia32: 'i686-pc-windows-msvc', arm64: 'aarch64-pc-windows-msvc' },
+        linux: { x64: 'x86_64-unknown-linux-gnu', arm64: 'aarch64-unknown-linux-gnu' } }[options.platform][options.arch];
+    if (options.target && options.target !== target) throw new Error(`Rust 目标 ${options.target} 与 ${options.platform}/${options.arch} 不匹配。`);
+    options.formats ||= options.platform === 'win32' ? ['nsis'] : ['deb', 'rpm', 'appimage'];
+    const allowed = options.platform === 'win32' ? ['nsis', 'dir'] : ['deb', 'rpm', 'appimage', 'dir'];
     if (!options.formats.length || options.formats.some(format => !allowed.includes(format))) throw new Error(`不支持的 Tauri 格式：${options.formats.join(',')}。`);
     return options;
 }
@@ -79,15 +83,6 @@ function cargoTargetDirectory(appDirectory) {
     return metadata.target_directory;
 }
 
-function archivePortable(directory, archive, platform) {
-    if (platform === 'win32') {
-        const data = Buffer.from(JSON.stringify({ directory, archive }), 'utf8').toString('base64');
-        const script = `$ErrorActionPreference = 'Stop'\n$data = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${data}')) | ConvertFrom-Json\nCompress-Archive -Path (Join-Path $data.directory '*') -DestinationPath $data.archive -CompressionLevel Optimal -Force`;
-        const powershell = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-        run(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]);
-    } else run('tar', ['-czf', archive, '-C', directory, '.']);
-}
-
 function checkPortable(directory, options) {
     const executable = path.join(directory, options.platform === 'win32' ? 'WiFiMeter.exe' : 'wifimeter');
     assertArchitecture(executable, options.platform, options.arch);
@@ -108,30 +103,25 @@ function collectArtifacts(prepared, targetDirectory, options) {
     const output = path.join(root, buildPaths(options.platform, options.arch).output);
     fs.mkdirSync(output, { recursive: true });
     const label = `WiFiMeter-${prepared.version}-${options.platform === 'win32' ? 'windows' : 'linux'}-${options.arch}-Tauri`;
-    const release = path.join(targetDirectory, 'release');
+    const release = path.join(targetDirectory, ...(options.target ? [options.target] : []), 'release');
     const executable = path.join(release, options.platform === 'win32' ? 'wifimeter.exe' : 'wifimeter');
     assertArchitecture(executable, options.platform, options.arch);
     const artifacts = [];
-    const portable = path.join(output, 'tauri-portable');
-    if (path.relative(fs.realpathSync(root), path.resolve(portable)) !== path.join(buildPaths(options.platform, options.arch).output, 'tauri-portable')) {
-        throw new Error(`便携生成目录超出工作区：${portable}`);
+    if (options.formats.includes('dir')) {
+        const directory = path.join(output, 'tauri-unpacked');
+        if (path.relative(fs.realpathSync(root), path.resolve(directory)) !== path.join(buildPaths(options.platform, options.arch).output, 'tauri-unpacked')) {
+            throw new Error(`程序生成目录超出工作区：${directory}`);
+        }
+        if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) throw new Error('程序生成目录不能是符号链接。');
+        fs.rmSync(directory, { recursive: true, force: true });
+        fs.mkdirSync(directory, { recursive: true });
+        fs.copyFileSync(executable, path.join(directory, options.platform === 'win32' ? 'WiFiMeter.exe' : 'wifimeter'));
+        fs.cpSync(prepared.resources, path.join(directory, 'resources'), { recursive: true });
+        fs.copyFileSync(path.join(prepared.appDirectory, 'LICENSE'), path.join(directory, 'LICENSE.txt'));
+        checkPortable(directory, options);
+        artifacts.push(directory);
     }
-    if (fs.existsSync(portable) && fs.lstatSync(portable).isSymbolicLink()) throw new Error('便携生成目录不能是符号链接。');
-    fs.rmSync(portable, { recursive: true, force: true });
-    fs.mkdirSync(portable, { recursive: true });
-    fs.copyFileSync(executable, path.join(portable, options.platform === 'win32' ? 'WiFiMeter.exe' : 'wifimeter'));
-    fs.cpSync(prepared.resources, path.join(portable, 'resources'), { recursive: true });
-    fs.copyFileSync(path.join(prepared.appDirectory, 'LICENSE'), path.join(portable, 'LICENSE.txt'));
-    fs.writeFileSync(path.join(portable, 'README.txt'), 'WiFiMeter\n' + (options.platform === 'win32'
-        ? 'Windows 需要已安装 Microsoft Edge WebView2 Runtime。安装版可自动安装 WebView2；便携版请使用系统已有运行时。\n'
-        : 'Linux 需要系统 WebKitGTK 4.1 运行时。\n') + '用户数据沿用 WiFiMeter 的本地数据目录。\n');
-    checkPortable(portable, options);
-    if (options.formats.includes('portable')) {
-        const archive = path.join(output, `${label}-Portable.${options.platform === 'win32' ? 'zip' : 'tar.gz'}`);
-        archivePortable(portable, archive, options.platform);
-        artifacts.push(archive);
-    }
-    for (const format of options.formats.filter(format => !['portable', 'dir'].includes(format))) {
+    for (const format of options.formats.filter(format => format !== 'dir')) {
         const folder = path.join(release, 'bundle', format);
         const extension = { nsis: '.exe', deb: '.deb', rpm: '.rpm', appimage: '.AppImage' }[format];
         const source = selectBundle(folder, extension, prepared.version);
@@ -139,12 +129,11 @@ function collectArtifacts(prepared, targetDirectory, options) {
         fs.copyFileSync(source, destination);
         artifacts.push(destination);
     }
-    if (artifacts.length) {
+    const installers = artifacts.filter(file => fs.statSync(file).isFile());
+    if (installers.length) {
         const checksums = path.join(output, `${label}-SHA256SUMS.txt`);
-        fs.writeFileSync(checksums, artifacts.map(file => `${createHash('sha256').update(fs.readFileSync(file)).digest('hex')}  ${path.basename(file)}`).join('\n') + '\n');
-        artifacts.push(checksums);
+        fs.writeFileSync(checksums, installers.map(file => `${createHash('sha256').update(fs.readFileSync(file)).digest('hex')}  ${path.basename(file)}`).join('\n') + '\n');
     }
-    if (options.formats.includes('dir')) artifacts.push(portable);
     return artifacts;
 }
 
@@ -156,18 +145,19 @@ function main(args = process.argv.slice(2)) {
     if (!fs.existsSync(cli)) throw new Error('未安装 Tauri CLI，请先运行 npm --prefix apps/desktop ci。');
     const common = { cwd: prepared.appDirectory };
     if (options.mode === 'dev') {
-        run(process.execPath, [cli, 'dev', '--features', 'custom-protocol', '--no-dev-server'], common);
+        run(process.execPath, [cli, 'dev', '--features', 'custom-protocol', '--no-dev-server', ...(options.target ? ['--target', options.target] : [])], common);
         return [];
     }
-    const bundles = options.formats.filter(format => !['portable', 'dir'].includes(format));
+    const bundles = options.formats.filter(format => format !== 'dir');
     run(process.execPath, [cli, 'build', '--ci', '--features', 'custom-protocol', '--config', JSON.stringify({ bundle: { useLocalToolsDir: true } }),
+        ...(options.target ? ['--target', options.target] : []),
         ...(bundles.length ? ['--bundles', bundles.join(',')] : ['--no-bundle'])], common);
     const artifacts = collectArtifacts(prepared, cargoTargetDirectory(prepared.appDirectory), options);
     for (const artifact of artifacts) process.stdout.write(`Tauri 产物：${artifact}\n`);
     return artifacts;
 }
 
-module.exports = { buildOptions, cachedCmake, buildBackend, archivePortable, checkPortable, selectBundle, collectArtifacts, main };
+module.exports = { buildOptions, cachedCmake, buildBackend, checkPortable, selectBundle, collectArtifacts, main };
 
 if (require.main === module) {
     try { main(); }

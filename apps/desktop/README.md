@@ -1,6 +1,6 @@
 # WiFiMeter 共享桌面应用
 
-此目录包含 Windows/Linux 共用的 Tauri 宿主和页面。Rust 提供窗口和原生桌面能力，随包 Node 辅助进程复用桌面业务模块并拉起 `wifimeter-backend`，按行交换 JSON，C++ 后端把采集结果写入本机 SQLite 数据库。发布包包含 Node 运行时，无须用户另装 Node。1.3.0 本轮验收与发布仅面向 Windows x64。
+此目录包含 Windows/Linux 共用的 Tauri 宿主和页面。Rust 提供窗口和原生桌面能力，随包 Node 辅助进程复用桌面业务模块并拉起 `wifimeter-backend`，按行交换 JSON，C++ 后端把采集结果写入本机 SQLite 数据库。发布包包含 Node 运行时，无须用户另装 Node。发布目标包含 Windows x64、x86、ARM64 及 Linux x64、ARM64。
 
 从仓库根目录运行：
 
@@ -11,7 +11,7 @@ npm test
 npm run dist:windows
 ```
 
-也可进入此目录执行这些命令。Windows 本机打包产物位于仓库根目录 `dist/windows/`。Linux 的 `npm run dist:linux` 及其他架构保留为源码构建入口，不代表已完成本轮验收。详见[构建与发布矩阵](../../docs/PACKAGING-MATRIX.md)。
+也可进入此目录执行这些命令。Windows 本机打包产物位于仓库根目录 `dist/windows/`。Linux 使用 `npm run dist:linux` 生成 deb、rpm、AppImage；各架构的安装包必须通过完整 CI 后才能发布。详见[构建与发布矩阵](../../docs/PACKAGING-MATRIX.md)。
 
 ## 模块
 
@@ -69,10 +69,10 @@ Linux 使用 eBPF，Windows 使用 ETW 原生采集辅助进程；统计口径�
 ```powershell
 npm run dist:windows
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --locked
-node apps/desktop/tests/tauri-smoke.mjs
+node packaging/tauri/verify-windows.cjs
 ```
 
-Tauri 集成脚本默认使用 `dist/windows/tauri-portable/WiFiMeter.exe`，可通过 `WIFIMETER_TAURI_EXECUTABLE` 指定路径；隔离配置和检查报告位于 `build/tauri-smoke/`。安装版可下载缺少的 WebView2，便携版需要系统已有 WebView2。
+运行 `node packaging/tauri/verify-windows.cjs` 会从 NSIS 解包并运行集成脚本；也可通过 `WIFIMETER_TAURI_EXECUTABLE` 指定程序路径。隔离配置与检查报告位于 `build/tauri-smoke/`，安装器可下载缺少的 WebView2。
 
 `npm test` 和 `npm run test:ui` 中的 Playwright 用例仍通过 Electron 入口验证共用页面。旧 Electron 打包程序回归可在 Windows PowerShell 中执行：
 

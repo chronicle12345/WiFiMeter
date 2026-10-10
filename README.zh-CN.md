@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.0.md"><img src="https://img.shields.io/badge/version-1.3.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.0" /></a>
-  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows x64 release target" /></a>
+  <a href="docs/releases/v1.3.1.md"><img src="https://img.shields.io/badge/version-1.3.1-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.1" /></a>
+  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
@@ -24,7 +24,7 @@
 
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
-WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。1.3.0 的发布目标仅为 Windows x64，已发布安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
+WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。发布目标包括 Windows x64、x86、ARM64 及 Linux x64、ARM64，当前可用安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
 以下总览和应用历史截图均使用虚构数据。
 
@@ -44,7 +44,7 @@ WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码�
 
 ## 原有数据与升级
 
-使用 Electron 1.2.x 的用户需从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取 Windows x64 Tauri 安装版并运行安装，程序会继续读取已有数据目录。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
+使用 Electron 1.2.x 的用户需从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取与系统及 CPU 架构匹配的 Tauri 安装版，程序会继续读取已有数据目录。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
 
 Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，其他目录可在设置中选择。导入前需要停止旧采集器；Windows 安装程序会先请求旧采集器保存并退出，再替换程序。
 
@@ -56,9 +56,9 @@ Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，�
 
 ## 安装包
 
-1.3.0 仅发布 Windows x64 Tauri，产物为 NSIS 安装程序、便携 ZIP 和 SHA-256 校验文件。Linux、Windows ia32 和 Windows ARM64 不在本轮验收与发布范围内。其他源码构建目标和旧 Electron 矩阵见[构建与发布矩阵](docs/PACKAGING-MATRIX.md)。
+Windows x64、x86、ARM64 分别提供 NSIS 安装程序，Linux x64、ARM64 分别提供 deb、rpm、AppImage。便携压缩包已取消。校验清单仅用于 CI 内部验证，下载页面只列应用安装包。五组目标的发布条件见[构建与发布矩阵](docs/PACKAGING-MATRIX.md)。
 
-1.3.0 的 Tauri 安装包使用系统 WebView，随包提供 Node 辅助进程和 C++ 采集器，不再携带 Electron 或 Chromium。Windows 安装版会在缺少 WebView2 时下载并安装运行时，便携版需要系统已有 WebView2。各产物名称含 Tauri，构建会核对宿主、Node、后端和采集器的架构。macOS 和 32 位 Linux 暂不在发布目标中。
+Tauri 安装包使用系统 WebView，随包提供 Node 辅助进程和 C++ 采集器，不再携带 Electron 或 Chromium。Windows 安装版会在缺少 WebView2 时下载并安装运行时，Linux 使用 WebKitGTK 4.1。各产物名称含 Tauri，构建会核对宿主、Node、后端和采集器的架构。macOS 和 32 位 Linux 暂不在发布目标中，Windows ARM64 暂不支持 WinDivert 下载限速。
 
 应用采集需要系统支持和相应权限。Linux eBPF 另有内核要求，详见 [Linux 采集](docs/LINUX_APP_CAPTURE.md)及 [Windows 采集](docs/WINDOWS_APP_CAPTURE.md)。应用网络控制会请求管理员授权。防火墙和 QoS 规则可能在退出或卸载后保留，不再需要时请先在应用内移除。
 
@@ -76,11 +76,11 @@ npm run test:ui
 后端测试由 CMake 构建，通过 CTest 执行。界面测试使用保留的 Electron 宿主验证共用页面。Windows x64 Tauri 需要另行构建安装包，并运行真实 WebView2 集成检查：
 
 ```sh
-node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis,portable
-node apps/desktop/tests/tauri-smoke.mjs
+node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis
+node packaging/tauri/verify-windows.cjs
 ```
 
-平台依赖及其他源码构建命令见[打包说明](packaging/README.md)。测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。1.3.x 发布流程要求 Windows x64 后端、共用页面、Rust 宿主、真实 WebView2 和安装包检查通过后，才发布标签对应的版本。
+平台依赖及其他源码构建命令见[打包说明](packaging/README.md)。测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。1.3.x 发布流程要求五组目标的后端、Rust 宿主和安装包检查全部通过，再发布完整的九个安装包。
 
 ## 性能与许可
 

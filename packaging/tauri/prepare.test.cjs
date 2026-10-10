@@ -62,8 +62,12 @@ test('build targets reject cross architecture Node resources before packaging', 
     const host = { platform: 'win32', arch: 'x64' };
     assert.throws(() => nativeTarget({ platform: 'win32', arch: 'arm64' }, host), /不能混用架构/);
     assert.throws(() => nativeTarget({ platform: 'linux', arch: 'x64' }, host), /不能混用架构/);
-    assert.deepEqual(buildOptions([], host).formats, ['nsis', 'portable']);
-    assert.deepEqual(buildOptions(['--formats', 'dir', '--skip-backend'], host), { mode: 'build', platform: 'win32', arch: 'x64', formats: ['dir'], skipBackend: true });
+    assert.deepEqual(buildOptions([], host).formats, ['nsis']);
+    assert.deepEqual(buildOptions(['--formats', 'dir', '--skip-backend'], host), { mode: 'build', platform: 'win32', arch: 'x64', formats: ['dir'], skipBackend: true, target: null });
+    assert.throws(() => buildOptions(['--formats', 'portable'], host), /不支持的 Tauri 格式/);
+    assert.equal(buildOptions(['--target', 'i686-pc-windows-msvc'], { platform: 'win32', arch: 'ia32' }).target, 'i686-pc-windows-msvc');
+    assert.throws(() => buildOptions(['--target', 'i686-pc-windows-msvc'], host), /不匹配/);
+    assert.deepEqual(buildOptions([], { platform: 'linux', arch: 'arm64' }).formats, ['deb', 'rpm', 'appimage']);
     assert.throws(() => buildOptions(['--formats', 'exe'], host), /不支持的 Tauri 格式/);
 });
 

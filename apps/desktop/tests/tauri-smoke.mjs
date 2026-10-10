@@ -10,11 +10,11 @@ import { chromium, expect } from '@playwright/test';
 // Exercise the release host, bundled worker, SQLite backend and real WebView2.
 // Only adapter counters are fixtures. The profile and operating-system settings are isolated.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const executable = path.resolve(process.env.WIFIMETER_TAURI_EXECUTABLE || path.join(root, 'dist/windows/tauri-portable/WiFiMeter.exe'));
+const executable = path.resolve(process.env.WIFIMETER_TAURI_EXECUTABLE || path.join(root, 'dist/windows/tauri-unpacked/WiFiMeter.exe'));
 const resources = path.join(path.dirname(executable), 'resources');
 const backend = path.join(resources, 'wifimeter-backend.exe');
 assert.equal(process.platform, 'win32', 'This integration check requires Windows WebView2.');
-assert.ok(existsSync(executable) && existsSync(backend), 'Build the Tauri portable directory before running this check.');
+assert.ok(existsSync(executable) && existsSync(backend), 'Build and extract the Tauri installer before running this check.');
 const outputRoot = path.join(root, 'build/tauri-smoke');
 mkdirSync(outputRoot, { recursive: true });
 const output = mkdtempSync(path.join(outputRoot, 'run-'));

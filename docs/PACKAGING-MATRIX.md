@@ -1,26 +1,30 @@
 # CI 与发布矩阵
 
-## 1.3.0 Windows x64 Tauri
+## Tauri 完整发布矩阵
 
-1.3.0 本轮验收与发布仅面向 Windows x64 Tauri。Linux、Windows ia32 和 Windows ARM64 不在本轮范围内；源码构建入口和下方旧 Electron 矩阵均不能作为这些平台已通过 1.3.0 验收的依据。测试结果、包体积和验收范围见[发布说明](releases/v1.3.0.md)。
+1.3.1 恢复 Windows 和 Linux 的完整构建与发布目标。可用附件及实际验证记录见[发布说明](releases/v1.3.1.md)和 [Releases](https://github.com/chronicle12345/WiFiMeter/releases)。
 
-[tauri.yml](../.github/workflows/tauri.yml) 在 `windows-latest` 使用 Node.js 24.14.1 x64 和本机 Rust/C++ 工具链。普通 `main` push、pull request 和手动运行执行检查，`v1.3.*` 标签额外进入发布流程。它依次检查版本、构建并测试 C++ 后端、执行 Node 单元和共用页面回归、构建 Tauri 包、运行 Rust 测试及真实 WebView2 集成检查。
+| 系统与架构 | 产物 |
+| --- | --- |
+| Windows x64 | NSIS Setup.exe |
+| Windows x86（ia32） | NSIS Setup.exe |
+| Windows ARM64 | NSIS Setup.exe |
+| Linux x64 | deb、rpm、AppImage |
+| Linux ARM64 | deb、rpm、AppImage |
 
-Windows runner 在测试前检查 WebView2 Runtime；缺失时从微软官方下载 Bootstrapper，校验微软签名后静默安装并复查版本。集成检查失败时会保存窗口创建阶段和 Tauri 内部错误、最后一次 CDP 请求结果、测试进程树及监听端口，作为独立诊断附件。
+[tauri.yml](../.github/workflows/tauri.yml) 使用对应架构的原生环境；Windows x86 在 x64 Windows 上运行 32 位 Node 与测试程序，Rust 目标为 i686-pc-windows-msvc。ARM64 使用 GitHub ARM64 runner。Linux 保持 Ubuntu 22.04 和 glibc 2.35 构建基线。
 
-集成测试使用独立配置目录和随机本机端口，通过 WebView2 API 传递调试参数。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出，高权限进程会忽略 `WEBVIEW2_*` 环境覆盖。专用 `WIFIMETER_TAURI_TEST_PORT` 仅在后台测试和配置隔离同时启用时生效，只接受 1 到 65535 的整数，调试地址固定为 `127.0.0.1`。
+普通 main push、pull request 和手动运行执行检查，v1.3.* 标签额外进入发布。每组构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需任务失败都阻止发布。
 
-共用页面回归仍使用保留的 Electron 测试入口；Tauri 集成检查分别解包 NSIS 安装版和便携 ZIP，核对资源 SHA-256 后启动各自的程序，使用随包 Node、真实 SQLite 后端、WebView2 和隔离配置。资源准备与打包检查宿主、Node、后端与采集器架构，并包含驱动和许可证。Rust 集成测试通过真实 Electron 进程验证新旧宿主互斥、不同数据目录隔离和退出后锁释放。NSIS 安装/卸载及真实限速吞吐需要另行实机验收。
+Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微软签名后安装并复查版本。集成检查使用隔离配置和随机本机端口。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出高权限进程会忽略 WEBVIEW2_* 环境覆盖；专用调试参数仅在后台测试与配置隔离同时启用时生效。
 
-Windows 安装版在缺少 WebView2 时下载运行时；便携 ZIP 需要系统已有 WebView2。两个包均使用系统 WebView，随包提供 Node 业务进程、C++ 后端及采集器、WinDivert 和许可证，发行资源不携带 Electron 或 Chromium。1.3.0 的发布目录必须恰好包含以下三个附件：
+Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。
 
-- `WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe`
-- `WiFiMeter-1.3.0-windows-x64-Tauri-Portable.zip`
-- `WiFiMeter-1.3.0-windows-x64-Tauri-SHA256SUMS.txt`
+便携压缩包已取消。每组 CI artifact 保留安装包与内部 SHA-256 清单，发布任务重新验证五组的名称、数量和校验值，只把九个应用安装包上传 Release。校验 TXT 不进入公开下载附件。
 
-`packaging/tauri/release.cjs` 校验根目录、桌面 package、Tauri 配置与 Cargo 版本一致，并要求发布标签及非空说明文件匹配。所有必需检查完成后，暂存安装版、便携 ZIP 和两者的 SHA-256 清单；发布任务再次核对附件名称、数量及校验值，完整上传草稿后再公开。已有同名 Release 或草稿会使创建失败，不会自动覆盖。工作流默认使用 `contents: read`，仅发布任务使用 `contents: write` 和当前运行的 `GITHUB_TOKEN`。
+packaging/tauri/release.cjs 要求根目录、桌面 package、Tauri 配置与 Cargo 版本一致，发布标签和说明必须匹配。全部检查通过后创建草稿并上传完整附件，再公开。已有同名 Release 或草稿会使创建失败，不会自动覆盖。默认 contents: read，仅发布任务使用 contents: write 和当前运行的 GITHUB_TOKEN。
 
-本机可在 Windows x64、已安装项目构建依赖的环境中执行：
+本机 Windows x64 检查：
 
 ```powershell
 npm run test:packaging:tauri
@@ -29,7 +33,9 @@ cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-p
 node packaging/tauri/verify-windows.cjs
 ```
 
-Electron 1.2.x 用户需从 [Releases](https://github.com/chronicle12345/WiFiMeter/releases) 下载 Tauri 安装版迁移，Windows 继续读取 `%APPDATA%\WiFiMeter Demo\wifimeter.db`。安装 Tauri 后，更新检查只选择对应的 Tauri 安装包。
+NSIS 完整安装/卸载、下载限速吞吐和真实驱动加载需要目标机器验收，解包后的程序运行不等于执行安装/卸载。
+
+Electron 1.2.x 用户从 [Releases](https://github.com/chronicle12345/WiFiMeter/releases) 获取系统和 CPU 对应的 Tauri 安装版。Windows 继续读取 %APPDATA%\WiFiMeter Demo\wifimeter.db，后续更新选择对应的 Tauri 安装包。
 
 ## 1.2.x Electron 参考矩阵
 

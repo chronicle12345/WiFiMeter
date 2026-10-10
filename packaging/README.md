@@ -1,27 +1,36 @@
-# 多架构打包与后台性能验证
+# 多架构打包
 
-## 1.3.0：Windows x64 Tauri
+## Tauri 安装包
 
-本轮验收与发布范围仅为 Windows x64 Tauri。Linux、Windows ia32 和 Windows ARM64 本轮未验收、未发布。当前入口为 `packaging/tauri/build.cjs`；在 Windows x64 上准备 Node.js x64、Rust MSVC 工具链、CMake 和支持 C++20 的编译器后，从仓库根目录运行：
+从仓库根目录运行，版本由 package metadata 读取。Windows x64、x86、ARM64 使用对应架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器；Linux x64、ARM64 使用本机工具链及 WebKitGTK 4.1。完整发布矩阵见[平台说明](../docs/PACKAGING-MATRIX.md)。
 
 ```powershell
 npm ci --prefix apps/desktop
 npm run dist:windows
 ```
 
-默认生成 NSIS 安装版、便携 ZIP 和 SHA-256 校验清单：
+Windows 默认只生成 NSIS 安装程序，Linux 默认生成 deb、rpm、AppImage。便携 ZIP 已取消。内部 SHA-256 清单仍用于构建及 CI 验证，不作为 Release 附件。
 
 ```text
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Portable.zip
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-SHA256SUMS.txt
+dist/windows/WiFiMeter-1.3.1-windows-x64-Tauri-Setup.exe
 ```
 
-Tauri 包随附 Node 业务进程、C++ 后端与采集器，使用系统 WebView2。NSIS 安装版会在缺少 WebView2 时下载并安装运行时；便携版要求系统已有 WebView2，解压后运行 `WiFiMeter.exe`，并保留同级的 `resources` 目录。
+Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
 
-Electron 1.2.x 用户需从 [GitHub Releases](https://github.com/chronicle12345/WiFiMeter/releases) 手动下载 Windows x64 Tauri 安装版迁移。安装版与便携版都沿用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，已有 SQLite 数据可直接读取；Tauri 后续更新选择对应的 Tauri 安装包。
+明确指定目标架构时，Node.js 必须是该架构，Rust target 必须对应：
 
-构建与检查入口见 [Windows 打包说明](windows/README.md)，本轮工作流为 [tauri.yml](../.github/workflows/tauri.yml)。本地安装包约 25.56 MB、便携 ZIP 约 37.79 MB；测试总数、解包运行验证和实机验收范围见 [1.3.0 发布说明](../docs/releases/v1.3.0.md)。
+```powershell
+node packaging/tauri/build.cjs --platform win32 --arch ia32 --target i686-pc-windows-msvc --formats nsis
+```
+
+Linux 在对应架构主机执行：
+
+```bash
+node packaging/tauri/build.cjs --platform linux --arch x64 --formats deb,rpm,appimage
+node packaging/tauri/verify-linux.cjs --arch x64
+```
+
+Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。完整检查结果与体积见[发布说明](../docs/releases/v1.3.1.md)。
 
 ## Electron 历史构建与性能参考
 

@@ -1,28 +1,28 @@
 # Windows 安装包
 
-## 1.3.0：Windows x64 Tauri
+## Tauri x64、x86、ARM64
 
-本轮验收与发布范围仅为 Windows x64 Tauri，Linux、Windows ia32 和 Windows ARM64 本轮未验收、未发布。当前打包入口为 `packaging/tauri/build.cjs`，要求在 Windows x64 上使用 Node.js x64、Rust MSVC 工具链、CMake 和支持 C++20 的编译器。其他环境依赖见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。从仓库根目录运行：
+准备对应架构 Node.js、Rust MSVC 工具链、CMake 与 C++20 编译器，其他依赖见 [Tauri 前置依赖](https://v2.tauri.app/start/prerequisites/)。从仓库根目录运行：
 
 ```powershell
 npm ci --prefix apps/desktop
 npm run dist:windows
+node packaging/tauri/verify-windows.cjs
 ```
 
-默认产物为 NSIS 安装版、便携 ZIP 和 SHA-256 校验清单，文件名跟随桌面应用版本：
+默认产物只有 NSIS 安装程序，名称跟随应用版本，例如 dist/windows/WiFiMeter-1.3.1-windows-x64-Tauri-Setup.exe。x86 和 ARM64 分别写入 dist/windows-ia32 和 dist/windows-arm64，内部校验清单不进入公开 Release。便携压缩包已取消。
 
-```text
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-Portable.zip
-dist/windows/WiFiMeter-1.3.0-windows-x64-Tauri-SHA256SUMS.txt
-dist/windows/tauri-portable/WiFiMeter.exe
+包内提供 Node 业务进程、C++ 后端与采集器，界面使用系统 WebView2。安装器采用当前用户安装，在缺少 WebView2 时下载运行时。程序继续读取 %APPDATA%\WiFiMeter Demo\wifimeter.db。
+
+x86 Node 需要对应 Rust target：
+
+```powershell
+rustup target add i686-pc-windows-msvc
+node packaging/tauri/build.cjs --arch ia32 --target i686-pc-windows-msvc
+node packaging/tauri/verify-windows.cjs --arch ia32 --target i686-pc-windows-msvc
 ```
 
-包内提供 Node 业务进程、C++ 后端与采集器，界面使用系统 WebView2。NSIS 安装版采用当前用户安装，并在缺少 WebView2 时下载、安装运行时。便携版需系统已有 WebView2，解压后运行 `WiFiMeter.exe`，保留同级的 `resources` 目录。
-
-Electron 1.2.x 用户需从 [GitHub Releases](https://github.com/chronicle12345/WiFiMeter/releases) 手动下载 Windows x64 Tauri 安装版迁移；Tauri 后续更新选择对应的 Tauri 安装包。两种 Tauri 产物都继续使用 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，已有 SQLite 数据无需重新导入。
-
-打包辅助脚本可用 `npm run test:packaging:tauri` 检查。`node packaging/tauri/verify-windows.cjs` 会分别解包安装版和便携 ZIP，核对每个运行资源的 SHA-256，并对两个解包目录运行真实 WebView2 集成检查。检查使用独立数据目录，验证后端发现、悬浮窗、备份恢复与关闭保存。单独检查程序目录可运行 `node apps/desktop/tests/tauri-smoke.mjs`。验证记录见 [1.3.0 发布说明](../../docs/releases/v1.3.0.md)。
+verify-windows.cjs 解包安装程序，逐文件核对运行资源与主程序，再启动真实 WebView2，检查后端发现、悬浮窗、备份恢复和关闭保存。它不执行 NSIS 安装/卸载。验证记录见[发布说明](../../docs/releases/v1.3.1.md)。Windows ARM64 暂不支持 WinDivert 下载限速。
 
 ## Electron 历史构建与验收参考
 

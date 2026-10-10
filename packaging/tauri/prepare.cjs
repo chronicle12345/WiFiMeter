@@ -106,7 +106,9 @@ function existingBackendDirectory(root, platform, arch) {
 }
 
 function prepare({ root = repositoryRoot, platform = process.platform, arch = process.arch,
-    nodeExecutable = process.execPath, nodeVersion = process.versions.node, license,
+    nodeExecutable = process.env.WIFIMETER_NODE_EXECUTABLE || process.execPath,
+    nodeVersion = process.env.WIFIMETER_NODE_VERSION || process.versions.node,
+    license = process.env.WIFIMETER_NODE_LICENSE,
     backendDirectory = existingBackendDirectory(root, platform, arch) } = {}) {
     nativeTarget({ platform, arch });
     assertArchitecture(nodeExecutable, platform, arch);

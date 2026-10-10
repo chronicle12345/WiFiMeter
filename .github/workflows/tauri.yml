@@ -15,12 +15,64 @@ concurrency:
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
-  windows:
-    name: Windows x64 Tauri
-    runs-on: windows-latest
-    timeout-minutes: 60
+  metadata:
+    name: Workflow checks and Tauri release metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.23.3
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install locked browser resources for packaging tests
+        run: npm ci --prefix apps/desktop --ignore-scripts
+      - name: Validate packaging and release helpers
+        run: npm run test:packaging:tauri
+      - name: Check workflow syntax with pinned actionlint
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+      - name: Require matching desktop versions and release tag notes
+        id: metadata
+        run: node packaging/tauri/release.cjs metadata
+
+  windows:
+    name: Windows ${{ matrix.arch }} Tauri
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch: x64
+            node_arch: x64
+            node_version: 22.23.3
+            cmake_arch: x64
+            target: x86_64-pc-windows-msvc
+          - runner: windows-2022
+            arch: ia32
+            node_arch: x86
+            node_version: 22.23.3
+            cmake_arch: Win32
+            target: i686-pc-windows-msvc
+          - runner: windows-11-arm
+            arch: arm64
+            node_arch: arm64
+            node_version: 22.23.3
+            cmake_arch: ARM64
+            target: aarch64-pc-windows-msvc
     defaults:
       run:
         shell: pwsh
@@ -30,37 +82,65 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 24.14.1
+          node-version: ${{ matrix.node_version }}
+          architecture: ${{ matrix.node_arch }}
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - name: Require matching desktop versions and release tag notes
-        id: metadata
-        run: node packaging/tauri/release.cjs metadata
-      - name: Install dependencies
-        run: npm ci --prefix apps/desktop
+      - name: Resolve native paths and installed Visual Studio generator
+        run: |
+          node .github/workflows/scripts/ci.cjs environment win32 '${{ matrix.arch }}'
+          if ($LASTEXITCODE) { throw 'Target Node.js architecture does not match' }
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installed = & $vswhere -latest -products '*' -property installationVersion
+          if ($LASTEXITCODE -or -not $installed) { throw 'Visual Studio C++ toolchain is missing' }
+          $major = ($installed -split '\.')[0]
+          $capabilities = cmake -E capabilities | ConvertFrom-Json
+          if ($LASTEXITCODE) { throw 'Cannot read CMake generators' }
+          $generator = $capabilities.generators.name | Where-Object { $_ -match "^Visual Studio $major " } | Select-Object -First 1
+          if (-not $generator) { throw 'CMake does not support the installed Visual Studio version' }
+          "CMAKE_GENERATOR=$generator" >> $env:GITHUB_ENV
+          rustup target add '${{ matrix.target }}'
+          if ($LASTEXITCODE) { throw 'Rust target installation failed' }
+      - name: Install locked desktop dependencies
+        run: |
+          if ('${{ matrix.arch }}' -eq 'ia32') {
+            npm ci --prefix apps/desktop --ignore-scripts
+          } else {
+            npm ci --prefix apps/desktop
+          }
+          if ($LASTEXITCODE) { throw 'npm ci failed' }
+      - name: Download pinned official ia32 Electron fixture runtime
+        if: matrix.arch == 'ia32'
+        id: ia32_runtime
+        run: node .github/workflows/scripts/install-electron-ia32.cjs download
+      - name: Activate Electron 43 for ia32 renderer regression tests
+        if: matrix.arch == 'ia32'
+        env:
+          ELECTRON_ARCHIVE: ${{ steps.ia32_runtime.outputs.archive }}
+          ELECTRON_DIRECTORY: ${{ steps.ia32_runtime.outputs.directory }}
+        run: |
+          Expand-Archive -LiteralPath $env:ELECTRON_ARCHIVE -DestinationPath $env:ELECTRON_DIRECTORY -Force
+          node .github/workflows/scripts/install-electron-ia32.cjs activate $env:ELECTRON_DIRECTORY
       - name: Ensure WebView2 Runtime for packaged integration tests
         timeout-minutes: 5
         run: |
-          # Detection and silent installation follow Microsoft's distribution guidance.
           # https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
           function Get-WebView2RuntimeVersion {
             $clientId = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
             $registryPaths = @(
               "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$clientId",
+              "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$clientId",
               "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$clientId"
             )
             foreach ($registryPath in $registryPaths) {
               $rawVersion = (Get-ItemProperty -LiteralPath $registryPath -Name pv -ErrorAction SilentlyContinue).pv
               [version]$parsedVersion = $null
-              if ([version]::TryParse([string]$rawVersion, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') {
-                return $parsedVersion
-              }
+              if ([version]::TryParse([string]$rawVersion, [ref]$parsedVersion) -and $parsedVersion -gt [version]'0.0.0.0') { return $parsedVersion }
             }
             return $null
           }
           $runtimeVersion = Get-WebView2RuntimeVersion
           if (-not $runtimeVersion) {
-            Write-Host 'WebView2 Runtime was not found; installing the Microsoft Evergreen Runtime.'
             $bootstrapper = Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
             Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $bootstrapper -TimeoutSec 120
             $signature = Get-AuthenticodeSignature -LiteralPath $bootstrapper
@@ -73,60 +153,169 @@ jobs:
           }
           if (-not $runtimeVersion) { throw 'WebView2 Runtime was not detected after installation' }
           Write-Host "WebView2 Runtime version: $runtimeVersion"
-          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-          try {
-            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-            Write-Host "WebView2 test launch is elevated: $($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
-          } finally { $identity.Dispose() }
-      - name: Validate packaging and release helpers
-        run: npm run test:packaging:tauri
-      - name: Build and test native backend
+      - name: Build and test the native backend
         run: |
-          cmake -S backend -B build/windows -A x64 -DWIFIMETER_BUILD_TESTS=ON
+          cmake -S backend -B $env:BUILD_DIR -G $env:CMAKE_GENERATOR -A '${{ matrix.cmake_arch }}' -DWIFIMETER_BUILD_TESTS=ON
           if ($LASTEXITCODE) { throw 'Backend configuration failed' }
-          cmake --build build/windows --config Release --parallel 2
+          cmake --build $env:BUILD_DIR --config Release --parallel 2
           if ($LASTEXITCODE) { throw 'Backend build failed' }
-          ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error
+          ctest --test-dir $env:BUILD_DIR -C Release --output-on-failure --no-tests=error
           if ($LASTEXITCODE) { throw 'Backend tests failed' }
+          node .github/workflows/scripts/ci.cjs backend win32 '${{ matrix.arch }}' "$env:BUILD_DIR/app"
+      - name: Require actual native ETW and TCP EStats capture
+        run: |
+          python backend/tests/windows_app_capture_smoke.py "$env:BUILD_DIR/app/wifimeter-app-capture.exe" --require-native
+          if ($LASTEXITCODE) { throw 'Native ETW capture failed' }
+          & (Join-Path $env:GITHUB_WORKSPACE "$env:BUILD_DIR/tests/Release/windows_estats_smoke_test.exe")
+          if ($LASTEXITCODE -ne 0) { throw 'Native TCP EStats capture failed; a skip is not a pass' }
       - name: Desktop unit and renderer regression tests
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
           npm run test:ui
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
-      - name: Build Tauri installer and portable package
-        run: npm run dist:windows
-      - name: Rust host tests
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --locked
-      - name: Validate installer and portable WebView integration
-        run: node packaging/tauri/verify-windows.cjs
-      - name: Stage exactly three verified release attachments
+      - name: Cache the compiled native Node worker
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: build/lean-node-runtime
+          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
+      - name: Build or validate the lean native Node worker
+        run: node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
+      - name: Build only the Tauri NSIS installer
+        run: node packaging/tauri/build.cjs --platform win32 --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats nsis --skip-backend
+      - name: Rust host tests on the target architecture
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --target '${{ matrix.target }}' --locked
+      - name: Validate the extracted installer in native WebView2
+        run: node packaging/tauri/verify-windows.cjs --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
+      - name: Stage verified installer and internal checksum
         id: stage
-        run: node packaging/tauri/release.cjs stage dist/windows
+        run: node packaging/tauri/release.cjs stage win32 '${{ matrix.arch }}' $env:OUTPUT_DIR
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: tauri-windows-x64
+          name: tauri-release-windows-${{ matrix.arch }}
           path: ${{ steps.stage.outputs.directory }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
       - name: Upload Tauri integration failure diagnostics
-        if: ${{ failure() }}
+        if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: tauri-windows-x64-diagnostics-${{ github.run_attempt }}
+          name: tauri-diagnostics-windows-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
-            build/tauri-smoke/**/host.log
-            build/tauri-smoke/**/startup-diagnostics.json
-            build/tauri-smoke/**/result.json
-            build/tauri-smoke/**/*.png
+            build/tauri-smoke/**
             build/tauri-package-check-*/result.json
+            ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 14
 
+  linux:
+    name: Linux ${{ matrix.arch }} Tauri
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            arch: arm64
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.23.3
+          architecture: ${{ matrix.arch }}
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Resolve native paths and Rust target
+        run: |
+          node .github/workflows/scripts/ci.cjs environment linux '${{ matrix.arch }}'
+          rustup target add '${{ matrix.target }}'
+      - name: Install native backend, Tauri and integration dependencies
+        run: bash .github/workflows/scripts/tauri-linux-deps.sh
+      - name: Install locked desktop dependencies
+        run: npm ci --prefix apps/desktop
+      - name: Build and test with the Ubuntu 22.04 compatibility baseline
+        run: |
+          cmake -S backend -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON -DWIFIMETER_LINUX_APP_CAPTURE=ON \
+            -DWIFIMETER_BPF_CLANG=/usr/bin/clang-14 -DWIFIMETER_LIBBPF_INCLUDE_DIR="$TAURI_LIBBPF_INCLUDE" -DWIFIMETER_LIBBPF_LIBRARY="$TAURI_LIBBPF_LIBRARY"
+          cmake --build "$BUILD_DIR" --parallel 2
+          ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error -E '^linux_app_capture_smoke$'
+          node .github/workflows/scripts/ci.cjs backend linux '${{ matrix.arch }}' "$BUILD_DIR/app"
+      - name: Require actual native eBPF capture
+        run: sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
+      - name: Desktop unit and renderer regression tests
+        run: |
+          npm run test:unit
+          sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
+          dbus-run-session -- xvfb-run -a npm run test:ui
+      - name: Cache the compiled native Node worker
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: build/lean-node-runtime
+          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
+      - name: Build or validate the lean native Node worker
+        run: node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
+      - name: Build Tauri deb, rpm and AppImage packages
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: node packaging/tauri/build.cjs --platform linux --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats deb,rpm,appimage --skip-backend
+      - name: Rust host tests on the target architecture
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --target '${{ matrix.target }}' --locked
+      - name: Install pinned Tauri WebDriver
+        run: cargo install tauri-driver --version 2.0.5 --locked
+      - name: Validate every extracted package in native WebKitGTK
+        run: node packaging/tauri/verify-linux.cjs --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
+      - name: Stage verified packages and internal checksum
+        id: stage
+        run: node packaging/tauri/release.cjs stage linux '${{ matrix.arch }}' "$OUTPUT_DIR"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: tauri-release-linux-${{ matrix.arch }}
+          path: ${{ steps.stage.outputs.directory }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - name: Upload Tauri integration failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: |
+            build/tauri-smoke/**
+            build/tauri-package-check-*/result.json
+            ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  required:
+    name: Required Tauri checks
+    if: always()
+    needs: [metadata, windows, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail on any failed, cancelled or skipped required job
+        env:
+          METADATA_RESULT: ${{ needs.metadata.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+        run: |
+          test "$METADATA_RESULT" = success
+          test "$WINDOWS_RESULT" = success
+          test "$LINUX_RESULT" = success
+
   publish:
-    name: Publish verified Windows x64 Tauri v1.3 release
-    needs: windows
+    name: Publish verified multi-platform Tauri v1.3 release
+    needs: [metadata, windows, linux, required]
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -138,27 +327,29 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: 24.14.1
+          node-version: 22.23.3
       - name: Recheck the tag, versions and release notes
         id: metadata
         run: node packaging/tauri/release.cjs metadata
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: tauri-windows-x64
+          pattern: tauri-release-*
           path: ${{ runner.temp }}/tauri-release-artifacts
-      - name: Require the exact release attachments and matching SHA-256
+          merge-multiple: false
+      - name: Require all five matrices, nine installers and matching internal SHA-256
         id: assets
         run: node packaging/tauri/release.cjs release-files "$RUNNER_TEMP/tauri-release-artifacts"
-      - name: Upload a complete draft before publishing
+      - name: Upload all installers to a draft before publishing
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-          VERSION: ${{ needs.windows.outputs.version }}
+          VERSION: ${{ needs.metadata.outputs.version }}
           NOTES_FILE: ${{ steps.metadata.outputs.notes_file }}
           ASSETS_FILE: ${{ steps.assets.outputs.assets_file }}
         run: |
           set -euo pipefail
           mapfile -t assets < "$ASSETS_FILE"
+          # The validated list contains installers only; checksum manifests stay in Actions artifacts.
           # Creation fails if this tag already has a release, including a draft.
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$NOTES_FILE" "${assets[@]}"
           gh release edit "$RELEASE_TAG" --draft=false

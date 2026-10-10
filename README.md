@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.0.md"><img src="https://img.shields.io/badge/version-1.3.0-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.0" /></a>
-  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows x64 release target" /></a>
+  <a href="docs/releases/v1.3.1.md"><img src="https://img.shields.io/badge/version-1.3.1-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.1" /></a>
+  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="backend/README.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
@@ -24,7 +24,7 @@
 
 <p align="center"><strong>English</strong> &nbsp;|&nbsp; <a href="README.zh-CN.md">简体中文</a></p>
 
-A desktop network usage meter with shared source code for Windows and Linux. Tauri renders the interface using the system WebView; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. The 1.3.0 release targets Windows x64; published builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
+A desktop network usage meter with shared source code for Windows and Linux. Tauri renders the interface using the system WebView; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. Release targets cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64; available builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
 
 The following overview and application history use synthetic data.
 
@@ -44,7 +44,7 @@ The following overview and application history use synthetic data.
 
 ## Existing data and upgrades
 
-For Electron 1.2.x, download and run the Windows x64 Tauri installer from [Releases](https://github.com/chronicle12345/WiFiMeter/releases). It reuses the existing data directory. Once Tauri is installed, subsequent update checks select the matching Tauri installer.
+For Electron 1.2.x, download the Tauri installer for your operating system and CPU from [Releases](https://github.com/chronicle12345/WiFiMeter/releases). It reuses the existing data directory. Once Tauri is installed, subsequent update checks select the matching Tauri installer.
 
 On Windows, the app discovers the file-based version's default directory at `%LOCALAPPDATA%\WiFiMeter\data`. Other directories can be selected in Settings. Stop the old collector before importing; the Windows installer requests a graceful save and stop before replacing the application.
 
@@ -56,9 +56,9 @@ See the [migration guide](docs/MIGRATION.md) for recovery, retained originals an
 
 ## Packages
 
-The 1.3.0 release scope is Windows x64 Tauri: an NSIS installer, a portable ZIP and a SHA-256 checksum file. Linux, Windows ia32 and Windows ARM64 are outside this release's validation and publication scope. Other source build targets and the older Electron matrix are documented in the [build and release matrix](docs/PACKAGING-MATRIX.md).
+Windows x64, x86 and ARM64 use NSIS installers. Linux x64 and ARM64 use deb, rpm and AppImage packages. Portable archives have been discontinued. Checksums are verified internally in CI; the download page lists application packages. The [build and release matrix](docs/PACKAGING-MATRIX.md) describes the checks required for all five targets.
 
-Tauri packages bundle the Node business worker and C++ collectors, with no Electron or Chromium runtime. Windows installers download WebView2 when needed; portable builds require an existing WebView2 installation. Artifact names contain Tauri, and all executable architectures are checked together. macOS and Linux 32-bit are not release targets.
+Tauri packages bundle the Node business worker and C++ collectors, with no Electron or Chromium runtime. Windows installers download WebView2 when needed. Linux uses WebKitGTK 4.1. Artifact names contain Tauri, and all executable architectures are checked together. macOS and Linux 32-bit are not release targets. Windows ARM64 does not support WinDivert download limits.
 
 Application capture requires supported native facilities and permission. Linux eBPF has additional kernel requirements; see [Linux capture](docs/LINUX_APP_CAPTURE.md) and [Windows capture](docs/WINDOWS_APP_CAPTURE.md). Network controls request administrator approval. Firewall/QoS policies can persist after exit or uninstall; remove unwanted policies in the application before uninstalling.
 
@@ -76,11 +76,11 @@ npm run test:ui
 Backend tests are built with CMake and run with CTest. The UI suite uses the retained Electron host to check the shared renderer. Build the Windows x64 Tauri package and run its separate native WebView2 integration check with:
 
 ```sh
-node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis,portable
-node apps/desktop/tests/tauri-smoke.mjs
+node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis
+node packaging/tauri/verify-windows.cjs
 ```
 
-Platform dependencies and other source build commands are documented in [packaging](packaging/README.md). Tests use synthetic fixtures and isolated profiles. Builds, runtime data, traces and local credentials are excluded from Git. The 1.3.x release workflow requires the Windows x64 backend, shared renderer, Rust host, native WebView2 and package checks before publishing.
+Platform dependencies and other source build commands are documented in [packaging](packaging/README.md). Tests use synthetic fixtures and isolated profiles. Builds, runtime data, traces and local credentials are excluded from Git. The 1.3.x release workflow requires all five targets to pass backend, Rust host and package checks before publishing the complete set of nine packages.
 
 ## Performance and license
 

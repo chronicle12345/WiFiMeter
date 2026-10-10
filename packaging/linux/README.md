@@ -1,3 +1,18 @@
+# Linux Tauri 打包
+
+在 Linux x64 或 ARM64 主机安装对应架构的 Node.js、Rust、C++20 工具链、CMake、WebKitGTK 4.1、libbpf、libelf、SQLite、zlib、rpm、patchelf，安装桌面 npm 依赖后执行：
+
+```bash
+npm run dist:linux
+node packaging/tauri/verify-linux.cjs --arch x64
+```
+
+ARM64 把验证参数改为 --arch arm64。默认生成 deb、rpm、AppImage，分别位于 dist/linux 和 dist/linux-arm64；内部校验清单不进入 Release 附件。三个格式分别解包后核对资源及架构，并在隔离配置、Xvfb 与 D-Bus 环境中运行真实 WebKitGTK 检查。CI 采用 Ubuntu 22.04 构建基线。运行仍需桌面库和内核采集能力，RPM 包管理安装及 FUSE 启动方式需目标系统验收。
+
+详见[平台矩阵](../../docs/PACKAGING-MATRIX.md)。
+
+## Electron 历史参考
+
 # Linux 打包
 
 从仓库根目录执行 `npm run dist:linux`。需要 Ubuntu x64、桌面应用的 npm 依赖和系统命令 `dpkg-deb`。
