@@ -193,24 +193,30 @@ try {
     applicationFixture.samples[0].txBytes = '16000';
     writeFileSync(env.WIFIMETER_FAKE_APPS, JSON.stringify(applicationFixture));
     await request('collectNow');
-    await evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true, miniExpanded: true, miniRange: '5m', miniAutoHide: false, miniSnap: false }));
-    await poll(() => selectWindow('mini'), { message: 'The native floating window must load' });
-    await poll(() => evaluate(() => document.querySelector('#appRows')?.textContent.includes('浏览器')));
-    const applicationState = await evaluate(() => window.miniDesktop.applications());
-    assert.equal(applicationState.rows[0].rxBytes, '64000');
-    assert.equal(applicationState.rows[0].txBytes, '16000');
-    assert.equal(await evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'backend:request', args: [{ method: 'snapshot' }] }).then(() => false, () => true)), true);
-    await evaluate(() => window.miniDesktop.preferences.update({ miniRange: 'custom', miniCustomMinutes: 17 }));
-    await poll(() => evaluate(async () => (await window.miniDesktop.preferences.read()).miniCustomMinutes === 17));
-    await screenshot('floating-applications.png');
+    const applicationState = await request('snapshot', { includeMinutes: true });
+    const applicationRows = applicationState.appMinuteRecords.filter(row => row.appId === applicationFixture.samples[0].appId);
+    assert.ok(applicationRows.length && applicationRows.every(row => row.name === '浏览器'));
+    assert.equal(totalReceived(applicationRows), 64000n);
+    assert.equal(applicationRows.reduce((sum, row) => sum + BigInt(row.txBytes), 0n), 16000n);
+    const applicationQuery = await request('snapshot', { includeMinutes: true,
+        networkKey: applicationRows[0].networkId, from: applicationRows[0].date, to: applicationRows.at(-1).date });
+    assert.equal(totalReceived(applicationQuery.appMinuteRecords), 64000n);
+    check('Independent application minute queries return the collected upload and download data');
+
+    // Floating windows are a Windows product feature. Linux must preserve preferences
+    // without creating an unsupported native window, including after page reload.
+    const windowPreferences = await evaluate(() => window.desktop.windowPreferences.update({
+        miniWindow: true, miniExpanded: true, miniRange: 'custom', miniCustomMinutes: 17,
+        miniAutoHide: false, miniSnap: false
+    }));
+    assert.equal(windowPreferences.miniWindow, true);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(profile, 'window-preferences.json'), 'utf8')), windowPreferences);
+    await delay(500);
+    assert.equal(await selectWindow('mini'), null, 'Linux must not create the Windows-only floating window');
+    assert.equal((await command('GET', '/window/handles')).length, 1);
+    assert.equal(execFileSync('wmctrl', ['-lp'], { env, encoding: 'utf8' }).trim().split('\n')
+        .filter(line => Number(line.trim().split(/\s+/)[2]) === hostPid).length, 1);
     await selectWindow('main');
-    await evaluate(() => window.desktop.windowPreferences.update({ miniWindow: false }));
-    await evaluate(() => window.desktop.windowPreferences.update({ miniWindow: true }));
-    await poll(() => selectWindow('mini'));
-    assert.equal(await evaluate(async () => (await window.miniDesktop.preferences.read()).miniCustomMinutes), 17);
-    await selectWindow('main');
-    await evaluate(() => window.desktop.windowPreferences.update({ miniWindow: false }));
-    check('Floating application records, channel restrictions and preferences survive native window recreation');
 
     await request('setPaused', { paused: true });
     const { backup } = await request('backup');
@@ -226,6 +232,11 @@ try {
     assert.deepEqual(await evaluate(() => window.__smokeErrors), []);
     await command('POST', '/refresh', {});
     await poll(() => evaluate(() => document.querySelector('.connection-title')?.textContent.includes('家里的 Wi-Fi')));
+    assert.deepEqual(await evaluate(() => window.desktop.windowPreferences.read()), windowPreferences);
+    assert.equal(await selectWindow('mini'), null);
+    await selectWindow('main');
+    await evaluate(() => window.desktop.windowPreferences.update({ miniWindow: false }));
+    check('Linux preserves window preferences across reload without creating a Windows-only floating window');
     await screenshot('overview-light.png');
     await evaluate(() => window.desktop.windowPreferences.update({ theme: 'dark' }));
     await poll(() => evaluate(() => document.documentElement.dataset.theme === 'dark'));

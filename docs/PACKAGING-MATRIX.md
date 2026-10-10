@@ -18,7 +18,7 @@
 
 Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微软签名后安装并复查版本。集成检查使用隔离配置和随机本机端口。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出高权限进程会忽略 WEBVIEW2_* 环境覆盖；专用调试参数仅在后台测试与配置隔离同时启用时生效。
 
-Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。
+Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。悬浮窗当前仅支持 Windows；Linux 集成检查验证应用分钟查询、偏好保存与重载，并确认请求小窗后不创建原生窗口。
 
 便携压缩包已取消。每组 CI artifact 保留安装包与内部 SHA-256 清单，发布任务重新验证五组的名称、数量和校验值，只把九个应用安装包上传 Release。校验 TXT 不进入公开下载附件。
 
