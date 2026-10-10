@@ -5,7 +5,7 @@
 从仓库根目录运行，版本由 package metadata 读取。Windows x64、x86、ARM64 使用对应架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器；Linux x64、ARM64 使用本机工具链及 WebKitGTK 4.1。完整发布矩阵见[平台说明](../docs/PACKAGING-MATRIX.md)。
 
 ```powershell
-npm ci --prefix apps/desktop
+npm ci --prefix apps/desktop --ignore-scripts
 npm run dist:windows
 ```
 
@@ -17,20 +17,55 @@ dist/windows/WiFiMeter-1.3.1-windows-x64-Tauri-Setup.exe
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
 
+未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式发行通过 [lean-node.cjs](tauri/lean-node.cjs) 从固定的 Node.js 22.23.3 官方源码构建精简运行时，并校验源码 SHA-256。该配置移除未使用的 inspector、内置 SQLite、Amaro、启动快照和代码缓存，保留 TLS、crypto 与中英文 ICU 数据；应用仍使用 C++ 后端的 SQLite 数据库。
+
+Windows Release 编译通过 [node-size.props](tauri/windows/node-size.props) 统一使用 MSVC `/O1 /Os`，包括 V8；JIT 和 WebAssembly 保留。构建缓存同时校验编译配置和 props 文件摘要，旧配置不能作为新配置的产物使用。NSIS 使用 64 MiB LZMA 字典。Linux RPM 与 AppImage 使用 XZ 压缩，deb 沿用 Tauri 的压缩配置。
+
+本机复现 CI 发行配置时，在仓库根目录执行以下命令。当前 Node.js 架构须与目标一致。Windows 还需 Python 3、完整 7-Zip 和 Visual Studio C++ 工具链；原生校验需 WebView2 Runtime。
+
+```powershell
+$nodeArch = node -p 'process.arch'
+$rustTarget = @{ x64 = 'x86_64-pc-windows-msvc'; ia32 = 'i686-pc-windows-msvc'; arm64 = 'aarch64-pc-windows-msvc' }[$nodeArch]
+rustup target add $rustTarget
+if ($LASTEXITCODE) { throw 'Rust target installation failed' }
+node packaging/tauri/lean-node.cjs --arch $nodeArch --output build/lean-node-runtime --jobs 2
+if ($LASTEXITCODE) { throw 'Lean Node build failed' }
+$env:WIFIMETER_NODE_EXECUTABLE = 'build/lean-node-runtime/node.exe'
+$env:WIFIMETER_NODE_LICENSE = 'build/lean-node-runtime/LICENSE'
+$env:WIFIMETER_NODE_VERSION = '22.23.3'
+node packaging/tauri/build.cjs --platform win32 --arch $nodeArch --target $rustTarget --formats nsis
+if ($LASTEXITCODE) { throw 'Tauri build failed' }
+node packaging/tauri/verify-windows.cjs --arch $nodeArch --target $rustTarget
+```
+
 明确指定目标架构时，Node.js 必须是该架构，Rust target 必须对应：
 
 ```powershell
 node packaging/tauri/build.cjs --platform win32 --arch ia32 --target i686-pc-windows-msvc --formats nsis
 ```
 
-Linux 在对应架构主机执行：
+Linux 在对应架构主机执行，先安装 [tauri-linux-deps.sh](../.github/workflows/scripts/tauri-linux-deps.sh) 中所列系统依赖：
 
 ```bash
-node packaging/tauri/build.cjs --platform linux --arch x64 --formats deb,rpm,appimage
-node packaging/tauri/verify-linux.cjs --arch x64
+set -euo pipefail
+node_arch=$(node -p 'process.arch')
+node packaging/tauri/lean-node.cjs --arch "$node_arch" --output build/lean-node-runtime --jobs 2
+install -D -m 755 build/lean-node-runtime/node build/lean-node-staged/node
+strip --strip-unneeded build/lean-node-staged/node
+build/lean-node-staged/node packaging/tauri/lean-node-check.cjs --lean
+export WIFIMETER_NODE_EXECUTABLE=build/lean-node-staged/node
+export WIFIMETER_NODE_LICENSE=build/lean-node-runtime/LICENSE
+export WIFIMETER_NODE_VERSION=22.23.3
+npm run dist:linux
+cargo install tauri-driver --version 2.0.5 --locked
+node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
 Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。完整检查结果与体积见[发布说明](../docs/releases/v1.3.1.md)。
+
+RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
+
+Linux 在运行时副本上去除静态符号及调试信息，保留原始构建缓存和运行所需动态符号。裁剪后的程序重新执行运行检查，并用于实际安装包与 WebKitGTK 验证。
 
 ## Electron 历史构建与性能参考
 

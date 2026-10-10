@@ -148,6 +148,7 @@ function main(args = process.argv.slice(2)) {
         run(process.execPath, [cli, 'dev', '--features', 'custom-protocol', '--no-dev-server', ...(options.target ? ['--target', options.target] : [])], common);
         return [];
     }
+    if (options.platform === 'linux') common.env = { ...process.env, LDAI_COMP: 'xz' };
     const bundles = options.formats.filter(format => format !== 'dir');
     run(process.execPath, [cli, 'build', '--ci', '--features', 'custom-protocol', '--config', JSON.stringify({ bundle: { useLocalToolsDir: true } }),
         ...(options.target ? ['--target', options.target] : []),

@@ -192,7 +192,7 @@ jobs:
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: build/lean-node-runtime
-          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
+          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs', 'packaging/tauri/windows/node-size.props') }}
           restore-keys: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-
       - name: Build or validate the lean native Node worker
         env:

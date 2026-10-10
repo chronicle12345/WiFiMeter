@@ -24,7 +24,8 @@
         "depends": ["network-manager", "pkexec | policykit-1", "libelf1 | libelf1t64", "libsqlite3-0", "zlib1g", "xdg-utils", "libstdc++6", "libgcc-s1", "libc6 (>= 2.35)"]
       },
       "rpm": {
-        "depends": ["NetworkManager", "polkit", "elfutils-libelf", "sqlite-libs", "zlib", "xdg-utils", "libstdc++", "libgcc"]
+        "depends": ["NetworkManager", "polkit", "elfutils-libelf", "sqlite-libs", "zlib", "xdg-utils", "libstdc++", "libgcc"],
+        "compression": { "type": "xz", "level": 6 }
       }
     },
     "windows": {

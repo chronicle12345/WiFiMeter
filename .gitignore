@@ -10,6 +10,7 @@
 /node_modules/
 /.cross-build/
 /artifacts/
+/apps/desktop/build/
 /apps/desktop/src-tauri/target/
 /apps/desktop/src-tauri/resources/
 /apps/desktop/src-tauri/ui/

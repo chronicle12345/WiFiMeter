@@ -19,6 +19,7 @@ const CONFIGURE_FLAGS = Object.freeze([
     '--v8-disable-object-print'
 ]);
 const repositoryRoot = path.resolve(__dirname, '../..');
+const WINDOWS_SIZE_PROPS = path.join(__dirname, 'windows/node-size.props');
 
 function digest(file) {
     const hash = createHash('sha256');
@@ -133,6 +134,7 @@ function visualStudio() {
 }
 
 function compileWindows(directory, configuration) {
+    fs.accessSync(WINDOWS_SIZE_PROPS, fs.constants.R_OK);
     const studio = visualStudio();
     const target = { x64: 'x64', ia32: 'x86', arm64: 'arm64' }[configuration.arch];
     const host = process.env.PROCESSOR_ARCHITECTURE === 'ARM64' ? 'arm64' : 'x64';
@@ -159,7 +161,8 @@ function compileWindows(directory, configuration) {
     phase('configure', () => run('python', ['-u', 'configure', ...flags], { cwd: directory, env, timeout: 600000 }));
     phase('MSBuild', () => run('msbuild', ['node.sln', '/t:node', '/m:2', '/p:Configuration=Release',
         `/p:Platform=${configuration.arch === 'ia32' ? 'Win32' : target === 'arm64' ? 'ARM64' : 'x64'}`,
-        `/p:MultiProcMaxCount=${configuration.jobs}`, '/clp:NoItemAndPropertyList;Verbosity=minimal', '/nologo'], { cwd: directory, env }));
+        `/p:MultiProcMaxCount=${configuration.jobs}`, `/p:ForceImportBeforeCppTargets=${WINDOWS_SIZE_PROPS}`,
+        '/clp:NoItemAndPropertyList;Verbosity=minimal', '/nologo'], { cwd: directory, env }));
     return path.join(directory, 'out/Release/node.exe');
 }
 
@@ -184,7 +187,8 @@ async function build(configuration = options()) {
     const license = path.join(configuration.output, 'LICENSE');
     let cached;
     try { cached = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { /* 首次构建或不完整缓存会重新编译。 */ }
-    const profile = CONFIGURE_FLAGS.join(' ');
+    const profile = CONFIGURE_FLAGS.join(' ') + (process.platform === 'win32'
+        ? ` msvc-release-minspace-size:${digest(WINDOWS_SIZE_PROPS)}` : '');
     if (!(cached?.version === VERSION && cached.sourceSha256 === SOURCE_SHA256 && cached.profile === profile
         && cached.platform === process.platform && cached.arch === configuration.arch && fs.existsSync(nodeExecutable)
         && fs.existsSync(license) && cached.sha256 === digest(nodeExecutable))) {

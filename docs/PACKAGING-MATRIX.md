@@ -14,17 +14,21 @@
 
 [tauri.yml](../.github/workflows/tauri.yml) 使用对应架构的原生环境；Windows x86 在 x64 Windows 上运行 32 位 Node 与测试程序，Rust 目标为 i686-pc-windows-msvc。ARM64 使用 GitHub ARM64 runner。Linux 保持 Ubuntu 22.04 和 glibc 2.35 构建基线。
 
-普通 main push、pull request 和手动运行执行检查，v1.3.* 标签额外进入发布。每组构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需任务失败都阻止发布。
+main push、pull request、手动运行及 v1.3.* 标签共用一套 Desktop CI，标签额外进入发布。每组构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需任务失败都阻止发布。
 
 Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微软签名后安装并复查版本。集成检查使用隔离配置和随机本机端口。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出高权限进程会忽略 WEBVIEW2_* 环境覆盖；专用调试参数仅在后台测试与配置隔离同时启用时生效。
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。悬浮窗当前仅支持 Windows；Linux 集成检查验证应用分钟查询、偏好保存与重载，并确认请求小窗后不创建原生窗口。
 
+正式发行的 Node.js 22.23.3 精简配置由 [lean-node.cjs](../packaging/tauri/lean-node.cjs) 固定，源码 SHA-256 校验、保留能力与本机复现命令见[打包说明](../packaging/README.md#tauri-安装包)。
+
+Windows 使用 `/O1 /Os` 编译发行运行时，并把优化配置摘要纳入缓存校验；NSIS 使用 64 MiB LZMA 字典。Linux RPM、AppImage 使用 XZ，RPM 的摘要校验和 `bsdtar` 解包均须成功，三个格式继续逐个执行完整资源与原生界面检查。
+
 便携压缩包已取消。每组 CI artifact 保留安装包与内部 SHA-256 清单，发布任务重新验证五组的名称、数量和校验值，只把九个应用安装包上传 Release。校验 TXT 不进入公开下载附件。
 
 packaging/tauri/release.cjs 要求根目录、桌面 package、Tauri 配置与 Cargo 版本一致，发布标签和说明必须匹配。全部检查通过后创建草稿并上传完整附件，再公开。已有同名 Release 或草稿会使创建失败，不会自动覆盖。默认 contents: read，仅发布任务使用 contents: write 和当前运行的 GITHUB_TOKEN。
 
-本机 Windows x64 检查：
+本机 Windows x64 检查前，先按[打包说明](../packaging/README.md#tauri-安装包)构建并设置精简 Node 运行时：
 
 ```powershell
 npm run test:packaging:tauri
@@ -55,7 +59,7 @@ Windows ia32 在 x64 runner 上执行 32 位 Node、Electron、后端和测试�
 
 ### 旧 Electron 分支验证
 
-`Integration CI and release` 在 integration-1.2.0、main、cross-platform、feature/** 的 push，以及 pull_request 和手动运行时验证。Windows 工作流仅保留 workflow_call，由这个入口调用。旧 cross-Wine 自动任务已移除，由五组原生矩阵覆盖旧宿主检查；该流程与 `tauri.yml` 的宿主、版本范围及发布入口独立。
+`Legacy Electron validation and release` 仅在 integration-1.2.0、cross-platform 分支、v1.2.* 标签及手动运行时验证。main 和 pull request 使用当前 Desktop CI，避免重复构建两套完整平台矩阵。Windows 工作流仅保留 workflow_call，由历史入口调用。旧 cross-Wine 自动任务已移除；历史流程与 `tauri.yml` 的宿主、版本范围及发布入口独立。
 
 每个架构执行完整 C++ 后端构建和 CTest，运行实际后端的 `--version` 并与桌面 package metadata 比较。Node 单元测试设置正确的 `WIFIMETER_BACKEND`，使后端协议与数据库测试使用目标架构程序。所有路径从 packaging/targets.cjs 生成。
 
