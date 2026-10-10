@@ -57,7 +57,16 @@ struct Electron {
 impl Electron {
     fn launch(profile: &Path) -> (Self, String) {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let executable = manifest.join("../node_modules/electron/dist/electron.exe");
+        let electron_directory = std::env::var_os("ELECTRON_OVERRIDE_DIST_PATH")
+            .filter(|directory| !directory.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| manifest.join("../node_modules/electron/dist"));
+        let executable = electron_directory.join("electron.exe");
+        assert!(
+            executable.is_file(),
+            "Electron 测试基础设施错误：找不到运行时 {}",
+            executable.display()
+        );
         let fixture = manifest.join("tests/fixtures/electron-instance.cjs");
         assert!(
             fixture.is_file(),
