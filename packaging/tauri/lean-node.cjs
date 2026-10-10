@@ -48,28 +48,47 @@ function options(args = process.argv.slice(2)) {
 }
 
 function run(executable, args, configuration = {}) {
-    return execFileSync(executable, args, { stdio: 'inherit', windowsHide: true, ...configuration });
+    return execFileSync(executable, args, { stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true, ...configuration });
+}
+
+function phase(name, operation) {
+    const started = Date.now();
+    const log = status => process.stdout.write(`[lean-node] ${new Date().toISOString()} ${name}: ${status} (${Date.now() - started} ms)\n`);
+    log('started');
+    const complete = result => { log('completed'); return result; };
+    const failed = error => { log('failed'); throw error; };
+    try {
+        const result = operation();
+        return result && typeof result.then === 'function' ? result.then(complete, failed) : complete(result);
+    } catch (error) { return failed(error); }
 }
 
 async function source(configuration) {
     fs.mkdirSync(configuration.sourceRoot, { recursive: true });
     const archive = path.join(configuration.sourceRoot, `node-v${VERSION}.tar.xz`);
     if (!fs.existsSync(archive)) {
-        const response = await fetch(SOURCE_URL, { signal: AbortSignal.timeout(600000) });
-        if (!response.ok || !response.body) throw Error(`下载 Node 源码失败：HTTP ${response.status}`);
         const temporary = `${archive}.part`;
         try {
-            await pipeline(response.body, fs.createWriteStream(temporary, { flags: 'wx' }));
-            if (digest(temporary) !== SOURCE_SHA256) throw Error('Node 官方源码 SHA-256 不符。');
+            await phase('source download', async () => {
+                const response = await fetch(SOURCE_URL, { signal: AbortSignal.timeout(600000) });
+                if (!response.ok || !response.body) throw Error(`下载 Node 源码失败：HTTP ${response.status}`);
+                await pipeline(response.body, fs.createWriteStream(temporary, { flags: 'wx' }));
+            });
+            phase('download verification', () => {
+                if (digest(temporary) !== SOURCE_SHA256) throw Error('Node 官方源码 SHA-256 不符。');
+            });
             fs.renameSync(temporary, archive);
         } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
     }
-    if (digest(archive) !== SOURCE_SHA256) throw Error('缓存的 Node 官方源码 SHA-256 不符。');
+    phase('source verification', () => {
+        if (digest(archive) !== SOURCE_SHA256) throw Error('缓存的 Node 官方源码 SHA-256 不符。');
+    });
     const directory = path.join(configuration.sourceRoot, `node-v${VERSION}`);
     const stamp = path.join(directory, '.wifimeter-source-sha256');
     if (!fs.existsSync(stamp) || fs.readFileSync(stamp, 'utf8').trim() !== SOURCE_SHA256) {
         // Windows 的 bsdtar 在部分系统中无法解码这个测试目录；它不参与宿主编译。
-        run(process.env.WIFIMETER_TAR || 'tar', [`--exclude=node-v${VERSION}/test/fixtures/copy/utf`, '-xf', archive, '-C', configuration.sourceRoot]);
+        phase('source extraction', () => run(process.env.WIFIMETER_TAR || 'tar',
+            [`--exclude=node-v${VERSION}/test/fixtures/copy/utf`, '-xf', archive, '-C', configuration.sourceRoot], { timeout: 900000 }));
         fs.writeFileSync(stamp, SOURCE_SHA256 + '\n');
     }
     return directory;
@@ -82,9 +101,9 @@ function quoteBatch(value) {
 
 function visualStudio() {
     const vswhere = path.join(process.env['ProgramFiles(x86)'] || 'C:/Program Files (x86)', 'Microsoft Visual Studio/Installer/vswhere.exe');
-    const installations = JSON.parse(execFileSync(vswhere,
+    const installations = phase('Visual Studio discovery', () => JSON.parse(run(vswhere,
         ['-all', '-prerelease', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-format', 'json'],
-        { encoding: 'utf8', windowsHide: true }));
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 })));
     const installation = installations.find(item => /^1[78]\./.test(item.installationVersion));
     if (!installation) throw Error('缺少 Visual Studio 2022 或 2026 的 C++ 编译工具。');
     return { path: installation.installationPath, version: installation.installationVersion.startsWith('18.') ? '2026' : '2022' };
@@ -94,30 +113,37 @@ function compileWindows(directory, configuration) {
     const studio = visualStudio();
     const target = { x64: 'x64', ia32: 'x86', arm64: 'arm64' }[configuration.arch];
     const host = process.env.PROCESSOR_ARCHITECTURE === 'ARM64' ? 'arm64' : 'x64';
-    const batch = path.join(configuration.sourceRoot, `compile-${configuration.arch}.cmd`);
+    const environmentOutput = phase('Visual Studio initialization', () => {
+        try {
+            return run('cmd.exe', ['/d', '/s', '/c',
+                `call ${quoteBatch(path.join(studio.path, 'Common7/Tools/VsDevCmd.bat'))} -no_logo -arch=${target} -host_arch=${host} >nul && set`],
+            { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000, windowsVerbatimArguments: true });
+        } catch (error) {
+            // 捕获的 stdout 包含环境变量；错误信息不能回显该输出。
+            throw Error(error.code === 'ETIMEDOUT' ? 'Visual Studio 初始化超过 2 分钟。' : 'Visual Studio 初始化失败。');
+        }
+    });
+    const env = {};
+    for (const line of environmentOutput.split(/\r?\n/)) {
+        const equals = line.indexOf('=');
+        // Windows 环境变量名不区分大小写，统一后避免 PATH 等变量重复。
+        if (equals > 0) env[line.slice(0, equals).toUpperCase()] = line.slice(equals + 1);
+    }
+    Object.assign(env, { GYP_MSVS_VERSION: studio.version, GYP_MSVS_OVERRIDE_PATH: studio.path,
+        MULTIPROCMAXCOUNT: String(configuration.jobs), USEMULTITOOLTASK: 'True', ENFORCEPROCESSCOUNTACROSSBUILDS: 'True' });
     const flags = [...CONFIGURE_FLAGS, '--openssl-no-asm', '--with-ltcg', `--dest-cpu=${configuration.arch}`];
     if (configuration.arch === 'ia32') flags.push('--no-cross-compiling');
-    const commands = [
-        '@echo off',
-        `call ${quoteBatch(path.join(studio.path, 'Common7/Tools/VsDevCmd.bat'))} -no_logo -arch=${target} -host_arch=${host}`,
-        'if errorlevel 1 exit /b 1',
-        `set GYP_MSVS_VERSION=${studio.version}`,
-        `set GYP_MSVS_OVERRIDE_PATH=${studio.path}`,
-        `set MultiProcMaxCount=${configuration.jobs}`,
-        'set UseMultiToolTask=True', 'set EnforceProcessCountAcrossBuilds=True',
-        `python configure ${flags.join(' ')}`,
-        'if errorlevel 1 exit /b 1',
-        `msbuild node.sln /t:node /m:2 /p:Configuration=Release /p:Platform=${configuration.arch === 'ia32' ? 'Win32' : target === 'arm64' ? 'ARM64' : 'x64'} /p:MultiProcMaxCount=${configuration.jobs} /clp:NoItemAndPropertyList;Verbosity=minimal /nologo`,
-        'exit /b %errorlevel%'
-    ];
-    fs.writeFileSync(batch, commands.join('\r\n') + '\r\n');
-    run('cmd.exe', ['/d', '/s', '/c', quoteBatch(batch)], { cwd: directory, windowsVerbatimArguments: true });
+    phase('configure', () => run('python', ['-u', 'configure', ...flags], { cwd: directory, env, timeout: 600000 }));
+    phase('MSBuild', () => run('msbuild', ['node.sln', '/t:node', '/m:2', '/p:Configuration=Release',
+        `/p:Platform=${configuration.arch === 'ia32' ? 'Win32' : target === 'arm64' ? 'ARM64' : 'x64'}`,
+        `/p:MultiProcMaxCount=${configuration.jobs}`, '/clp:NoItemAndPropertyList;Verbosity=minimal', '/nologo'], { cwd: directory, env }));
     return path.join(directory, 'out/Release/node.exe');
 }
 
 function compileLinux(directory, configuration) {
-    run('python3', ['configure', ...CONFIGURE_FLAGS, `--dest-cpu=${configuration.arch}`], { cwd: directory });
-    run('make', [`-j${configuration.jobs}`, 'node'], { cwd: directory });
+    phase('configure', () => run('python3', ['-u', 'configure', ...CONFIGURE_FLAGS, `--dest-cpu=${configuration.arch}`],
+        { cwd: directory, timeout: 600000 }));
+    phase('make', () => run('make', [`-j${configuration.jobs}`, 'node'], { cwd: directory }));
     return path.join(directory, 'out/Release/node');
 }
 
@@ -141,13 +167,13 @@ async function build(configuration = options()) {
         && fs.existsSync(license) && cached.sha256 === digest(nodeExecutable))) {
         const directory = await source(configuration);
         const built = process.platform === 'win32' ? compileWindows(directory, configuration) : compileLinux(directory, configuration);
-        validate(built, configuration);
+        phase('runtime validation', () => validate(built, configuration));
         fs.copyFileSync(built, nodeExecutable);
         if (process.platform !== 'win32') fs.chmodSync(nodeExecutable, 0o755);
         fs.copyFileSync(path.join(directory, 'LICENSE'), license);
         fs.writeFileSync(manifestPath, JSON.stringify({ version: VERSION, platform: process.platform, arch: configuration.arch,
             sourceUrl: SOURCE_URL, sourceSha256: SOURCE_SHA256, profile, sha256: digest(nodeExecutable), bytes: fs.statSync(nodeExecutable).size }, null, 2) + '\n');
-    } else validate(nodeExecutable, configuration);
+    } else phase('cached runtime validation', () => validate(nodeExecutable, configuration));
     if (process.env.GITHUB_ENV) fs.appendFileSync(process.env.GITHUB_ENV,
         `WIFIMETER_NODE_EXECUTABLE=${nodeExecutable}\nWIFIMETER_NODE_LICENSE=${license}\nWIFIMETER_NODE_VERSION=${VERSION}\n`);
     const result = { nodeExecutable, nodeVersion: VERSION, license, manifest: manifestPath, bytes: fs.statSync(nodeExecutable).size };

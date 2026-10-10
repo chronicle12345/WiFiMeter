@@ -50,7 +50,7 @@ jobs:
     name: Windows ${{ matrix.arch }} Tauri
     needs: metadata
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
@@ -187,8 +187,18 @@ jobs:
         with:
           path: build/lean-node-runtime
           key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
+          restore-keys: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-
       - name: Build or validate the lean native Node worker
-        run: node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          Get-Command python, tar -ErrorAction Stop | Select-Object Name, Source | Format-Table -AutoSize
+          python --version
+          if ($LASTEXITCODE) { throw 'Python version check failed' }
+          tar --version
+          if ($LASTEXITCODE) { throw 'tar version check failed' }
+          node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
+          if ($LASTEXITCODE) { throw 'Lean Node build or validation failed' }
       - name: Save the validated native Node worker before package tests
         if: steps.lean_node_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -282,6 +292,7 @@ jobs:
         with:
           path: build/lean-node-runtime
           key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
+          restore-keys: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-
       - name: Build or validate the lean native Node worker
         run: node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
       - name: Save the validated native Node worker before package tests
@@ -290,6 +301,19 @@ jobs:
         with:
           path: build/lean-node-runtime
           key: ${{ steps.lean_node_cache.outputs.cache-primary-key }}
+      - name: Measure and strip a copy of the Linux worker
+        run: |
+          set -euo pipefail
+          directory="$GITHUB_WORKSPACE/build/lean-node-staged"
+          install -D -m 755 build/lean-node-runtime/node "$directory/node"
+          readelf --wide --section-headers "$directory/node" > "$directory/sections-before.txt"
+          before=$(stat --format=%s "$directory/node")
+          strip --strip-unneeded "$directory/node"
+          readelf --wide --section-headers "$directory/node" > "$directory/sections-after.txt"
+          after=$(stat --format=%s "$directory/node")
+          "$directory/node" packaging/tauri/lean-node-check.cjs --lean
+          echo "Linux worker bytes before strip=$before after strip=$after"
+          echo "WIFIMETER_NODE_EXECUTABLE=$directory/node" >> "$GITHUB_ENV"
       - name: Build Tauri deb, rpm and AppImage packages
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -318,6 +342,7 @@ jobs:
           path: |
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
+            build/lean-node-staged/*.txt
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 14
