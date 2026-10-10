@@ -381,15 +381,56 @@ pub fn start(app: &AppHandle, host: Arc<Host>) -> Result<(), String> {
         while !timer_host.quitting.load(Ordering::SeqCst)
             && !timer_host.failed.load(Ordering::SeqCst)
         {
-            let _ = timer_host.send(crate::native::screen_info(&timer_app));
-            for window in timer_app.webview_windows().values() {
-                let current = (
-                    window.is_visible().unwrap_or(false),
-                    window.is_minimized().unwrap_or(false),
-                );
-                if visibility.insert(window.label().to_string(), current) != Some(current) {
-                    crate::native::window_event(&timer_host, window, "visibility");
+            let sample_app = timer_app.clone();
+            let sample_host = timer_host.clone();
+            let mut previous_visibility = std::mem::take(&mut visibility);
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            // GTK monitor getters must run on the main thread, even when other getters proxy there.
+            if timer_app
+                .run_on_main_thread(move || {
+                    if sample_host.quitting.load(Ordering::SeqCst)
+                        || sample_host.failed.load(Ordering::SeqCst)
+                    {
+                        return;
+                    }
+                    let mut messages = vec![crate::native::screen_info(&sample_app)];
+                    for window in sample_app.webview_windows().values() {
+                        let current = (
+                            window.is_visible().unwrap_or(false),
+                            window.is_minimized().unwrap_or(false),
+                        );
+                        if previous_visibility.insert(window.label().to_string(), current)
+                            != Some(current)
+                        {
+                            messages.push(crate::native::window_state(window, "visibility"));
+                        }
+                    }
+                    let _ = sender.send((previous_visibility, messages));
+                })
+                .is_err()
+            {
+                break;
+            }
+            // Wait for this sample before queuing another; worker I/O stays off the main thread.
+            let snapshot = loop {
+                match receiver.recv_timeout(Duration::from_millis(100)) {
+                    Ok(snapshot) => break Some(snapshot),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        if timer_host.quitting.load(Ordering::SeqCst)
+                            || timer_host.failed.load(Ordering::SeqCst)
+                        {
+                            break None;
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break None,
                 }
+            };
+            let Some((sample_visibility, messages)) = snapshot else {
+                break;
+            };
+            visibility = sample_visibility;
+            for message in messages {
+                let _ = timer_host.send(message);
             }
             std::thread::sleep(Duration::from_millis(100));
         }

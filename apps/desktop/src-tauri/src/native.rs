@@ -199,11 +199,13 @@ fn bounds(window: &WebviewWindow) -> Value {
 }
 
 pub fn window_event(host: &Host, window: &WebviewWindow, event: &str) {
-    let _ = host.send(
-        json!({ "type": "window-event", "window": window.label(), "event": event,
+    let _ = host.send(window_state(window, event));
+}
+
+pub fn window_state(window: &WebviewWindow, event: &str) -> Value {
+    json!({ "type": "window-event", "window": window.label(), "event": event,
         "bounds": bounds(window), "visible": window.is_visible().unwrap_or(false),
-        "minimized": window.is_minimized().unwrap_or(false) }),
-    );
+        "minimized": window.is_minimized().unwrap_or(false) })
 }
 
 pub fn screen_info(app: &AppHandle) -> Value {
