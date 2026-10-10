@@ -112,7 +112,7 @@ function compileWindows(directory, configuration) {
     ];
     fs.writeFileSync(batch, commands.join('\r\n') + '\r\n');
     run('cmd.exe', ['/d', '/s', '/c', quoteBatch(batch)], { cwd: directory, windowsVerbatimArguments: true });
-    return path.join(directory, 'Release/node.exe');
+    return path.join(directory, 'out/Release/node.exe');
 }
 
 function compileLinux(directory, configuration) {
