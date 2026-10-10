@@ -61,19 +61,23 @@ async fn desktop_request(
             .and_then(|value| value["dirty"].as_bool())
             .unwrap_or(false);
         if dirty {
-            let accepted = tauri::async_runtime::spawn_blocking(move || {
-                rfd::MessageDialog::new()
-                    .set_title("退出 WiFiMeter")
-                    .set_description("有尚未保存的设置，仍然退出？")
-                    .set_buttons(rfd::MessageButtons::OkCancelCustom(
-                        "放弃更改并退出".into(),
-                        "继续编辑".into(),
-                    ))
-                    .show()
-                    == rfd::MessageDialogResult::Custom("放弃更改并退出".into())
-            })
-            .await
-            .map_err(|error| error.to_string())?;
+            let accepted = if native::isolated_background_test() {
+                false
+            } else {
+                tauri::async_runtime::spawn_blocking(move || {
+                    rfd::MessageDialog::new()
+                        .set_title("退出 WiFiMeter")
+                        .set_description("有尚未保存的设置，仍然退出？")
+                        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+                            "放弃更改并退出".into(),
+                            "继续编辑".into(),
+                        ))
+                        .show()
+                        == rfd::MessageDialogResult::Custom("放弃更改并退出".into())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            };
             if !accepted {
                 if action["type"] == "native-result" {
                     let mut rejected = action;
@@ -170,8 +174,10 @@ fn main() {
         }),
         Err(error) => {
             eprintln!("[desktop] {error}");
-            rfd::MessageDialog::new().set_title("WiFiMeter").set_level(rfd::MessageLevel::Error)
-                .set_description(format!("无法启动 WiFiMeter。\n{error}")).show();
+            if !native::isolated_background_test() {
+                rfd::MessageDialog::new().set_title("WiFiMeter").set_level(rfd::MessageLevel::Error)
+                    .set_description(format!("无法启动 WiFiMeter。\n{error}")).show();
+            }
             std::process::exit(1);
         }
     }

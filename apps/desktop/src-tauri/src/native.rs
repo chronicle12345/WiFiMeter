@@ -64,6 +64,15 @@ fn boolean(options: &Value, name: &str, fallback: bool) -> bool {
     options[name].as_bool().unwrap_or(fallback)
 }
 
+fn isolated_test_profile() -> bool {
+    std::env::var("WIFIMETER_TEST_ISOLATION").as_deref() == Ok("1")
+        && std::env::var_os("WIFIMETER_USER_DATA").is_some_and(|path| !path.is_empty())
+}
+
+pub fn isolated_background_test() -> bool {
+    std::env::var("WIFIMETER_BACKGROUND_TEST").as_deref() == Ok("1") && isolated_test_profile()
+}
+
 fn browser_arguments(
     software_rendering: bool,
     background_test: bool,
@@ -163,8 +172,7 @@ fn create_window(app: &AppHandle, host: Arc<Host>, label: &str, page: &str) -> R
         builder = builder.background_color(tauri::window::Color(0, 0, 0, 0));
     }
     let test_port = std::env::var("WIFIMETER_TAURI_TEST_PORT").ok();
-    let isolated_profile = std::env::var("WIFIMETER_TEST_ISOLATION").as_deref() == Ok("1")
-        && std::env::var_os("WIFIMETER_USER_DATA").is_some_and(|path| !path.is_empty());
+    let isolated_profile = isolated_test_profile();
     if let Some(arguments) = browser_arguments(
         std::env::var("WIFIMETER_SOFTWARE_RENDERING").as_deref() == Ok("1"),
         std::env::var("WIFIMETER_BACKGROUND_TEST").as_deref() == Ok("1"),

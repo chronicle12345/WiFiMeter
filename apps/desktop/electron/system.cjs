@@ -21,7 +21,7 @@ function autostartFile(home) {
     return path.join(home, '.config', 'autostart', 'wifimeter.desktop');
 }
 
-function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, getWindow, iconPath, logger = () => {}, platform = process.platform }) {
+function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, getWindow, iconPath, logger = () => {}, platform = process.platform, backgroundTest = false }) {
     let tray = null;
     let settings = { language: 'zh-CN', autoStart: false, minimizeToTray: false, notifications: true };
     let quitting = false;
@@ -165,9 +165,9 @@ X-GNOME-Autostart-enabled=true
             return true;
         },
 
-        // 后端的额度提醒转成系统通知；设置里关掉提醒就不打扰用户。
+        // 后端的额度提醒转成系统通知；后台测试不向用户显示真实通知。
         notify(alert) {
-            if (!settings.notifications || !Notification) return false;
+            if (backgroundTest || !settings.notifications || !Notification) return false;
             if (!Notification.isSupported()) return false;
             const name = alert.scope === 'total' ? (settings.language === 'en' ? 'Total Wi-Fi' : 'Wi-Fi 总额度') : alert.alias || alert.ssid || (settings.language === 'en' ? 'Current network' : '当前网络');
             const percent = Number(alert.percent ?? 0).toFixed(0);

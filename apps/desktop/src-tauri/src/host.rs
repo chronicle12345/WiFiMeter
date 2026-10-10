@@ -134,11 +134,13 @@ impl Host {
         }
         let app = app.clone();
         std::thread::spawn(move || {
-            rfd::MessageDialog::new()
-                .set_title("WiFiMeter")
-                .set_level(rfd::MessageLevel::Error)
-                .set_description(format!("桌面服务启动失败或意外退出。\n{error}"))
-                .show();
+            if !crate::native::isolated_background_test() {
+                rfd::MessageDialog::new()
+                    .set_title("WiFiMeter")
+                    .set_level(rfd::MessageLevel::Error)
+                    .set_description(format!("桌面服务启动失败或意外退出。\n{error}"))
+                    .show();
+            }
             app.exit(1);
         });
     }

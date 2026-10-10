@@ -3,6 +3,22 @@ use serde_json::{json, Value};
 use std::{path::Path, process::Command};
 use tauri::{AppHandle, Manager};
 
+fn background_dialog_reply(method: &str, params: &Value, background_test: bool) -> Option<Reply> {
+    if !background_test {
+        return None;
+    }
+    let result = match method {
+        "dialog:open" => json!({ "canceled": true, "filePaths": [] }),
+        "dialog:save" => json!({ "canceled": true, "filePath": null }),
+        "dialog:message" => json!({
+            "response": params["options"]["cancelId"].as_u64().unwrap_or(0),
+            "checkboxChecked": false
+        }),
+        _ => return None,
+    };
+    Some(Ok(result))
+}
+
 fn file_dialog(app: &AppHandle, params: &Value) -> rfd::FileDialog {
     let options = &params["options"];
     let mut dialog = rfd::FileDialog::new();
@@ -40,6 +56,11 @@ fn file_dialog(app: &AppHandle, params: &Value) -> rfd::FileDialog {
 }
 
 pub fn dialog(app: &AppHandle, method: &str, params: &Value) -> Reply {
+    if let Some(reply) =
+        background_dialog_reply(method, params, crate::native::isolated_background_test())
+    {
+        return reply;
+    }
     let options = &params["options"];
     match method {
         "dialog:open" => {
@@ -188,6 +209,9 @@ fn message(app: &AppHandle, params: &Value) -> Reply {
 }
 
 pub fn notify(params: &Value) -> Reply {
+    if crate::native::isolated_background_test() {
+        return Ok(Value::Null);
+    }
     let title = params["title"].as_str().unwrap_or("WiFiMeter");
     let body = params["body"].as_str().unwrap_or("");
     #[cfg(windows)]
@@ -232,4 +256,40 @@ pub fn notify(params: &Value) -> Reply {
         }
     }
     Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::background_dialog_reply;
+    use serde_json::json;
+
+    #[test]
+    fn background_dialogs_return_cancellation_without_a_native_prompt() {
+        let params = json!({ "options": { "cancelId": 2, "checkboxChecked": true } });
+        assert_eq!(
+            background_dialog_reply("dialog:message", &params, true)
+                .unwrap()
+                .unwrap(),
+            json!({ "response": 2, "checkboxChecked": false })
+        );
+        assert_eq!(
+            background_dialog_reply("dialog:open", &params, true)
+                .unwrap()
+                .unwrap(),
+            json!({ "canceled": true, "filePaths": [] })
+        );
+        assert_eq!(
+            background_dialog_reply("dialog:save", &params, true)
+                .unwrap()
+                .unwrap(),
+            json!({ "canceled": true, "filePath": null })
+        );
+    }
+
+    #[test]
+    fn normal_dialogs_keep_native_user_interaction() {
+        for method in ["dialog:message", "dialog:open", "dialog:save"] {
+            assert!(background_dialog_reply(method, &json!({}), false).is_none());
+        }
+    }
 }

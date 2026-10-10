@@ -98,6 +98,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     });
     system = createSystemIntegration({
         app, Tray, Menu, Notification, nativeImage,
+        backgroundTest,
         getWindow: () => window,
         iconPath: path.join(__dirname, '../assets/icon.png'),
         logger: message => console.log(`[system] ${message}`)
@@ -358,7 +359,10 @@ if (primaryInstance) app.whenReady().then(async () => {
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
         checkForUpdates({ automatic: true }).catch(error => updateResult({ state: 'error', error: error.message }));
     }
-    if (migrationStatus.error) dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
+    if (migrationStatus.error) {
+        if (backgroundTest) console.error(`[migration] ${migrationStatus.error}`);
+        else dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
+    }
 });
 app.on('window-all-closed', () => app.quit());
 

@@ -10,9 +10,9 @@ import path from 'node:path';
 import { createSystemIntegration, autostartFile } from '../electron/system.cjs';
 import { createNativeAdapter } from '../tauri/native-adapter.cjs';
 
-function createFakes({ trayThrows = false, notificationSupported = true, appOverride } = {}) {
+function createFakes({ trayThrows = false, notificationSupported = true, appOverride, backgroundTest = false } = {}) {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-'));
-    const state = { tray: null, trayCount: 0, destroyed: 0, notifications: [], shown: 0, hidden: 0, menu: null };
+    const state = { tray: null, trayCount: 0, destroyed: 0, notifications: [], notificationsShown: 0, notificationSupportChecks: 0, shown: 0, hidden: 0, menu: null };
 
     class FakeTray {
         constructor() {
@@ -34,8 +34,9 @@ function createFakes({ trayThrows = false, notificationSupported = true, appOver
         constructor(options) {
             state.notifications.push(options);
         }
-        show() {}
+        show() { state.notificationsShown += 1; }
         static isSupported() {
+            state.notificationSupportChecks += 1;
             return notificationSupported;
         }
     }
@@ -70,6 +71,7 @@ function createFakes({ trayThrows = false, notificationSupported = true, appOver
         getWindow: () => window,
         iconPath: '/tmp/icon.png',
         platform: 'linux',
+        backgroundTest,
         logger: () => {}
     });
 
@@ -287,8 +289,21 @@ test('额度提醒按设置转成系统通知', async () => {
     await integration.applySettings({ notifications: false });
     assert.equal(integration.notify({ kind: 'quotaWarn', ssid: 'x', percent: 90 }), false);
     assert.equal(state.notifications.length, 3, '关闭提醒后不应再发通知');
+    assert.equal(state.notificationsShown, 3, '正常运行时应实际显示额度通知');
 
     rmSync(home, { recursive: true, force: true });
+});
+
+test('后台测试即使开启额度提醒也不调用系统通知接口', async t => {
+    const { home, state, integration } = createFakes({ backgroundTest: true });
+    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
+    await integration.applySettings({ notifications: true });
+    const results = ['quotaWarn', 'quotaLimit', 'quotaDisconnect'].map(kind =>
+        integration.notify({ kind, ssid: 'Fixture Wi-Fi', percent: 100, outcome: 0 }));
+    assert.equal(state.notificationsShown, 0, '后台测试不能显示额度通知');
+    assert.equal(state.notifications.length, 0, '后台测试不能创建系统通知');
+    assert.equal(state.notificationSupportChecks, 0, '后台测试无需访问系统通知支持状态');
+    assert.deepEqual(results, [false, false, false]);
 });
 
 test('相同设置不重写自启动文件，外部修改后仍能恢复', async t => {
