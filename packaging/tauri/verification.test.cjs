@@ -166,14 +166,18 @@ test('Linux entry point checks each Debian package against the release version b
     const version = '1.3.1';
     for (const arch of ['x64', 'arm64']) {
         for (const packageVersion of [version, '1.3.0']) {
-            const extracted = new Error('Package metadata accepted; stop before native extraction.');
+            const extracted = Object.assign(new Error('Package metadata accepted; stop before native extraction.'), { status: 37 });
+            let extractionRequested = false;
             const queries = [];
             const module = { exports: {} };
             const require = name => {
                 if (name === 'node:child_process') return {
                     execFileSync(command, args) {
                         assert.equal(command, 'dpkg-deb');
-                        if (args[0] === '--extract') throw extracted;
+                        if (args[0] === '--extract') {
+                            extractionRequested = true;
+                            throw extracted;
+                        }
                         assert.equal(args[0], '--field');
                         queries.push(args[2]);
                         return args[2] === 'Architecture' ? (arch === 'x64' ? 'amd64\n' : 'arm64\n') : `${packageVersion}\n`;
@@ -193,8 +197,8 @@ test('Linux entry point checks each Debian package against the release version b
                 module, require, console, process: { platform: 'linux', arch }
             }, { filename });
             await assert.rejects(module.exports.main(['--arch', arch]), error => {
-                if (packageVersion === version) return error === extracted;
-                return error.code === 'ERR_ASSERTION' && error.actual === packageVersion && error.expected === version;
+                if (packageVersion === version) return extractionRequested && /dpkg-deb exited unsuccessfully.*status=37/.test(error.message);
+                return !extractionRequested && error.code === 'ERR_ASSERTION' && error.actual === packageVersion && error.expected === version;
             });
             assert.deepEqual(queries, ['Architecture', 'Version']);
         }

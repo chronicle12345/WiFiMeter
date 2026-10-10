@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { Buffer } = require('node:buffer');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -9,7 +10,15 @@ const { assertArchitecture, binaryArchitecture } = require('../targets.cjs');
 const { root, verificationOptions, filesUnder, digest, compareResources, compareExecutable, verifyRuntime } = require('./verify-common.cjs');
 
 function run(command, args, options = {}) {
-    return execFileSync(command, args, { cwd: root, stdio: 'pipe', ...options });
+    try {
+        return execFileSync(command, args, { cwd: root, stdio: 'pipe', ...options });
+    } catch (error) {
+        // stdout 可能是安装包二进制内容；只输出退出信息和有限的 stderr。
+        console.error(`${command} failed: code=${error.code ?? '-'} status=${error.status ?? '-'} signal=${error.signal ?? '-'}`);
+        const stderr = Buffer.from(error.stderr || '').subarray(0, 8192).toString('utf8').trim();
+        if (stderr) console.error(stderr);
+        throw new Error(`${command} exited unsuccessfully (code=${error.code ?? '-'}, status=${error.status ?? '-'}, signal=${error.signal ?? '-'}).`);
+    }
 }
 
 function packageLayout(directory) {
@@ -49,13 +58,9 @@ function extractPackage(archive, directory, { arch, version }) {
     if (archive.endsWith('.rpm')) {
         const metadata = run('rpm', ['--query', '--package', '--queryformat', '%{ARCH}\n%{VERSION}\n', archive], { encoding: 'utf8' }).trim().split('\n');
         assert.deepEqual(metadata, [arch === 'x64' ? 'x86_64' : 'aarch64', version], 'RPM package architecture or version does not match the build.');
-        const payload = path.join(path.dirname(directory), 'payload.cpio');
-        const output = fs.openSync(payload, 'wx');
-        try { run('rpm2cpio', [archive], { stdio: ['ignore', output, 'pipe'] }); }
-        finally { fs.closeSync(output); }
-        const input = fs.openSync(payload, 'r');
-        try { run('cpio', ['--extract', '--make-directories', '--no-absolute-filenames', '--quiet'], { cwd: directory, stdio: [input, 'pipe', 'pipe'] }); }
-        finally { fs.closeSync(input); fs.rmSync(payload); }
+        console.log(run('rpm', ['--checksig', archive], { encoding: 'utf8' }).trim());
+        // rpm2cpio 4.17 rejects rpm-rs packages without an archive-size tag, even after a complete extraction.
+        run('bsdtar', ['--extract', '--file', archive, '--directory', directory]);
         return { ...packageLayout(directory), bundleType: 'RPM', launcher: path.join(directory, 'usr/bin/wifimeter') };
     }
     assert.ok(archive.endsWith('.AppImage'), 'Unknown Linux package format.');

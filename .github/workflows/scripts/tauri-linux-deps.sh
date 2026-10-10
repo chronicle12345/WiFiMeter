@@ -11,7 +11,7 @@ sudo apt-get install -y --no-install-recommends \
   libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 squashfs-tools \
   libnss3 libxss1 libxtst6 libgbm1 libasound2 libatspi2.0-0 libsecret-1-0 libnotify4 \
   xdg-utils network-manager policykit-1 xvfb xauth dbus-x11 webkit2gtk-driver wmctrl openbox \
-  rpm cpio dpkg-dev xz-utils
+  rpm cpio dpkg-dev xz-utils libarchive-tools
 
 # Use the same fixed static libbpf dependency as the existing Linux compatibility build.
 dependency_dir="$RUNNER_TEMP/tauri-native-deps"
