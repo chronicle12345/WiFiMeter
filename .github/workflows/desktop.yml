@@ -1,10 +1,9 @@
-name: Integration CI and release
+name: Legacy Electron validation and release
 
 on:
   push:
-    branches: [main, cross-platform, integration-1.2.0, 'feature/**']
+    branches: [cross-platform, integration-1.2.0]
     tags: ['v1.2.*']
-  pull_request:
   workflow_dispatch:
 
 permissions:

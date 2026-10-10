@@ -86,10 +86,33 @@ async function source(configuration) {
     const directory = path.join(configuration.sourceRoot, `node-v${VERSION}`);
     const stamp = path.join(directory, '.wifimeter-source-sha256');
     if (!fs.existsSync(stamp) || fs.readFileSync(stamp, 'utf8').trim() !== SOURCE_SHA256) {
-        // Windows 的 bsdtar 在部分系统中无法解码这个测试目录；它不参与宿主编译。
-        phase('source extraction', () => run(process.env.WIFIMETER_TAR || 'tar',
-            [`--exclude=node-v${VERSION}/test/fixtures/copy/utf`, '-xf', archive, '-C', configuration.sourceRoot], { timeout: 900000 }));
-        fs.writeFileSync(stamp, SOURCE_SHA256 + '\n');
+        let extractionArchive = archive;
+        let temporaryDirectory;
+        try {
+            if (process.platform === 'win32') {
+                // 完整 7-Zip 同时处理 XZ 和 tar，避免系统 tar 的 XZ 与 Unicode 路径问题。
+                const { sevenZipExecutable } = require('./verify-windows.cjs');
+                const sevenZip = sevenZipExecutable();
+                temporaryDirectory = fs.mkdtempSync(path.join(configuration.sourceRoot, '.wifimeter-source-extract-'));
+                extractionArchive = path.join(temporaryDirectory, `node-v${VERSION}.tar`);
+                const descriptor = fs.openSync(extractionArchive, 'wx');
+                try {
+                    phase('source XZ decoding', () => run(sevenZip, ['x', '-txz', '-so', '-bd', '-y', archive],
+                        { stdio: ['ignore', descriptor, 'inherit'], timeout: 900000 }));
+                } finally { fs.closeSync(descriptor); }
+                phase('source extraction', () => run(sevenZip,
+                    ['x', '-ttar', '-bd', '-y', extractionArchive, `-o${configuration.sourceRoot}`], { timeout: 900000 }));
+            } else {
+                phase('source extraction', () => run(process.env.WIFIMETER_TAR || 'tar',
+                    [`--exclude=node-v${VERSION}/test/fixtures/copy/utf`, '-xf', archive, '-C', configuration.sourceRoot], { timeout: 900000 }));
+            }
+            fs.writeFileSync(stamp, SOURCE_SHA256 + '\n');
+        } finally {
+            if (temporaryDirectory) {
+                if (fs.existsSync(extractionArchive)) fs.unlinkSync(extractionArchive);
+                fs.rmdirSync(temporaryDirectory);
+            }
+        }
     }
     return directory;
 }
@@ -181,5 +204,5 @@ async function build(configuration = options()) {
     return result;
 }
 
-module.exports = { VERSION, SOURCE_SHA256, SOURCE_URL, CONFIGURE_FLAGS, options, digest, build, validate };
+module.exports = { VERSION, SOURCE_SHA256, SOURCE_URL, CONFIGURE_FLAGS, options, digest, source, build, validate };
 if (require.main === module) build().catch(error => { console.error(error.message); process.exitCode = 1; });

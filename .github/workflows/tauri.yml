@@ -1,4 +1,4 @@
-name: Tauri desktop validation and release
+name: Desktop CI and release
 
 on:
   push:
@@ -33,7 +33,9 @@ jobs:
       - name: Install locked browser resources for packaging tests
         run: npm ci --prefix apps/desktop --ignore-scripts
       - name: Validate packaging and release helpers
-        run: npm run test:packaging:tauri
+        run: |
+          npm run test:packaging:tauri
+          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs
       - name: Check workflow syntax with pinned actionlint
         run: |
           set -euo pipefail
@@ -176,11 +178,15 @@ jobs:
           & (Join-Path $env:GITHUB_WORKSPACE "$env:BUILD_DIR/tests/Release/windows_estats_smoke_test.exe")
           if ($LASTEXITCODE -ne 0) { throw 'Native TCP EStats capture failed; a skip is not a pass' }
       - name: Desktop unit and renderer regression tests
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/tauri-ui.json
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
-          npm run test:ui
+          npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
+          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+          if ($LASTEXITCODE) { throw 'Renderer tests must all execute and pass' }
       - name: Cache the compiled native Node worker
         id: lean_node_cache
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
@@ -192,11 +198,11 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
         run: |
-          Get-Command python, tar -ErrorAction Stop | Select-Object Name, Source | Format-Table -AutoSize
+          Get-Command python -ErrorAction Stop | Select-Object Name, Source | Format-Table -AutoSize
           python --version
           if ($LASTEXITCODE) { throw 'Python version check failed' }
-          tar --version
-          if ($LASTEXITCODE) { throw 'tar version check failed' }
+          node -e "console.log('7-Zip executable:', require('./packaging/tauri/verify-windows.cjs').sevenZipExecutable())"
+          if ($LASTEXITCODE) { throw '7-Zip lookup failed' }
           node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
           if ($LASTEXITCODE) { throw 'Lean Node build or validation failed' }
       - name: Save the validated native Node worker before package tests
@@ -281,11 +287,14 @@ jobs:
       - name: Require actual native eBPF capture
         run: sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
       - name: Desktop unit and renderer regression tests
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/tauri-ui.json
         run: |
           npm run test:unit
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm run test:ui
+          dbus-run-session -- xvfb-run -a npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
+          node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Cache the compiled native Node worker
         id: lean_node_cache
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
