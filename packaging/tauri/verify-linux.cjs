@@ -82,7 +82,7 @@ async function main(args = process.argv.slice(2)) {
     const packages = [];
     for (const archive of archives) {
         const format = path.extname(archive).slice(1);
-        const layout = extractPackage(archive, path.join(output, format), options);
+        const layout = extractPackage(archive, path.join(output, format), { ...options, version });
         verifyRuntime(layout.executable, layout.resources, { ...options, version });
         // AppImage deployment may change ELF rpaths and strip sections after Cargo builds it.
         const bundledReference = layout.bundleType === 'APP';
