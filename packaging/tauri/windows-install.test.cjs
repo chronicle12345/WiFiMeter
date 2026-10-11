@@ -69,23 +69,45 @@ test('repair only accepts a missing uninstaller from a matching isolated product
                 $phase='compile-fixture'
                 Add-Type -TypeDefinition ('using System.Reflection; [assembly: AssemblyProduct("'+$product+'")] public class Program { public static void Main() {} }') -OutputAssembly ${ps(main)} -OutputType ConsoleApplication
                 function Check([int]$expected, [string]$publisher='WiFiMeter') {
-                    $script:repairCase++; $script:phase='repair-case-'+$script:repairCase
-                    & ${ps(helper)} -ProductName $product -Publisher $publisher -RegistryView 64
-                    $actual=$LASTEXITCODE
-                    if($actual -ne $expected){
-                        if($expected -eq 0){
-                            try {
-                                [Console]::Error.WriteLine(('fixture ProductName='+[Diagnostics.FileVersionInfo]::GetVersionInfo(${ps(main)}).ProductName+'; expected='+$product))
-                                $diagnostic=Join-Path $directory 'diagnostic-repair-uninstall.ps1'
-                                [IO.File]::WriteAllText($diagnostic,${ps(diagnosticHelperSource())},[Text.UTF8Encoding]::new($true))
-                                & $diagnostic -ProductName $product -Publisher $publisher -RegistryView 64
-                                [Console]::Error.WriteLine(('repair diagnostic status='+$LASTEXITCODE))
-                            } catch { [Console]::Error.WriteLine(('repair diagnostic failed: '+$_.Exception.GetType().FullName+'; '+$_.Exception.Message)) }
+                    foreach($view in @('32','64')) {
+                        $script:repairCase++; $script:phase='repair-case-'+$script:repairCase+'-view-'+$view
+                        & ${ps(helper)} -ProductName $product -Publisher $publisher -RegistryView $view
+                        $actual=$LASTEXITCODE
+                        if($actual -ne $expected){
+                            if($expected -eq 0){
+                                try {
+                                    [Console]::Error.WriteLine(('fixture ProductName='+[Diagnostics.FileVersionInfo]::GetVersionInfo(${ps(main)}).ProductName+'; expected='+$product))
+                                    $diagnostic=Join-Path $directory 'diagnostic-repair-uninstall.ps1'
+                                    [IO.File]::WriteAllText($diagnostic,${ps(diagnosticHelperSource())},[Text.UTF8Encoding]::new($true))
+                                    & $diagnostic -ProductName $product -Publisher $publisher -RegistryView $view
+                                    [Console]::Error.WriteLine(('repair diagnostic status='+$LASTEXITCODE))
+                                } catch { [Console]::Error.WriteLine(('repair diagnostic failed: '+$_.Exception.GetType().FullName+'; '+$_.Exception.Message)) }
+                            }
+                            throw ('Unexpected repair status: '+$actual+' expected '+$expected)
                         }
-                        throw ('Unexpected repair status: '+$actual+' expected '+$expected)
                     }
                 }
                 Check 0
+                $phase='short-path-fixture'
+                Add-Type -TypeDefinition 'using System.Runtime.InteropServices; using System.Text; public static class FixtureShortPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetShortPathName(string path, StringBuilder buffer, uint length); }'
+                $buffer=[Text.StringBuilder]::new(32768)
+                if([FixtureShortPath]::GetShortPathName($directory,$buffer,32768) -eq 0){throw 'Could not obtain a real fixture short path'}
+                $shortDirectory=$buffer.ToString()
+                if($shortDirectory -notmatch '~[0-9]' -or $shortDirectory -ieq [IO.Path]::GetFullPath($shortDirectory)){throw 'Fixture must exercise a real short path expanded by GetFullPath'}
+                $entry=$registry.OpenSubKey($key,$true)
+                try { $entry.SetValue('InstallLocation',$shortDirectory) } finally { $entry.Dispose() }; Check 0
+                $entry=$registry.OpenSubKey($key,$true)
+                try { $entry.SetValue('UninstallString',('"'+(Join-Path $shortDirectory 'Uninstall.exe')+'" --uninstall')) } finally { $entry.Dispose() }; Check 0
+                $entry=$registry.OpenSubKey($key,$true)
+                try { $entry.SetValue('InstallLocation',$directory) } finally { $entry.Dispose() }; Check 0
+                $entry=$registry.OpenSubKey($key,$true)
+                try { $entry.SetValue('UninstallString',('"'+${ps(old)}+'" --uninstall')) } finally { $entry.Dispose() }
+                foreach($invalid in @(($directory+'\\.'), ($directory+'\\..\\'+[IO.Path]::GetFileName($directory)), ($directory+'.'), ($directory+' '), ($directory.Replace('\\','/')), ($directory.Replace('\\','\\\\')), (${ps('\\\\?\\')}+$directory), (${ps('\\\\.\\')}+$directory))) {
+                    $entry=$registry.OpenSubKey($key,$true)
+                    try { $entry.SetValue('InstallLocation',$invalid) } finally { $entry.Dispose() }; Check 2
+                }
+                $entry=$registry.OpenSubKey($key,$true)
+                try { $entry.SetValue('InstallLocation',$directory) } finally { $entry.Dispose() }
                 Check 0 'wifimeter'
                 $entry=$registry.OpenSubKey($key,$true)
                 try { $entry.SetValue('InstallLocation',('"'+$directory+'"')) } finally { $entry.Dispose() }; Check 0

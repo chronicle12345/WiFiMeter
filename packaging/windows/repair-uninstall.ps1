@@ -17,13 +17,21 @@ function Test-MissingProductUninstaller {
             if ($entry.GetValue('DisplayName') -ine $ProductName -or $entry.GetValue('Publisher') -ine $Publisher) { return $false }
             $directory = [string]$entry.GetValue('InstallLocation', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
             if ($directory.StartsWith('"') -and $directory.EndsWith('"')) { $directory = $directory.Substring(1, $directory.Length - 2) }
-            if ($directory -notmatch '^(?:[a-zA-Z]:\\|\\\\[^\\]+\\[^\\]+\\)' -or $directory.IndexOf('"') -ge 0) { return $false }
+            if ($directory -notmatch '^(?:[a-zA-Z]:\\|\\\\[^\\]+\\[^\\]+\\)' -or $directory.IndexOf('"') -ge 0 -or
+                $directory.Contains('/') -or $directory.StartsWith('\\?\') -or $directory.StartsWith('\\.\')) { return $false }
+            $components = $directory.TrimEnd('\')
+            if ($components.StartsWith('\\')) { $components = $components.Substring(2) }
+            foreach ($component in $components.Split('\')) {
+                if ($component.Length -eq 0 -or $component.EndsWith('.') -or $component.EndsWith(' ')) { return $false }
+            }
+            # Framework GetFullPath expands valid 8.3 names; compare canonical directories below.
             $normalized = [IO.Path]::GetFullPath($directory).TrimEnd('\')
-            if ($directory.TrimEnd('\') -ine $normalized -or -not [IO.Directory]::Exists($normalized)) { return $false }
+            if (-not [IO.Directory]::Exists($normalized)) { return $false }
             $command = [string]$entry.GetValue('UninstallString', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
             if ($command -notmatch '^"([^"\r\n]+)"(?:\s+(?:--uninstall|/currentuser|/S))*\s*$') { return $false }
             $uninstaller = [IO.Path]::GetFullPath($Matches[1])
-            if ([IO.Path]::GetDirectoryName($uninstaller) -ine $normalized -or
+            $uninstallerDirectory = [IO.Path]::GetFullPath([IO.Path]::GetDirectoryName($uninstaller)).TrimEnd('\')
+            if ($uninstallerDirectory -ine $normalized -or
                 [IO.Path]::GetFileName($uninstaller) -inotmatch '^(?:uninstall\.exe|Uninstall WiFiMeter\.exe)$') { return $false }
             # File.Exists also returns false for access errors. Only missing paths permit repair.
             try { [IO.File]::GetAttributes($uninstaller) | Out-Null; return $false }
