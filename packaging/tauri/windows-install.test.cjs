@@ -24,6 +24,16 @@ function fixtureFailure(result, directory) {
     return `Isolated PowerShell fixture failed: status=${result.status}, signal=${result.signal || 'none'}, spawn=${result.error?.code || 'none'}\n${stderr.slice(0, 8192) || '(no stderr)'}`;
 }
 
+function diagnosticHelperSource() {
+    return fs.readFileSync(helper, 'utf8').split('\n').map((line, index) => {
+        const rejection = `throw 'repair predicate at helper line ${index + 1}'`;
+        if (line.trim().startsWith('return [Diagnostics.FileVersionInfo]')) {
+            return `if (-not (${line.trim().slice('return '.length)})) { ${rejection} }; return $true`;
+        }
+        return line.replaceAll('return $false', rejection);
+    }).join('\n').replace('catch { exit 2 }', "catch { [Console]::Error.WriteLine(('repair diagnostic: '+$_.Exception.GetType().FullName+'; '+$_.FullyQualifiedErrorId+'; '+$_.Exception.Message+'; '+$_.ScriptStackTrace)); exit 2 }");
+}
+
 test('missing uninstall repair is connected before the default uninstall command', () => {
     const config = JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json')));
     assert.equal(config.bundle.windows.nsis.template, '../../../packaging/tauri/windows/installer.nsi');
@@ -61,7 +71,19 @@ test('repair only accepts a missing uninstaller from a matching isolated product
                 function Check([int]$expected, [string]$publisher='WiFiMeter') {
                     $script:repairCase++; $script:phase='repair-case-'+$script:repairCase
                     & ${ps(helper)} -ProductName $product -Publisher $publisher -RegistryView 64
-                    if($LASTEXITCODE -ne $expected){throw ('Unexpected repair status: '+$LASTEXITCODE+' expected '+$expected)}
+                    $actual=$LASTEXITCODE
+                    if($actual -ne $expected){
+                        if($expected -eq 0){
+                            try {
+                                [Console]::Error.WriteLine(('fixture ProductName='+[Diagnostics.FileVersionInfo]::GetVersionInfo(${ps(main)}).ProductName+'; expected='+$product))
+                                $diagnostic=Join-Path $directory 'diagnostic-repair-uninstall.ps1'
+                                [IO.File]::WriteAllText($diagnostic,${ps(diagnosticHelperSource())},[Text.UTF8Encoding]::new($true))
+                                & $diagnostic -ProductName $product -Publisher $publisher -RegistryView 64
+                                [Console]::Error.WriteLine(('repair diagnostic status='+$LASTEXITCODE))
+                            } catch { [Console]::Error.WriteLine(('repair diagnostic failed: '+$_.Exception.GetType().FullName+'; '+$_.Exception.Message)) }
+                        }
+                        throw ('Unexpected repair status: '+$actual+' expected '+$expected)
+                    }
                 }
                 Check 0
                 Check 0 'wifimeter'

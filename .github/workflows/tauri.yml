@@ -67,7 +67,7 @@ jobs:
     needs: metadata
     if: needs.metadata.outputs.source_run_id == ''
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
+    timeout-minutes: 60
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.ci-npm-cache-v1-${{ matrix.arch }}
     strategy:
@@ -221,30 +221,12 @@ jobs:
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
           if ($LASTEXITCODE) { throw 'Renderer tests must all execute and pass' }
-      - name: Cache the compiled native Node worker
-        id: lean_node_cache
-        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: build/lean-node-runtime
-          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs', 'packaging/tauri/windows/node-size.props') }}
-          restore-keys: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-
-      - name: Build or validate the lean native Node worker
-        env:
-          PYTHONUNBUFFERED: '1'
+      - name: Validate the official Node runtime and NSIS extraction tool
         run: |
-          Get-Command python -ErrorAction Stop | Select-Object Name, Source | Format-Table -AutoSize
-          python --version
-          if ($LASTEXITCODE) { throw 'Python version check failed' }
-          node -e "console.log('7-Zip executable:', require('./packaging/tauri/verify-windows.cjs').sevenZipExecutable())"
-          if ($LASTEXITCODE) { throw '7-Zip lookup failed' }
-          node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
-          if ($LASTEXITCODE) { throw 'Lean Node build or validation failed' }
-      - name: Save the validated native Node worker before package tests
-        if: steps.lean_node_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: build/lean-node-runtime
-          key: ${{ steps.lean_node_cache.outputs.cache-primary-key }}
+          node packaging/tauri/lean-node-check.cjs
+          if ($LASTEXITCODE) { throw 'Official Node runtime validation failed' }
+          node -e "require('./packaging/tauri/prepare.cjs').nodeLicense(); require('./packaging/tauri/verify-windows.cjs').sevenZipExecutable()"
+          if ($LASTEXITCODE) { throw 'Node license or 7-Zip lookup failed' }
       - name: Build only the Tauri NSIS installer
         run: node packaging/tauri/build.cjs --platform win32 --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats nsis --skip-backend
       - name: Rust host tests on the target architecture
@@ -278,7 +260,7 @@ jobs:
     needs: metadata
     if: needs.metadata.outputs.source_run_id == ''
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -344,34 +326,10 @@ jobs:
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
           dbus-run-session -- xvfb-run -a npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
-      - name: Cache the compiled native Node worker
-        id: lean_node_cache
-        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: build/lean-node-runtime
-          key: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('packaging/tauri/lean-node.cjs') }}
-          restore-keys: tauri-lean-node-22.23.3-${{ matrix.runner }}-${{ matrix.arch }}-
-      - name: Build or validate the lean native Node worker
-        run: node packaging/tauri/lean-node.cjs --arch '${{ matrix.arch }}' --output build/lean-node-runtime --jobs 2
-      - name: Save the validated native Node worker before package tests
-        if: steps.lean_node_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: build/lean-node-runtime
-          key: ${{ steps.lean_node_cache.outputs.cache-primary-key }}
-      - name: Measure and strip a copy of the Linux worker
+      - name: Validate the official Node runtime and locate its license
         run: |
-          set -euo pipefail
-          directory="$GITHUB_WORKSPACE/build/lean-node-staged"
-          install -D -m 755 build/lean-node-runtime/node "$directory/node"
-          readelf --wide --section-headers "$directory/node" > "$directory/sections-before.txt"
-          before=$(stat --format=%s "$directory/node")
-          strip --strip-unneeded "$directory/node"
-          readelf --wide --section-headers "$directory/node" > "$directory/sections-after.txt"
-          after=$(stat --format=%s "$directory/node")
-          "$directory/node" packaging/tauri/lean-node-check.cjs --lean
-          echo "Linux worker bytes before strip=$before after strip=$after"
-          echo "WIFIMETER_NODE_EXECUTABLE=$directory/node" >> "$GITHUB_ENV"
+          node packaging/tauri/lean-node-check.cjs
+          node -e "const fs = require('node:fs'), path = require('node:path'); const license = require('./packaging/tauri/prepare.cjs').nodeLicense({ license: path.resolve(path.dirname(process.execPath), '..', 'LICENSE') }); fs.appendFileSync(process.env.GITHUB_ENV, 'WIFIMETER_NODE_LICENSE=' + license + '\n')"
       - name: Build Tauri deb, rpm and AppImage packages
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
@@ -400,7 +358,6 @@ jobs:
           path: |
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
-            build/lean-node-staged/*.txt
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
           retention-days: 14
