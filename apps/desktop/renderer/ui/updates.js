@@ -4,6 +4,8 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const renderedNotes = new WeakMap();
 const activePhases = new Set(['checking','downloading','verifying','preparing','installing']);
 const bytes = value => { let n=Math.max(0,Number(value)||0),i=0;const units=['B','KB','MB','GB'];while(n>=1000&&i<3){n/=1000;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`; };
+const automaticPending = status => status.state === 'available' && status.canInstall === true;
+const lockedUpdate = (status, busy) => busy || status.busy === true || activePhases.has(status.state) || automaticPending(status);
 function updateError(status) {
     if (!status.error || !status.errorPhase || status.recoveryRequired) return status.error || '';
     const labels={downloading:'下载更新失败',verifying:'更新文件 SHA-256 校验失败',preparing:'准备安装更新失败',installing:'启动更新辅助程序失败'};
@@ -14,20 +16,32 @@ export function updateProgress(status) {
     if (!activePhases.has(status.state)) return '';
     const progress=status.progress||{},known=status.state==='downloading'&&Number.isFinite(progress.percent)&&progress.totalBytes>0;
     const percent=known?Math.min(100,Math.max(0,progress.percent)):null;
-    const label={checking:t('正在检查更新…'),downloading:t('正在下载安装包…'),verifying:t('正在校验安装包…'),preparing:t('正在保存数据并准备安装…'),installing:t('正在启动安装程序…')}[status.state];
-    const detail=status.state==='downloading'?`${bytes(progress.receivedBytes)}${known?' / '+bytes(progress.totalBytes):''}${known?' · '+Math.floor(percent)+'%':''}`:status.state==='installing'?t('后续安装进度将在安装程序中显示。'):'';
+    const label={checking:t('正在检查更新…'),downloading:t('正在下载安装包…'),verifying:t('正在校验安装包…'),preparing:t('正在保存数据并准备安装…'),installing:t('正在退出并启动静默安装…')}[status.state];
+    const detail=status.state==='downloading'?`${bytes(progress.receivedBytes)}${known?' / '+bytes(progress.totalBytes):''}${known?' · '+Math.floor(percent)+'%':''}`:'';
     return `<div class="update-progress" data-phase="${status.state}"><div class="update-progress-label"><span>${label}</span><span>${esc(detail)}</span></div><progress aria-label="${label}" max="100" ${known?`value="${percent}"`:''}></progress></div>`;
 }
+function updateMessage(status) {
+    const messages={recovered:t('已恢复原采集状态。'),unchecked:t('尚未检查更新。'),cancelled:t('已取消更新。'),manual:t('已打开官方发布页。'),latest:t('当前已是最新版本。'),available:automaticPending(status)?t('即将自动下载并安装更新。'):t('发现新版本。'),error:t('更新失败。')};
+    return `${messages[status.state] || ''}${status.error ? ' ' + esc(updateError(status)) : ''}`;
+}
+function updateButton(status, busy) {
+    const label=status.recoveryRequired?t('恢复采集'):status.state==='error'&&status.canInstall?t('重试更新'):status.state==='available'&&!status.canInstall?t('打开版本下载页'):'';
+    return label?`<button class="btn primary" data-action="install-update" ${lockedUpdate(status,busy)?'disabled':''}>${label}</button>`:'';
+}
+export function updateBannerView(status = {}, busy = false) {
+    if (!activePhases.has(status.state) && !['available','error'].includes(status.state) && !status.recoveryRequired) return '';
+    const action=updateButton(status,busy)||(status.state==='error'?`<button class="btn" data-action="check-updates" ${lockedUpdate(status,busy)?'disabled':''}>${t('重试更新')}</button>`:'');
+    return `<section class="update-banner" aria-label="${t('软件更新')}" data-state="${esc(status.state)}"><div class="update-banner-head"><strong>${t('软件更新')}${status.latestVersion?' · '+esc(status.latestVersion):''}</strong>${action}</div><p role="status">${updateMessage(status)}</p>${updateProgress(status)}</section>`;
+}
 export function updatesView(status = {}, busy = false) {
-    const locked=busy||status.busy===true||activePhases.has(status.state);
-    const messages={recovered:t('已恢复原采集状态。'),unchecked:t('尚未检查更新。'),cancelled:t('已取消更新。'),manual:t('已打开官方发布页。'),latest:t('当前已是最新版本。'),available:t('发现新版本。'),error:t('更新失败。')};
+    const locked=lockedUpdate(status,busy);
     return tr`<section class="panel settings-group" id="updatesPanel"><div class="panel-head"><div><h2>软件更新</h2></div></div>
         <label class="quota-check"><input id="checkUpdatesOnStartup" type="checkbox" ${status.checkOnStartup !== false ? 'checked' : ''} ${locked ? 'disabled' : ''}>启动时检查更新</label>
         <p class="small muted update-version">当前版本：${esc(status.currentVersion || '—')}${status.latestVersion ? tr` · 最新版本：${esc(status.latestVersion)}` : ''}</p>
-        <div id="updateStatusRegion"><p role="status">${messages[status.state] || ''}${status.error ? ' ' + esc(updateError(status)) : ''}</p>${updateProgress(status)}</div>
+        <div id="updateStatusRegion"><p role="status">${updateMessage(status)}</p>${updateProgress(status)}</div>
         ${status.notes ? `<details class="release-notes"><summary>${t('更新说明')}</summary><div class="release-notes-body">${releaseNotes(status.notes)}</div></details>` : ''}
         <div class="settings-actions"><button class="btn" data-action="check-updates" ${locked ? 'disabled' : ''}>检查更新</button>
-        ${status.recoveryRequired || status.state === 'available' ? `<button class="btn primary" data-action="install-update" ${locked ? 'disabled' : ''}>${status.recoveryRequired ? t('恢复采集') : status.canInstall ? t('下载并安装') : t('打开版本下载页')}</button>` : ''}</div></section>`;
+        ${updateButton(status,busy)}</div></section>`;
 }
 
 // Progress must not replace the notes DOM or reset its expanded/scroll state.

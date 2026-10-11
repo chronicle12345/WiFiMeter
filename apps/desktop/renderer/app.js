@@ -4,7 +4,7 @@ import { createAutosave, autosaveStatus } from './ui/autosave.js';
 import { parseWarnPercents, quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
-import { updatesView, refreshUpdates } from './ui/updates.js';
+import { updatesView, refreshUpdates, updateBannerView } from './ui/updates.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyConfigPatch, proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -200,7 +200,7 @@ function historyPage(){
  const table=details.length?tr`<div class="table-scroll"><table><thead><tr><th>${ui.historyGrouping==='day'?t('日期'):t('时间')}</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th></tr></thead><tbody>${sliced.map(row=>`<tr><td>${esc(row.key)}</td><td class="right">${fmtWithUnit(row.rx)}</td><td class="right">${fmtWithUnit(row.tx)}</td><td class="right strong">${fmtWithUnit(row.rx+row.tx)}</td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>${t('记录数')} ${details.length}</span><div class="flex gap8">${button('history-prev',t('上一页'),'','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next',t('下一页'),'','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty(t('所选时段没有记录'),ui.historyGrouping==='day'?t('更换日期或网络试试；缺失记录不会被当作零流量。'):t('分钟明细从升级后开始记录，旧记录保留原有时间精度。'));
  return `${toolbar()}${stats}${trendPanel()}<section class="panel table-panel" data-history-details style="margin-top:18px"><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
 }
-let updateStatus = {}, updateBusy = false;
+let updateStatus = {}, updateBusy = false, updateExitPrepared = false;
 function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
@@ -231,6 +231,7 @@ function updateSettingsScroll(){
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
 function renderMain(){
  renderChrome();
+ renderUpdateBanner();
  updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
  syncSaveFlags();
  syncInert();
@@ -263,9 +264,10 @@ async function doNavigate(page){
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
 }
 function syncInert(){
- const hasDrawer=!!ui.drawer,hasModal=!!ui.modal;
- $('.sidebar').inert=hasDrawer||hasModal;$('#main').inert=hasDrawer||hasModal;
- const drawer=$('.drawer');if(drawer)drawer.inert=hasModal;
+ const hasDrawer=!!ui.drawer,hasModal=!!ui.modal,updating=preparingUpdate||updateExitPrepared||['preparing','installing'].includes(updateStatus.state);
+ $('.sidebar').inert=hasDrawer||hasModal||updating;$('#main').inert=hasDrawer||hasModal||updating;
+ const drawer=$('.drawer');if(drawer)drawer.inert=hasModal||updating;
+ const modal=$('.modal');if(modal)modal.inert=updating;
  document.body.style.overflow=hasDrawer||hasModal?'hidden':'';
 }
 function openDrawer(id,tab='usage'){
@@ -454,7 +456,7 @@ function formAutosave(form){
   if(label){label.dataset.state=status.state;label.textContent=status.state==='error'?t('保存失败，请重试。')+' '+status.error:status.state==='saving'?t('正在保存…'):status.state==='pending'?t('等待保存…'):t('已自动保存');}
   if(retry){retry.hidden=status.state!=='error';retry.textContent=t('重试');}
   const error=$('.form-error',form);if(error)error.textContent=status.error;
-  if(languageRenderNeeded&&!settingsDirty&&!networkDirty&&!totalQuotaDirty&&!proxyDirty){languageRenderNeeded=false;queueMicrotask(()=>{if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){languageRenderNeeded=true;return;}if(ui.page==='settings')renderSettingsDrafts();else renderChrome();});}
+  if(languageRenderNeeded&&!settingsDirty&&!networkDirty&&!totalQuotaDirty&&!proxyDirty){languageRenderNeeded=false;queueMicrotask(()=>{if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){languageRenderNeeded=true;return;}if(ui.page==='settings')renderSettingsDrafts();else {renderChrome();renderUpdateBanner();}});}
  }});
  formSaves.set(form,save);activeSaves.add({form,save});return save;
 }
@@ -478,7 +480,15 @@ function editAutosave(input,immediate){
   save.set(input.name,patch,immediate);
  }catch(error){fieldEdits.set(input,{raw});save.invalid(input.name,error.message);}
 }
-function confirmAutosave(title,text){return new Promise(resolve=>{
+let preparingUpdate=false;
+window.wifimeterPrepareUpdate=async()=>{
+ if(pendingAutosaveCancel)return false;
+ preparingUpdate=true;syncInert();
+ try{await flushAutosaves(['settingsForm','totalQuotaForm','proxyConfigForm','networkForm']);updateExitPrepared=!(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty);return updateExitPrepared;}
+ catch{updateExitPrepared=false;return false;}
+ finally{preparingUpdate=false;syncInert();}
+};
+function confirmAutosave(title,text){if(preparingUpdate)throw Error(t('请先保存设置并重试更新。'));return new Promise(resolve=>{
  confirmModal(title,text,t('确认启用'),()=>resolve(true),true);
  pendingAutosaveCancel=()=>resolve(false);
 });}
@@ -606,15 +616,15 @@ let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
 async function copySsid(id){const text=getNetwork(id)?.ssid||'';try{await navigator.clipboard.writeText(text);toast(t('已复制原始 SSID。'));}catch(e){showModal(t('复制网络名称'),tr`<p class="modal-desc">浏览器不允许直接写入剪贴板。可以选中下方名称复制。</p><input class="input" value="${esc(text)}" readonly autofocus>`,button('close-modal',t('完成'),'','primary'),()=>$('.modal input')?.select());}}
 function renderStatusHelp(){refreshStatusHelp($('#settings-status'),{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus});}
-function renderUpdates(){renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
+function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy);updateRegion(banner,view);banner.hidden=!view;}
+function renderUpdates(){if(['error','recovered','cancelled','latest','manual','unchecked'].includes(updateStatus.state))updateExitPrepared=false;syncInert();renderUpdateBanner();renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
 async function updateAction(action){
  if(updateBusy)return;
- if(action==='install'&&(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty)){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return;}
+ if(action==='install'&&!updateStatus.recoveryRequired&&(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty)){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return;}
  updateBusy=true;if(action==='check')updateStatus={...updateStatus,state:'checking',error:'',progress:null};renderUpdates();
- const content=$('#content');
  try{updateStatus=await window.desktop.updates[action]();}
  catch(error){updateStatus={...updateStatus,state:'error',error:error.message};}
- finally{content.inert=false;updateBusy=false;renderUpdates();}
+ finally{updateBusy=false;renderUpdates();}
 }
 const actions={
  'check-updates':()=>updateAction('check'),
@@ -753,5 +763,5 @@ store.start({from:initialRange.start,to:initialRange.end}).then(()=>{
 
 if(window.desktop.updates){
  window.desktop.updates.status().then(status=>{updateStatus=status;renderUpdates();}).catch(error=>{updateStatus={state:'error',error:error.message};renderUpdates();});
- window.desktop.updates.onStatus(status=>{updateStatus={...updateStatus,...status};renderUpdates();if(status.state==='available')toast(t('发现新版本，请在设置中查看更新。'));});
+ window.desktop.updates.onStatus(status=>{updateStatus={...updateStatus,...status};renderUpdates();});
 }

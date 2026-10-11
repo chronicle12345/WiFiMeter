@@ -21,6 +21,8 @@ async function launchUpdateHandoff(file, { userData, digest, timeout = 15000 } =
         throw Error('Installer changed after download verification.');
     }
     const encodedPath = Buffer.from(target, 'utf8').toString('base64');
+    const appPid = Number(process.env.WIFIMETER_APP_PID || process.pid);
+    if (!Number.isSafeInteger(appPid) || appPid <= 0) throw Error('Invalid application process ID.');
     // Lock the same file while waiting: allow reads, deny replacement/deletion.
     // EOF without GO cancels a helper that became ready after the parent's timeout.
     const script = `$ErrorActionPreference='Stop'
@@ -31,6 +33,8 @@ $authorized=$false
 try {
     $p=Get-Process -Id ${process.pid} -ErrorAction Stop
     $null=$p.Handle
+    $gui=Get-Process -Id ${appPid} -ErrorAction SilentlyContinue
+    if($gui){$null=$gui.Handle}
     $file=[IO.File]::Open($target,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
     $sha=[Security.Cryptography.SHA256]::Create()
     try {$hash=([BitConverter]::ToString($sha.ComputeHash($file))).Replace('-','').ToLowerInvariant()} finally {$sha.Dispose()}
@@ -40,7 +44,8 @@ try {
     if([Console]::In.ReadLine() -ne 'GO'){exit 1}
     $authorized=$true
     if(-not $p.WaitForExit(60000)){throw 'WiFiMeter did not exit within 60 seconds'}
-    Start-Process -FilePath $target -WindowStyle Hidden
+    if($gui -and -not $gui.WaitForExit(60000)){throw 'WiFiMeter window did not exit within 60 seconds'}
+    Start-Process -FilePath $target -ArgumentList @('/S', '/R') -WindowStyle Hidden
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     if($authorized){

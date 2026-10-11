@@ -104,8 +104,11 @@ impl Host {
         let _ = self.send(message);
     }
 
-    pub fn request_close(&self, app: &AppHandle, action: Value) {
+    pub fn request_close(&self, app: &AppHandle, mut action: Value) {
         if !self.loaded.lock().unwrap().contains("main") {
+            if action["automaticUpdate"].as_bool() == Some(true) {
+                action["result"] = json!(false);
+            }
             let _ = self.send(action);
             return;
         }
@@ -114,12 +117,13 @@ impl Host {
             return;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let automatic_update = action["automaticUpdate"].as_bool() == Some(true);
         *pending = Some((id, action));
         let _ = app.emit_to(
             "main",
             "desktop:event",
             json!({
-            "channel": "window:close-request", "payload": { "id": id } }),
+            "channel": "window:close-request", "payload": { "id": id, "automaticUpdate": automatic_update } }),
         );
     }
 
@@ -451,20 +455,24 @@ mod resource_tests {
     use std::{
         fs,
         path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
         fn new() -> Self {
             let directory = std::env::temp_dir().join(format!(
-                "wifimeter-tauri-resources-{}-{}",
+                "wifimeter-tauri-resources-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&directory).unwrap();
             Self(directory)

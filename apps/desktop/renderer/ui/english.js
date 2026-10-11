@@ -33,6 +33,10 @@ export const english = Object.fromEntries(`
 正在下载安装包…|Downloading installer…
 正在校验安装包…|Verifying installer…
 正在保存数据并准备安装…|Saving data and preparing installation…
+正在退出并启动静默安装…|Exiting and starting silent installation…
+即将自动下载并安装更新。|The update will download and install automatically.
+重试更新|Retry update
+请先保存设置并重试更新。|Save your settings and retry the update.
 正在启动安装程序…|Starting installer…
 后续安装进度将在安装程序中显示。|Further installation progress is shown in the installer.
 更新失败。|Update failed.
@@ -42,6 +46,7 @@ export const english = Object.fromEntries(`
 启动更新辅助程序失败|Could not start the update helper
 安装更新失败|Update installation failed
 文件内容与官方 SHA-256 不一致，请重新下载。|The file does not match the official SHA-256. Download it again.
+更新文件长度与官方记录不一致，请重新下载。|The update file size does not match the official record. Download it again.
 下载服务器没有返回可用的安装包。|The download server did not return a usable installer.
 下载重定向无效或次数过多。|The download redirect was invalid or exceeded the limit.
 下载被重定向到未允许的地址。|The download was redirected to an address that is not allowed.

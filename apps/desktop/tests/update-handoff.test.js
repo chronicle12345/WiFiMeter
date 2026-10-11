@@ -16,7 +16,7 @@ const { createNativeAdapter } = require('../tauri/native-adapter.cjs');
 const digest = createHash('sha256').update('verified fixture').digest('hex');
 const directory = fileURLToPath(new URL('../electron/', import.meta.url));
 
-async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions } = {}) {
+async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions, prepareUpdateResult = true, missingPrepareHook = false } = {}) {
     let ready, window, backend, hooks, quitCount = 0, releaseReady;
     const handlers = new Map(), calls = [], updates = [], nativeMessages = [];
     const native = nativeExitDecisions ? createNativeAdapter({
@@ -25,15 +25,16 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
             nativeMessages.push(message);
             if (message.type === 'quit') quitCount++;
             else if (message.type === 'native') {
-                assert.equal(message.method, 'app:confirmQuit');
-                const result = nativeExitDecisions.shift();
+                assert.ok(['app:confirmQuit', 'app:prepareUpdateQuit'].includes(message.method));
+                const result = message.method === 'app:prepareUpdateQuit' ? prepareUpdateResult : nativeExitDecisions.shift();
                 queueMicrotask(() => native.receive({ type: 'native-result', id: message.id, ok: true, result }));
             }
         }
     }) : null;
     const handoffReady = new Promise(resolve => { releaseReady = resolve; });
     class Window extends EventEmitter {
-        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send(channel, value) { if (channel === 'updates:status') updates.push(value); }, session: { setPermissionRequestHandler() {} } }); }
+        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send(channel, value) { if (channel === 'updates:status') updates.push(value); }, session: { setPermissionRequestHandler() {} },
+            ...(missingPrepareHook ? {} : { async executeJavaScript(script) { assert.equal(script, 'window.wifimeterPrepareUpdate?.()'); calls.push('prepareUpdate'); return prepareUpdateResult; } }) }); }
         isDestroyed() { return false; }
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
@@ -121,10 +122,11 @@ test('shutdown still pending keeps protection and gives an explicit recovery fai
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
 for (const failure of ['handoff', 'shutdown']) test(`Tauri requests a fresh exit confirmation after ${failure} recovery`, async () => {
-    const h = await harness({ failure, nativeExitDecisions: [true, false] });
+    const h = await harness({ failure, nativeExitDecisions: [false] });
     let result = await h.invoke('updates:install');
     assert.equal(result.state, 'error');
-    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 1);
+    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 0);
+    assert.equal(h.nativeMessages.filter(message => message.method === 'app:prepareUpdateQuit').length, 1);
     if (failure === 'shutdown') {
         assert.equal(result.recoveryRequired, true);
         h.backend.shutdownPending = false; h.backend.running = false;
@@ -136,7 +138,7 @@ for (const failure of ['handoff', 'shutdown']) test(`Tauri requests a fresh exit
 
     h.app.quit();
     await new Promise(setImmediate);
-    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 2,
+    assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 1,
         '恢复使用后退出应再次确认，不能沿用安装更新前的确认结果');
     assert.equal(h.quitCount, 0);
     assert.equal(h.backend.running, true);
@@ -152,12 +154,13 @@ test('main quits only after handoff READY', async () => {
     assert.equal(h.quitCount, 1);
 });
 
-function handoffHarness() {
+function handoffHarness({ appPid = process.pid } = {}) {
     const child = new EventEmitter(); child.stdout = new PassThrough(); child.stdin = new PassThrough(); child.stderr = new PassThrough(); child.unref = () => {};
     let spawned;
     const module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'update-handoff.cjs'), 'utf8'), {
-        module, __dirname: directory, Buffer, process, setTimeout, clearTimeout,
+        module, __dirname: directory, Buffer, process: { pid: process.pid, execPath: process.execPath,
+            env: { ...process.env, WIFIMETER_APP_PID: String(appPid) } }, setTimeout, clearTimeout,
         require: name => name === 'node:child_process' ? { spawn(...args) { spawned = args; return child; } }
             : name === 'node:fs' ? { createReadStream: () => Readable.from([Buffer.from('verified '), Buffer.from('fixture')]), readFileSync: fs.readFileSync }
             : name === 'node:fs/promises' ? { readFile: async () => { assert.fail('Installer hashing must stream, not read the full file'); } } : require(name)
@@ -186,7 +189,8 @@ test('READY is framed across chunks and only then authorizes the fixed installer
     assert.equal(options.windowsHide, true); assert.notEqual(options.shell, true);
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
     assert.match(script, /FileShare\]::Read/); assert.match(script, /SHA256/);
-    assert.match(script, /WaitForExit\(60000\)/); assert.match(script, /Start-Process -FilePath \$target -WindowStyle Hidden/);
+    assert.match(script, /WaitForExit\(60000\)/);
+    assert.match(script, /Start-Process -FilePath \$target -ArgumentList @\('\/S', '\/R'\) -WindowStyle Hidden/);
 });
 test('timeout closes input without authorizing a late READY', async () => {
     const h = handoffHarness(); const p = h.launch({ timeout: 15 });
@@ -282,7 +286,7 @@ test('helper spawn error rejects without GO', async () => {
     assert.equal(h.child.stdin.read()?.toString().includes('GO'), undefined);
 });
 
-for (const runtime of ['electron', 'tauri']) test(`${runtime} download passes its verified release digest to the handoff hook`, async () => {
+function fixtureUpdateService(options, { runtime = 'electron', downloadFails = false } = {}) {
     const module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'updates.cjs'), 'utf8'), {
         module, AbortSignal, globalThis, process: { env: { WIFIMETER_DESKTOP_RUNTIME: runtime } },
@@ -291,34 +295,134 @@ for (const runtime of ['electron', 'tauri']) test(`${runtime} download passes it
             mkdir: async () => {}, rename: async () => {}, unlink: async () => {}
         } : name === 'node:fs' ? { createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }) } : require(name)
     });
-    let metadata;
     const assetName = runtime === 'tauri' ? 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe' : 'WiFiMeter-1.3.0-x64-Setup.exe';
-    const service = module.exports.createUpdateService({
+    return module.exports.createUpdateService({
+        ...options,
         currentVersion: '1.2.0', platform: 'win32', arch: 'x64', userData: 'fixture',
-        fetch: async url => url.includes('api.github.com') ? Response.json({ tag_name: 'v1.3.0', assets: [{
-            name: assetName, digest: `sha256:${digest}`,
-            browser_download_url: `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/${assetName}`
-        }] }) : new Response('verified fixture'),
-        confirm: async () => true, beforeInstall: async () => {},
-        launchInstaller: async (file, argv, verified) => {
-            assert.ok(file.endsWith(assetName));
-            assert.equal(argv.length, 0); metadata = verified;
+        fetch: async url => {
+            if (url.includes('api.github.com')) return Response.json({ tag_name: 'v1.3.0', assets: [{
+                name: assetName, size: Buffer.byteLength('verified fixture'), digest: `sha256:${digest}`,
+                browser_download_url: `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/${assetName}`
+            }] });
+            if (downloadFails) throw Error('injected download failure');
+            return new Response('verified fixture');
         }
     });
+}
+
+for (const runtime of ['electron', 'tauri']) test(`${runtime} download passes its verified release digest to the handoff hook`, async () => {
+    let metadata;
+    const service = fixtureUpdateService({
+        confirm: async () => true, beforeInstall: async () => {},
+        launchInstaller: async (file, argv, verified) => {
+            assert.ok(file.endsWith(runtime === 'tauri' ? 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe' : 'WiFiMeter-1.3.0-x64-Setup.exe'));
+            assert.deepEqual(Array.from(argv), ['/S', '/R']); metadata = verified;
+        }
+    }, { runtime });
     assert.equal((await service.install()).state, 'installing');
     assert.equal(metadata.digest, digest);
 });
 
+for (const runtime of ['electron', 'tauri']) test(`${runtime} automatic check refuses an unsaved draft before pausing, handoff, or quitting`, async () => {
+    const h = await harness({ paused: true, appsEnabled: true, prepareUpdateResult: false,
+        nativeExitDecisions: runtime === 'tauri' ? [] : undefined,
+        updateFactory: options => fixtureUpdateService(options, { runtime }) });
+    const result = await h.invoke('updates:check');
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, 'preparing');
+    assert.match(result.error, /尚未保存.*保存后重试更新/);
+    assert.equal(result.busy, false);
+    assert.equal(Boolean(result.recoveryRequired), false);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, true);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.includes('waitForShutdown'), false);
+    assert.equal(h.quitCount, 0);
+    if (runtime === 'tauri') {
+        assert.deepEqual(h.nativeMessages.map(message => message.method), ['app:prepareUpdateQuit']);
+    } else assert.equal(h.calls.filter(call => call === 'prepareUpdate').length, 1);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+});
+
+for (const paused of [false, true]) test(`automatic check handoff failure restores original paused=${paused} and application collection`, async () => {
+    const h = await harness({ failure: 'handoff', paused, appsEnabled: true,
+        updateFactory: options => fixtureUpdateService(options) });
+    const result = await h.invoke('updates:check');
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, 'installing');
+    assert.equal(result.busy, false);
+    assert.equal(result.recoveryRequired, false);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, paused);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.equal(h.calls.filter(call => call === 'handoff').length, 1);
+    assert.equal(h.quitCount, 0);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+});
+
+test('automatic check download failure leaves the running collector unchanged', async () => {
+    const h = await harness({ appsEnabled: true,
+        updateFactory: options => fixtureUpdateService(options, { downloadFails: true }) });
+    const result = await h.invoke('updates:check');
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, 'downloading');
+    assert.equal(result.busy, false);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, false);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.equal(h.calls.includes('prepareUpdate'), false);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.includes('waitForShutdown'), false);
+    assert.equal(h.quitCount, 0);
+});
+
+test('automatic check refuses installation when the page save hook is unavailable', async () => {
+    const h = await harness({ missingPrepareHook: true,
+        updateFactory: options => fixtureUpdateService(options) });
+    const result = await h.invoke('updates:check');
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, 'preparing');
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, false);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+    assert.equal(h.quitCount, 0);
+});
+
+test('automatic check keeps data protected until a timed-out collector shutdown really finishes', async () => {
+    const h = await harness({ failure: 'shutdown', appsEnabled: true,
+        updateFactory: options => fixtureUpdateService(options) });
+    const failed = await h.invoke('updates:check');
+    assert.equal(failed.state, 'error');
+    assert.equal(failed.recoveryRequired, true);
+    assert.equal(h.backend.paused, true);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.includes('start'), false);
+    assert.equal((await h.invoke('updates:check')).recoveryRequired, true);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, false);
+    h.backend.shutdownPending = false; h.backend.running = false;
+    const recovered = await h.invoke('updates:install');
+    assert.equal(recovered.state, 'recovered');
+    assert.equal(recovered.recoveryRequired, false);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, false);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.equal(h.quitCount, 0);
+});
+
 // Exercise the generated PowerShell, replacing both process operations with
 // functions. The .exe fixture is plain text and can never be executed here.
-for (const mode of ['GO', 'EOF', 'changed', 'start-failure', 'parent-timeout']) test(`PowerShell handshake: ${mode}, installer execution stubbed`, { skip: process.platform !== 'win32' }, async t => {
+for (const mode of ['GO', 'EOF', 'changed', 'start-failure', 'parent-timeout', 'gui-timeout', 'gui-already-exited']) test(`PowerShell handshake: ${mode}, installer execution stubbed`, { skip: process.platform !== 'win32' }, async t => {
     const os = require('node:os');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-handoff-'));
     const updates = path.join(root, 'updates'); fs.mkdirSync(updates);
     const file = path.join(updates, "fixture';ignored.exe");
     fs.writeFileSync(file, mode === 'changed' ? 'replaced fixture' : 'verified fixture');
     t.after(() => { fs.unlinkSync(file); fs.rmdirSync(updates); fs.rmdirSync(root); });
-    const h = handoffHarness();
+    const guiPid = process.pid + 1;
+    const h = handoffHarness({ appPid: guiPid });
     const capture = h.launch(); await new Promise(setImmediate); h.child.stdout.write('READY\n'); await capture;
     // Only the base64 data changes; the production script body stays intact.
     let script = Buffer.from(h.spawned[1].at(-1), 'base64').toString('utf16le');
@@ -327,14 +431,17 @@ for (const mode of ['GO', 'EOF', 'changed', 'start-failure', 'parent-timeout']) 
     const stubs = `
 Add-Type -TypeDefinition 'public class TestMessageBox { public static void Show(string message, string title) { System.Console.WriteLine("MESSAGE-STUB"); } }'
 function Get-Process {
-    $fake=[pscustomobject]@{Handle=1}
-    $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {param($timeout) return ${mode === 'parent-timeout' ? '$false' : '$true'}}
+    param($Id)
+    ${mode === 'gui-already-exited' ? `if($Id -eq ${guiPid}){return $null}` : ''}
+    $fake=[pscustomobject]@{Handle=1;FixtureId=$Id}
+    $fake | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {param($timeout) ${mode === 'gui-timeout' ? `if($this.FixtureId -eq ${guiPid}){return $false}` : ''} return ${mode === 'parent-timeout' ? '$false' : '$true'}}
     return $fake
 }
 function Start-Process {
-    param($FilePath,$WindowStyle)
+    param($FilePath,$ArgumentList,$WindowStyle)
     ${mode === 'start-failure' ? "throw 'Injected installer start failure'" : ''}
     if($WindowStyle -ne 'Hidden'){throw 'Wrong window style'}
+    if(($ArgumentList -join ' ') -ne '/S /R'){throw 'Installer must be silent and restart the app'}
     $blocked=$false
     try {$writer=[IO.File]::Open($FilePath,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite); $writer.Dispose()} catch {$blocked=$true}
     if(-not $blocked){throw 'Installer was not locked'}
@@ -346,15 +453,17 @@ function Start-Process {
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
-    child.stdin.on('error', () => {}); child.stdin.end(['GO', 'start-failure', 'parent-timeout'].includes(mode) ? 'GO\n' : '');
+    child.stdin.on('error', () => {}); child.stdin.end(['GO', 'start-failure', 'parent-timeout', 'gui-timeout', 'gui-already-exited'].includes(mode) ? 'GO\n' : '');
     const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
-    if (mode === 'GO') { assert.equal(code, 0, stderr); assert.match(stdout, /READY[\r\n]+LAUNCH-STUB/); }
+    if (['GO', 'gui-already-exited'].includes(mode)) { assert.equal(code, 0, stderr); assert.match(stdout, /READY[\r\n]+LAUNCH-STUB/); }
     else { assert.notEqual(code, 0); assert.doesNotMatch(stdout, /LAUNCH-STUB/); }
     if (mode === 'changed') assert.doesNotMatch(stdout, /READY/);
-    if (['start-failure', 'parent-timeout'].includes(mode)) {
+    if (['start-failure', 'parent-timeout', 'gui-timeout'].includes(mode)) {
         assert.match(stdout, /READY/);
         assert.equal((stdout.match(/MESSAGE-STUB/g) || []).length, 1, stderr);
     } else assert.doesNotMatch(stdout, /MESSAGE-STUB/);
+    if (mode === 'parent-timeout') assert.match(stderr, /WiFiMeter did not exit/);
+    if (mode === 'gui-timeout') assert.match(stderr, /WiFiMeter window did not exit/);
 });
 
 
@@ -362,7 +471,7 @@ test('recovery action takes priority over installation, is disabled while busy, 
     const status = { state: 'available', canInstall: true, recoveryRequired: true };
     const html = updatesView(status, true);
     assert.match(html, /data-action="install-update" disabled>恢复采集<\/button>/);
-    assert.doesNotMatch(html, /下载并安装/);
+    assert.doesNotMatch(html, /data-action="install-update"[^>]*>下载并安装<\/button>/);
     setLanguage('en');
     try {
         assert.match(updatesView({ state: 'error', recoveryRequired: true }), />Resume collection<\/button>/);
@@ -443,7 +552,7 @@ test('in-flight checking rejects repeat actions without replacing the saved phas
 
 // Exercise the real runtime and helper script. Only Start-Process is replaced;
 // the .exe contains text and cannot be executed by this test.
-for (const runtime of ['Node', 'Electron', 'Electron ASAR']) test(`Windows ${runtime} handoff survives its parent and keeps the installer locked`, { skip: process.platform !== 'win32' }, async t => {
+for (const runtime of ['Node', 'Electron', 'Electron ASAR', 'Node with separate GUI process']) test(`Windows ${runtime} handoff survives its parent and keeps the installer locked`, { skip: process.platform !== 'win32' }, async t => {
     const os = require('node:os');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-handoff-survival-'));
     const updates = path.join(root, 'updates'); fs.mkdirSync(updates);
@@ -452,8 +561,10 @@ for (const runtime of ['Node', 'Electron', 'Electron ASAR']) test(`Windows ${run
     const packageRoot = path.join(root, 'package');
     const packageDirectory = path.join(packageRoot, 'electron');
     const archive = path.join(root, 'app.asar');
+    let guiProcess, guiExit;
     fs.writeFileSync(installer, 'verified fixture');
     t.after(async () => {
+        if (guiProcess) { guiProcess.stdin.end(); await guiExit; }
         const removeFile = async file => {
             const deadline = Date.now() + 5000;
             while (true) {
@@ -486,9 +597,10 @@ for (const runtime of ['Node', 'Electron', 'Electron ASAR']) test(`Windows ${run
 $ProgressPreference='SilentlyContinue'
 Add-Type -TypeDefinition 'public class TestMessageBox { public static void Show(string message, string title) { System.Console.Error.WriteLine("MESSAGE-STUB: " + message); } }'
 function Start-Process {
-    param($FilePath, $WindowStyle)
+    param($FilePath, $ArgumentList, $WindowStyle)
     if($env:ELECTRON_RUN_AS_NODE){throw 'Installer inherited Electron Node mode'}
     if($WindowStyle -ne 'Hidden'){throw 'Wrong window style'}
+    if(($ArgumentList -join ' ') -ne '/S /R'){throw 'Installer must be silent and restart the app'}
     $blocked=$false
     try {$writer=[IO.File]::Open($FilePath,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite); $writer.Dispose()} catch {$blocked=$true}
     if(-not $blocked){throw 'Installer was not locked'}
@@ -512,15 +624,38 @@ moduleFixture.exports.launchUpdateHandoff(${JSON.stringify(installer)}, {
     userData: ${JSON.stringify(root)}, digest: ${JSON.stringify(digest)}, timeout: 30000
 }).then(() => { console.log('HANDOFF-ACCEPTED'); }, error => { console.error(error.message); process.exitCode = 1; });
 `);
-    const executable = runtime === 'Node' ? process.execPath : require('electron');
+    if (runtime === 'Node with separate GUI process') {
+        // A separate headless PID exercises the Tauri GUI lifetime without opening a window.
+        guiProcess = require('node:child_process').spawn(process.execPath, ['-e',
+            "process.stdin.resume(); process.stdin.on('end', () => process.exit(0)); console.log('GUI-STAND-IN-READY');"],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+        guiProcess.stdin.on('error', () => {});
+        guiExit = new Promise(resolve => guiProcess.once('close', resolve));
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(Error('headless GUI fixture did not start')), 10000);
+            const finish = error => { clearTimeout(timeout); error ? reject(error) : resolve(); };
+            guiProcess.once('error', finish);
+            let output = '';
+            guiProcess.stdout.on('data', chunk => { output += chunk; if (output.includes('GUI-STAND-IN-READY')) finish(); });
+        });
+    }
+    const executable = runtime.startsWith('Node') ? process.execPath : require('electron');
     const child = require('node:child_process').spawn(executable, [fixture], {
-        windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', 'pipe', 'pipe']
+        windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1',
+            ...(guiProcess ? { WIFIMETER_APP_PID: String(guiProcess.pid) } : {}) }, stdio: ['ignore', 'pipe', 'pipe']
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
     assert.equal(code, 0, stderr);
     assert.match(stdout, /HANDOFF-ACCEPTED/);
+    if (guiProcess) {
+        await delay(300);
+        assert.equal(guiProcess.exitCode, null);
+        assert.equal(fs.existsSync(marker), false, 'installer must wait for the distinct GUI PID after Node exits');
+        guiProcess.stdin.end();
+        assert.equal(await guiExit, 0);
+    }
     const deadline = Date.now() + 10000;
     while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
     assert.equal(fs.readFileSync(marker, 'utf8'), 'PARENT-EXITED;INSTALLER-LOCKED');

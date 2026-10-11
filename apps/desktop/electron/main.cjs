@@ -288,20 +288,12 @@ if (primaryInstance) app.whenReady().then(async () => {
         currentVersion: app.getVersion(), platform: process.platform, arch: process.arch,
         userData: app.getPath('userData'),
         openExternal: url => shell.openExternal(url),
-        confirm: async details => {
-            const choice = await dialog.showMessageBox(window, {
-                type: 'question', title: 'WiFiMeter update / 软件更新',
-                message: `WiFiMeter ${details.latestVersion}`,
-                detail: details.canInstall ? 'Download, verify and install this update? The application will save and exit.\n是否下载、校验并安装更新？程序将先保存并退出。'
-                    : 'Open the official release page to choose a package?\n是否打开官方发布页选择更新包？',
-                buttons: ['Continue / 继续', 'Cancel / 取消'], defaultId: 1, cancelId: 1
-            });
-            return choice.response === 0;
-        },
         beforeInstall: async () => {
             await startup;
             if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
-            if (app.confirmExit && !await app.confirmExit()) throw Error('已取消退出，更新尚未开始。');
+            const saved = app.prepareUpdateExit ? await app.prepareUpdateExit()
+                : window.webContents.executeJavaScript ? await window.webContents.executeJavaScript('window.wifimeterPrepareUpdate?.()') : false;
+            if (saved !== true) throw Error('有尚未保存的设置，请先完成设置保存后重试更新。');
             installingUpdate = true;
             updateRecovery = { paused: null, pauseRequested: false };
             const original = await backend.request('hello');
@@ -331,7 +323,10 @@ if (primaryInstance) app.whenReady().then(async () => {
         if (updateRecovery || installingUpdate) return updateState;
         updateRequestBusy = true;
         let result;
-        try { result = await updateService.check(options); }
+        try {
+            result = await updateService.check(options);
+            if (result.state !== 'installing' && result.state !== 'busy') result = await recoverAfterUpdateFailure(result);
+        }
         finally { updateRequestBusy = false; }
         return updateResult(result);
     }

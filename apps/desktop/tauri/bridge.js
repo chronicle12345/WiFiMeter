@@ -13,10 +13,19 @@
     // 启动脚本先于页面模块执行；事件注册完成后再释放第一个业务请求。
     const ready = window.__TAURI__.event.listen('desktop:event', ({ payload: message }) => {
         if (!isMini && message.channel === 'window:close-request') {
-            const event = new Event('beforeunload', { cancelable: true });
-            window.dispatchEvent(event);
-            invoke('window:confirm-close', { id: message.payload.id,
-                dirty: event.defaultPrevented || event.returnValue === false }).catch(error => console.error(error));
+            const confirm = async () => {
+                let dirty;
+                if (message.payload.automaticUpdate) {
+                    try { dirty = await window.wifimeterPrepareUpdate?.() !== true; }
+                    catch { dirty = true; }
+                } else {
+                    const event = new Event('beforeunload', { cancelable: true });
+                    window.dispatchEvent(event);
+                    dirty = event.defaultPrevented || event.returnValue === false;
+                }
+                await invoke('window:confirm-close', { id: message.payload.id, dirty });
+            };
+            confirm().catch(error => console.error(error));
             return;
         }
         for (const handler of listeners.get(message.channel) || []) {

@@ -48,6 +48,12 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         }).finally(() => { exitFlight = null; });
         return exitFlight;
     };
+    app.prepareUpdateExit = async () => {
+        if (stopped) return false;
+        const saved = await call('app:prepareUpdateQuit');
+        if (saved === true) exitConfirmed = true;
+        return saved === true;
+    };
     const finishQuit = () => {
         const event = preventable();
         app.emit('before-quit', event);

@@ -1,6 +1,6 @@
 [package]
 name = "wifimeter"
-version = "1.3.1"
+version = "1.3.2"
 description = "WiFiMeter desktop host"
 authors = ["WiFiMeter contributors"]
 edition = "2021"

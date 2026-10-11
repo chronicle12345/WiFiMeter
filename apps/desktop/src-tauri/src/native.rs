@@ -253,10 +253,11 @@ pub fn dispatch(app: &AppHandle, host: Arc<Host>, message: Value) {
             params["label"]
         );
     }
-    if method == "app:confirmQuit" {
+    if method == "app:confirmQuit" || method == "app:prepareUpdateQuit" {
         host.request_close(
             &app,
-            json!({ "type": "native-result", "id": id, "ok": true, "result": true }),
+            json!({ "type": "native-result", "id": id, "ok": true, "result": true,
+                "automaticUpdate": method == "app:prepareUpdateQuit" }),
         );
         return;
     }

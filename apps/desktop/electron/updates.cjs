@@ -7,7 +7,7 @@ const { pipeline } = require('node:stream/promises');
 
 const REPOSITORY = 'https://github.com/chronicle12345/WiFiMeter';
 const API = 'https://api.github.com/repos/chronicle12345/WiFiMeter/releases/latest';
-const DAY = 24 * 60 * 60 * 1000;
+const CHECK_INTERVAL = 60 * 60 * 1000;
 
 function parseVersion(value) {
     if (typeof value !== 'string') throw Error('版本号无效。');
@@ -58,6 +58,7 @@ function installationFailure(error, phase) {
     const reasons = {
         'digest mismatch': '文件内容与官方 SHA-256 不一致，请重新下载。',
         'download failed': '下载服务器没有返回可用的安装包。',
+        'download size mismatch': '更新文件长度与官方记录不一致，请重新下载。',
         'invalid redirect': '下载重定向无效或次数过多。',
         'untrusted asset URL': '下载被重定向到未允许的地址。',
         'unexpected redirect': '下载请求出现了非预期的重定向。',
@@ -88,25 +89,25 @@ function installationFailure(error, phase) {
 /**
  * All methods return Promises. settings()/setCheckOnStartup() return {checkOnStartup}.
  * check() returns {status, state, currentVersion, latestVersion, notes, url, canInstall,
- * checkOnStartup, manual}; state is latest/available/error, with error on failure
+ * checkOnStartup, manual}; state is latest/available/error/installing, with error on failure
  * and skipped=disabled/cached for skipped automatic checks.
- * install() additionally returns state=cancelled/manual/installing/busy.
+ * check() automatically downloads and installs a supported update; autoInstall=false
+ * only looks up metadata. install() retries a failed update or opens the official
+ * release page on unsupported platforms. Both methods can return state=busy.
  * onProgress(fullSnapshot) observes checking/downloading/verifying/preparing/installing
  * and terminal results. progress is {receivedBytes,totalBytes,percent,phase}, or null
  * outside active phases. Only downloading has a percentage, when length is known.
  * Download 100% does not imply verification or installation has completed.
- * Observer exceptions/rejections are ignored. status always mirrors state. confirm({...snapshot, title, message, detail})
- * must return strictly true; missing confirm fails closed.
- * beforeInstall() is awaited after verification, before launchInstaller(file, [], { digest }).
+ * Observer exceptions/rejections are ignored. status always mirrors state.
+ * beforeInstall() is awaited after verification, before launchInstaller(file, ['/S', '/R'], { digest }).
  * launchInstaller(file, argv) resolves once a helper reliably accepts the task.
  * The main process then quits; the helper waits for the app to exit before
  * launching the installer via hidden spawn, using argv and no shell.
  * beforeInstall() must reject if graceful backend shutdown fails.
- * The main process supplies launchInstaller using hidden spawn without a shell,
- * and exposes install only through an explicit user action, never a timer.
+ * The main process supplies launchInstaller using hidden spawn without a shell.
  */
 function createUpdateService({ currentVersion, platform, arch, userData,
-    fetch: fetchImpl = globalThis.fetch, openExternal, launchInstaller, beforeInstall, confirm, onProgress } = {}) {
+    fetch: fetchImpl = globalThis.fetch, openExternal, launchInstaller, beforeInstall, onProgress } = {}) {
     const current = parseVersion(currentVersion);
     const preferencesPath = path.join(userData, 'update-preferences.json');
     let preferences;
@@ -202,11 +203,10 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             await loadPreferences();
             if (automatic && !preferences.checkOnStartup) return result({ skipped: 'disabled' });
             const now = Date.now();
-            if (automatic && preferences.lastAutomaticAt && now - preferences.lastAutomaticAt < DAY) {
+            if (automatic && snapshot.state !== 'error' && preferences.lastAutomaticAt
+                && now - preferences.lastAutomaticAt < CHECK_INTERVAL) {
                 return result({ skipped: 'cached' });
             }
-            // 失败的自动请求也计入限频；仅保存设置和时间，不保存请求、token 或签名 URL。
-            if (automatic) await savePreferences({ ...preferences, lastAutomaticAt: now });
             selectedAsset = null;
             phase('checking', { receivedBytes: 0, totalBytes: null });
             const response = await request(API, AbortSignal.timeout(30_000));
@@ -217,18 +217,22 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             const newer = compareVersions(latest, current) > 0;
             const url = `${REPOSITORY}/releases/tag/${encodeURIComponent(release.tag_name)}`;
             if (newer && platform === 'win32' && ['x64', 'ia32', 'arm64'].includes(arch)) {
-                // Tauri 更新仅选择对应安装包，避免升级后切回旧桌面运行时。
-                const names = process.env.WIFIMETER_DESKTOP_RUNTIME === 'tauri'
-                    ? [`WiFiMeter-${latest.version}-windows-${arch}-Tauri-Setup.exe`]
-                    : [`WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`];
+                // Electron 也可升级到当前 Tauri 发行版；Tauri 不切回旧运行时。
+                const names = [`WiFiMeter-${latest.version}-windows-${arch}-Tauri-Setup.exe`,
+                    ...(process.env.WIFIMETER_DESKTOP_RUNTIME === 'tauri' ? [] : [
+                        `WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`])];
                 const assets = Array.isArray(release.assets) ? release.assets : [];
                 const name = names.find(name => assets.some(asset => asset.name === name)) || names[0];
-                const matches = assets.filter(asset =>
-                    asset.name === name && /^sha256:[a-fA-F0-9]{64}$/.test(asset.digest || '')
-                    && assetUrlAllowed(asset.browser_download_url, release.tag_name, name));
-                if (matches.length === 1) selectedAsset = { name, url: matches[0].browser_download_url,
-                    digest: matches[0].digest.slice(7).toLowerCase() };
+                const matches = assets.filter(asset => asset?.name === name);
+                if (matches.length === 1 && /^sha256:[a-fA-F0-9]{64}$/.test(matches[0].digest || '')
+                    && Number.isSafeInteger(matches[0].size) && matches[0].size > 0
+                    && assetUrlAllowed(matches[0].browser_download_url, release.tag_name, name)) {
+                    selectedAsset = { name, url: matches[0].browser_download_url,
+                        digest: matches[0].digest.slice(7).toLowerCase(), size: matches[0].size };
+                }
             }
+            // 仅已确认没有新版本时限频；检查或安装失败允许下次启动立即重试。
+            if (automatic && !newer) await savePreferences({ ...preferences, lastAutomaticAt: now });
             snapshot = { state: newer ? 'available' : 'latest', currentVersion,
                 latestVersion: latest.version, notes: typeof release.body === 'string' ? release.body : '',
                 url, canInstall: Boolean(selectedAsset), manual: newer && !selectedAsset,
@@ -244,7 +248,7 @@ function createUpdateService({ currentVersion, platform, arch, userData,
     }
 
     async function download(asset) {
-        phase('downloading', { receivedBytes: 0, totalBytes: null });
+        phase('downloading', { receivedBytes: 0, totalBytes: asset.size });
         const directory = path.join(userData, 'updates');
         await fs.mkdir(directory, { recursive: true });
         const destination = path.join(directory, `${randomUUID()}-${asset.name}`);
@@ -265,8 +269,11 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             }
             if (!response.ok || !response.body) throw Error('download failed');
             const length = response.headers.get('content-length');
-            const parsedLength = length && /^\d+$/.test(length) ? Number(length) : null;
-            const totalBytes = Number.isSafeInteger(parsedLength) && parsedLength > 0 ? parsedLength : null;
+            if (length !== null && (!/^\d+$/.test(length) || Number(length) !== asset.size)) {
+                await response.body.cancel();
+                throw Error('download size mismatch');
+            }
+            const totalBytes = asset.size;
             let receivedBytes = 0;
             let lastProgressAt = 0;
             function downloadProgress(force = false) {
@@ -282,10 +289,12 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             const hashing = new Transform({ transform(chunk, encoding, callback) {
                 hash.update(chunk);
                 receivedBytes += chunk.length;
+                if (receivedBytes > totalBytes) return callback(Error('download size mismatch'));
                 downloadProgress();
                 callback(null, chunk);
             } });
             await pipeline(response.body, hashing, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), { signal });
+            if (receivedBytes !== totalBytes) throw Error('download size mismatch');
             downloadProgress(true);
             phase('verifying');
             if (hash.digest('hex') !== asset.digest) throw Error('digest mismatch');
@@ -294,6 +303,37 @@ function createUpdateService({ currentVersion, platform, arch, userData,
         } finally {
             await fs.unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
         }
+    }
+
+    // The caller already owns the check/install guard and serial queue.
+    async function installSelected({ status, asset }, { manual = false } = {}) {
+        let file;
+        try {
+            if (status.state !== 'available') return status;
+            if (!asset) {
+                if (!manual) return status;
+                if (!openExternal) throw Error('missing openExternal');
+                await openExternal(status.url);
+                return publish({ state: 'manual', manual: true, progress: null, error: undefined });
+            }
+            if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
+            file = await download(asset);
+            phase('preparing');
+            await beforeInstall();
+            phase('installing');
+            await launchInstaller(file, ['/S', '/R'], { digest: asset.digest });
+            file = null; // 保留已交接文件，安装器将在当前应用退出后读取。
+            return result();
+        } catch (error) {
+            const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
+            return publish({ state: 'error', progress: null, ...failure });
+        } finally {
+            if (file) await fs.unlink(file).catch(() => {});
+        }
+    }
+
+    function selectedTarget() {
+        return { status: result(), asset: selectedAsset && { ...selectedAsset } };
     }
 
     return {
@@ -307,54 +347,28 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             await savePreferences({ ...preferences, checkOnStartup: value });
             return { checkOnStartup: value };
         }),
-        async check(options) {
+        async check(options = {}) {
             if (installing || checking) return result({ state: 'busy' });
             checking = true;
-            try { return await serial(() => checkNow(options)); }
+            try {
+                return await serial(async () => {
+                    const status = await checkNow(options);
+                    if (status.skipped || options.autoInstall === false) return status;
+                    return installSelected(selectedTarget());
+                });
+            }
             finally { checking = false; }
         },
         async install() {
             if (installing || checking) return result({ state: 'busy' });
             installing = true;
-            let file;
             try {
-                // 与在途检查排队，捕获确认对应的版本，避免确认期间被其他检查替换。
-                const target = await serial(async () => {
+                return await serial(async () => {
                     if (snapshot.state !== 'available') await checkNow();
-                    return { status: result(), asset: selectedAsset && { ...selectedAsset } };
+                    return installSelected(selectedTarget(), { manual: true });
                 });
-                const status = target.status;
-                if (status.state !== 'available') return status;
-                const message = {
-                    ...status,
-                    title: target.asset ? '安装 WiFiMeter 更新' : '打开 WiFiMeter 更新页面',
-                    message: target.asset ? `是否安装 WiFiMeter ${status.latestVersion}？`
-                        : `是否打开 WiFiMeter ${status.latestVersion} 的官方发布页？`,
-                    detail: target.asset ? '下载并校验成功后将停止采样，退出应用，再启动安装程序。'
-                        : '请在官方发布页选择适合当前系统和安装方式的软件包。'
-                };
-                if (!confirm || await confirm(message) !== true) {
-                    return publish({ state: 'cancelled', progress: null, error: undefined });
-                }
-                if (!target.asset) {
-                    if (!openExternal) throw Error('missing openExternal');
-                    await openExternal(status.url);
-                    return publish({ state: 'manual', manual: true, progress: null, error: undefined });
-                }
-                if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
-                file = await download(target.asset);
-                phase('preparing');
-                await beforeInstall();
-                phase('installing');
-                await launchInstaller(file, [], { digest: target.asset.digest });
-                file = null; // 成功启动后保留安装包，避免安装器尚未读取时被删除。
-                return result();
-            } catch (error) {
-                const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
-                return publish({ state: 'error', progress: null, ...failure });
             } finally {
                 installing = false;
-                if (file) await fs.unlink(file).catch(() => {});
             }
         }
     };

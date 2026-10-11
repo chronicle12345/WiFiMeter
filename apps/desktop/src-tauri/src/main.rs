@@ -19,7 +19,12 @@ impl log::Log for BackgroundTestLogger {
 
     fn log(&self, record: &log::Record<'_>) {
         if self.enabled(record.metadata()) {
-            eprintln!("[{}] {}: {}", record.level(), record.target(), record.args());
+            eprintln!(
+                "[{}] {}: {}",
+                record.level(),
+                record.target(),
+                record.args()
+            );
         }
     }
 
@@ -61,7 +66,9 @@ async fn desktop_request(
             .and_then(|value| value["dirty"].as_bool())
             .unwrap_or(false);
         if dirty {
-            let accepted = if native::isolated_background_test() {
+            let accepted = if action["automaticUpdate"].as_bool() == Some(true)
+                || native::isolated_background_test()
+            {
                 false
             } else {
                 tauri::async_runtime::spawn_blocking(move || {
