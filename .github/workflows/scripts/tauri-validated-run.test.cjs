@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { findValidatedRun, main } = require('./tauri-validated-run.cjs');
 
@@ -207,8 +208,11 @@ test('HTTP failures, malformed responses and exceptions safely fall back without
 });
 
 test('CLI output is a numeric run ID or empty fallback without storing credentials', async t => {
-    const directory = fs.mkdtempSync(path.resolve('build/validated-run-test-'));
-    t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-validated-run-test-'));
+    t.after(() => {
+        assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
+        fs.rmSync(directory, { recursive: true, force: true });
+    });
     const output = path.join(directory, 'output.txt');
     const env = { GITHUB_REPOSITORY: repository, GITHUB_SHA: sha, GITHUB_REF_TYPE: 'tag', GH_TOKEN: 'fixture-token', GITHUB_OUTPUT: output };
     await main(env, api(fixtures()));
