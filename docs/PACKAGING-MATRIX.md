@@ -14,7 +14,11 @@
 
 [tauri.yml](../.github/workflows/tauri.yml) 使用对应架构的原生环境；Windows x86 在 x64 Windows 上运行 32 位 Node 与测试程序，Rust 目标为 i686-pc-windows-msvc。ARM64 使用 GitHub ARM64 runner。Linux 保持 Ubuntu 22.04 和 glibc 2.35 构建基线。
 
-main push、pull request、手动运行及 v1.3.* 标签共用一套 Desktop CI，标签额外进入发布。每组构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需任务失败都阻止发布。
+main push、pull request、手动运行及 v1.3.* 标签共用一套 Desktop CI。完整矩阵构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需检查失败都阻止发布。
+
+标签优先复用同一个提交已经通过 main CI 的完整产物。复用前核对仓库、工作流、提交、五平台检查和未过期的附件；条件不满足时执行完整矩阵。发布仍重新核对九个安装包的内部 SHA-256，避免标签重复编译相同代码。
+
+CI 复用已校验的 Node 运行时，并按系统、架构、Rust 编译器及 Cargo 依赖配置缓存 Rust 编译结果。Rust 缓存保留依赖源码、编译结果、编译指纹及构建脚本输出；测试构建关闭调试符号和增量缓存，减少传输体积。恢复缓存后，构建、测试和包内验证仍实际执行。
 
 Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微软签名后安装并复查版本。集成检查使用隔离配置和随机本机端口。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出高权限进程会忽略 WEBVIEW2_* 环境覆盖；专用调试参数仅在后台测试与配置隔离同时启用时生效。
 

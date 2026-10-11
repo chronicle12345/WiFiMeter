@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
 concurrency:
   group: tauri-${{ github.ref }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
@@ -19,8 +24,12 @@ jobs:
     name: Workflow checks and Tauri release metadata
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     outputs:
       version: ${{ steps.metadata.outputs.version }}
+      source_run_id: ${{ steps.source.outputs.source_run_id }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -35,7 +44,7 @@ jobs:
       - name: Validate packaging and release helpers
         run: |
           npm run test:packaging:tauri
-          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs
+          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs
       - name: Check workflow syntax with pinned actionlint
         run: |
           set -euo pipefail
@@ -47,10 +56,16 @@ jobs:
       - name: Require matching desktop versions and release tag notes
         id: metadata
         run: node packaging/tauri/release.cjs metadata
+      - name: Reuse a verified main build for the same release commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/workflows/scripts/tauri-validated-run.cjs
 
   windows:
     name: Windows ${{ matrix.arch }} Tauri
     needs: metadata
+    if: needs.metadata.outputs.source_run_id == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     strategy:
@@ -103,6 +118,21 @@ jobs:
           "CMAKE_GENERATOR=$generator" >> $env:GITHUB_ENV
           rustup target add '${{ matrix.target }}'
           if ($LASTEXITCODE) { throw 'Rust target installation failed' }
+          $tauriRustVersion = rustc --version
+          if ($LASTEXITCODE) { throw 'Rust compiler version check failed' }
+          "TAURI_RUST_VERSION=$tauriRustVersion" >> $env:GITHUB_ENV
+      - name: Cache Rust dependencies and compiled targets
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target/**/deps
+            apps/desktop/src-tauri/target/**/.fingerprint
+            apps/desktop/src-tauri/target/**/build
+            apps/desktop/src-tauri/target/.rustc_info.json
+          key: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml') }}
+          restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
       - name: Install locked desktop dependencies
         run: |
           if ('${{ matrix.arch }}' -eq 'ia32') {
@@ -242,6 +272,7 @@ jobs:
   linux:
     name: Linux ${{ matrix.arch }} Tauri
     needs: metadata
+    if: needs.metadata.outputs.source_run_id == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     strategy:
@@ -268,6 +299,20 @@ jobs:
         run: |
           node .github/workflows/scripts/ci.cjs environment linux '${{ matrix.arch }}'
           rustup target add '${{ matrix.target }}'
+          tauri_rust_version=$(rustc --version)
+          echo "TAURI_RUST_VERSION=$tauri_rust_version" >> "$GITHUB_ENV"
+      - name: Cache Rust dependencies and compiled targets
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/desktop/src-tauri/target/**/deps
+            apps/desktop/src-tauri/target/**/.fingerprint
+            apps/desktop/src-tauri/target/**/build
+            apps/desktop/src-tauri/target/.rustc_info.json
+          key: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml') }}
+          restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
       - name: Install native backend, Tauri and integration dependencies
         run: bash .github/workflows/scripts/tauri-linux-deps.sh
       - name: Install locked desktop dependencies
@@ -368,19 +413,26 @@ jobs:
           METADATA_RESULT: ${{ needs.metadata.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           LINUX_RESULT: ${{ needs.linux.result }}
+          SOURCE_RUN_ID: ${{ needs.metadata.outputs.source_run_id }}
         run: |
           test "$METADATA_RESULT" = success
-          test "$WINDOWS_RESULT" = success
-          test "$LINUX_RESULT" = success
+          if [ -n "$SOURCE_RUN_ID" ]; then
+            test "$WINDOWS_RESULT" = skipped
+            test "$LINUX_RESULT" = skipped
+          else
+            test "$WINDOWS_RESULT" = success
+            test "$LINUX_RESULT" = success
+          fi
 
   publish:
     name: Publish verified multi-platform Tauri v1.3 release
     needs: [metadata, windows, linux, required]
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') }}
+    if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') && needs.required.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -396,6 +448,8 @@ jobs:
           pattern: tauri-release-*
           path: ${{ runner.temp }}/tauri-release-artifacts
           merge-multiple: false
+          run-id: ${{ needs.metadata.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Require all five matrices, nine installers and matching internal SHA-256
         id: assets
         run: node packaging/tauri/release.cjs release-files "$RUNNER_TEMP/tauri-release-artifacts"
