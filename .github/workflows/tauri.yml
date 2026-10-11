@@ -68,6 +68,8 @@ jobs:
     if: needs.metadata.outputs.source_run_id == ''
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
+    env:
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.ci-npm-cache-v1-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -213,7 +215,7 @@ jobs:
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
-          npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
+          npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
           if ($LASTEXITCODE) { throw 'Renderer tests must all execute and pass' }
@@ -338,7 +340,7 @@ jobs:
           npm run test:unit
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
+          dbus-run-session -- xvfb-run -a npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Cache the compiled native Node worker
         id: lean_node_cache
