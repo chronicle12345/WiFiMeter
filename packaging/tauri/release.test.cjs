@@ -46,7 +46,7 @@ function metadataFixture(t) {
         write(path.join(root, file), JSON.stringify({ version }));
     }
     write(path.join(root, 'apps/desktop/src-tauri/Cargo.toml'), '[package]\nname = "wifimeter"\nversion = "1.3.0"\n\n[dependencies]\nserde = "1"\n');
-    write(path.join(root, 'docs/releases/v1.3.0.md'), '# WiFiMeter 1.3.0\nRelease notes.\n');
+    write(path.join(root, 'docs/releases/v1.3.0.md'), '# WiFiMeter 1.3.0\n\n## 中文\n\n发布说明。\n\n## English\n\nRelease notes.\n');
     return root;
 }
 
@@ -92,6 +92,20 @@ test('release tags must match the v1.3 package version and have nonempty notes',
     write(path.join(root, 'docs/releases/v1.3.0.md'), ' \n');
     assert.throws(() => helper.readMetadata(root, { refType: 'tag', refName: 'v1.3.0' }), /发布说明/);
     assert.equal(helper.readMetadata(root, { refType: 'branch', refName: 'main' }).version, version);
+});
+
+test('release tags reject missing or empty Chinese and English sections', t => {
+    const root = metadataFixture(t);
+    const notes = path.join(root, 'docs/releases/v1.3.0.md');
+    for (const body of [
+        '# WiFiMeter\n\n仅中文说明。', '# WiFiMeter\n\nEnglish only.',
+        '## 中文\n\n说明。\n\n## English\n',
+        '## 中文\n\n## English\n\nRelease notes.',
+        '## 中文\n\n说明。\n\n## English\n\n## Validation\n\nPassed.'
+    ]) {
+        write(notes, body);
+        assert.throws(() => helper.readMetadata(root, { refType: 'tag', refName: 'v1.3.0' }), /中英文/);
+    }
 });
 
 test('each supported architecture validates installers and keeps checksums out of the public file list', async t => {

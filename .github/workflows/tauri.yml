@@ -469,3 +469,7 @@ jobs:
           # Creation fails if this tag already has a release, including a draft.
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$NOTES_FILE" "${assets[@]}"
           gh release edit "$RELEASE_TAG" --draft=false
+      - name: Verify nine public downloads against the internal SHA-256 manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node packaging/tauri/verify-public-release.cjs "$RUNNER_TEMP/tauri-release-artifacts"

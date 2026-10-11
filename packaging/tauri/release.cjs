@@ -31,6 +31,12 @@ function readMetadata(root = repositoryRoot, { refType, refName } = {}) {
         assert.equal(refName, `v${version}`, '发布标签必须与 1.3.x package 版本一致。');
         assert.ok(fs.existsSync(notesFile) && fs.lstatSync(notesFile).isFile()
             && fs.readFileSync(notesFile, 'utf8').trim(), '缺少非空的发布说明。');
+        const notes = fs.readFileSync(notesFile, 'utf8');
+        for (const language of ['中文', 'English']) {
+            const sections = [...notes.matchAll(/^## ([^\r\n]+)\r?\n([\s\S]*?)(?=^## |$(?![\s\S]))/gm)]
+                .filter(section => section[1] === language);
+            assert.ok(sections.length === 1 && sections[0][2].trim(), '发布说明必须包含完整且非空的中英文段落。');
+        }
     }
     return { version, notesFile };
 }
