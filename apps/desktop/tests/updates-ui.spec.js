@@ -2,14 +2,26 @@ import { test, expect, _electron as electron } from '@playwright/test';
 import { createHarness } from './support/backend-harness.mjs';
 let app, page, harness;
 test.beforeEach(async () => {
+    app = null; page = null;
     harness = await createHarness();
     const env = { ...process.env, ...harness.env }; delete env.ELECTRON_RUN_AS_NODE;
     app = await electron.launch({ args: ['.'], env });
     page = await app.firstWindow();
-    page.on('dialog',dialog=>dialog.dismiss());
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
 });
-test.afterEach(async () => { if(app) { await app.evaluate(({dialog}) => { dialog.showMessageBoxSync=()=>1;dialog.showMessageBox=async()=>({response:1,checkboxChecked:false}); }); await app.close(); } harness?.cleanup(); });
+test.afterEach(async () => {
+    try {
+        if (app) {
+            // Destroy only this test's isolated windows after all draft assertions.
+            // Suppress their quit event so app.close() alone starts backend shutdown.
+            await app.evaluate(({ app: fixtureApp, BrowserWindow }) => {
+                fixtureApp.removeAllListeners('window-all-closed');
+                for (const window of BrowserWindow.getAllWindows()) window.destroy();
+            });
+            await app.close();
+        }
+    } finally { harness?.cleanup(); }
+});
 test('update setting persists and available native updates show their automatic download', async () => {
     await page.locator('.nav [data-page="settings"]').click();
     await page.locator('[data-category="about"]').click();

@@ -215,6 +215,8 @@ jobs:
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
+          node --test packaging/tauri/windows-install.test.cjs
+          if ($LASTEXITCODE) { throw 'Windows uninstall repair tests failed' }
           npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
