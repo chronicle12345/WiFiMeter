@@ -217,7 +217,7 @@ jobs:
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
-          npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
+          npm run test:ui -- '^(?!.*packaging\.spec\.js$).*\.spec\.js$' --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
           if ($LASTEXITCODE) { throw 'Renderer tests failed' }
           node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
           if ($LASTEXITCODE) { throw 'Renderer tests must all execute and pass' }
@@ -249,6 +249,8 @@ jobs:
         with:
           name: tauri-diagnostics-windows-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/playwright-tauri/
+            ${{ runner.temp }}/tauri-ui.json
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
@@ -324,7 +326,7 @@ jobs:
           npm run test:unit
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --workers=2 --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
+          dbus-run-session -- xvfb-run -a npm run test:ui -- '^(?!.*packaging\.spec\.js$).*\.spec\.js$' --workers=2 --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Validate the official Node runtime and locate its license
         run: |
@@ -356,6 +358,8 @@ jobs:
         with:
           name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/playwright-tauri/
+            ${{ runner.temp }}/tauri-ui.json
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log

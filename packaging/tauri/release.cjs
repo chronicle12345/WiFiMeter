@@ -37,6 +37,16 @@ function readMetadata(root = repositoryRoot, { refType, refName } = {}) {
                 .filter(section => section[1] === language);
             assert.ok(sections.length === 1 && sections[0][2].trim(), '发布说明必须包含完整且非空的中英文段落。');
         }
+        for (const file of ['README.md', 'README.zh-CN.md']) {
+            const readme = fs.readFileSync(path.join(root, file), 'utf8');
+            const badge = [...readme.matchAll(/https:\/\/img\.shields\.io\/badge\/version-([0-9.]+)-/g)];
+            const alternative = [...readme.matchAll(/alt="Version ([^"]+)"/g)];
+            const links = [...readme.matchAll(/(?:href="|\]\()docs\/releases\/v([^"\)]+)\.md/g)];
+            for (const matches of [badge, alternative, links]) {
+                assert.ok(matches.length === 1 && matches[0][1] === version,
+                    `${file} 的版本徽章、替代文字和发布说明链接必须与标签版本一致。`);
+            }
+        }
     }
     return { version, notesFile };
 }

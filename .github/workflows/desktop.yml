@@ -105,7 +105,7 @@ jobs:
           node -e "const fs=require('node:fs'); const path=require('node:path'); const exe=require('./apps/desktop/node_modules/electron'); if (!fs.existsSync(exe)) throw Error('Electron runtime is missing'); if (!fs.existsSync(path.join(path.dirname(exe),'chrome-sandbox'))) throw Error('Electron sandbox helper is missing');"
           sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- desktop.spec.js renderer-backend.spec.js renderer-history.spec.js updates-ui.spec.js settings-access.spec.js applications-page.spec.js app-icons.spec.js overview-layout.spec.js --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
+          dbus-run-session -- xvfb-run -a npm --prefix apps/desktop run test:ui -- '^(?!.*packaging\.spec\.js$).*\.spec\.js$' --reporter=list,json --output "$RUNNER_TEMP/playwright-development"
           node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Build deb, rpm and AppImage
         run: node packaging/linux/build.cjs --arch "${{ matrix.arch }}" --formats deb,rpm,AppImage --skip-rebuild

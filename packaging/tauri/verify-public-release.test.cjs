@@ -245,6 +245,9 @@ function writeMetadata(f) {
     fs.writeFileSync(path.join(f.root, 'apps/desktop/src-tauri/Cargo.toml'), `[package]\nversion = "${version}"\n`);
     fs.mkdirSync(path.join(f.root, 'docs/releases'), { recursive: true });
     fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## 中文\n\n说明。\n\n## English\n\nRelease notes.\n');
+    for (const file of ['README.md', 'README.zh-CN.md']) {
+        fs.writeFileSync(path.join(f.root, file), `<a href="docs/releases/${tag}.md"><img src="https://img.shields.io/badge/version-${version}-6366F1" alt="Version ${version}" /></a>\n`);
+    }
     return { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted',
         GITHUB_REPOSITORY: repository, GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: tag, GH_TOKEN: token };
 }
@@ -257,7 +260,7 @@ test('CLI uses the current tag and bilingual metadata before verifying public fi
     assert.equal(output.length, 9);
 });
 
-for (const kind of ['local execution', 'self-hosted runner', 'fork', 'branch', 'wrong tag', 'missing English', 'missing Chinese', 'version mismatch']) {
+for (const kind of ['local execution', 'self-hosted runner', 'fork', 'branch', 'wrong tag', 'missing English', 'missing Chinese', 'version mismatch', 'stale README']) {
     test(`CLI rejects ${kind} before accessing the network`, async t => {
         const f = fixture(t), env = writeMetadata(f);
         if (kind === 'local execution') delete env.GITHUB_ACTIONS;
@@ -268,6 +271,7 @@ for (const kind of ['local execution', 'self-hosted runner', 'fork', 'branch', '
         if (kind === 'missing English') fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## 中文\n\n说明。\n');
         if (kind === 'missing Chinese') fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## English\n\nRelease notes.\n');
         if (kind === 'version mismatch') fs.writeFileSync(path.join(f.root, 'package.json'), '{"version":"1.3.1"}');
+        if (kind === 'stale README') fs.writeFileSync(path.join(f.root, 'README.zh-CN.md'), 'Previous version.\n');
         await assert.rejects(implementation().main([f.directory], { env, root: f.root, fetch: f.fetch, onAsset() {} }));
         assert.equal(f.calls.length, 0);
     });

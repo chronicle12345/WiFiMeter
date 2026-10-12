@@ -326,9 +326,9 @@ test('有线名称与身份分开显示，无频段信号或无线自动断开',
 });
 
 // Set WIFIMETER_CAPTURE_README=1 only after the final renderer changes are ready.
-// Ordinary UI runs write previews to artifacts, never overwrite published README assets.
-test('生成 v1.2 合成数据验收截图',async()=>{
- const directory=path.resolve('../..',process.env.WIFIMETER_CAPTURE_README==='1'?'docs/assets':'artifacts');
+// 普通测试截图放在本次报告目录，只有明确设置环境变量时才更新 README 图片。
+test('生成 v1.2 合成数据验收截图',async({},testInfo)=>{
+ const directory=process.env.WIFIMETER_CAPTURE_README==='1'?path.resolve('../..','docs/assets'):testInfo.outputPath('screenshots');
  await mkdir(directory,{recursive:true});
  // Screenshot records use a fixed local calendar date; the runner's timezone must not shift it.
  const clockSession=await page.context().newCDPSession(page);
