@@ -48,7 +48,11 @@ Windows 使用名称 `WiFiMeter`，沿用应用标识 `io.wifimeter.demo` 和数
 
 从 Electron 1.2.x 升级需到 [Releases](https://github.com/chronicle12345/WiFiMeter/releases) 下载 Windows x64 Tauri 安装版并运行安装；后续 Tauri 更新只选择对应的 Tauri 安装包。
 
-完整备份包含日、小时、分钟及应用记录、备注、额度账本、偏好和迁移档案；恢复后采集暂停，避免当前计数差立刻覆盖刚恢复的历史。CSV/JSON 流量导出不能代替完整备份。自启动设置会写入系统（Windows 用启动目录，Linux 用 `~/.config/autostart`），额度提醒转成系统通知，超额断开由后端核对网络身份后真实执行。
+完整备份包含日、小时、分钟及应用记录、备注、额度账本、偏好和迁移档案；恢复后采集暂停，避免当前计数差立刻覆盖刚恢复的历史。CSV/JSON 流量导出不能代替完整备份。自启动设置会写入系统（Windows 用 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，Linux 用 `~/.config/autostart`），额度提醒转成系统通知，超额断开由后端核对网络身份后真实执行。
+
+Windows 的 Electron 和 Tauri 宿主统一使用 `WiFiMeter` 启动项。设置同步会合并同一程序路径的旧 `io.wifimeter.demo` 登记，并识别旧版的 `--tray` 和 `--background` 参数；关闭自启动会移除这些登记。其他程序路径或未知参数的项目会保留。同步时读取并保留 Windows 的禁用状态，只有用户在应用中明确开启自启动才恢复启用；新登记核对成功后才清理旧项。
+
+已规范的 Windows 启动项每次同步只查询两项登记和一次批准状态，直接使用本次核对结果，避免再次启动注册表查询进程。下一次同步仍重新读取 Windows 的实际状态，任务管理器中的启用或禁用操作会生效。
 
 ## 后端进程
 

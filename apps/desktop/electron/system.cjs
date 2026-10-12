@@ -7,7 +7,7 @@
 //
 // 开机启动按平台分两条路：
 //
-//   * Windows：Electron 的 setLoginItemSettings 在系统的登录启动项里登记，
+//   * Windows：两种宿主共用 windows-autostart.cjs，在登录启动项里登记，
 //     由系统负责拉起，比自建快捷方式可靠；
 //   * Linux：没有 setLoginItemSettings（那是 macOS/Windows 的接口），
 //     按 XDG 约定写 ~/.config/autostart 下的 .desktop 文件。
@@ -28,11 +28,13 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
 
     // Windows：登记或取消登录启动项。开发态（未打包）execPath 指向 electron 本体，
     // 因此把应用目录作为参数带上，登录后仍能加载正确的应用。
-    function applyWindowsAutostart(enabled) {
+    function applyWindowsAutostart(enabled, enableAutostart) {
         if (typeof app.setLoginItemSettings !== 'function') return false;
         const options = { openAtLogin: enabled, path: process.execPath };
+        if (enableAutostart) options.enabled = true;
         if (app.isPackaged === false) options.args = [path.resolve(__dirname, '..')];
-        app.setLoginItemSettings(options);
+        const applied = app.setLoginItemSettings(options);
+        if (typeof applied?.openAtLogin === 'boolean') return applied.openAtLogin;
         // 读回系统里的实际状态：组策略或安全软件可能拒绝写入。
         if (typeof app.getLoginItemSettings !== 'function') return enabled;
         return Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin);
@@ -66,8 +68,8 @@ X-GNOME-Autostart-enabled=true
         return true;
     }
 
-    async function applyAutostart(enabled) {
-        if (platform === 'win32') return applyWindowsAutostart(enabled);
+    async function applyAutostart(enabled, enableAutostart) {
+        if (platform === 'win32') return applyWindowsAutostart(enabled, enableAutostart);
         return applyLinuxAutostart(enabled);
     }
 
@@ -123,11 +125,11 @@ X-GNOME-Autostart-enabled=true
         initializeTray: ensureTray,
 
         // 设置变更后同步到系统；返回实际生效的结果，供界面校对。
-        async applySettings(next) {
+        async applySettings(next, { enableAutostart = false } = {}) {
             settings = { ...settings, ...next };
             let autoStartApplied = settings.autoStart;
             try {
-                autoStartApplied = await applyAutostart(settings.autoStart);
+                autoStartApplied = await applyAutostart(settings.autoStart, enableAutostart);
             } catch (error) {
                 logger(`设置开机启动失败：${error.message}`);
                 autoStartApplied = false;

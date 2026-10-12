@@ -66,6 +66,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
         './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, handleWindowClose() {}, dispose() {} }) },
+        './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => ({ found: false }) },
         './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },

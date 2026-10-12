@@ -24,13 +24,17 @@ let installingUpdate = false;
 let startup;
 let migrationStatus = { found: false };
 let migrationBusy = false;
-let lastAutoStartPreference = false;
 let speedUnit = 'auto';
 let preserveUnmatchedLoginItem = false;
 
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
 // 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
 const productName = applyProductIdentity(app, process.platform, app.getPath('appData')).productName;
+if (process.platform === 'win32' && process.env.WIFIMETER_DESKTOP_RUNTIME !== 'tauri' && process.env.WIFIMETER_TEST_ISOLATION !== '1') {
+    const { createWindowsAutostart } = require('./windows-autostart.cjs');
+    Object.assign(app, createWindowsAutostart({ executable: process.execPath,
+        args: app.isPackaged === false ? [path.resolve(__dirname, '..')] : [] }));
+}
 // Tests use an isolated profile and never modify the user's demo records.
 if (process.env.WIFIMETER_USER_DATA) app.setPath('userData', process.env.WIFIMETER_USER_DATA);
 // Explicit fixture mode isolates operating-system settings as well as the database.
@@ -165,7 +169,6 @@ if (primaryInstance) app.whenReady().then(async () => {
     // 启动时按已保存的偏好同步一次系统状态（开机启动文件、托盘）。
     startup.then(() => backend.request('hello')).then(result => {
         speedUnit = result.settings?.speedUnit || 'auto';
-        lastAutoStartPreference = Boolean(result.settings?.autoStart);
         if (migrationStatus.error || preserveUnmatchedLoginItem || (process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1')) return;
         return system.applySettings(result.settings ?? {});
     }).catch(error => console.log(`[system] 同步设置失败：${error.message}`));
@@ -194,11 +197,10 @@ if (primaryInstance) app.whenReady().then(async () => {
             // 设置改动后立刻作用于系统，并把实际生效的结果回给页面。
             if (method === 'updateSettings' && result?.settings) {
                 speedUnit = result.settings.speedUnit || 'auto';
-                const explicitAutoStart = Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart') && Boolean(payload.params.settings.autoStart) !== lastAutoStartPreference;
-                lastAutoStartPreference = Boolean(result.settings.autoStart);
+                const explicitAutoStart = Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart');
                 if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
                     if (explicitAutoStart) preserveUnmatchedLoginItem = false;
-                    result.system = await system.applySettings(result.settings);
+                    result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
                 }
             }
             return { ok: true, result };

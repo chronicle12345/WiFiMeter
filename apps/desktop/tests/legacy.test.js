@@ -219,7 +219,7 @@ test('real total quota rejects lossy values with archived warnings and protects 
 });
 
 // 执行真实 main.cjs 的启动和 IPC 注册；Electron、平台集成和后端都使用内存替身。
-async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, login = false, paused = false, confirmResponse = 1 } = {}) {
+async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, login = false, paused = false, confirmResponse = 1, systemApply } = {}) {
     const { runInNewContext } = await import('node:vm');
     const { EventEmitter } = await import('node:events');
     const { fileURLToPath, pathToFileURL } = await import('node:url');
@@ -252,7 +252,8 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
         'node:path': path, 'node:fs': { existsSync: () => true }, 'node:url': { pathToFileURL },
         './files.cjs': { createFileActions: () => ({ saveFile() {}, openBackup() {} }) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fake' },
-        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async value => { systemCalls.push(value); return {}; }, handleWindowClose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async (value, options = {}) => { systemCalls.push(value); return systemApply ? systemApply(value, options) : {}; }, handleWindowClose() {} }) },
+        './windows-autostart.cjs': { createWindowsAutostart: () => ({ getLoginItemSettings: app.getLoginItemSettings, setLoginItemSettings() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'Fixture' }) },
         './legacy.cjs': { legacyDirectory: () => 'fictional-legacy', importLegacyDirectory: legacy || (async () => ({ found: false })) },
         './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
@@ -306,6 +307,20 @@ test('first migration inherits only the same executable login item and leaves un
     assert.equal(unmatched.systemCalls.length, 1);
     const isolated = await mainHarness({ legacy, login: true });
     assert.equal(isolated.loginReads.length, 0); assert.equal(isolated.systemCalls.length, 0);
+});
+
+test('explicit startup enable retries after a rejected registration without enabling it on unrelated saves', async () => {
+    let enableAttempts = 0;
+    const harness = await mainHarness({ env: {}, systemApply: (_settings, options) => {
+        if (options.enableAutostart) enableAttempts++;
+        return { autoStart: options.enableAutostart === true && enableAttempts > 1 };
+    } });
+    const enable = { method: 'updateSettings', params: { settings: { autoStart: true } } };
+    assert.equal((await harness.invoke('backend:request', enable)).result.system.autoStart, false);
+    assert.equal((await harness.invoke('backend:request', enable)).result.system.autoStart, true);
+    assert.equal(enableAttempts, 2);
+    await harness.invoke('backend:request', { method: 'updateSettings', params: { settings: { language: 'en' } } });
+    assert.equal(enableAttempts, 2);
 });
 
 

@@ -161,6 +161,39 @@ test('Windows 开机启动登记到系统登录项并读回实际状态', async 
     assert.equal(result.autoStart, false, '系统没生效时不能报告已开启');
 });
 
+test('Windows 设置同步采用登记方法返回的实际状态，避免重复查询', async () => {
+    let getterCalls = 0;
+    let actualEnabled = true;
+    const integration = createSystemIntegration({
+        app: {
+            isPackaged: true,
+            setLoginItemSettings: () => ({ openAtLogin: actualEnabled, executableWillLaunchAtLogin: actualEnabled }),
+            getLoginItemSettings() { getterCalls++; return { openAtLogin: !actualEnabled }; }
+        },
+        platform: 'win32',
+        getWindow: () => null
+    });
+    assert.equal((await integration.applySettings({ autoStart: true })).autoStart, true);
+    actualEnabled = false;
+    assert.equal((await integration.applySettings({ notifications: false })).autoStart, false);
+    assert.equal(getterCalls, 0);
+});
+
+test('Windows 旧宿主登记方法未返回状态时仍查询实际结果', async () => {
+    let getterCalls = 0;
+    const integration = createSystemIntegration({
+        app: {
+            isPackaged: true,
+            setLoginItemSettings() {},
+            getLoginItemSettings() { getterCalls++; return { openAtLogin: false }; }
+        },
+        platform: 'win32',
+        getWindow: () => null
+    });
+    assert.equal((await integration.applySettings({ autoStart: true })).autoStart, false);
+    assert.equal(getterCalls, 1);
+});
+
 test('开发态的 Windows 开机启动带上应用目录', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-win-dev-'));
     const calls = [];

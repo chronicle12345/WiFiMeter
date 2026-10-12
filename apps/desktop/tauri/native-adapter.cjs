@@ -2,10 +2,14 @@
 
 // 原有桌面业务通过这个适配器调用 Tauri；发行包无需 Electron。
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { execFileSync, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const packagedAutostart = path.join(__dirname, 'electron/windows-autostart.cjs');
+const { createWindowsAutostart } = require(fs.existsSync(packagedAutostart)
+    ? packagedAutostart : path.join(__dirname, '../electron/windows-autostart.cjs'));
 
 function createNativeAdapter({ send, configuration = {}, execute = execFileSync, executeAsync = promisify(execFile) }) {
     let nextId = 1, stopped = false;
@@ -73,23 +77,8 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         quitStarted = true;
         finishQuit();
     };
-    const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
-    function loginCommand() {
-        try {
-            const text = execute('reg.exe', ['query', runKey, '/v', 'WiFiMeter'], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-            return text.match(/REG_SZ\s+([^\r\n]+)/)?.[1]?.trim() || '';
-        } catch { return ''; }
-    }
-    app.getLoginItemSettings = () => {
-        const enabled = loginCommand().toLowerCase() === `"${configuration.appExe}"`.toLowerCase();
-        return { openAtLogin: enabled, executableWillLaunchAtLogin: enabled };
-    };
-    app.setLoginItemSettings = options => {
-        // 使用真正的桌面可执行文件；不能把 Node 辅助进程注册成启动项。
-        const command = `"${configuration.appExe}"`;
-        if (options.openAtLogin) execute('reg.exe', ['add', runKey, '/v', 'WiFiMeter', '/t', 'REG_SZ', '/d', command, '/f'], { windowsHide: true, stdio: 'pipe' });
-        else if (loginCommand().toLowerCase() === command.toLowerCase()) execute('reg.exe', ['delete', runKey, '/v', 'WiFiMeter', '/f'], { windowsHide: true, stdio: 'pipe' });
-    };
+    // 使用真正的桌面可执行文件，不能登记 Node 辅助进程或附带开发参数。
+    Object.assign(app, createWindowsAutostart({ executable: configuration.appExe, execute }));
     const linuxIcons = (configuration.platform || process.platform) === 'linux'
         ? require('./linux-icons.cjs').createLinuxFileIcons({ executeAsync }) : null;
     app.getFileIcon = async file => {
