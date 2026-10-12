@@ -89,7 +89,7 @@ private:
     Response updateNetwork(const support::JsonValue& params, core::TimePoint now);
     Response exportUsage(const support::JsonValue& params, core::TimePoint now) const;
     Response backup() const;
-    Response restore(const support::JsonValue& params);
+    Response restore(const support::JsonValue& params, core::TimePoint now);
     Response disconnect(const support::JsonValue& params);
     Response pruneUsage(core::TimePoint now);
     storage::Status initializeProxyStorage() const;

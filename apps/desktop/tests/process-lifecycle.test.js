@@ -13,14 +13,15 @@ const directory = fileURLToPath(new URL('../electron/', import.meta.url));
 const flush = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 
 // 进程、窗口、系统设置和计时器均为内存替身，不读写用户数据。
-function backendHarness({ answer = true, crashRestarts = false } = {}) {
+function backendHarness({ answer = true, crashRestarts = false, restoreThenHelloFails = false } = {}) {
     const children = [], module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'backend.cjs'), 'utf8'), {
         module, setTimeout, clearTimeout, process,
         require: name => name === 'node:child_process' ? { spawn(_file, args) {
             const child = new EventEmitter();
             Object.assign(child, { pid: children.length + 100, exitCode: null, killed: false,
-                stdout: new PassThrough(), stderr: new PassThrough(), paused: args.includes('--paused'), appsEnabled: false });
+                stdout: new PassThrough(), stderr: new PassThrough(), paused: args.includes('--paused'), appsEnabled: false,
+                settings: { autoStart: false, notifications: true, language: 'zh-CN', speedUnit: 'auto' } });
             child.stdin = new Writable({ write(chunk, _encoding, done) {
                 const request = JSON.parse(chunk.toString());
                 child.requests.push(request);
@@ -32,8 +33,17 @@ function backendHarness({ answer = true, crashRestarts = false } = {}) {
                 if (request.method === 'setPaused') child.paused = request.params.paused;
                 if (['clearUsage', 'restore'].includes(request.method)) child.paused = true;
                 if (request.method === 'setAppCollection') child.appsEnabled = request.params.enabled;
+                if (request.method === 'updateSettings') Object.assign(child.settings, request.params.settings);
+                if (request.method === 'restore') {
+                    Object.assign(child.settings, request.params.backup?.settings);
+                    child.failHello = restoreThenHelloFails;
+                }
+                if (request.method === 'hello' && child.failHello) {
+                    child.stdout.write(JSON.stringify({ id: request.id, ok: false, error: { code: 'storageFailure', message: 'restored hello failed' } }) + '\n');
+                    done(); return;
+                }
                 child.stdout.write(JSON.stringify({ id: request.id, ok: true, result: {
-                    paused: child.paused, appCollection: { enabled: child.appsEnabled }, settings: {}
+                    paused: child.paused, appCollection: { enabled: child.appsEnabled }, settings: child.settings
                 } }) + '\n');
                 done();
                 if (request.method === 'shutdown') queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); });
@@ -63,9 +73,9 @@ function clock() {
     };
 }
 
-async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = false, crashRestarts = false } = {}) {
-    const transport = backendHarness({ crashRestarts }), timers = clock();
-    const handlers = new Map(), statuses = [], calls = [];
+async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false } = {}) {
+    const transport = backendHarness({ crashRestarts, restoreThenHelloFails }), timers = clock();
+    const handlers = new Map(), statuses = [], calls = [], systemSettings = [], miniEvents = [];
     let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
     const app = new EventEmitter();
     Object.assign(app, { isPackaged: false, getVersion: () => '1.3.2', getPath: () => 'fixture', setPath() {},
@@ -93,11 +103,13 @@ async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = fal
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
         './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
         './files.cjs': { createFileActions: () => ({}) },
-        './system.cjs': { createSystemIntegration: () => ({ initializeTray() {}, applySettings: async () => {}, beginQuit() { calls.push('beginQuit'); }, dispose() { disposed++; } }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() {}, applySettings: async (settings, options) => {
+            systemSettings.push({ settings: structuredClone(settings), options }); return { autoStart: settings.autoStart, notifications: settings.notifications };
+        }, beginQuit() { calls.push('beginQuit'); }, dispose() { disposed++; } }) },
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
-        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({}), publishLive() {}, onMainClose() {}, dispose() {} }; } },
+        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({}), publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
         './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({}) },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { await handoff; throw Error('fixture handoff failed'); } },
         './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), async install() {
@@ -108,12 +120,12 @@ async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = fal
     let releaseHandoff;
     const handoff = new Promise(resolve => { releaseHandoff = resolve; });
     runInNewContext(fs.readFileSync(path.join(directory, 'main.cjs'), 'utf8'), {
-        require: name => imports[name] || require(name), __dirname: directory, Buffer, console,
-        process: { platform: 'win32', arch: 'x64', pid: 42, env: { WIFIMETER_USER_DATA: 'fixture' }, resourcesPath: 'fixture' }
+        require: name => imports[name] || require(name), __dirname: directory, Buffer, console, structuredClone,
+        process: { platform: 'win32', arch: 'x64', pid: 42, env: { WIFIMETER_USER_DATA: 'fixture', WIFIMETER_TEST_ISOLATION: '1' }, resourcesPath: 'fixture' }
     });
     await ready; await flush(); calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { app, backend, timers, statuses, calls, hooks, children: transport.children, releaseHandoff,
+    return { app, backend, timers, statuses, calls, hooks, systemSettings, miniEvents, children: transport.children, releaseHandoff,
         get disposed() { return disposed; }, get quitCount() { return quitCount; }, window,
         invoke: (name, payload) => handlers.get(name)(event, payload), miniRequest: () => miniRequest({ includeMinutes: true }),
         crash() { const child = backend.child; child.exitCode = 1; child.emit('exit', 1, null); },
@@ -164,6 +176,24 @@ test('crash recovery keeps an explicitly paused collector paused', async t => {
     assert.equal(h.children.length, 2);
     assert.equal(h.children[1].paused, true);
     assert.equal(h.statuses.at(-1).collector, 'paused');
+});
+
+test('restoring a backup synchronizes settings without depending on a later hello request', async t => {
+    const h = await mainHarness({ restoreThenHelloFails: true }); t.after(h.dispose);
+    const settings = { autoStart: true, notifications: false, language: 'en', speedUnit: 'Mbps' };
+    const child = h.children.at(-1), previousRequests = child.requests.length;
+    const response = await h.invoke('backend:request', { method: 'restore', params: { backup: { settings } } });
+    assert.equal(response.ok, true);
+    assert.deepEqual(structuredClone(response.result.settings), settings);
+    assert.deepEqual(Array.from(child.requests.slice(previousRequests), request => request.method), ['restore']);
+    assert.deepEqual(h.systemSettings.at(-1).settings, settings);
+    assert.equal(h.systemSettings.at(-1).options.enableAutostart, true);
+    assert.equal(response.result.system.autoStart, true);
+    assert.equal(response.result.system.notifications, false);
+    h.backend.emit('event', { event: 'live', collector: 'paused', connections: [] });
+    assert.equal(h.miniEvents.at(-1).speedUnit, 'Mbps');
+    assert.equal(h.backend.collectionState.paused, true);
+    await assert.rejects(h.backend.request('hello'), /restored hello failed/);
 });
 
 for (const method of ['clearUsage', 'restore']) test(`crash recovery preserves the pause required by ${method}`, async t => {

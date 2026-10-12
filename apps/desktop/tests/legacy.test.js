@@ -6,12 +6,12 @@ import path from 'node:path';
 import { legacyDirectory, importLegacyDirectory } from '../electron/legacy.cjs';
 
 const state = '{"SchemaVersion":1,"StartedAt":"2026-01-01T00:00:00Z","UpdatedAt":"2026-01-02T00:00:00Z","Networks":[{"SSID":"Sample","RxBytes":9007199254740993,"TxBytes":0,"FirstSeen":"2026-01-01T00:00:00Z","LastSeen":"2026-01-02T00:00:00Z","Days":[{"Date":"2026-01-01","RxBytes":9007199254740993,"TxBytes":0}]}]}';
-async function fixture(t) {
+async function fixture(t, { primary = state } = {}) {
     const root = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-migration-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const source = path.join(root, 'legacy'), target = path.join(root, 'profile');
     await mkdir(source); await mkdir(target);
-    await writeFile(path.join(source, 'state.json'), state);
+    if (primary !== null) await writeFile(path.join(source, 'state.json'), primary);
     await writeFile(path.join(source, 'collector.lock'), '');
     await writeFile(path.join(source, 'settings.json'), '{"Language":"en","RetentionDays":0}');
     return { source, target };
@@ -103,8 +103,7 @@ test('legacy files survive a real SQLite import and restart without duplicate by
 
 test('missing or syntactically broken primary uses bak without modifying either file', async t => {
     for (const broken of [null, '{broken']) {
-        const { source, target } = await fixture(t);
-        if (broken === null) await rm(path.join(source, 'state.json')); else await writeFile(path.join(source, 'state.json'), broken);
+        const { source, target } = await fixture(t, { primary: broken });
         await writeFile(path.join(source, 'state.json.bak'), state);
         const report = await importLegacyDirectory({ directory: source, userData: target, request: async (method, params) => {
             if (method === 'migrationStatus') return { status: 'notImported', canInitializeSettings: true };
@@ -184,8 +183,19 @@ test('real retry eligibility and legacy total quota survive pruning and backup r
     assert.equal(backup.totalQuota.settings.warnPercent, 77);
     assert.equal(backup.totalQuota.settings.autoDisconnect, true);
     assert.equal(backup.totalQuota.ledgers.find(row => row.period === 'all').usedBytes, '9007199254741993');
+    const restoreStarted = Date.now();
     await request('restore', { backup });
-    assert.deepEqual((await request('backup')).backup, backup);
+    const restoredBackup = (await request('backup')).backup;
+    assert.equal(restoredBackup.gaps.length, backup.gaps.length + 1);
+    const currentPause = restoredBackup.gaps.at(-1);
+    assert.equal(currentPause.reason, 'paused');
+    assert.equal(currentPause.networkId, '');
+    assert.equal(currentPause.endedAt, '');
+    assert.equal(currentPause.spanSeconds, '0');
+    assert.ok(Date.parse(currentPause.startedAt) >= restoreStarted - 1000);
+    assert.ok(Date.parse(currentPause.startedAt) <= Date.now());
+    // 恢复新建当前暂停记录，备份原有内容仍应完整保留。
+    assert.deepEqual({ ...restoredBackup, gaps: restoredBackup.gaps.slice(0, -1) }, backup);
     assert.equal((await importLegacyDirectory({ directory: source, userData: target, request })).alreadyImported, true);
 });
 
@@ -249,7 +259,7 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
     const dialog = { showMessageBox: async (_window, options) => { confirmations.push(options); return { response: confirmResponse }; }, showOpenDialog: async () => ({ filePaths: ['fictional-legacy'] }), showErrorBox() {} };
     const imports = {
         electron: { app, BrowserWindow: Window, dialog, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
-        'node:path': path, 'node:fs': { existsSync: () => true }, 'node:url': { pathToFileURL },
+        'node:path': path, 'node:fs': { existsSync: () => true }, 'node:url': { pathToFileURL }, 'node:timers': await import('node:timers'),
         './files.cjs': { createFileActions: () => ({ saveFile() {}, openBackup() {} }) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fake' },
         './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async (value, options = {}) => { systemCalls.push(value); return systemApply ? systemApply(value, options) : {}; }, handleWindowClose() {} }) },

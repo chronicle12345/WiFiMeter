@@ -93,9 +93,11 @@ platform::WifiSample makeSample(const std::string& interfaceId, const std::strin
     return sample;
 }
 
+bool memoryOnly = false;
+
 struct Harness
 {
-    TempDirectory directory{"service"};
+    std::unique_ptr<TempDirectory> directory;
     std::unique_ptr<Store> store;
     FakePlatform network;
     std::unique_ptr<BackendService> service;
@@ -103,7 +105,8 @@ struct Harness
     explicit Harness(bool paused = false)
     {
         Status status;
-        store = Store::open(directory.file("meter.db"), status);
+        if (!memoryOnly) directory = std::make_unique<TempDirectory>("service");
+        store = Store::open(memoryOnly ? ":memory:" : directory->file("meter.db"), status);
         if (store)
             service = std::make_unique<BackendService>(BackendService::Deps{*store, network}, paused);
     }
@@ -125,6 +128,133 @@ struct Harness
 };
 
 const std::string kUuid = "21f995e7-fe3b-41a1-ae3a-6468c6918397";
+
+void checkRestoredBackup(const JsonValue& original, const JsonValue& restored, TimePoint at)
+{
+    const auto* oldGaps = original.find("gaps");
+    const auto* newGaps = restored.find("gaps");
+    WIFIMETER_CHECK(oldGaps && newGaps && newGaps->size() == oldGaps->size() + 1);
+    if (!oldGaps || !newGaps || newGaps->size() != oldGaps->size() + 1) return;
+    auto preserved = JsonValue::makeArray();
+    for (std::size_t index = 0; index < oldGaps->size(); ++index) preserved.push(newGaps->at(index));
+    const auto& pause = newGaps->at(oldGaps->size());
+    WIFIMETER_CHECK(pause.stringOr("networkId").empty());
+    WIFIMETER_CHECK_EQ(pause.stringOr("reason"), std::string("paused"));
+    WIFIMETER_CHECK(pause.stringOr("reasonDetail").empty());
+    WIFIMETER_CHECK_EQ(pause.stringOr("startedAt"), isoUtcOf(at));
+    WIFIMETER_CHECK(pause.stringOr("endedAt").empty());
+    WIFIMETER_CHECK_EQ(pause.stringOr("spanSeconds"), std::string("0"));
+    auto normalized = restored;
+    normalized.set("gaps", std::move(preserved));
+    WIFIMETER_CHECK_EQ(normalized.dump(), original.dump());
+}
+
+// 此回归只使用内存数据库，能够单独运行而不创建或清理临时目录。
+void restoreRecordsItsPausedIntervalInMemory()
+{
+    const auto restoredAt = utcTime(2026, 10, 12, 10, 0, 0);
+    Status status;
+    auto source = Store::open(":memory:", status);
+    WIFIMETER_CHECK(source && status);
+    if (!source) return;
+    FakePlatform sourceNetwork;
+    BackendService sourceService({*source, sourceNetwork});
+    NetworkRecord network; network.key = "restore-fixture"; network.ssid = "Restore fixture";
+    WIFIMETER_CHECK(source->networks().replace(network));
+    WIFIMETER_CHECK(source->usage().setDaily(network.key, "2026-10-11", 9007199254740993ULL, 7));
+    auto settings = source->settings().load(status);
+    WIFIMETER_CHECK(status);
+    settings.language = "zh-CN";
+    settings.speedUnit = SpeedUnit::megabitsPerSecond;
+    settings.autoStart = true;
+    settings.notifications = false;
+    WIFIMETER_CHECK(source->settings().save(settings));
+    CoverageGap history;
+    history.networkKey = network.key;
+    history.reason = CoverageReason::paused;
+    history.reasonDetail = "historical pause";
+    history.startedAt = restoredAt - std::chrono::seconds(60);
+    history.endedAt = restoredAt - std::chrono::seconds(55);
+    history.span = std::chrono::seconds(5);
+    WIFIMETER_CHECK(source->usage().addGap(history));
+    history.application = true;
+    WIFIMETER_CHECK(source->usage().addGap(history));
+    const auto call = [](BackendService& service, const std::string& method, const JsonValue& params, TimePoint at) {
+        Request request; request.hasId = true; request.id = 1; request.method = method; request.params = params;
+        return service.handle(request, at);
+    };
+    const auto saved = call(sourceService, method::kBackup, JsonValue::makeObject(), restoredAt);
+    WIFIMETER_CHECK(saved.ok());
+    const auto* document = saved.result.find("backup");
+    WIFIMETER_CHECK(document != nullptr);
+    if (!document) return;
+    auto params = JsonValue::makeObject(); params.set("backup", *document);
+
+    for (const bool alreadyPaused : {false, true}) for (const bool appsEnabled : {false, true})
+    {
+        auto target = Store::open(":memory:", status);
+        WIFIMETER_CHECK(target && status);
+        if (!target) continue;
+        FakePlatform targetNetwork;
+        FakeApps apps;
+        BackendService service({*target, targetNetwork, &apps}, alreadyPaused);
+        auto enabled = JsonValue::makeObject(); enabled.set("enabled", JsonValue::makeBool(appsEnabled));
+        WIFIMETER_CHECK(call(service, method::kSetAppCollection, enabled, restoredAt).ok());
+        const auto restored = call(service, method::kRestore, params, restoredAt);
+        WIFIMETER_CHECK(restored.ok());
+        WIFIMETER_CHECK(service.paused());
+        const auto* restoredSettings = restored.result.find("settings");
+        WIFIMETER_CHECK(restoredSettings != nullptr);
+        if (restoredSettings)
+            WIFIMETER_CHECK_EQ(restoredSettings->dump(), document->find("settings")->dump());
+        const auto readGaps = [&](bool applications) {
+            auto gaps = target->usage().gapsInRange("2026-10-12T09:58:00Z", "2026-10-12T10:01:00Z", status, applications);
+            WIFIMETER_CHECK(status);
+            return gaps;
+        };
+        auto gaps = readGaps(false);
+        WIFIMETER_CHECK_EQ(gaps.size(), std::size_t{2});
+        if (gaps.size() == 2)
+        {
+            WIFIMETER_CHECK_EQ(isoUtcOf(gaps[0].endedAt), isoUtcOf(history.endedAt));
+            WIFIMETER_CHECK_EQ(gaps[0].reasonDetail, history.reasonDetail);
+            WIFIMETER_CHECK_EQ(isoUtcOf(gaps[1].startedAt), isoUtcOf(restoredAt));
+            WIFIMETER_CHECK_EQ(gaps[1].span.count(), std::int64_t{0});
+            WIFIMETER_CHECK(gaps[1].reason == CoverageReason::paused);
+        }
+        auto appGaps = readGaps(true);
+        WIFIMETER_CHECK_EQ(appGaps.size(), appsEnabled ? std::size_t{2} : std::size_t{1});
+        if (appsEnabled && appGaps.size() == 2)
+            WIFIMETER_CHECK_EQ(isoUtcOf(appGaps[1].startedAt), isoUtcOf(restoredAt));
+
+        // 再恢复时，数据库来自同一备份，当前暂停只新增一次且使用这次恢复的时间。
+        const auto repeatedAt = restoredAt + std::chrono::seconds(3);
+        WIFIMETER_CHECK(call(service, method::kRestore, params, repeatedAt).ok());
+        gaps = readGaps(false);
+        WIFIMETER_CHECK_EQ(gaps.size(), std::size_t{2});
+        if (gaps.size() == 2) WIFIMETER_CHECK_EQ(isoUtcOf(gaps[1].startedAt), isoUtcOf(repeatedAt));
+        service.setPaused(false, restoredAt + std::chrono::seconds(15));
+        gaps = readGaps(false);
+        WIFIMETER_CHECK_EQ(gaps.size(), std::size_t{2});
+        if (gaps.size() == 2)
+        {
+            WIFIMETER_CHECK_EQ(gaps[0].span.count(), std::int64_t{5});
+            WIFIMETER_CHECK_EQ(gaps[1].span.count(), std::int64_t{12});
+        }
+        appGaps = readGaps(true);
+        if (appsEnabled && appGaps.size() == 2) WIFIMETER_CHECK_EQ(appGaps[1].span.count(), std::int64_t{12});
+        const auto beforeFailure = call(service, method::kBackup, JsonValue::makeObject(), restoredAt);
+        const int stops = apps.stops;
+        WIFIMETER_CHECK(target->database().exec("CREATE TEMP TRIGGER reject_restore_pause BEFORE INSERT ON coverage_gaps WHEN NEW.started_at='2026-10-12T10:00:00Z' BEGIN SELECT RAISE(ABORT,'pause write failed'); END;"));
+        WIFIMETER_CHECK(!call(service, method::kRestore, params, restoredAt).ok());
+        WIFIMETER_CHECK(!service.paused());
+        WIFIMETER_CHECK_EQ(apps.stops, stops);
+        const auto afterFailure = call(service, method::kBackup, JsonValue::makeObject(), restoredAt);
+        WIFIMETER_CHECK(beforeFailure.ok() && afterFailure.ok());
+        if (beforeFailure.ok() && afterFailure.ok())
+            WIFIMETER_CHECK_EQ(afterFailure.result.find("backup")->dump(), beforeFailure.result.find("backup")->dump());
+    }
+}
 
 void fractionalQuotaRoundTrip()
 {
@@ -160,7 +290,7 @@ void fractionalQuotaRoundTrip()
     restore.set("backup", *backup);
     WIFIMETER_CHECK(target.call(method::kRestore, restore, now).ok());
     const auto roundTrip = target.call(method::kBackup, now);
-    WIFIMETER_CHECK_EQ(roundTrip.result.find("backup")->dump(), backup->dump());
+    checkRestoredBackup(*backup, *roundTrip.result.find("backup"), now);
     for (const auto& invalid : {JsonValue::makeNumber(0.9), JsonValue::makeNumber(100.1), JsonValue::makeString("85.5")})
     {
         patch.set("warnPercent", invalid);
@@ -1206,22 +1336,23 @@ void completeBackupRoundTrip()
     auto params = JsonValue::makeObject(); params.set("backup", *document);
     WIFIMETER_CHECK(target.call(method::kRestore, params, now).ok());
     const auto again = target.call(method::kBackup, now);
-    WIFIMETER_CHECK_EQ(again.result.find("backup")->dump(), document->dump());
+    const auto restoredDocument = *again.result.find("backup");
+    checkRestoredBackup(*document, restoredDocument, now);
     auto malformed = *document;
     malformed.set("hourlyRecords", JsonValue::makeString("invalid"));
     params.set("backup", malformed);
     WIFIMETER_CHECK(!target.call(method::kRestore, params, now).ok());
-    WIFIMETER_CHECK_EQ(target.call(method::kBackup, now).result.find("backup")->dump(), document->dump());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup, now).result.find("backup")->dump(), restoredDocument.dump());
     for (const auto* field : {"gaps","appGaps","legacyImports","legacyNetworkMappings","records","ledgers"})
     {
         malformed=*document; malformed.set(field,JsonValue::makeString("invalid")); params.set("backup",malformed);
         WIFIMETER_CHECK(!target.call(method::kRestore,params,now).ok());
-        WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),document->dump());
+        WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),restoredDocument.dump());
     }
     WIFIMETER_CHECK(target.store->database().exec("CREATE TRIGGER restore_failure BEFORE INSERT ON legacy_imports BEGIN SELECT RAISE(ABORT,'fictional restore failure'); END"));
     params.set("backup",*document);
     WIFIMETER_CHECK(!target.call(method::kRestore,params,now).ok());
-    WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),document->dump());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup,now).result.find("backup")->dump(),restoredDocument.dump());
     WIFIMETER_CHECK(target.store->database().exec("DROP TRIGGER restore_failure"));
     auto old = JsonValue::makeObject();
     for (const auto& field : document->fields())
@@ -1328,14 +1459,15 @@ void minuteHistoryPreservesBoundariesAndBackups()
     Harness target(true);
     auto restore = JsonValue::makeObject(); restore.set("backup", *backup.result.find("backup"));
     WIFIMETER_CHECK(target.call(method::kRestore, restore, end).ok());
-    WIFIMETER_CHECK_EQ(target.call(method::kBackup, end).result.find("backup")->dump(), backup.result.find("backup")->dump());
+    const auto restoredDocument = *target.call(method::kBackup, end).result.find("backup");
+    checkRestoredBackup(*backup.result.find("backup"), restoredDocument, end);
     auto malformed = *backup.result.find("backup");
     auto invalidRows = JsonValue::makeArray();
     auto badMinute = malformed.find("minuteRecords")->at(0);
     badMinute.set("minute", JsonValue::makeString("60")); invalidRows.push(badMinute);
     malformed.set("minuteRecords", invalidRows); restore.set("backup", malformed);
     WIFIMETER_CHECK(!target.call(method::kRestore, restore, end).ok());
-    WIFIMETER_CHECK_EQ(target.call(method::kBackup, end).result.find("backup")->dump(), backup.result.find("backup")->dump());
+    WIFIMETER_CHECK_EQ(target.call(method::kBackup, end).result.find("backup")->dump(), restoredDocument.dump());
     auto oldBackup = JsonValue::makeObject();
     for (const auto& entry : backup.result.find("backup")->fields())
         if (entry.first != "minuteRecords" && entry.first != "appMinuteRecords") oldBackup.set(entry.first, entry.second);
@@ -1363,8 +1495,15 @@ void minuteHistoryPreservesBoundariesAndBackups()
 
 }  // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--restore-pause-memory")
+    {
+        restoreRecordsItsPausedIntervalInMemory();
+        return WIFIMETER_REPORT();
+    }
+    memoryOnly = argc == 2 && std::string(argv[1]) == "--memory";
+    restoreRecordsItsPausedIntervalInMemory();
     minuteHistoryPreservesBoundariesAndBackups();
     pausedRefreshPreservesLegacyNetworkIdentity();
     pausedRequestsRefreshWithoutRecordingUsage();

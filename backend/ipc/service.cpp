@@ -1015,7 +1015,7 @@ BackendService::Response BackendService::backup() const
     return response;
 }
 
-BackendService::Response BackendService::restore(const JsonValue& params)
+BackendService::Response BackendService::restore(const JsonValue& params, TimePoint now)
 {
     Response response;
     Status status;
@@ -1182,6 +1182,21 @@ BackendService::Response BackendService::restore(const JsonValue& params)
     { response.error = Error{errorCode::kInvalidParams, totalRestored.message}; return response; }
     if (const auto restored = restoreAdditionalTables(deps_.store.database(), *document); !restored)
     { response.error = Error{errorCode::kInvalidParams, restored.message}; return response; }
+    const auto restoredSettings = deps_.store.settings().load(status);
+    if (!status)
+    { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
+    // 本次恢复会暂停采集。把当前暂停与历史一起提交，写入失败时保持原数据库和采集状态。
+    storage::CoverageGap pause;
+    pause.reason = storage::CoverageReason::paused;
+    pause.startedAt = now;
+    if (const auto saved = deps_.store.usage().addGap(pause); !saved)
+    { response.error = Error{errorCode::kStorageFailure, saved.message}; return response; }
+    if (appEnabled_)
+    {
+        pause.application = true;
+        if (const auto saved = deps_.store.usage().addGap(pause); !saved)
+        { response.error = Error{errorCode::kStorageFailure, saved.message}; return response; }
+    }
     if (const Status committed = transaction.commit(); !committed)
     {
         response.error = Error{errorCode::kStorageFailure, committed.message};
@@ -1205,6 +1220,7 @@ BackendService::Response BackendService::restore(const JsonValue& params)
     result.set("networks", JsonValue::makeInt(static_cast<std::int64_t>(networkCount)));
     result.set("records", JsonValue::makeInt(static_cast<std::int64_t>(recordCount)));
     result.set("paused", JsonValue::makeBool(true));
+    result.set("settings", settingsToJson(restoredSettings));
     response.result = std::move(result);
     return response;
 }
@@ -1306,7 +1322,7 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
     if (request.method == method::kBackup)
         return backup();
     if (request.method == method::kRestore)
-        return restore(request.params);
+        return restore(request.params, now);
     if (request.method == method::kDisconnect)
         return disconnect(request.params);
     if (request.method == method::kPruneUsage)

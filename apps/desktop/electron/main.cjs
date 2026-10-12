@@ -293,10 +293,10 @@ if (primaryInstance) app.whenReady().then(async () => {
                 migrationStatus = { ...migrationStatus, error: '', importWarning: migrationStatus.error };
             }
             const result = await requestBackend(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
-            // 设置改动后立刻作用于系统，并把实际生效的结果回给页面。
-            if (method === 'updateSettings' && result?.settings) {
+            // 设置改动或恢复后立刻作用于系统，并把实际生效的结果回给页面。
+            if (['updateSettings', 'restore'].includes(method) && result?.settings) {
                 speedUnit = result.settings.speedUnit || 'auto';
-                const explicitAutoStart = Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart');
+                const explicitAutoStart = method === 'restore' || Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart');
                 if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
                     if (explicitAutoStart) preserveUnmatchedLoginItem = false;
                     result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
