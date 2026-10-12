@@ -4,7 +4,7 @@ English | [简体中文](PACKAGING-MATRIX.zh-CN.md)
 
 ## Complete Tauri release matrix
 
-The 1.3.x series provides the complete Windows and Linux build and release targets below. See the [1.3.2 release notes](releases/v1.3.2.md) and [Releases](https://github.com/chronicle12345/WiFiMeter/releases) for the current stable version's features, installation instructions, and limitations. Historical performance and artifact records apply only to their respective versions.
+The 1.3.x series provides the complete Windows and Linux build and release targets below. See the [1.3.3 release notes](releases/v1.3.3.md) and [Releases](https://github.com/chronicle12345/WiFiMeter/releases) for the current stable version's features, installation instructions, and limitations. Historical performance and artifact records apply only to their respective versions.
 
 | System and architecture | Artifacts |
 | --- | --- |

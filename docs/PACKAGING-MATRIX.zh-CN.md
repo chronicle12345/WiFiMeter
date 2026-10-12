@@ -4,7 +4,7 @@
 
 ## Tauri 完整发布矩阵
 
-1.3.x 提供 Windows 和 Linux 的完整构建与发布目标。当前正式版本的功能、安装方法和限制见[1.3.2 发布说明](releases/v1.3.2.md#中文)和 [Releases](https://github.com/chronicle12345/WiFiMeter/releases)。历史版本的性能与产物记录只适用于对应版本。
+1.3.x 提供 Windows 和 Linux 的完整构建与发布目标。当前正式版本的功能、安装方法和限制见[1.3.3 发布说明](releases/v1.3.3.md#中文)和 [Releases](https://github.com/chronicle12345/WiFiMeter/releases)。历史版本的性能与产物记录只适用于对应版本。
 
 | 系统与架构 | 产物 |
 | --- | --- |

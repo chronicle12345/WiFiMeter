@@ -6,21 +6,27 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+## [1.3.3] - 2026-10-13
+
+- Recover renderer initialization and live subscriptions after a startup failure without replacing a newer selected range. Recheck lifecycle state before update shutdown and resume collector recovery after canceling an import dialog. Query collection gaps using local calendar days and complete retained history; hide backend build consoles.
+- Retry one network-usage batch after a temporary database write failure, preserving its time, network attribution and quota increments. Flush it before normal shutdown, and discard it after successful clear or restore.
 - Keep personal agent rules out of Git, use English by default with matching Chinese project guides, and consolidate release preparation requirements into the public packaging documentation.
 - Archive unused Node runtime trimming, Zig/Wine cross-build and old PowerShell product tools. Consolidate outdated module README files, move demo snapshots into test fixtures, and remove uncalled backend interfaces while retaining current sampling and migration coverage.
 - Remove Electron and electron-builder dependencies and legacy build entry points. Move shared Node business modules into host, run renderer regressions in a headless browser through the Tauri bridge, and validate native desktop behavior in actual Tauri packages. Preserve existing data locations, upgrade handoff and profile locks.
 - Consolidate Windows startup registration, report synchronization failures and hide collector and test helper consoles. Reuse verified complete update downloads instead of downloading them again.
 - Preserve form drafts and failed-save retries, finish retention cleanup after a partial failure, synchronize restored settings and collection gaps, and retain failed database transactions for rollback or retry.
 - Preserve directional firewall rules, improve history and proxy refreshes, and reuse network filters and application icon extraction. Move form persistence into a dedicated renderer module and keep quota notices visible in short windows with wider fonts.
-- Keep native windows hidden throughout background tests, retain their latest visibility state until page initialization completes, and simulate visibility changes for renderer checks. Organize local diagnostics under ignored directories, document module and tag requirements, discover new renderer tests automatically, and reject release tags with outdated README version information. These changes are not included in the published 1.3.2 installers.
+- Keep native windows hidden throughout background tests, retain their latest visibility state until page initialization completes, and simulate visibility changes for renderer checks. Organize local diagnostics under ignored directories, document module and tag requirements, discover new renderer tests automatically, and reject release tags with outdated README version information.
 
+- 启动失败后恢复页面初始化和实时订阅，保留最新选择的范围；更新关闭采集器前重新检查生命周期，取消导入对话框后继续恢复采集。采集缺失区间按本地日历日及完整保留历史查询，后端构建也隐藏控制台。
+- 数据库暂时写入失败时重试一轮流量批次，保留原时间、网络归属和额度增量；正常退出前成功补写，清空或恢复成功后不再重放旧批次。
 - 个人代理规则取消 Git 跟踪，项目文档默认英文并提供对应中文版，发布准备要求统一保存在正式打包文档。
 - 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
 - 移除 Electron、electron-builder 依赖与旧构建入口，共享 Node 业务归入 host。页面回归使用无头浏览器和真实 Tauri 桥接，原生桌面行为通过实际 Tauri 安装包验证；保留原数据目录、升级握手和实例互斥保护。
 - 归档未使用的 Node 裁剪、Zig/Wine 交叉编译和旧 PowerShell 产品构建工具，合并过时模块 README；演示快照移入测试夹具，移除未调用的后端接口，保留当前采集与迁移验证。
 - 保留表单草稿和保存失败重试，补齐保留期清理失败后的后续操作，同步恢复的设置与采集缺失区间；数据库提交失败后保留事务以便回滚或重试。
 - 保留单向防火墙规则，改进历史与代理数据刷新，复用网络筛选和应用图标提取；表单保存逻辑移入独立页面模块，矮窗口使用较宽字体时也能完整显示额度提示。
-- 后台测试全程保持原生窗口隐藏，页面初始化完成后读取最新可见状态，通过状态替身验证页面刷新；本地诊断文件归入忽略目录，补齐模块与标签规范。CI 自动发现新增界面测试，并阻止 README 版本信息过期的标签发布。这些改动尚未包含在已发布的 1.3.2 安装包中。
+- 后台测试全程保持原生窗口隐藏，页面初始化完成后读取最新可见状态，通过状态替身验证页面刷新；本地诊断文件归入忽略目录，补齐模块与标签规范。CI 自动发现新增界面测试，并阻止 README 版本信息过期的标签发布。
 
 ## [1.3.2]
 
@@ -132,3 +138,4 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 [1.3.0]: docs/releases/v1.3.0.md
 [1.3.1]: docs/releases/v1.3.1.md
 [1.3.2]: docs/releases/v1.3.2.md
+[1.3.3]: docs/releases/v1.3.3.md

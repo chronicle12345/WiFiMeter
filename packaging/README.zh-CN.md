@@ -14,7 +14,7 @@ npm run dist:windows
 Windows 默认只生成 NSIS 安装程序，Linux 默认生成 deb、rpm、AppImage。便携 ZIP 已取消。内部 SHA-256 清单仍用于构建及 CI 验证，不作为 Release 附件。
 
 ```text
-dist/windows/WiFiMeter-1.3.2-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.3-windows-x64-Tauri-Setup.exe
 ```
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
@@ -57,7 +57,7 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。当前安装方法与限制见[发布说明](../docs/releases/v1.3.2.md#中文)，检查结果以对应提交的 CI 记录为准。
+Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。当前安装方法与限制见[发布说明](../docs/releases/v1.3.3.md#中文)，检查结果以对应提交的 CI 记录为准。
 
 RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
 

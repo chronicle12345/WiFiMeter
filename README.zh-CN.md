@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.2.md#中文"><img src="https://img.shields.io/badge/version-1.3.2-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.2" /></a>
+  <a href="docs/releases/v1.3.3.md#中文"><img src="https://img.shields.io/badge/version-1.3.3-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.3" /></a>
   <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md#c-后端"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -25,6 +25,8 @@
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
 WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。发布目标包括 Windows x64、x86、ARM64 及 Linux x64、ARM64，当前可用安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
+
+1.3.3 改进启动恢复、更新协调和历史采集缺失区间查询，Windows 开机启动统一保留一条，并移除开发依赖和构建工具中的 Electron。发布说明记录了具体改动和验证范围。
 
 以下总览和应用历史截图均使用虚构数据。
 

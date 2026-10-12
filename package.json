@@ -1,6 +1,6 @@
 {
   "name": "wifimeter-repository",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "private": true,
   "scripts": {
     "start": "npm --prefix apps/desktop start",

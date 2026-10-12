@@ -23,6 +23,8 @@ The Node business process uses `host/backend.cjs` to launch the backend and matc
 
 The renderer completes the current range query before loading minute history as needed. Concurrent minute queries for the same range share a request, and late responses from older requests cannot replace the current range. The backend handles hourly exports: complete dates can export existing hourly records, while partial ranges aggregate hours at minute boundaries. Custom ranges use local dates and hours/minutes and include the entire ending minute.
 
+After initial backend initialization fails, a refresh repeats the handshake and restores the live subscription. A date selection made during that handshake remains the current query. The update host rechecks import, exit and recovery state after asynchronous settings confirmation, before stopping the collector.
+
 ## C++ backend
 
 `backend/platform/network_platform.h` defines platform-independent interfaces for collection, identity lookup and disconnect control, with two implementations:
@@ -48,6 +50,8 @@ Decisions such as discarding samples after a network switch, waiting for asynchr
 `storage/` incrementally stores daily, hourly, minute and application usage in SQLite, together with networks, quota ledgers and preferences. Schema 6 adds `minute_usage` and `app_minute_usage`; existing data retains its original precision. Samples spanning minutes allocate bytes by time while preserving their total. Minute records participate in complete backups, restoration, clearing, network deletion and retention policies. `coverage_gaps` records missing intervals separately so that the interface can distinguish them from actual zero traffic. Linux uses the system `libsqlite3`; Windows uses the amalgamated source in `backend/third_party/sqlite`.
 
 `ipc/` implements the protocol and event loop: requests are `{id, method, params}`, responses are `{id, ok, result|error}`, and events are `{event, ...}`. The I/O loop is selected by platform: POSIX uses `poll` to wait for standard input and the sampling timer, while Windows uses `WaitForSingleObject` on the pipe handle. The protocol and business logic are shared in full.
+
+If network-usage persistence fails, the service holds one pending batch with its original sample time. It retries that batch before reading new counters, preserving attribution and minute allocation without growing an unbounded queue. Successful clear or restore operations discard it; import, retention cleanup and normal shutdown operations must flush it first. The batch is in memory and does not survive forced process termination. Gap queries use local calendar-day boundaries and include the entire retained history.
 
 Cumulative adapter counters are used only to calculate increments between adjacent valid samples. The first sample, a counter rollback, an identity change or a confirmed adapter disappearance rebuilds the baseline so that historical counters are not attributed to the current network. If identity is temporarily unreadable, the baseline is retained for a limited time. Quota ledgers are stored independently for local daily, monthly or cumulative periods and are not recalculated from history within the retention period. Interfaces represent bytes as decimal strings, and JavaScript uses `BigInt`. Values are checked against the signed 64-bit range before SQLite writes; out-of-range values are rejected.
 

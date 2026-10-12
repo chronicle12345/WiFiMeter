@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.2.md"><img src="https://img.shields.io/badge/version-1.3.2-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.2" /></a>
+  <a href="docs/releases/v1.3.3.md"><img src="https://img.shields.io/badge/version-1.3.3-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.3" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.md#c-backend"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -25,6 +25,8 @@
 <p align="center"><strong>English</strong> &nbsp;|&nbsp; <a href="README.zh-CN.md">简体中文</a></p>
 
 A desktop network usage meter with shared source code for Windows and Linux. Tauri renders the interface using the system WebView; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. Release targets cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64; available builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
+
+Version 1.3.3 improves startup recovery, update coordination and historical collection-gap queries, keeps one Windows login entry, and removes Electron from development dependencies and build tools. The release notes describe the changes and validation limits.
 
 The following overview and application history use synthetic data.
 
