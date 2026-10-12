@@ -269,7 +269,8 @@ Status Transaction::commit()
     if (!active_)
         return Status::failure("事务已经结束。");
     const Status status = database_->commit();
-    active_ = false;
+    // COMMIT 失败时事务可能仍然存在，保留析构回滚和显式重试的机会。
+    if (status) active_ = false;
     return status;
 }
 

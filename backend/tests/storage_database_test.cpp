@@ -219,6 +219,96 @@ void rollsBackUncommittedTransactions()
     }
 }
 
+void failedCommitRollsBackInMemory()
+{
+    Status status;
+    auto database = Database::open(":memory:", status);
+    WIFIMETER_CHECK(database && status);
+    if (!database) return;
+    WIFIMETER_CHECK(database->exec(
+        "CREATE TABLE commit_parents(id INTEGER PRIMARY KEY, value TEXT NOT NULL);"
+        "CREATE TABLE commit_children(id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL "
+        "REFERENCES commit_parents(id) DEFERRABLE INITIALLY DEFERRED);"
+        "INSERT INTO commit_parents VALUES(1,'original');"
+        "INSERT INTO commit_children VALUES(1,1);"));
+    const auto value = [&]() {
+        auto query = database->prepare("SELECT value FROM commit_parents WHERE id=1;", status);
+        WIFIMETER_CHECK(query && query->step());
+        return query ? query->columnText(0) : std::string();
+    };
+    const auto count = [&](const std::string& sql) {
+        auto query = database->prepare(sql, status);
+        WIFIMETER_CHECK(query && query->step());
+        return query ? query->columnInt64(0) : std::int64_t{-1};
+    };
+    {
+        Transaction transaction(*database);
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(database->exec(
+            "UPDATE commit_parents SET value='uncommitted' WHERE id=1;"
+            "DELETE FROM commit_children; INSERT INTO commit_children VALUES(2,999);"));
+        // 延迟外键约束允许写入，在提交时才失败。
+        const auto committed = transaction.commit();
+        WIFIMETER_CHECK(!committed);
+        WIFIMETER_CHECK(committed.message.find("FOREIGN KEY") != std::string::npos);
+        WIFIMETER_CHECK(transaction.active());
+    }
+    WIFIMETER_CHECK_EQ(value(), std::string("original"));
+    WIFIMETER_CHECK_EQ(count("SELECT COUNT(*) FROM commit_children WHERE id=1 AND parent_id=1;"), std::int64_t{1});
+    WIFIMETER_CHECK_EQ(count("SELECT COUNT(*) FROM commit_children WHERE id=2;"), std::int64_t{0});
+
+    // 失败事务退出后，同一连接能开始并成功提交下一次写入。
+    {
+        Transaction committed(*database);
+        WIFIMETER_CHECK(committed.active());
+        WIFIMETER_CHECK(database->exec("UPDATE commit_parents SET value='committed' WHERE id=1;"));
+        WIFIMETER_CHECK(committed.commit());
+        WIFIMETER_CHECK(!committed.active());
+        {
+            Transaction next(*database);
+            WIFIMETER_CHECK(next.active());
+            WIFIMETER_CHECK(database->exec("UPDATE commit_parents SET value='next-uncommitted' WHERE id=1;"));
+            // 对已经提交的对象再次提交，不能提交另一对象正在管理的事务。
+            WIFIMETER_CHECK(!committed.commit());
+            WIFIMETER_CHECK(!committed.active());
+            WIFIMETER_CHECK(next.active());
+        }
+        WIFIMETER_CHECK_EQ(value(), std::string("committed"));
+    }
+    WIFIMETER_CHECK_EQ(value(), std::string("committed"));
+
+    // 提交失败后也允许在同一事务内修正约束，再显式重试提交。
+    {
+        Transaction transaction(*database);
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(database->exec("INSERT INTO commit_children VALUES(3,3);"));
+        WIFIMETER_CHECK(!transaction.commit());
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(database->exec("INSERT INTO commit_parents VALUES(3,'repaired');"));
+        WIFIMETER_CHECK(transaction.commit());
+        WIFIMETER_CHECK(!transaction.active());
+        WIFIMETER_CHECK(!transaction.commit());
+    }
+    WIFIMETER_CHECK_EQ(count("SELECT COUNT(*) FROM commit_children WHERE id=3 AND parent_id=3;"), std::int64_t{1});
+
+    // SQLite 已自动回滚时，析构再次尝试回滚不能影响后续事务。
+    {
+        Transaction transaction(*database);
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(database->exec("UPDATE commit_parents SET value='automatic-uncommitted' WHERE id=1;"));
+        WIFIMETER_CHECK(!database->exec("INSERT OR ROLLBACK INTO commit_parents VALUES(1,'duplicate');"));
+        WIFIMETER_CHECK(!transaction.commit());
+    }
+    WIFIMETER_CHECK_EQ(value(), std::string("committed"));
+    {
+        Transaction transaction(*database);
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(database->exec("UPDATE commit_parents SET value='after-automatic-rollback' WHERE id=1;"));
+        WIFIMETER_CHECK(transaction.commit());
+    }
+    WIFIMETER_CHECK_EQ(value(), std::string("after-automatic-rollback"));
+}
+
 void convertsByteCountsSafely()
 {
     WIFIMETER_CHECK_EQ(toStoredBytes(0).value_or(-1), std::int64_t{0});
@@ -314,8 +404,14 @@ void migratesVersionFiveWithoutInventingMinuteHistory()
 
 }  // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--transaction-memory")
+    {
+        failedCommitRollsBackInMemory();
+        return WIFIMETER_REPORT();
+    }
+    failedCommitRollsBackInMemory();
     migratesVersionFiveWithoutInventingMinuteHistory();
     migratesLegacyArchiveFromVersionFour();
     createsSchemaOnFirstOpen();
