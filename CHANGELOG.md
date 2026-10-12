@@ -6,6 +6,14 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+- Switch between live traffic and usage history in one application workspace. Share filters, a five-column table and the application drawer with network details; preserve each view's search and sort selections. The application page starts with live traffic, while network details start with usage history.
+- Keep speed units, historical byte units and source labels distinct. Show measured local TCP proxy connections separately from validated daily connection-weight estimates, preserve native records when estimate totals do not match, and omit daily estimates from partial-day and minute/hour details.
+- Add the explicit proxy application identifier to observed `proxy.clients` entries. Leave it empty when the proxy path is unavailable and match details by known identifiers instead of display-name guesses.
+
+- 应用流量通过同一工作区切换实时排行与用量记录，与网络详情共用筛选控件、五列表格和应用抽屉；两个视图各自保留搜索与排序选择。应用页默认显示实时流量，网络详情默认显示用量记录。
+- 分别显示速度单位、历史字节单位及数据来源；实时本地 TCP 代理测量与通过校验的每日连接权重估算分开。估算合计不匹配时保留原生记录，部分日期及分钟/小时详情不显示每日估算。
+- 观测到的 `proxy.clients` 增加明确代理应用标识，代理路径不可用时保留空值；详情按已知标识匹配，不根据显示名称猜测身份。
+
 ## [1.3.3] - 2026-10-13
 
 - Recover renderer initialization and live subscriptions after a startup failure without replacing a newer selected range. Recheck lifecycle state before update shutdown and resume collector recovery after canceling an import dialog. Query collection gaps using local calendar days and complete retained history; hide backend build consoles.

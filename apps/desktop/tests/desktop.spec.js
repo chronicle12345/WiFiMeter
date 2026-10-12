@@ -139,9 +139,10 @@ test('总览保留用量、连接、趋势与额度，网络明细只在网络�
     await expect(page.locator('#footer')).toBeEmpty();
 
     await navigate('应用');
-    await expect(page.locator('.live-ranking-panel')).toHaveCount(1);
+    await expect(page.getByRole('tab', { name: '实时流量排行', exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('#liveRankingRegion')).toHaveCount(1);
-    await expect(page.locator('.live-ranking-panel h2')).toHaveText('实时流量排行');
+    await expect(page.locator('#appListRegion')).toHaveCount(1);
+    await expect(page.locator('#appTotal')).toHaveCount(0);
 
     await navigate('网络');
     await expect(page.locator('#networkTableRegion table')).toHaveCount(1);
@@ -246,7 +247,9 @@ test('小流量在所有用量入口使用自动单位，图表可见且 CSV 保
     await expect(page.locator('.drawer td').nth(1)).toHaveText('520 KB');
     await page.getByRole('tab', { name: '应用分布' }).click();
     await expect(page.locator('#appTotal')).toHaveText(/520\s*KB/);
-    await expect(page.locator('.app-row')).toContainText('下载 520 KB · 上传 1 B');
+    const appMetrics = page.locator('.application-table-row .application-metric');
+    await expect(appMetrics.nth(0)).toHaveText('520 KB');
+    await expect(appMetrics.nth(1)).toHaveText('1 B');
     await page.locator('#appSearch').fill('小流量');
     await expect(page.locator('#appTotal')).toHaveText(/520\s*KB/);
     await page.locator('[data-action="select-app"]').first().click();
@@ -301,22 +304,21 @@ test('零用量显示 0 B，无记录仍显示破折号', async () => {
     await expect(page.locator('.chart-wrap')).toContainText('所选时段暂无流量记录');
 });
 
-test('应用分布聚合、排序、搜索与展开，占比分母不随搜索改变', async () => {
+test('应用分布完整显示聚合列表、排序与搜索，占比分母不随搜索改变', async () => {
     const date = new Date().toLocaleDateString('en-CA');
     const records = Array.from({ length: 12 }, (_, i) => ({ date, appId: `app-${i}`, name: `应用 ${i}`,
         rxBytes: String((12 - i) * 1000000), txBytes: '0' }));
     records.push({ date, appId: 'app-0', name: '应用 0', rxBytes: '1000000', txBytes: '20000000' });
     await applicationSnapshot(records);
-    await expect(page.locator('.app-row')).toHaveCount(10);
-    await expect(page.locator('.app-row').first()).toContainText('应用 0');
-    await expect(page.locator('.app-row').first()).toContainText('33 MB');
-    await expect(page.locator('.app-row').first()).toContainText('33.3%');
-    await page.getByRole('button', { name: '显示全部应用' }).click();
-    await expect(page.locator('.app-row')).toHaveCount(12);
+    await expect(page.locator('.application-table-row')).toHaveCount(12);
+    await expect(page.locator('.application-table-row').first()).toContainText('应用 0');
+    await expect(page.locator('.application-table-row').first()).toContainText('33 MB');
+    await expect(page.locator('.application-table-row').first()).toContainText('33.3%');
+    await expect(page.getByRole('button', { name: '显示全部应用' })).toHaveCount(0);
     await page.locator('#appSort').selectOption('rx');
     await page.locator('#appSearch').fill('应用 0');
-    await expect(page.locator('.app-row')).toHaveCount(1);
-    await expect(page.locator('.app-row')).toContainText('33.3%');
+    await expect(page.locator('.application-table-row')).toHaveCount(1);
+    await expect(page.locator('.application-table-row')).toContainText('33.3%');
     await expect(page.locator('#appSearch')).toBeFocused();
     await page.locator('#appSearch').fill('不存在');
     await expect(page.locator('#appListRegion')).toContainText('没有匹配的应用');
@@ -328,10 +330,10 @@ test('应用分布聚合、排序、搜索与展开，占比分母不随搜索�
 test('应用零用量、名称转义与历史无记录状态正常展示', async () => {
     const date = new Date().toLocaleDateString('en-CA');
     await applicationSnapshot([{ date, appId: 'zero', name: '<img src=x onerror=alert(1)>', rxBytes: '0', txBytes: '0' }]);
-    await expect(page.locator('.app-row')).toContainText('<img src=x onerror=alert(1)>');
-    await expect(page.locator('.app-row img')).toHaveCount(0);
-    await expect(page.locator('.app-row')).toContainText('0 B');
-    await expect(page.locator('.app-value')).toContainText('—');
+    await expect(page.locator('.application-table-row')).toContainText('<img src=x onerror=alert(1)>');
+    await expect(page.locator('.application-table-row img')).toHaveCount(0);
+    await expect(page.locator('.application-table-row')).toContainText('0 B');
+    await expect(page.locator('.application-table-row .application-share-label')).toHaveText('—');
     await page.keyboard.press('Escape');
     await applicationSnapshot([{ date: '2000-01-01', appId: 'old', name: '历史应用', rxBytes: '123', txBytes: '456' }]);
     await expect(page.locator('.drawer')).toContainText('所选时段没有应用记录');
@@ -353,8 +355,8 @@ test('应用历史来自 SQLite，重启、完整备份恢复与清空都保留�
     await navigate('网络');
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
     await page.getByRole('tab', { name: '应用分布' }).click();
-    await expect(page.locator('.app-row')).toContainText('浏览器');
-    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await expect(page.locator('.application-table-row')).toContainText('浏览器');
+    await expect(page.locator('.application-table-row')).toContainText('100 MB');
     await app.close();
     await launch();
     await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
@@ -390,17 +392,19 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await expect(page.locator('#appStatusRegion')).toContainText('应用采集中');
     harness.appCounters(80000000, 20000000);
     await page.evaluate(() => window.desktop.backend.request('collectNow'));
-    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await expect(page.locator('.application-table-row')).toContainText('100 MB');
     await expect.poll(() => query('SELECT rx_bytes FROM app_usage')).toBe('80000000');
     await page.locator('#appSearch').fill('浏览');
     await page.evaluate(() => window.desktop.backend.request('collectNow'));
     await expect(page.locator('#appSearch')).toBeFocused();
-    await expect(page.locator('.app-row')).toContainText('100 MB');
-    await page.locator('#appGrouping').selectOption('live');
+    await expect(page.locator('.application-table-row')).toContainText('100 MB');
+    await page.getByRole('tab', { name: '实时流量排行', exact: true }).click();
     await page.locator('[data-action="select-live-app"]').first().click();
     await expect(page.locator('.drawer .application-summary')).toContainText('42');
     await page.keyboard.press('Escape');
-    await expect(page.locator('#appGrouping')).toHaveValue('live');
+    await expect(page.getByRole('tab', { name: '实时流量排行', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#appSearch')).toHaveValue('');
+    await page.getByRole('tab', { name: '应用用量记录', exact: true }).click();
     await expect(page.locator('#appSearch')).toHaveValue('浏览');
     await page.keyboard.press('Escape');
     await page.getByRole('button', { name: '暂停统计', exact: true }).click();
@@ -415,7 +419,7 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await page.getByRole('button', { name: '停止应用采集', exact: true }).click();
     await expect(page.getByRole('button', { name: '开启应用采集', exact: true })).toBeVisible();
     await expect(page.locator('#appStatusRegion')).not.toContainText('应用采集未启用');
-    await expect(page.locator('.app-row')).toContainText('100 MB');
+    await expect(page.locator('.application-table-row')).toContainText('100 MB');
     await page.getByRole('tab', { name: '用量明细' }).click();
     await expect(page.locator('.drawer-total')).toContainText('3.6');
 });

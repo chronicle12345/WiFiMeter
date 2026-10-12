@@ -49,6 +49,14 @@ Linux 原生采集接入 eBPF，Windows 接入 ETW；不会把网卡总量按比
 Linux 原生源仅在构建辅助进程时可用，仍默认不采集；统计口径与授权验证见 [Linux 应用采集](../docs/LINUX_APP_CAPTURE.zh-CN.md)。
 Windows 原生源也默认不采集，通过专用管道连接授权辅助进程；详见 [Windows 应用采集](../docs/WINDOWS_APP_CAPTURE.zh-CN.md)。
 
+## 代理客户端与应用详情
+
+`proxy.clients` 报告当前观测到的本地代理连接。每项包含 `appId`、`name`、`proxyAppId`、`proxyName`、`connections`、`pathAvailable` 和 `measurementAvailable`，可测量时同时提供字节计数与速率。连接归属已知时，`proxyAppId` 保存观测到的代理应用标识；仅检测到客户端且代理路径不可用时，该字段为空字符串，`pathAvailable` 为 `false`。显示名称不能作为身份依据，也不能用于推断缺失标识。身份是否已知与流量是否可测量分别报告。
+
+本地 TCP 速率来自连接测量，数值单位为字节每秒。`measurementAvailable` 为 false 时，即使仍有旧数值字段，页面也显示横线，避免将不可测量当作零流量。停止或暂停采集后，页面中的代理速率不可用。这些速率与网卡总量、额度账本及已存历史估算分别处理，无法据此还原 UDP/QUIC 流量或精确的客户端历史用量。应用详情根据客户端 `appId` 或明确的 `proxyAppId` 匹配；Windows 路径先统一分隔符，并忽略大小写。
+
+`proxyEstimatedRecords` 保存每日归属记录，字段为 `{networkId, date, proxyAppId, appId, name, rxBytes, txBytes, estimated, unattributed}`。历史归属按观测到的连接权重估算。页面替换原生代理记录前，同一网络、日期和代理标识的下载、上传估算合计必须分别等于原生总量，否则继续显示原生记录；客户端直接记录继续保留。详情沿用所选网络与日期范围，选中具体日期或月份时进一步筛选估算行；部分日期范围及分钟/小时详情不显示每日估算。
+
 ## 数据与平台约定
 
 - 网络身份：`core/network_key.h` 已确定取键策略——优先用连接配置 UUID（跨重启稳定，天然满足 `network.id` 的 `^[-a-zA-Z0-9_]+$`），拿不到时退回 `ssid_` 加 SSID 的 FNV-1a 散列。代价是删除并重建 Wi-Fi 配置会让历史分成两条记录，上层可按 `ssid` 归并显示。

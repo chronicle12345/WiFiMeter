@@ -1,7 +1,33 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+按日期|By date
+按应用名称|By application name
 实时流量排行|Live traffic ranking
 应用用量记录|Application usage history
+应用视图|Application view
+点击应用查看实时详情与代理归属。|Select an application to view live details and proxy attribution.
+查看所选时段的用量，原生记录与代理估算分别标注。|Usage for the selected period, with native records and proxy estimates labeled separately.
+条结果|results
+实时速度与历史用量分别显示|Live rates and historical usage are shown separately
+时间|Time
+重试|Retry
+实时更新|Live updates
+查看应用详情|View application details
+实时本地 TCP 连接|Live local TCP connections
+历史代理估算|Historical proxy estimates
+代理程序|Proxy application
+客户端|Client
+实测|Measured
+不可测|Unavailable
+网络采集|Network collection
+当前没有实时流量|No live traffic
+搜索当前采集的应用|Search collected applications
+按当前速度排序|Sorted by current speed
+应用列表|Application list
+记录范围|Record period
+未知代理|Unknown proxy
+历史用量按连接权重估算|Historical usage is estimated by connection weight
+本地 TCP 实时速度不计入 Wi-Fi 用量。|Live local TCP rates are separate from Wi-Fi usage.
 代理估算设置|Proxy estimation settings
 开启应用采集|Start application collection
 应用限制记录|Application restriction records

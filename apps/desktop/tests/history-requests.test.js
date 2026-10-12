@@ -60,7 +60,7 @@ async function rangeFixture(t, includeMinutes = true) {
     const ui = { page: 'overview', period: 'month', start: '2026-10-01', end: '2026-10-10', startTime: '00:00', endTime: '23:59', historyGrouping: 'minute' };
     const applications = { appGrouping: 'summary' };
     const context = {
-        ui, data: client.snapshot, applications, today: () => '2026-10-10', historyRange,
+        ui, data: client.snapshot, applications, navigationVersion: 0, today: () => '2026-10-10', historyRange,
         getRange: () => historyRange(ui.period, '2026-10-10', ui), appContext: () => applications,
         document: { getElementById: () => ({ setAttribute() {}, removeAttribute() {} }) },
         renderMain() {}, closeDrawer() {}, history: { replaceState() {} }, location: { pathname: '/', search: '' }, window: { scrollTo() {} }, store: client

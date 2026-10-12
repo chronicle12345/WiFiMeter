@@ -54,7 +54,7 @@ test.beforeEach(async({},testInfo)=>{
 test.afterEach(async()=>{if(app){await app.evaluate(({app:fixtureApp,BrowserWindow})=>{fixtureApp.removeAllListeners('window-all-closed');for(const window of BrowserWindow.getAllWindows())window.destroy();});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 async function allHistory(){await page.locator('[data-action="period"][data-value="all"]').click();await expect(page.locator('.date-text')).toHaveText('全部已保留历史');}
-async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
+async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();}
 
 test('自定义时分筛选网络和应用分钟明细，包含结束分钟并可按小时汇总',async()=>{
     await app.evaluate(()=>{
@@ -75,7 +75,7 @@ test('自定义时分筛选网络和应用分钟明细，包含结束分钟并�
     await expect(page.locator('[data-history-details]')).toContainText('2020-01-01 10:02');
     await page.locator('#historyGrouping').selectOption('hour');
     await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(1);
-    await page.locator('.nav [data-page="apps"]').click();await page.locator('#appGrouping').selectOption('minute');
+    await page.locator('.nav [data-page="apps"]').click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();await page.locator('#appGrouping').selectOption('minute');
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
     await page.locator('#appGrouping').selectOption('hour');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
     await expect(page.locator('#appListRegion')).toContainText('5.2 KB');
@@ -112,7 +112,7 @@ test('跨午夜后今日范围自动查询新一天，网络与应用总量同�
     });
     await expect(page.locator('.date-text')).toContainText('2026 / 11 / 01');
     await expect(page.locator('.metric.featured')).toContainText('2.2');
-    await page.locator('.nav [data-page="apps"]').click();
+    await page.locator('.nav [data-page="apps"]').click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
     await expect(page.locator('#appListRegion')).toContainText('Browser');
     await expect(page.locator('#appListRegion')).toContainText('2.2 KB');
     const count=()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(call=>call.method==='snapshot'&&call.params.from==='2026-11-01'&&call.params.to==='2026-11-01').length);
@@ -159,13 +159,13 @@ test('切换预设范围后返回历史和应用页继续显示已选分钟分�
     await page.locator('.nav [data-page="history"]').click();
     await expect(page.locator('#historyGrouping')).toHaveValue('minute');
     await expect(page.locator('[data-history-details] tbody tr')).toHaveCount(2);
-    await page.locator('.nav [data-page="apps"]').click();
+    await page.locator('.nav [data-page="apps"]').click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
     await page.locator('#appGrouping').selectOption('hour');
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
     await page.locator('.nav [data-page="overview"]').click();
     await page.locator('[data-value="month"]').click();
     await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='snapshot').at(-1).params.includeMinutes)).toBe(false);
-    await page.locator('.nav [data-page="apps"]').click();
+    await page.locator('.nav [data-page="apps"]').click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
     await expect(page.locator('#appGrouping')).toHaveValue('hour');
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(1);
     await expect(page.locator('#appListRegion')).toContainText('2.2 KB');

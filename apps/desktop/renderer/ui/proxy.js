@@ -1,4 +1,5 @@
 import { measuredRate } from '../data/application-live.js';
+import { applicationProxyClientKey } from '../data/application-proxy.js';
 import { autosaveStatus } from './autosave.js';
 import { t, tr } from '../i18n.js';
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -27,5 +28,5 @@ export function estimateLabel(row) {
 export function proxyClientsView(proxy, speedUnit = 'auto') {
     const clients = proxy?.clients || [];
     if (!clients.length) return '';
-    return tr`<section class="detail-section proxy-clients"><h3>检测到的代理客户端</h3><div class="table-scroll"><table class="proxy-client-table"><thead><tr><th>应用</th><th>代理</th><th class="right">连接数</th><th class="right">下载速度</th><th class="right">上传速度</th></tr></thead><tbody>${clients.map(client=>`<tr><td><button class="network-name" data-action="select-proxy-app" data-app-id="${esc(client.appId)}" data-app-name="${esc(client.name)}">${esc(client.name)}</button></td><td>${esc(client.proxyName)}</td><td class="right num">${esc(client.connections)}</td><td class="right num">${esc(measuredRate(client.measurementAvailable?client.rxPerSecond:null,speedUnit))}</td><td class="right num">${esc(measuredRate(client.measurementAvailable?client.txPerSecond:null,speedUnit))}</td></tr>`).join('')}</tbody></table></div><p class="small muted">本地代理连接 · 实时速度不计入 Wi-Fi 总量</p></section>`;
+    return tr`<section class="detail-section proxy-clients"><h3>检测到的代理客户端</h3><div class="table-scroll"><table class="proxy-client-table"><thead><tr><th>应用</th><th>代理</th><th class="right">连接数</th><th class="right">下载速度</th><th class="right">上传速度</th></tr></thead><tbody>${clients.map(client=>`<tr><td><button class="network-name" data-action="select-proxy-app" data-app-id="${esc(client.appId)}" data-app-name="${esc(client.name)}" data-proxy-key="${esc(applicationProxyClientKey(client))}">${esc(client.name)}</button></td><td>${esc(client.proxyName)}</td><td class="right num">${esc(client.connections)}</td><td class="right num">${esc(measuredRate(client.measurementAvailable?client.rxPerSecond:null,speedUnit))}</td><td class="right num">${esc(measuredRate(client.measurementAvailable?client.txPerSecond:null,speedUnit))}</td></tr>`).join('')}</tbody></table></div><p class="small muted">本地代理连接 · 实时速度不计入 Wi-Fi 总量</p></section>`;
 }

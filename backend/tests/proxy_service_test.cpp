@@ -301,8 +301,9 @@ void discoversClientsOnSaveWithoutStartingByteCollection()
     WIFIMETER_CHECK_EQ(client.stringOr("appId"), std::string("a.exe"));
     WIFIMETER_CHECK_EQ(client.stringOr("name"), std::string("Client A"));
     WIFIMETER_CHECK_EQ(client.stringOr("proxyName"), std::string("Proxy"));
+    WIFIMETER_CHECK_EQ(client.stringOr("proxyAppId"), std::string("proxy.exe"));
     WIFIMETER_CHECK_EQ(client.intOr("connections"), std::int64_t(1));
-    WIFIMETER_CHECK_EQ(client.fields().size(), std::size_t(14));
+    WIFIMETER_CHECK_EQ(client.fields().size(), std::size_t(15));
     WIFIMETER_CHECK(client.boolOr("pathAvailable"));
     WIFIMETER_CHECK(client.find("rxBytes")->isNull() && client.find("txBytes")->isNull());
     WIFIMETER_CHECK(!client.boolOr("measurementAvailable"));
@@ -345,6 +346,7 @@ void detectedClientsNeverBecomeByteWeights()
     if (!clients || clients->size() != 3) return;
     const auto& detected = clients->at(2);
     WIFIMETER_CHECK_EQ(detected.stringOr("appId"), std::string("detected.exe"));
+    WIFIMETER_CHECK_EQ(detected.stringOr("proxyAppId", "missing"), std::string{});
     WIFIMETER_CHECK_EQ(detected.intOr("connections"), std::int64_t(3));
     WIFIMETER_CHECK(!detected.boolOr("pathAvailable", true));
     WIFIMETER_CHECK(detected.find("rxBytes")->isNull() && detected.find("txBytes")->isNull());
@@ -660,9 +662,38 @@ void migratesOnlyInitialProxySettingsInTheImportTransaction()
 }
 
 }
-int main()
+void proxyClientIdentityIsExplicitInMemory()
+{
+    storage::Status status;
+    auto store = storage::Store::open(":memory:", status);
+    WIFIMETER_CHECK(store && status.ok);
+    if (!store) return;
+    FakeNetwork network;
+    FakeApps apps;
+    auto report = observed();
+    report.detectedClients = {{"detected.exe", "Detected", "Unknown proxy", 1}};
+    ipc::BackendService::Deps deps{*store, network, &apps};
+    deps.proxySampler = [&](const platform::ProxyOptions&) { return report; };
+    ipc::BackendService service(deps);
+    ipc::Request request;
+    request.method = "updateProxyConfig";
+    request.params = json(R"({"ports":[7890],"processNames":[]})");
+    const auto response = service.handle(request, utcTime(2026, 10, 1));
+    WIFIMETER_CHECK(response.ok());
+    if (!response.ok()) return;
+    const auto* clients = response.result.find("proxy")->find("clients");
+    WIFIMETER_CHECK(clients && clients->size() == 3);
+    if (!clients || clients->size() != 3) return;
+    WIFIMETER_CHECK_EQ(clients->at(0).stringOr("proxyAppId"), std::string("proxy.exe"));
+    WIFIMETER_CHECK_EQ(clients->at(2).stringOr("proxyAppId", "missing"), std::string{});
+    WIFIMETER_CHECK(!clients->at(2).boolOr("pathAvailable", true));
+}
+
+int main(int argc, char** argv)
 {
     test::useTimeZone("UTC");
+    proxyClientIdentityIsExplicitInMemory();
+    if (argc == 2 && std::string(argv[1]) == "--memory") return WIFIMETER_REPORT();
     loopbackBytesAreLiveButNotWifiUsage();
     helperResolvesOnlyMatchingCurrentConnections();
     estimatedUpdatesReplaceOnlyChangedDayNetworkProxyGroups();

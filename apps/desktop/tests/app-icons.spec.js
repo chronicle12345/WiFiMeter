@@ -80,11 +80,11 @@ test('application page resolves a known backend executable through the icon brid
     backup.appRecords=[{networkId:backup.networks[0].key,date:new Date().toLocaleDateString('en-CA'),appId:executable,name:'Node',rxBytes:'100',txBytes:'10'}];
    return window.desktop.backend.request('restore',{backup});
   },executable);expect(result.ok).toBe(true);
-  await page.reload();await page.locator('.nav [data-page="apps"]').click();
+  await page.reload();await page.locator('.nav [data-page="apps"]').click();await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
   const icon=await page.evaluate(appId=>window.desktop.appIcons.get({appId}),executable);
   if(process.platform==='linux' && icon===null){
-   await expect(page.locator('.app-row .app-avatar')).toHaveText('N');
-   await expect(page.locator('.app-row .app-avatar img')).toHaveCount(0);
+   await expect(page.locator('.application-table-row .app-avatar')).toHaveText('N');
+   await expect(page.locator('.application-table-row .app-avatar img')).toHaveCount(0);
    await page.locator('[data-action="select-app"]').click();
    await expect(page.locator('#drawerTitle .app-avatar')).toHaveText('N');
    await expect(page.locator('#drawerTitle .app-avatar img')).toHaveCount(0);
@@ -93,9 +93,10 @@ test('application page resolves a known backend executable through the icon brid
     app.getFileIcon=async()=>nativeImage.createFromBitmap(Buffer.from([0x40,0x80,0xc0,0xff]),{width:1,height:1});
    });
    await page.reload();
+   await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
   }else expect(icon).toMatch(/^data:image\/png;base64,/);
-  await expect(page.locator('.app-row .app-avatar img')).toBeVisible();
-  expect(await page.locator('.app-row .app-avatar img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
+  await expect(page.locator('.application-table-row .app-avatar img')).toBeVisible();
+  expect(await page.locator('.application-table-row .app-avatar img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await page.locator('[data-action="select-app"]').click();await expect(page.locator('#drawerTitle .app-avatar img')).toBeVisible();
  }finally{if(app)await app.close();harness.cleanup();}
 });

@@ -234,6 +234,7 @@ JsonValue BackendService::proxyJson(Status& status) const
         {
             auto client = JsonValue::makeObject();
             client.set("appId", JsonValue::makeString(observation.appId));
+            client.set("proxyAppId", JsonValue::makeString(observation.proxyAppId));
             client.set("name", JsonValue::makeString(observation.name));
             client.set("proxyName", JsonValue::makeString(observation.proxyName));
             client.set("connections", JsonValue::makeInt(static_cast<std::int64_t>(observation.connections)));
@@ -246,6 +247,7 @@ JsonValue BackendService::proxyJson(Status& status) const
         {
             auto client = JsonValue::makeObject();
             client.set("appId", JsonValue::makeString(detected.appId));
+            client.set("proxyAppId", JsonValue::makeString(""));
             client.set("name", JsonValue::makeString(detected.name));
             client.set("proxyName", JsonValue::makeString(detected.proxyName));
             client.set("connections", JsonValue::makeInt(static_cast<std::int64_t>(detected.connections)));
