@@ -11,16 +11,20 @@ test('后台后端构建的工具发现、配置和编译均隐藏 Windows 控�
     const calls = [];
     const module = { exports: {} };
     const script = require.resolve('../../../packaging/build-backend.cjs');
+    const host = { platform: 'win32', arch: 'x64', env: {}, argv: [] };
+    const targets = require('../../../packaging/targets.cjs');
     const context = vm.createContext({ module, exports: module.exports,
         __dirname: path.dirname(script),
-        process: { platform: 'win32', arch: 'x64', env: {}, argv: [] },
+        process: host,
         require: name => {
             if (name === 'node:fs') return { existsSync: () => false };
             if (name === 'node:child_process') return { execFileSync: (command, args, options) => {
                 calls.push({ command, args, options });
                 return JSON.stringify({ generators: [{ name: 'Visual Studio 17 2022' }] });
             } };
-            return name === './targets.cjs' ? require('../../../packaging/targets.cjs') : require(name);
+            return name === './targets.cjs' ? { ...targets,
+                validateNativeTarget: (platform, arch) => targets.validateNativeTarget(platform, arch, host)
+            } : require(name);
         }
     });
     new vm.Script(readFileSync(script, 'utf8')).runInContext(context);
