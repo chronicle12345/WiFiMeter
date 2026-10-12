@@ -113,12 +113,22 @@ private:
     storage::Status refreshPausedLive(core::TimePoint now);
     void refreshLive(const platform::SampleReport& report, core::TimePoint now);
     void evaluateQuotas(core::TimePoint now, Events& events);
+    void appendUsageEvent(const core::AccumulateResult& result, core::TimePoint at, Events& events);
+    storage::Status retryPendingUsage(Events& events);
+    storage::Status flushPendingUsage();
     support::JsonValue appCollectionToJson() const;
     void collectApplications(const platform::SampleReport& wifi, core::TimePoint now, Events& events);
     Response setAppCollection(const support::JsonValue& params, core::TimePoint now);
 
     Deps deps_;
     core::UsageAccumulator accumulator_;
+    struct PendingUsage
+    {
+        core::AccumulateResult result;
+        core::TimePoint at;
+    };
+    // 只保留一轮失败批次；重试成功前不读取新的网卡计数。
+    std::optional<PendingUsage> pendingUsage_;
     core::AppUsageAccumulator appAccumulator_;
     LoopbackLive loopbackLive_;
     bool appEnabled_ = false;

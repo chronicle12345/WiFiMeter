@@ -4,6 +4,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "../ipc/service.h"
@@ -1493,6 +1494,311 @@ void minuteHistoryPreservesBoundariesAndBackups()
         if (const auto* rows = cleared.result.find(field)) WIFIMETER_CHECK_EQ(rows->size(), std::size_t{0});
 }
 
+void snapshotCoverageUsesCompleteHistoryAndLocalCalendarDays()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    const auto now = utcTime(2026, 11, 2, 12);
+    const auto addGap = [](Harness& harness, TimePoint start, bool application) {
+        CoverageGap gap;
+        gap.application = application;
+        gap.reason = CoverageReason::offline;
+        gap.startedAt = start;
+        gap.endedAt = start + std::chrono::minutes(5);
+        gap.span = std::chrono::minutes(5);
+        WIFIMETER_CHECK(harness.store->usage().addGap(gap).ok);
+    };
+    wifimeter::test::useTimeZone("UTC");
+    Harness history;
+    for (bool application : {false, true}) addGap(history, utcTime(2024, 1, 1, 10), application);
+    auto params = JsonValue::makeObject();
+    params.set("from", JsonValue::makeString("0001-01-01"));
+    params.set("to", JsonValue::makeString("2026-11-02"));
+    const auto all = history.call(method::kSnapshot, params, now);
+    WIFIMETER_CHECK(all.ok());
+    if (all.ok())
+        for (const auto* field : {"gaps", "appGaps"})
+            WIFIMETER_CHECK_EQ(all.result.find(field)->size(), std::size_t{1});
+
+    wifimeter::test::useTimeZone("America/New_York");
+    for (const auto& bounds : {std::tuple{"2026-03-08", utcTime(2026, 3, 8, 5), utcTime(2026, 3, 9, 4)},
+                              std::tuple{"2026-11-01", utcTime(2026, 11, 1, 4), utcTime(2026, 11, 2, 5)}})
+    {
+        Harness day;
+        const auto& [date, start, end] = bounds;
+        for (bool application : {false, true})
+        {
+            addGap(day, start - std::chrono::minutes(30), application);
+            addGap(day, start + std::chrono::minutes(15), application);
+            addGap(day, end - std::chrono::minutes(30), application);
+            addGap(day, end, application);
+        }
+        params.set("from", JsonValue::makeString(date));
+        params.set("to", JsonValue::makeString(date));
+        const auto selected = day.call(method::kSnapshot, params, now);
+        WIFIMETER_CHECK(selected.ok());
+        if (selected.ok())
+            for (const auto* field : {"gaps", "appGaps"})
+            {
+                const auto* rows = selected.result.find(field);
+                WIFIMETER_CHECK_EQ(rows->size(), std::size_t{2});
+                if (rows->size() == 2)
+                {
+                    WIFIMETER_CHECK_EQ(rows->at(0).stringOr("startedAt"), isoUtcOf(start + std::chrono::minutes(15)));
+                    WIFIMETER_CHECK_EQ(rows->at(1).stringOr("startedAt"), isoUtcOf(end - std::chrono::minutes(30)));
+                }
+            }
+    }
+    wifimeter::test::useTimeZone("UTC");
+    Harness paused;
+    auto pause = JsonValue::makeObject(); pause.set("paused", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(paused.call(method::kSetPaused, pause, now).ok());
+    const auto open = paused.call(method::kSnapshot, now);
+    WIFIMETER_CHECK(open.ok());
+    const auto* gaps = open.result.find("gaps");
+    WIFIMETER_CHECK(gaps && gaps->size() == 1);
+    if (gaps && gaps->size() == 1)
+        WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("endedAt"), std::string{});
+    Harness closed;
+    for (bool application : {false, true})
+    {
+        CoverageGap gap;
+        gap.application = application;
+        gap.reason = CoverageReason::paused;
+        gap.startedAt = now;
+        WIFIMETER_CHECK(closed.store->usage().addGap(gap).ok);
+        std::size_t count = 0;
+        WIFIMETER_CHECK(closed.store->usage().closeOpenGaps(now, count, application).ok);
+        WIFIMETER_CHECK_EQ(count, std::size_t{1});
+    }
+    const auto zeroSpan = closed.call(method::kSnapshot, now);
+    WIFIMETER_CHECK(zeroSpan.ok());
+    if (zeroSpan.ok())
+        for (const auto* field : {"gaps", "appGaps"})
+        {
+            const auto* rows = zeroSpan.result.find(field);
+            WIFIMETER_CHECK(rows && rows->size() == 1);
+            if (rows && rows->size() == 1)
+            {
+                WIFIMETER_CHECK_EQ(rows->at(0).intOr("spanSeconds"), std::int64_t{0});
+                WIFIMETER_CHECK_EQ(rows->at(0).stringOr("endedAt"), isoUtcOf(now));
+            }
+        }
+    memoryOnly = before;
+}
+
+void failedUsageWriteRetriesBeforeAdvancingAnotherSample()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    wifimeter::test::useTimeZone("UTC");
+    Harness harness;
+    const auto start = utcTime(2026, 9, 30, 23, 59, 55);
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 1000, 1000)};
+    WIFIMETER_CHECK(harness.service->collectOnce(start).error.code.empty());
+    WIFIMETER_CHECK(harness.store->database().exec(
+        "CREATE TEMP TRIGGER reject_usage_write BEFORE INSERT ON minute_usage BEGIN SELECT RAISE(ABORT,'injected usage failure'); END;").ok);
+    harness.network.sampleReport.samples[0].rxBytes = 1600;
+    harness.network.sampleReport.samples[0].txBytes = 1400;
+    const auto failed = harness.service->collectOnce(start + std::chrono::seconds(10));
+    WIFIMETER_CHECK_EQ(failed.error.code, std::string(errorCode::kStorageFailure));
+    Status status;
+    WIFIMETER_CHECK(harness.store->usage().dailyRange("", "2026-09-30", "2026-10-01", status).empty());
+    WIFIMETER_CHECK(status.ok);
+    const int reads = harness.network.sampleCount;
+    harness.network.sampleReport.samples[0].rxBytes = 1900;
+    harness.network.sampleReport.samples[0].txBytes = 1600;
+    const auto retryAt = start + std::chrono::seconds(15);
+    WIFIMETER_CHECK_EQ(harness.service->collectOnce(retryAt).error.code, std::string(errorCode::kStorageFailure));
+    WIFIMETER_CHECK_EQ(harness.network.sampleCount, reads);
+    WIFIMETER_CHECK(harness.service->nextSampleAt() > retryAt);
+    WIFIMETER_CHECK(harness.store->database().exec("DROP TRIGGER reject_usage_write;").ok);
+    const auto recovered = harness.service->collectOnce(start + std::chrono::seconds(20));
+    WIFIMETER_CHECK(recovered.error.code.empty());
+    const auto rows = harness.store->usage().dailyRange("", "2026-09-30", "2026-10-01", status);
+    WIFIMETER_CHECK(status.ok);
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{2});
+    if (rows.size() == 2)
+    {
+        WIFIMETER_CHECK_EQ(rows[0].rxBytes, ByteCount{300});
+        WIFIMETER_CHECK_EQ(rows[0].txBytes, ByteCount{200});
+        WIFIMETER_CHECK_EQ(rows[1].rxBytes, ByteCount{600});
+        WIFIMETER_CHECK_EQ(rows[1].txBytes, ByteCount{400});
+    }
+    const auto quota = harness.store->totalQuota().current(start + std::chrono::seconds(20), status);
+    WIFIMETER_CHECK(status.ok);
+    WIFIMETER_CHECK_EQ(quota.ledger.usedBytes, ByteCount{1000});
+    ByteCount eventRx = 0, eventTx = 0;
+    for (std::size_t index = 0; index < recovered.names.size(); ++index)
+        if (recovered.names[index] == event::kUsage)
+            for (const auto& record : recovered.items[index].find("minuteRecords")->items())
+            {
+                ByteCount value = 0;
+                WIFIMETER_CHECK(parseDecimal(record.stringOr("rxBytes"), value)); eventRx += value;
+                WIFIMETER_CHECK(parseDecimal(record.stringOr("txBytes"), value)); eventTx += value;
+            }
+    WIFIMETER_CHECK_EQ(eventRx, ByteCount{900});
+    WIFIMETER_CHECK_EQ(eventTx, ByteCount{600});
+    const auto next = harness.service->collectOnce(start + std::chrono::seconds(25));
+    WIFIMETER_CHECK(next.error.code.empty());
+    const auto unchanged = harness.store->usage().dailyRange("", "2026-09-30", "2026-10-01", status);
+    WIFIMETER_CHECK_EQ(unchanged.size(), std::size_t{2});
+    if (unchanged.size() == 2)
+        WIFIMETER_CHECK_EQ(unchanged[1].rxBytes + unchanged[1].txBytes, ByteCount{1000});
+    memoryOnly = before;
+}
+
+void pendingUsageHonorsPauseClearRestoreImportAndRetention()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    wifimeter::test::useTimeZone("UTC");
+    const auto now = utcTime(2026, 10, 1, 10);
+    const auto failedBatch = [&](Harness& harness) {
+        harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 1000, 1000)};
+        WIFIMETER_CHECK(harness.service->collectOnce(now).error.code.empty());
+        WIFIMETER_CHECK(harness.store->database().exec(
+            "CREATE TEMP TRIGGER reject_usage_write BEFORE INSERT ON minute_usage BEGIN SELECT RAISE(ABORT,'injected usage failure'); END;").ok);
+        harness.network.sampleReport.samples[0].rxBytes = 1500;
+        harness.network.sampleReport.samples[0].txBytes = 1300;
+        WIFIMETER_CHECK_EQ(harness.service->collectOnce(now + std::chrono::seconds(5)).error.code, std::string(errorCode::kStorageFailure));
+    };
+    const auto allowWrites = [](Harness& harness) {
+        WIFIMETER_CHECK(harness.store->database().exec("DROP TRIGGER reject_usage_write;").ok);
+    };
+    const auto storedBytes = [](Harness& harness) {
+        Status status;
+        ByteCount bytes = 0;
+        for (const auto& row : harness.store->usage().dailyRange("", "2026-10-01", "2026-10-01", status))
+            bytes += row.rxBytes + row.txBytes;
+        WIFIMETER_CHECK(status.ok);
+        return bytes;
+    };
+    auto pause = JsonValue::makeObject(); pause.set("paused", JsonValue::makeBool(true));
+    auto resume = JsonValue::makeObject(); resume.set("paused", JsonValue::makeBool(false));
+    Harness paused;
+    failedBatch(paused);
+    WIFIMETER_CHECK(paused.call(method::kSetPaused, pause, now + std::chrono::seconds(10)).ok());
+    const int reads = paused.network.sampleCount;
+    allowWrites(paused);
+    WIFIMETER_CHECK(paused.service->collectOnce(now + std::chrono::seconds(15)).error.code.empty());
+    WIFIMETER_CHECK_EQ(paused.network.sampleCount, reads);
+    paused.network.sampleReport.samples[0].rxBytes = 9000;
+    WIFIMETER_CHECK(paused.call(method::kSetPaused, resume, now + std::chrono::seconds(20)).ok());
+    WIFIMETER_CHECK(paused.service->collectOnce(now + std::chrono::seconds(25)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(paused), ByteCount{800});
+
+    Harness cleared;
+    failedBatch(cleared);
+    WIFIMETER_CHECK(cleared.call(method::kClearUsage, now + std::chrono::seconds(10)).ok());
+    allowWrites(cleared);
+    WIFIMETER_CHECK(cleared.call(method::kSetPaused, resume, now + std::chrono::seconds(15)).ok());
+    WIFIMETER_CHECK(cleared.service->collectOnce(now + std::chrono::seconds(20)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(cleared), ByteCount{0});
+
+    Harness empty;
+    const auto document = empty.call(method::kBackup, now);
+    WIFIMETER_CHECK(document.ok());
+    auto restore = JsonValue::makeObject(); restore.set("backup", *document.result.find("backup"));
+    Harness restored;
+    failedBatch(restored);
+    WIFIMETER_CHECK(restored.call(method::kRestore, restore, now + std::chrono::seconds(10)).ok());
+    allowWrites(restored);
+    WIFIMETER_CHECK(restored.call(method::kSetPaused, resume, now + std::chrono::seconds(15)).ok());
+    WIFIMETER_CHECK(restored.service->collectOnce(now + std::chrono::seconds(20)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(restored), ByteCount{0});
+
+    Harness rejectedRestore;
+    failedBatch(rejectedRestore);
+    WIFIMETER_CHECK(!rejectedRestore.call(method::kRestore, JsonValue::makeObject(), now + std::chrono::seconds(10)).ok());
+    allowWrites(rejectedRestore);
+    WIFIMETER_CHECK(rejectedRestore.service->collectOnce(now + std::chrono::seconds(15)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(rejectedRestore), ByteCount{800});
+
+    Harness imported;
+    failedBatch(imported);
+    auto legacy = JsonValue::makeObject();
+    legacy.set("sourceId", JsonValue::makeString("pending-usage"));
+    legacy.set("stateJson", JsonValue::makeString(R"({"SchemaVersion":1,"StartedAt":"2020-01-01T00:00:00Z","UpdatedAt":"2020-01-02T00:00:00Z","Networks":[]})"));
+    WIFIMETER_CHECK_EQ(imported.call("importLegacy", legacy, now + std::chrono::seconds(10)).error.code, std::string(errorCode::kStorageFailure));
+    allowWrites(imported);
+    WIFIMETER_CHECK(imported.call("importLegacy", legacy, now + std::chrono::seconds(15)).ok());
+    WIFIMETER_CHECK_EQ(storedBytes(imported), ByteCount{800});
+    WIFIMETER_CHECK(imported.service->collectOnce(now + std::chrono::seconds(20)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(imported), ByteCount{800});
+
+    Harness retained;
+    failedBatch(retained);
+    Status status;
+    auto settings = retained.store->settings().load(status);
+    settings.retentionDays = 1;
+    WIFIMETER_CHECK(retained.store->settings().save(settings).ok);
+    const auto tomorrow = now + std::chrono::hours(24);
+    WIFIMETER_CHECK_EQ(retained.call(method::kPruneUsage, tomorrow).error.code, std::string(errorCode::kStorageFailure));
+    allowWrites(retained);
+    WIFIMETER_CHECK(retained.call(method::kPruneUsage, tomorrow).ok());
+    WIFIMETER_CHECK_EQ(storedBytes(retained), ByteCount{0});
+    WIFIMETER_CHECK(retained.service->collectOnce(tomorrow + std::chrono::seconds(5)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(retained), ByteCount{0});
+
+    // 手动采集的旧批次已提交、随后新批次失败时，仍推送已提交的增量。
+    Harness partial;
+    failedBatch(partial);
+    allowWrites(partial);
+    WIFIMETER_CHECK(partial.store->database().exec(
+        "CREATE TEMP TRIGGER reject_new_usage BEFORE INSERT ON minute_usage WHEN NEW.rx_bytes=200 BEGIN SELECT RAISE(ABORT,'new usage failure'); END;").ok);
+    partial.network.sampleReport.samples[0].rxBytes = 1700;
+    const auto collect = partial.call(method::kCollectNow, now + std::chrono::seconds(10));
+    WIFIMETER_CHECK_EQ(collect.error.code, std::string(errorCode::kStorageFailure));
+    const auto committedEvents = partial.service->takePendingEvents();
+    WIFIMETER_CHECK_EQ(committedEvents.size(), std::size_t{1});
+    if (committedEvents.size() == 1)
+    {
+        WIFIMETER_CHECK_EQ(committedEvents[0].first, std::string(event::kUsage));
+        WIFIMETER_CHECK_EQ(committedEvents[0].second.find("networks")->at(0).stringOr("rxBytes"), std::string("500"));
+        WIFIMETER_CHECK_EQ(committedEvents[0].second.stringOr("usageRevision"), std::string("2"));
+    }
+    WIFIMETER_CHECK_EQ(storedBytes(partial), ByteCount{800});
+    WIFIMETER_CHECK(partial.store->database().exec("DROP TRIGGER reject_new_usage;").ok);
+    WIFIMETER_CHECK(partial.service->collectOnce(now + std::chrono::seconds(15)).error.code.empty());
+    WIFIMETER_CHECK_EQ(storedBytes(partial), ByteCount{1000});
+
+    Harness stopped;
+    failedBatch(stopped);
+    WIFIMETER_CHECK(stopped.call(method::kSetPaused, pause, now + std::chrono::seconds(10)).ok());
+    WIFIMETER_CHECK_EQ(stopped.call(method::kShutdown, now + std::chrono::seconds(15)).error.code, std::string(errorCode::kStorageFailure));
+    WIFIMETER_CHECK(stopped.service->takePendingEvents().empty());
+    allowWrites(stopped);
+    WIFIMETER_CHECK(stopped.call(method::kShutdown, now + std::chrono::seconds(20)).ok());
+    WIFIMETER_CHECK_EQ(storedBytes(stopped), ByteCount{800});
+    const auto stopEvents = stopped.service->takePendingEvents();
+    WIFIMETER_CHECK_EQ(stopEvents.size(), std::size_t{1});
+    if (stopEvents.size() == 1)
+    {
+        WIFIMETER_CHECK_EQ(stopEvents[0].first, std::string(event::kUsage));
+        WIFIMETER_CHECK_EQ(stopEvents[0].second.find("networks")->at(0).stringOr("rxBytes"), std::string("500"));
+    }
+
+    for (bool reset : {false, true})
+    {
+        Harness changed;
+        failedBatch(changed);
+        allowWrites(changed);
+        changed.network.sampleReport.samples[0] = makeSample("wlan0", reset ? kUuid : "office",
+            reset ? "Home" : "Office", reset ? 1 : 2000, reset ? 1 : 2000);
+        WIFIMETER_CHECK(changed.service->collectOnce(now + std::chrono::seconds(10)).error.code.empty());
+        WIFIMETER_CHECK_EQ(storedBytes(changed), ByteCount{800});
+        const auto gaps = changed.store->usage().gapsInRange(isoUtcOf(now), isoUtcOf(now + std::chrono::seconds(15)), status);
+        WIFIMETER_CHECK_EQ(gaps.size(), std::size_t{1});
+        if (!gaps.empty())
+            WIFIMETER_CHECK(gaps[0].reason == (reset ? CoverageReason::counterReset : CoverageReason::reattributed));
+        changed.network.sampleReport.samples[0].rxBytes += 100;
+        WIFIMETER_CHECK(changed.service->collectOnce(now + std::chrono::seconds(15)).error.code.empty());
+        WIFIMETER_CHECK_EQ(storedBytes(changed), ByteCount{900});
+    }
+    memoryOnly = before;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1503,6 +1809,9 @@ int main(int argc, char** argv)
         return WIFIMETER_REPORT();
     }
     memoryOnly = argc == 2 && std::string(argv[1]) == "--memory";
+    failedUsageWriteRetriesBeforeAdvancingAnotherSample();
+    pendingUsageHonorsPauseClearRestoreImportAndRetention();
+    snapshotCoverageUsesCompleteHistoryAndLocalCalendarDays();
     restoreRecordsItsPausedIntervalInMemory();
     minuteHistoryPreservesBoundariesAndBackups();
     pausedRefreshPreservesLegacyNetworkIdentity();

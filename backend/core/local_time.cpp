@@ -70,6 +70,16 @@ LocalStamp shiftLocalDays(const LocalStamp& stamp, int days)
     return localStampOf(std::chrono::system_clock::from_time_t(seconds));
 }
 
+TimePoint localDayStartOf(const LocalStamp& stamp)
+{
+    std::tm time{};
+    time.tm_year = stamp.year - 1900;
+    time.tm_mon = stamp.month - 1;
+    time.tm_mday = stamp.day;
+    time.tm_isdst = -1;
+    return std::chrono::system_clock::from_time_t(std::mktime(&time));
+}
+
 bool parseDayKey(std::string_view day, TimePoint& at)
 {
     if (day.size() != 10 || day[4] != '-' || day[7] != '-')

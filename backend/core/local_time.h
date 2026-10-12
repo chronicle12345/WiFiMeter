@@ -42,6 +42,9 @@ std::string hourKeyOf(const LocalStamp& stamp);
 // 基准取当天 12:00，避免夏令时切换当天的午夜歧义。
 LocalStamp shiftLocalDays(const LocalStamp& stamp, int days);
 
+// 当地日历当天的起点；午夜偏移按该时刻的夏令时规则计算。
+TimePoint localDayStartOf(const LocalStamp& stamp);
+
 // 解析 YYYY-MM-DD 为本地当天 12:00 的时间点；格式或日期不合法时返回 false。
 // 取正午是为了避开夏令时切换当天的午夜歧义。
 bool parseDayKey(std::string_view day, TimePoint& at);

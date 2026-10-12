@@ -139,14 +139,14 @@ std::vector<storage::AppUsageRow> appsFromMinutes(const std::vector<storage::App
     return result;
 }
 
-JsonValue appGapToJson(const storage::CoverageGap& gap)
+JsonValue coverageGapToJson(const storage::CoverageGap& gap)
 {
     JsonValue entry = JsonValue::makeObject();
     entry.set("networkId", JsonValue::makeString(gap.networkKey));
     entry.set("reason", JsonValue::makeString(std::string(storage::coverageReasonName(gap.reason))));
     entry.set("detail", JsonValue::makeString(gap.reasonDetail));
     entry.set("startedAt", JsonValue::makeString(core::isoUtcOf(gap.startedAt)));
-    entry.set("endedAt", JsonValue::makeString(gap.span.count() > 0 ? core::isoUtcOf(gap.endedAt) : ""));
+    entry.set("endedAt", JsonValue::makeString(gap.endedAt != TimePoint{} ? core::isoUtcOf(gap.endedAt) : ""));
     entry.set("spanSeconds", JsonValue::makeInt(gap.span.count()));
     return entry;
 }
@@ -472,7 +472,7 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         {
             if (!(status = deps_.store.usage().addGap(gap)))
                 break;
-            gapRecords.push(appGapToJson(gap));
+            gapRecords.push(coverageGapToJson(gap));
         }
     }
     const bool collecting = report.state == platform::AppCollectorState::running || report.state == platform::AppCollectorState::partial;
@@ -493,7 +493,7 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         {
             status = deps_.store.usage().addGap(gap);
             if (status)
-                gapRecords.push(appGapToJson(gap));
+                gapRecords.push(coverageGapToJson(gap));
         }
     }
     if (!status || !(status = transaction.commit()))
@@ -679,28 +679,24 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     }
     result.set("hourly", std::move(hourlyArray));
 
-    // 覆盖空档：界面据此说明“这段时间没有采集到数据”，而不是显示成 0。
-    // 空档按本地日期的整天区间查询：从起始日的正午往前推半天到结束日的次日正午。
-    TimePoint rangeStart = now - std::chrono::hours(24 * 366);
-    TimePoint rangeEnd = now;
-    if (!core::parseDayKey(fromDay, rangeStart))
-        rangeStart = now - std::chrono::hours(24 * 366);
-    if (!core::parseDayKey(toDay, rangeEnd))
-        rangeEnd = now;
-    rangeStart -= std::chrono::hours(12);
-    rangeEnd += std::chrono::hours(12);
-    const std::vector<storage::CoverageGap> gaps = deps_.store.usage().gapsInRange(core::isoUtcOf(rangeStart), core::isoUtcOf(rangeEnd), status);
+    // 覆盖空档：界面据此说明这段时间没有采集到数据。
+    // 当地一天可能长 23 或 25 小时，分别计算两端午夜，避免用正午加减固定时长。
+    // 全部历史的起点是查询哨兵，无需转换为 system_clock 可表示的时间点。
+    TimePoint parsedDay;
+    std::string rangeStart = "0001-01-01T00:00:00Z";
+    if (fromDay != "0001-01-01")
+    {
+        core::parseDayKey(fromDay, parsedDay);
+        rangeStart = core::isoUtcOf(core::localDayStartOf(core::localStampOf(parsedDay)));
+    }
+    core::parseDayKey(toDay, parsedDay);
+    const std::string rangeEnd = core::isoUtcOf(core::localDayStartOf(
+        core::shiftLocalDays(core::localStampOf(parsedDay), 1)) - std::chrono::seconds(1));
+    const std::vector<storage::CoverageGap> gaps = deps_.store.usage().gapsInRange(rangeStart, rangeEnd, status);
+    if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
     JsonValue gapArray = JsonValue::makeArray();
     for (const storage::CoverageGap& gap : gaps)
-    {
-        JsonValue entry = JsonValue::makeObject();
-        entry.set("networkId", JsonValue::makeString(gap.networkKey));
-        entry.set("reason", JsonValue::makeString(std::string(storage::coverageReasonName(gap.reason))));
-        entry.set("startedAt", JsonValue::makeString(core::isoUtcOf(gap.startedAt)));
-        entry.set("endedAt", JsonValue::makeString(core::isoUtcOf(gap.endedAt)));
-        entry.set("spanSeconds", JsonValue::makeInt(static_cast<std::int64_t>(gap.span.count())));
-        gapArray.push(std::move(entry));
-    }
+        gapArray.push(coverageGapToJson(gap));
     result.set("gaps", std::move(gapArray));
 
     result.set("totalQuota", totalQuotaJson(now, status));
@@ -719,7 +715,7 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
     result.set("appCollection", appCollectionToJson());
     result.set("appProcesses", appProcesses_);
-    const auto appGaps = deps_.store.usage().gapsInRange(core::isoUtcOf(rangeStart), core::isoUtcOf(rangeEnd), status, true);
+    const auto appGaps = deps_.store.usage().gapsInRange(rangeStart, rangeEnd, status, true);
     if (!status)
     {
         response.error = Error{errorCode::kStorageFailure, status.message};
@@ -727,7 +723,7 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     }
     JsonValue appGapArray = JsonValue::makeArray();
     for (const auto& gap : appGaps)
-        appGapArray.push(appGapToJson(gap));
+        appGapArray.push(coverageGapToJson(gap));
     result.set("appGaps", std::move(appGapArray));
 
     response.result = std::move(result);
@@ -1205,6 +1201,7 @@ BackendService::Response BackendService::restore(const JsonValue& params, TimePo
 
     proxyReportCurrent_ = false;
     // 恢复后暂停采集，避免刚恢复的历史立刻被当前计数差覆盖。
+    pendingUsage_.reset();
     accumulator_.clear();
     paused_ = true;
     collectorState_ = "paused";
@@ -1277,6 +1274,8 @@ BackendService::Response BackendService::disconnect(const JsonValue& params)
 BackendService::Response BackendService::pruneUsage(TimePoint now)
 {
     Response response;
+    if (const auto flushed = flushPendingUsage(); !flushed)
+    { response.error = Error{errorCode::kStorageFailure, flushed.message}; return response; }
     std::size_t removedDaily = 0;
     std::size_t removedHourly = 0;
     if (const Status pruned = deps_.store.pruneByRetention(now, removedDaily, removedHourly); !pruned)
@@ -1296,6 +1295,9 @@ BackendService::Response BackendService::pruneUsage(TimePoint now)
 BackendService::Response BackendService::legacyRequest(const JsonValue& params, TimePoint now, bool query)
 {
     Response response;
+    if (!query)
+        if (const auto flushed = flushPendingUsage(); !flushed)
+        { response.error = Error{errorCode::kStorageFailure, flushed.message}; return response; }
     std::string code;
     const Status status = query ? legacyMigrationStatus(deps_.store, params, response.result, code)
                                 : importLegacy(deps_.store, params, now, response.result, code);
@@ -1338,6 +1340,8 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
             response.error = Error{errorCode::kStorageFailure, cleared.message};
             return response;
         }
+        pendingUsage_.reset();
+        accumulator_.clear();
         if (const auto cleared = clearProxyObservations(); !cleared)
         { response.error = Error{errorCode::kStorageFailure, cleared.message}; return response; }
         proxyReportCurrent_ = false;
@@ -1381,13 +1385,13 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
         else
             events = collectOnce(now);
         Response response;
+        for (std::size_t index = 0; index < events.items.size(); ++index)
+            pending_.emplace_back(events.names[index], events.items[index]);
         if (!events.error.code.empty())
         {
             response.error = events.error;
             return response;
         }
-        for (std::size_t index = 0; index < events.items.size(); ++index)
-            pending_.emplace_back(events.names[index], events.items[index]);
         JsonValue result = JsonValue::makeObject();
         result.set("events", JsonValue::makeInt(static_cast<std::int64_t>(events.items.size())));
         response.result = std::move(result);
@@ -1397,6 +1401,8 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
     if (request.method == method::kShutdown)
     {
         Response response;
+        if (const auto flushed = flushPendingUsage(); !flushed)
+        { response.error = Error{errorCode::kStorageFailure, flushed.message}; return response; }
         response.result = JsonValue::makeObject();
         return response;
     }
@@ -1544,6 +1550,72 @@ void BackendService::evaluateQuotas(TimePoint now, Events& events)
     }
 }
 
+Status BackendService::retryPendingUsage(Events& events)
+{
+    if (!pendingUsage_) return Status::success();
+    storage::ApplySummary summary;
+    if (const auto written = deps_.store.applyUsage(pendingUsage_->result, pendingUsage_->at, summary); !written)
+        return written;
+    ++usageRevision_;
+    appendUsageEvent(pendingUsage_->result, pendingUsage_->at, events);
+    pendingUsage_.reset();
+    return Status::success();
+}
+
+Status BackendService::flushPendingUsage()
+{
+    Events events;
+    const auto written = retryPendingUsage(events);
+    for (std::size_t index = 0; index < events.items.size(); ++index)
+        pending_.emplace_back(events.names[index], std::move(events.items[index]));
+    return written;
+}
+
+void BackendService::appendUsageEvent(const core::AccumulateResult& accumulated, TimePoint at, Events& events)
+{
+    if (accumulated.deltas.empty()) return;
+    Status lookup;
+    JsonValue usage = JsonValue::makeObject();
+    const auto stamp = core::localStampOf(at);
+    usage.set("day", JsonValue::makeString(core::dayKeyOf(stamp)));
+    usage.set("hour", JsonValue::makeInt(stamp.hour));
+    usage.set("minute", JsonValue::makeInt(stamp.minute));
+    usage.set("usageRevision", bytes(usageRevision_));
+    std::map<std::string, std::pair<ByteCount, ByteCount>> recorded;
+    std::vector<storage::MinuteUsageRow> minuteDeltas;
+    for (const auto& delta : accumulated.deltas)
+    {
+        auto& totals = recorded[delta.network.key];
+        totals.first += delta.rxBytes;
+        totals.second += delta.txBytes;
+        auto rows = storage::minuteUsageOf(delta.network.key, delta.at, delta.span, delta.rxBytes, delta.txBytes);
+        minuteDeltas.insert(minuteDeltas.end(), rows.begin(), rows.end());
+    }
+    usage.set("minuteRecords", minuteRowsToJson(minuteDeltas));
+    JsonValue networks = JsonValue::makeArray();
+    for (const auto& entry : recorded)
+    {
+        JsonValue item = JsonValue::makeObject();
+        item.set("networkId", JsonValue::makeString(entry.first));
+        item.set("rxBytes", bytes(entry.second.first));
+        item.set("txBytes", bytes(entry.second.second));
+        // 首次记录网络时带上元数据，让界面直接显示网络名称及额度。
+        const auto record = deps_.store.networks().find(entry.first, lookup);
+        if (lookup && record.has_value())
+        {
+            const auto ledger = deps_.store.networks().ledger(entry.first, lookup);
+            const ByteCount used = lookup && ledger.has_value() ? ledger->usedBytes : 0;
+            item.set("network", networkToJson(*record, used, core::periodKeyFor(record->quotaPeriod, at)));
+        }
+        networks.push(std::move(item));
+    }
+    usage.set("networks", std::move(networks));
+    auto total = totalQuotaJson(at, lookup);
+    if (lookup) usage.set("totalQuota", std::move(total));
+    events.names.push_back(event::kUsage);
+    events.items.push_back(std::move(usage));
+}
+
 BackendService::Events BackendService::collectOnce(TimePoint now)
 {
     Events events;
@@ -1554,6 +1626,13 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     }
 
     const int interval = intervalSeconds();
+    // 失败批次包含原始日期、跨度及身份变化，先完整补写，再读取下一轮计数。
+    if (const auto retried = retryPendingUsage(events); !retried)
+    {
+        nextSampleAt_ = now + std::chrono::seconds(interval);
+        events.error = Error{errorCode::kStorageFailure, retried.message};
+        return events;
+    }
     if (hasSampled_)
     {
         const auto gap = std::chrono::duration_cast<std::chrono::seconds>(now - lastSampleAt_);
@@ -1574,10 +1653,11 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
 
     refreshLive(report, now);
 
-    const core::AccumulateResult accumulated = accumulator_.accumulate(report, now);
+    core::AccumulateResult accumulated = accumulator_.accumulate(report, now);
     storage::ApplySummary summary;
     if (const Status applied = deps_.store.applyUsage(accumulated, now, summary); !applied)
     {
+        pendingUsage_ = PendingUsage{std::move(accumulated), now};
         events.error = Error{errorCode::kStorageFailure, applied.message};
         return events;
     }
@@ -1587,56 +1667,13 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     // 速率用本次增量除以区间长度，与累计差值保持同一口径。
     collectApplications(report, now, events);
     collectProxyClients(now);
-    std::map<std::string, std::pair<ByteCount, ByteCount>> recorded;
     for (const core::UsageDelta& delta : accumulated.deltas)
     {
         const auto seconds = delta.span.count() > 0 ? delta.span.count() : 1;
         linkRates_[delta.interfaceId] = {delta.rxBytes / static_cast<ByteCount>(seconds), delta.txBytes / static_cast<ByteCount>(seconds)};
-        auto& totals = recorded[delta.network.key];
-        totals.first += delta.rxBytes;
-        totals.second += delta.txBytes;
     }
 
-    if (!accumulated.deltas.empty())
-    {
-        Status lookup;
-        JsonValue usage = JsonValue::makeObject();
-        usage.set("day", JsonValue::makeString(core::dayKeyOf(core::localStampOf(now))));
-        usage.set("hour", JsonValue::makeInt(core::localStampOf(now).hour));
-        usage.set("minute", JsonValue::makeInt(core::localStampOf(now).minute));
-        usage.set("usageRevision", bytes(usageRevision_));
-        std::vector<storage::MinuteUsageRow> minuteDeltas;
-        for (const auto& delta : accumulated.deltas)
-        {
-            auto rows = storage::minuteUsageOf(delta.network.key,delta.at,delta.span,delta.rxBytes,delta.txBytes);
-            minuteDeltas.insert(minuteDeltas.end(), rows.begin(), rows.end());
-        }
-        usage.set("minuteRecords", minuteRowsToJson(minuteDeltas));
-        JsonValue networks = JsonValue::makeArray();
-        for (const auto& entry : recorded)
-        {
-            JsonValue item = JsonValue::makeObject();
-            item.set("networkId", JsonValue::makeString(entry.first));
-            item.set("rxBytes", bytes(entry.second.first));
-            item.set("txBytes", bytes(entry.second.second));
-            // 顺带带上网络记录：首次见到某个网络时（新装的应用、换了新 Wi-Fi），
-            // 界面的快照里还没有这个网络，只推增量的话它无法把用量归属到名字上，
-            // 于是显示“未识别网络”并且用量一直是 0，要重启应用才恢复。
-            const auto record = deps_.store.networks().find(entry.first, lookup);
-            if (lookup && record.has_value())
-            {
-                const auto ledger = deps_.store.networks().ledger(entry.first, lookup);
-                const ByteCount used = lookup && ledger.has_value() ? ledger->usedBytes : 0;
-                item.set("network", networkToJson(*record, used, core::periodKeyFor(record->quotaPeriod, now)));
-            }
-            networks.push(std::move(item));
-        }
-        usage.set("networks", std::move(networks));
-        auto total = totalQuotaJson(now, lookup);
-        if (lookup) usage.set("totalQuota", std::move(total));
-        events.names.push_back(event::kUsage);
-        events.items.push_back(std::move(usage));
-    }
+    appendUsageEvent(accumulated, now, events);
 
     events.names.push_back(event::kLive);
     auto live = buildLive();
