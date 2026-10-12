@@ -12,30 +12,74 @@ function createWindowsAutostart({ executable, args = [], execute = execFileSync 
     const quote = value => `"${String(value).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`;
     const argumentText = args.map(quote).join(' ');
     const command = `${quote(executable)}${argumentText ? ' ' + argumentText : ''}`;
-    let decoder;
+    let decoder, unsupportedEncoding;
     const decode = value => {
         if (!Buffer.isBuffer(value)) return String(value || '');
         if (value.every(byte => byte < 128)) return value.toString('utf8');
+        if (unsupportedEncoding) throw unsupportedEncoding;
         if (!decoder) {
             const output = execute('chcp.com', [], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
             const codePage = String(output).match(/(\d+)\s*$/)?.[1];
             const encoding = { 65001: 'utf-8', 936: 'gbk', 950: 'big5', 932: 'shift_jis', 949: 'euc-kr', 866: 'ibm866' }[codePage] || `windows-${codePage}`;
             // 不猜测本地代码页，否则中文路径和缺失值错误会被误读。
-            decoder = new TextDecoder(encoding, { fatal: true });
+            try { decoder = new TextDecoder(encoding, { fatal: true }); }
+            catch (error) {
+                if (error.code === 'ERR_ENCODING_NOT_SUPPORTED') unsupportedEncoding = error;
+                throw error;
+            }
         }
         return decoder.decode(value);
     };
+    const unicodeQuery = (key, name, type) => {
+        // CLI 无法可靠解码或错误语言未知时回退；.NET 只读查询区分缺失与拒绝访问。
+        const payload = Buffer.from(JSON.stringify({ key, name, type }), 'utf8').toString('base64');
+        const script = `$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$request=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json
+$registry=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($request.key.Substring(5), $false)
+try {
+    $result=@{found=$false;value=$null}
+    if($null -ne $registry -and $registry.GetValueNames() -contains $request.name){
+        $kind=$registry.GetValueKind($request.name).ToString()
+        if(($request.type -eq 'REG_SZ' -and $kind -ne 'String') -or ($request.type -eq 'REG_BINARY' -and $kind -ne 'Binary')){throw 'Unexpected registry value type.'}
+        $value=$registry.GetValue($request.name,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if($request.type -eq 'REG_BINARY'){$value=[BitConverter]::ToString([byte[]]$value).Replace('-','')}
+        $result=@{found=$true;value=$value}
+    }
+    [Console]::Write(($result | ConvertTo-Json -Compress))
+} finally {if($null -ne $registry){$registry.Dispose()}}`;
+        const executable = path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const output = execute(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+            encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000, maxBuffer: 256 * 1024
+        });
+        const result = JSON.parse(String(output).trim());
+        if (!result || typeof result.found !== 'boolean' || (result.found && typeof result.value !== 'string')) throw Error(`无法读取开机启动项：${name}`);
+        return result.found ? result.value : null;
+    };
+    const invalidEncoding = error => ['ERR_ENCODING_NOT_SUPPORTED', 'ERR_ENCODING_INVALID_ENCODED_DATA'].includes(error?.code);
     const query = (key, name, type) => {
+        let value;
         try {
             const output = decode(execute('reg.exe', ['query', key, '/v', name], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }));
-            const value = output.match(new RegExp(`\\b${type}\\s+([^\\r\\n]+)`))?.[1]?.trim();
+            value = output.match(new RegExp(`\\b${type}\\s+([^\\r\\n]+)`))?.[1]?.trim();
             if (value === undefined) throw Error(`无法读取开机启动项：${name}`);
-            return value;
         } catch (error) {
             // reg.exe 的缺失值和权限错误都可能返回 1，不能把拒绝访问当成不存在。
-            if (error.status === 1 && /unable to find|找不到指定的注册表|系统找不到指定/i.test(decode(error.stderr))) return null;
+            if (invalidEncoding(error)) return unicodeQuery(key, name, type);
+            if (error.status === 1) {
+                let message;
+                try { message = decode(error.stderr); }
+                catch (decodeError) {
+                    if (invalidEncoding(decodeError)) return unicodeQuery(key, name, type);
+                    throw decodeError;
+                }
+                if (/unable to find|找不到指定的注册表|系统找不到指定/i.test(message)) return null;
+                if (!/access is denied|拒绝访问/i.test(message)) return unicodeQuery(key, name, type);
+            }
             throw error;
         }
+        // 问号可能来自 CLI 的损失替代；读取原值后仍按完整路径和参数判断归属。
+        return type === 'REG_SZ' && value.includes('?') ? unicodeQuery(key, name, type) : value;
     };
     const approval = name => {
         const value = query(approvedKey, name, 'REG_BINARY');

@@ -536,7 +536,16 @@ async function writeAutosave(form,fields){
   const prefs=Object.fromEntries(Object.entries(patch).filter(([key])=>windowFields.has(key)));
   const settings=Object.fromEntries(Object.entries(patch).filter(([key])=>!windowFields.has(key)));
   if(Object.keys(prefs).length){receiveWindowPreferences(await window.desktop.windowPreferences.update(prefs));if(Object.hasOwn(prefs,'closeAction'))settings.minimizeToTray=prefs.closeAction==='tray';}
-  if(Object.keys(settings).length){const result=await store.updateSettings(settings);if(settings.autoStart&&result.system&&!result.system.autoStart)throw Error(t('偏好已保存，但写入开机启动项失败，请检查用户目录权限。'));}
+  if(Object.keys(settings).length){
+   const result=await store.updateSettings(settings);
+   if(Object.hasOwn(settings,'autoStart')&&result.system){
+    const error=result.system.autoStartError;
+    if(error||result.system.autoStart!==Boolean(settings.autoStart)){
+     const message=t(settings.autoStart?'偏好已保存，但开启开机启动失败。':'偏好已保存，但关闭开机启动失败。');
+     throw Error(error?`${message} ${error}`:message);
+    }
+   }
+  }
   if(retentionShortened){await store.pruneUsage();await store.reload();}
   if(Object.hasOwn(settings,'language')){setLanguage(settings.language);languageRenderNeeded=true;}
   restartSampler();return;

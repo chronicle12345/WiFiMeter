@@ -17,10 +17,12 @@ const cp936Missing = Buffer.from('b4edcef33a20cfb5cdb3d5d2b2bbb5bdd6b8b6a8b5c4d7
 const cp936Denied = Buffer.from('b4edcef33a20bedcbef8b7c3cecaa1a30d0d0a', 'hex');
 
 function fixture(t, entries = [], { rejectAdd = false, ignoreAdd = false, rejectApprovalAdd = false, ignoreApprovalAdd = false,
-    approvals = [], missingError = englishMissing, queryError = null, bufferQueries = false } = {}) {
+    approvals = [], missingError = englishMissing, queryError = null, bufferQueries = false,
+    executable: actualExecutable = appExe, codePage = 936, fallback = false, fallbackError = null, queryOutput = null } = {}) {
+    const command = `"${actualExecutable}"`;
     const registry = new Map(entries);
     const approval = new Map(approvals);
-    const calls = [], boundaryErrors = [], codePageReads = [];
+    const calls = [], boundaryErrors = [], codePageReads = [], fallbackReads = [];
     const execute = (executable, args, options) => {
         // 严格限定外部命令边界，替身不得放行其他键、值名称或系统命令。
         try {
@@ -31,7 +33,27 @@ function fixture(t, entries = [], { rejectAdd = false, ignoreAdd = false, reject
                 assert.ok(bufferQueries || Buffer.isBuffer(missingError) || Buffer.isBuffer(queryError?.stderr));
                 assert.deepEqual(args, []);
                 codePageReads.push({ executable, args });
-                return Buffer.from('Active code page: 936\r\n');
+                return Buffer.from(`Active code page: ${codePage}\r\n`);
+            }
+            if (executable.toLowerCase().endsWith('\\powershell.exe')) {
+                assert.ok(fallback, '正常中英文读取不得增加 PowerShell 子进程');
+                assert.deepEqual(args.slice(0, 4), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
+                assert.equal(args.length, 5);
+                assert.equal(options.encoding, 'utf8');
+                const script = Buffer.from(args[4], 'base64').toString('utf16le');
+                assert.doesNotMatch(script, /SetValue|DeleteValue|CreateSubKey|Remove-Item|Set-Item/i);
+                assert.match(script, /OpenSubKey\([^,]+,\s*\$false\)/);
+                assert.match(script, /OutputEncoding/);
+                const encoded = script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)?.[1];
+                assert.ok(encoded);
+                const request = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+                assert.ok([runKey, approvedKey].includes(request.key));
+                assert.ok(names.includes(request.name));
+                assert.equal(request.type, request.key === runKey ? 'REG_SZ' : 'REG_BINARY');
+                fallbackReads.push(request);
+                if (fallbackError) throw fallbackError;
+                const values = request.key === runKey ? registry : approval;
+                return JSON.stringify({ found: values.has(request.name), value: values.get(request.name) ?? null });
             }
             assert.equal(executable, 'reg.exe');
             assert.ok([runKey, approvedKey].includes(args[1]));
@@ -55,7 +77,7 @@ function fixture(t, entries = [], { rejectAdd = false, ignoreAdd = false, reject
                 assert.deepEqual(args, ['delete', args[1], '/v', name, '/f']);
             }
         } catch (error) {
-            boundaryErrors.push(error);
+            if (error !== fallbackError) boundaryErrors.push(error);
             throw error;
         }
         const [operation, key, , name] = args;
@@ -65,6 +87,7 @@ function fixture(t, entries = [], { rejectAdd = false, ignoreAdd = false, reject
             if (queryError?.key === key && queryError?.name === name) throw Object.assign(Error('Registry query failed.'), { status: 1, stderr: queryError.stderr });
             if (!store.has(name)) throw Object.assign(Error('Registry value does not exist.'), { status: 1, stderr: missingError });
             const output = `\r\n${key}\r\n    ${name}    ${key === runKey ? 'REG_SZ' : 'REG_BINARY'}    ${store.get(name)}\r\n`;
+            if (queryOutput) return queryOutput(output, { key, name });
             return bufferQueries ? Buffer.from(output) : output;
         }
         if (operation === 'add') {
@@ -76,14 +99,14 @@ function fixture(t, entries = [], { rejectAdd = false, ignoreAdd = false, reject
         return 'The operation completed successfully.\r\n';
     };
     const native = createNativeAdapter({
-        configuration: { platform: 'win32', appExe, isPackaged: true, userData: 'fixture' },
+        configuration: { platform: 'win32', appExe: actualExecutable, isPackaged: true, userData: 'fixture' },
         send() { assert.fail('自启动操作不得调用原生窗口、对话框或通知'); },
         execute,
         executeAsync() { assert.fail('自启动操作不得启动其他外部进程'); }
     });
     t.after(() => assert.deepEqual(boundaryErrors, [], '系统命令必须符合注册表替身限定的边界'));
     const mutations = () => calls.filter(call => call.operation !== 'query');
-    return { app: native.app, registry, approval, calls, mutations, codePageReads };
+    return { app: native.app, registry, approval, calls, mutations, codePageReads, fallbackReads };
 }
 
 for (const name of names) {
@@ -320,6 +343,75 @@ test('CP936 的 reg.exe 拒绝访问错误 Buffer 必须报错且不得覆盖已
     assert.throws(() => app.setLoginItemSettings({ openAtLogin: true }));
     assert.deepEqual(registry, new Map(original));
     assert.deepEqual(mutations(), []);
+});
+
+for (const codePage of [437, 850]) test(`不支持的 OEM ${codePage} 使用只读 Unicode 查询，非 ASCII 路径能迁移`, t => {
+    const executable = 'C:\\Users\\José\\WiFiMeter.exe';
+    const canonical = `"${executable}"`;
+    const { app, registry, approval, codePageReads, fallbackReads } = fixture(t, [
+        ['io.wifimeter.demo', `${canonical} --tray`]
+    ], { executable, codePage, bufferQueries: true, fallback: true,
+        approvals: [['io.wifimeter.demo', approvalDisabled]] });
+    assert.equal(app.getLoginItemSettings().openAtLogin, false);
+    assert.equal(app.setLoginItemSettings({ openAtLogin: true }).openAtLogin, false);
+    assert.deepEqual(registry, new Map([['WiFiMeter', canonical]]));
+    assert.equal(approval.get('WiFiMeter'), approvalDisabled);
+    assert.equal(codePageReads.length, 1, '不支持的代码页也只查询一次');
+    assert.ok(fallbackReads.length > 0);
+});
+
+test('未知语言的缺失值通过只读查询确认，首次开启不被误判为权限错误', t => {
+    const { app, registry, fallbackReads } = fixture(t, [], { fallback: true,
+        missingError: 'FEHLER: Der angegebene Registrierungsschlüssel bzw. Wert wurde nicht gefunden.' });
+    assert.equal(app.setLoginItemSettings({ openAtLogin: true }).openAtLogin, true);
+    assert.deepEqual(registry, new Map([['WiFiMeter', command]]));
+    assert.ok(fallbackReads.length > 0);
+});
+
+test('未知语言的拒绝访问在只读回退中仍报错，不能当作缺失值覆盖', t => {
+    const original = [['WiFiMeter', '"C:\\Other\\WiFiMeter.exe"']];
+    const denied = Object.assign(Error('Registry read denied.'), { status: 1, stderr: 'Access is denied.' });
+    const { app, registry, mutations, fallbackReads } = fixture(t, original, { fallback: true,
+        queryError: { key: runKey, name: 'WiFiMeter', stderr: 'FEHLER: Zugriff verweigert.' }, fallbackError: denied });
+    assert.throws(() => app.setLoginItemSettings({ openAtLogin: true }), /Registry read denied/);
+    assert.deepEqual(registry, new Map(original));
+    assert.deepEqual(mutations(), []);
+    assert.equal(fallbackReads.length, 1);
+});
+
+for (const channel of ['stdout', 'stderr']) test(`CLI 输出恢复：无效 UTF-8 ${channel} 通过只读 Unicode 查询恢复`, t => {
+    const settings = { codePage: 65001, bufferQueries: true, fallback: true };
+    if (channel === 'stdout') settings.queryOutput = output => Buffer.concat([Buffer.from(output), Buffer.from([0xff])]);
+    else settings.queryError = { key: runKey, name: 'WiFiMeter', stderr: Buffer.from([0xff]) };
+    const { app, registry, mutations, fallbackReads } = fixture(t, [['WiFiMeter', command]], settings);
+    assert.equal(app.getLoginItemSettings().openAtLogin, true);
+    assert.deepEqual(registry, new Map([['WiFiMeter', command]]));
+    assert.deepEqual(mutations(), []);
+    assert.equal(fallbackReads.length, 1);
+});
+
+test('CLI 输出恢复：替身将不可表示路径替换为问号时核对原值后识别本程序', t => {
+    const executable = 'C:\\Users\\A😀\\WiFiMeter.exe';
+    const canonical = `"${executable}"`;
+    const { app, registry, codePageReads, fallbackReads } = fixture(t, [['WiFiMeter', canonical]], {
+        executable, fallback: true, queryOutput: output => Buffer.from(output.replaceAll('😀', '?'))
+    });
+    assert.equal(app.getLoginItemSettings().openAtLogin, true);
+    app.setLoginItemSettings({ openAtLogin: false });
+    assert.equal(registry.size, 0);
+    assert.equal(codePageReads.length, 0, 'ASCII 问号替代输出无需查询代码页');
+    assert.ok(fallbackReads.length > 0);
+});
+
+test('CLI 输出恢复：核对含真实问号的 URI 参数后仍保留未知命令', t => {
+    const original = [['WiFiMeter', `${command} --url https://example.test/?mode=fixture`]];
+    const { app, registry, mutations, fallbackReads } = fixture(t, original, { fallback: true });
+    assert.equal(app.getLoginItemSettings().openAtLogin, false);
+    app.setLoginItemSettings({ openAtLogin: false });
+    assert.throws(() => app.setLoginItemSettings({ openAtLogin: true }), /其他路径或参数/);
+    assert.deepEqual(registry, new Map(original));
+    assert.deepEqual(mutations(), []);
+    assert.ok(fallbackReads.length > 0);
 });
 
 test('规范登记未变时设置同步仅查询两项 Run 和一次批准状态', async t => {

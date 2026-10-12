@@ -14,6 +14,8 @@ export const english = Object.fromEntries(`
 入站已配置|Inbound blocking configured
 出站已配置|Outbound blocking configured
 规则未启用|Rules disabled
+偏好已保存，但开启开机启动失败。|Preferences saved, but enabling startup failed.
+偏好已保存，但关闭开机启动失败。|Preferences saved, but disabling startup failed.
 列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。|This list saves the last queried state. Query to check current restrictions; download limits stop when WiFiMeter exits.
 还没有应用限制记录。设置成功后会显示在这里。|No restriction records yet. Successfully configured restrictions will appear here.
 应用限制记录未能读取。|Unable to read application restriction records.

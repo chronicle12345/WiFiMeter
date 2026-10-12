@@ -6,9 +6,58 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+import { runInNewContext } from 'node:vm';
 
 import { createSystemIntegration, autostartFile } from '../electron/system.cjs';
 import { createNativeAdapter } from '../tauri/native-adapter.cjs';
+
+for (const requested of [false, true]) test(`autostart regression: rejected ${requested ? 'enable' : 'disable'} reports the actual state and a retryable error`, async () => {
+    const actual = !requested;
+    const app = {
+        setLoginItemSettings() { throw Object.assign(Error('Access is denied.'), { code: 'EACCES' }); },
+        getLoginItemSettings: () => ({ openAtLogin: actual })
+    };
+    const integration = createSystemIntegration({ app, platform: 'win32', getWindow: () => null });
+    const result = await integration.applySettings({ autoStart: requested });
+    assert.equal(result.autoStart, actual);
+    assert.match(result.autoStartError, /Access is denied/);
+    app.setLoginItemSettings = () => ({ openAtLogin: requested });
+    const retried = await integration.applySettings({ autoStart: requested });
+    assert.equal(retried.autoStart, requested);
+    assert.equal(retried.autoStartError, undefined);
+});
+
+test('autostart regression: unreadable status after a failed disable still reports an explicit error', async () => {
+    const integration = createSystemIntegration({ platform: 'win32', getWindow: () => null, app: {
+        setLoginItemSettings() { throw Error('Cannot remove startup entry.'); },
+        getLoginItemSettings() { throw Error('Cannot read startup entry.'); }
+    } });
+    const result = await integration.applySettings({ autoStart: false });
+    assert.match(result.autoStartError, /Cannot remove startup entry/);
+});
+
+for (const executable of ['/home/fixture/My Apps/WiFiMeter.AppImage', '/home/fixture/cash$"tick`\\100%/WiFiMeter.AppImage']) {
+    test(`autostart regression: Desktop Entry quoting restores one executable argument for ${executable}`, async () => {
+        const require = createRequire(import.meta.url), module = { exports: {} }, files = new Map();
+        runInNewContext(readFileSync(new URL('../electron/system.cjs', import.meta.url), 'utf8'), {
+            module, process: { env: { APPIMAGE: executable }, execPath: '/usr/bin/node', platform: 'linux' },
+            require: name => name === 'node:fs/promises' ? {
+                async readFile(file) { if (files.has(file)) return files.get(file); throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
+                async mkdir() {}, async writeFile(file, content) { files.set(file, content); },
+                async rm() { assert.fail('this regression only enables autostart'); }
+            } : require(name)
+        });
+        const integration = module.exports.createSystemIntegration({ platform: 'linux', app: { getPath: () => 'fixture-home' }, getWindow: () => null });
+        assert.equal((await integration.applySettings({ autoStart: true })).autoStart, true);
+        const exec = [...files.values()][0].split(/\r?\n/).find(line => line.startsWith('Exec=')).slice(5);
+        assert.ok(exec.startsWith('"') && exec.endsWith('"'), '路径必须作为一个带引号参数');
+        // Desktop Entry 先解析字符串转义，再取消 Exec 引号，最后处理字面百分号。
+        const decoded = exec.replace(/\\(s|n|t|r|\\)/g, (_, value) => ({ s: ' ', n: '\n', t: '\t', r: '\r', '\\': '\\' })[value]);
+        const argument = decoded.slice(1, -1).replace(/\\(["`$\\])/g, '$1').replace(/%%/g, '%');
+        assert.equal(argument, executable);
+    });
+}
 
 function createFakes({ trayThrows = false, notificationSupported = true, appOverride, backgroundTest = false } = {}) {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-'));

@@ -32,7 +32,10 @@ test.beforeEach(async({},testInfo)=>{
             const f=globalThis.rendererFixture;f.calls.push({method,params});
             if(method==='updateProxyConfig'){Object.assign(f.snapshot.proxy,params);return {ok:true,result:{proxy:f.snapshot.proxy}};}
             if(method==='updateTotalQuota'){Object.assign(f.snapshot.totalQuota,params);return {ok:true,result:{totalQuota:f.snapshot.totalQuota}};}
-            if(method==='updateSettings'){Object.assign(f.snapshot.settings,params.settings);return {ok:true,result:{settings:f.snapshot.settings}};}
+            if(method==='updateSettings'){
+                Object.assign(f.snapshot.settings,params.settings);
+                return {ok:true,result:{settings:f.snapshot.settings,...(Object.hasOwn(params.settings,'autoStart')&&f.autoStartSystem?{system:f.autoStartSystem}:{})}};
+            }
             if(method==='setAppCollection'){if(f.failCollection)return {ok:false,error:{message:'collection denied'}};f.snapshot.appCollection={available:true,enabled:params.enabled,state:params.enabled?'running':'disabled'};return {ok:true,result:{appCollection:f.snapshot.appCollection}};}
             if(method!=='snapshot')return {ok:true,result:{}};
             if(f.failRange)return {ok:false,error:{message:'range query failed'}};
@@ -263,6 +266,37 @@ test('应用采集重试按钮在无变化和状态变化的实时刷新后保�
     await expect(retry).toBeFocused();
 });
 
+test('明确开启和关闭自启动被拒绝时自动保存显示失败，重试后恢复',async()=>{
+    await app.evaluate(()=>{const f=globalThis.rendererFixture;
+        f.snapshot.settings.autoStart=true;
+        f.autoStartSystem={autoStart:false,autoStartError:'删除被拒绝'};
+    });
+    await page.reload();
+    await page.locator('.nav [data-page="settings"]').click();
+    const setting=page.locator('#settingsForm [name="autoStart"]');
+    const status=page.locator('#settingsSaveHint');
+    const retry=page.locator('#settingsForm [data-action="retry-autosave"]');
+    await expect(setting).toBeChecked();
+    await setting.uncheck();
+    await expect(status).toContainText('保存失败');
+    await expect(status).toContainText('删除被拒绝');
+    await expect(setting).not.toBeChecked();
+    await expect(retry).toBeVisible();
+    await app.evaluate(()=>{globalThis.rendererFixture.autoStartSystem={autoStart:false};});
+    await retry.click();
+    await expect(status).toContainText('已自动保存');
+    await expect(retry).toBeHidden();
+    await app.evaluate(()=>{globalThis.rendererFixture.autoStartSystem={autoStart:true,autoStartError:'写入被拒绝'};});
+    await setting.check();
+    await expect(status).toContainText('保存失败');
+    await expect(status).toContainText('写入被拒绝');
+    await expect(setting).toBeChecked();
+    await expect(retry).toBeVisible();
+    await app.evaluate(()=>{globalThis.rendererFixture.autoStartSystem={autoStart:true};});
+    await retry.click();
+    await expect(status).toContainText('已自动保存');
+    await expect(retry).toBeHidden();
+});
 
 test('下载限速提交和取消使用独立方向',async()=>{
     await openApplications();await page.locator('[data-action="application-control"]').click();

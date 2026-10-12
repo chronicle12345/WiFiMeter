@@ -49,11 +49,14 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
         }
         // 打包后 execPath 就是 /opt/WiFiMeter/wifimeter；开发态是 electron 本体。
         const command = process.env.APPIMAGE ?? process.env.WIFIMETER_APP_EXE ?? process.execPath;
+        // Desktop Entry 先处理字符串转义，再解析 Exec 引号及字面百分号。
+        const quoted = '"' + command.replace(/%/g, '%%').replace(/["`$\\]/g, '\\$&')
+            .replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') + '"';
         const content = `[Desktop Entry]
 Type=Application
 Name=WiFiMeter
 Comment=Wi-Fi 流量管理
-Exec=${command}
+Exec=${quoted}
 Terminal=false
 X-GNOME-Autostart-enabled=true
 `;
@@ -128,15 +131,22 @@ X-GNOME-Autostart-enabled=true
         async applySettings(next, { enableAutostart = false } = {}) {
             settings = { ...settings, ...next };
             let autoStartApplied = settings.autoStart;
+            let autoStartError;
             try {
                 autoStartApplied = await applyAutostart(settings.autoStart, enableAutostart);
             } catch (error) {
                 logger(`设置开机启动失败：${error.message}`);
+                autoStartError = String(error?.message || '无法同步开机启动状态。');
                 autoStartApplied = false;
+                if (platform === 'win32' && typeof app.getLoginItemSettings === 'function') {
+                    try { autoStartApplied = Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin); }
+                    catch { /* 保留原同步错误，不能把读取失败当成成功。 */ }
+                }
             }
             // 默认常驻图标，旧 minimizeToTray 字段不再决定图标是否存在。
             ensureTray();
-            return { autoStart: autoStartApplied, minimizeToTray: Boolean(tray), notifications: settings.notifications };
+            return { autoStart: autoStartApplied, minimizeToTray: Boolean(tray), notifications: settings.notifications,
+                ...(autoStartError ? { autoStartError } : {}) };
         },
 
         // 显式关闭到托盘不依赖旧的 minimizeToTray 设置，也不修改自启动项。
