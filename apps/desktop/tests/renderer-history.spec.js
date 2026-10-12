@@ -189,7 +189,13 @@ test('全部与旧日期实际查询；失败保留上次结果和筛选',async(
 test('应用月表排序与导出一致，未变化事件保留表格节点与选择',async()=>{
     await allHistory();await apps();await page.locator('#appGrouping').selectOption('month');
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(2);
+    await page.locator('#appSort').selectOption('date');
     await page.locator('[data-action="app-history-sort"][data-key="total"]').click();
+    const months=page.locator('#appListRegion tbody tr td:first-child');
+    const totalHeading=page.locator('#appListRegion th').filter({has:page.locator('[data-action="app-history-sort"][data-key="total"]')});
+    await expect(totalHeading).toHaveAttribute('aria-sort','descending');
+    await expect(months).toHaveText(['2020-01','2020-02']);
+    await expect(page.locator('#appSort')).toHaveValue('total');
     await page.locator('[data-action="select-app-row"]').first().click();
     if(process.platform==='win32')await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\Browser.exe');
     else await expect(page.locator('#appControlRegion')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
@@ -201,6 +207,11 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     const file=path.join(profile,'apps.csv');await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({filePath:file,canceled:false});},file);
     await page.locator('[data-action="export-apps"]').click();await expect(page.locator('.toast').last()).toContainText('已导出 2 条记录');
     const csv=await readFile(file,'utf8');expect(csv).toContain('"520010","2","520012"');expect(csv.indexOf('2020-01')).toBeLessThan(csv.indexOf('2020-02'));
+    await page.locator('[data-action="app-history-sort"][data-key="total"]').click();
+    await expect(totalHeading).toHaveAttribute('aria-sort','ascending');
+    await expect(months).toHaveText(['2020-02','2020-01']);
+    await page.locator('[data-action="export-apps"]').click();
+    await expect.poll(async()=>{const exported=await readFile(file,'utf8');return exported.indexOf('2020-02')<exported.indexOf('2020-01');}).toBe(true);
     await page.locator('#appGrouping').selectOption('day');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);
 });
 
