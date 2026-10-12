@@ -1,12 +1,13 @@
 import { applicationLiveRows } from './data/application-live.js';
 import { refreshStatusHelp } from './ui/status-help.js';
-import { createAutosave, autosaveStatus } from './ui/autosave.js';
-import { parseWarnPercents, quotaThresholds } from './data/quota-thresholds.js';
+import { autosaveStatus } from './ui/autosave.js';
+import { createFormAutosave, autosaveFormIds } from './ui/form-autosave.js';
+import { quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
 import { updatesView, refreshUpdates, updateBannerView } from './ui/updates.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
-import { proxyConfigPatch, proxyUsageRecords } from './data/proxy.js';
+import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
 import { settingsView } from './ui/settings.js';
 import { drawerShell } from './ui/drawer.js';
@@ -21,7 +22,7 @@ import { createAppControlModel, legacyMessage } from './data/desktop-actions.js'
 import { historyRange, applicationRows, applicationCsv, recordInRange } from './data/history.js';
 import { minuteUsageRows } from './data/minute-usage.js';
 import { validTime } from './data/model.js';
-import { MAX_QUOTA_GB, validQuotaGb, GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
+import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
 import { createDataClient } from './data/client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -205,7 +206,7 @@ function settingsPage(){return settingsView(data.settings,{button,toggle,option,
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
  for(const key of ['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']){
-  const input=$('#settingsForm [name="'+key+'"]');if(!input||formSaves.get(input.form)?.has(key))continue;
+  const input=$('#settingsForm [name="'+key+'"]');if(!input||formAutosaves.has(input.form,key))continue;
   const value=input.type==='checkbox'?input.checked:input.value;
   if(!previous||value===(previous[key]??(key==='theme'?'system':undefined))){if(input.type==='checkbox')input.checked=next[key];else input.value=next[key]??'system';}
  }
@@ -230,7 +231,7 @@ function updateSettingsScroll(){
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
 function renderMain(){
- const drafts=[...activeSaves].filter(({form,save})=>form.isConnected&&save.dirty&&['settingsForm','totalQuotaForm','proxyConfigForm'].includes(form.id)).map(({form})=>form);
+ const drafts=formAutosaves.drafts(['settingsForm','totalQuotaForm','proxyConfigForm']);
  const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd,proxyOpen=$('.app-proxy-panel')?.open;
  renderChrome();
  renderUpdateBanner();
@@ -473,62 +474,31 @@ async function clearRecords(){
  if(!await saveBeforeDataChange())return;
  confirmModal(t('清空全部用量记录？'),t('此操作删除每日与小时记录、覆盖说明，并重置当前额度计数；保留网络备注与提醒设置。不能撤销。'),t('清空记录'),async()=>{if(!await saveBeforeDataChange())return;await store.clearRecords();restartSampler();renderMain();toast(t('记录已清空，采集已暂停。'));},true,true);
 }
-const autosaveForms=new Set(['settingsForm','networkForm','totalQuotaForm','proxyConfigForm']);
-const formSaves=new WeakMap(), activeSaves=new Set(), fieldEdits=new WeakMap(), statusTimers=new WeakMap();
-let retentionFollowups=new WeakMap();
-let pendingRetentionFollowup=null;
-const windowFields=new Set(['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']);
+const autosaveForms=autosaveFormIds;
 let pendingAutosaveCancel=null, languageRenderNeeded=false;
+const formAutosaves=createFormAutosave({
+ store,desktop:window.desktop,getData:()=>data,getWindowPreferences:()=>windowPreferences,
+ receiveWindowPreferences,confirm:confirmAutosave,networkName,
+ onState:refreshAutosaveState,onLanguage:language=>{setLanguage(language);languageRenderNeeded=true;},
+ onSettingsSaved:restartSampler
+});
 function syncSaveFlags(){
- for(const entry of activeSaves)if(!entry.form.isConnected&&!entry.save.dirty)activeSaves.delete(entry);
- const dirty=id=>[...activeSaves].some(entry=>entry.form.id===id&&entry.save.dirty);
- settingsDirty=dirty('settingsForm');networkDirty=dirty('networkForm');totalQuotaDirty=dirty('totalQuotaForm');proxyDirty=dirty('proxyConfigForm');
+ settingsDirty=formAutosaves.dirty('settingsForm');networkDirty=formAutosaves.dirty('networkForm');
+ totalQuotaDirty=formAutosaves.dirty('totalQuotaForm');proxyDirty=formAutosaves.dirty('proxyConfigForm');
 }
-async function flushAutosaves(ids){await Promise.all([...activeSaves].filter(entry=>ids.includes(entry.form.id)).map(entry=>entry.save.flush()));}
+function refreshAutosaveState(){
+ syncSaveFlags();
+ if(languageRenderNeeded&&!settingsDirty&&!networkDirty&&!totalQuotaDirty&&!proxyDirty){languageRenderNeeded=false;queueMicrotask(()=>{if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){languageRenderNeeded=true;return;}if(ui.page==='settings')renderSettingsDrafts();else {renderChrome();renderUpdateBanner();}});}
+}
+async function flushAutosaves(ids){await formAutosaves.flush(ids);}
 async function saveBeforeDataChange(){
  await flushAutosaves(['settingsForm','totalQuotaForm','proxyConfigForm','networkForm']);
  if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return false;}
  return true;
 }
-function discardAutosaves(ids){
- for(const entry of activeSaves)if(ids.includes(entry.form.id)){entry.save.discard();activeSaves.delete(entry);}
- if(ids.includes('settingsForm')){retentionFollowups=new WeakMap();pendingRetentionFollowup=null;}
- syncSaveFlags();
-}
-function formAutosave(form){
- if(formSaves.has(form))return formSaves.get(form);
- const save=createAutosave({write:patch=>writeAutosave(form,patch),onState:status=>{
-  syncSaveFlags();
-  const feedback=$('.autosave-feedback',form),label=feedback?.querySelector('[role="status"]'),retry=feedback?.querySelector('button');
-  clearTimeout(statusTimers.get(form));
-  if(status.state==='saved'&&label)statusTimers.set(form,setTimeout(()=>{label.textContent='';},1800));
-  if(label){label.dataset.state=status.state;label.textContent=status.state==='error'?t('保存失败，请重试。')+' '+status.error:status.state==='saving'?t('正在保存…'):status.state==='pending'?t('等待保存…'):t('已自动保存');}
-  if(retry){retry.hidden=status.state!=='error';retry.textContent=t('重试');}
-  const error=$('.form-error',form);if(error)error.textContent=status.error;
-  if(languageRenderNeeded&&!settingsDirty&&!networkDirty&&!totalQuotaDirty&&!proxyDirty){languageRenderNeeded=false;queueMicrotask(()=>{if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){languageRenderNeeded=true;return;}if(ui.page==='settings')renderSettingsDrafts();else {renderChrome();renderUpdateBanner();}});}
- }});
- formSaves.set(form,save);activeSaves.add({form,save});return save;
-}
-function fieldPatch(input){
- const key=input.name,value=input.type==='checkbox'?input.checked:input.value;
- if(key==='warnPercents'){const values=parseWarnPercents(value);return {warnPercents:values,warnPercent:values[0]};}
- if(key==='capGb'){if(value===''&&input.form.id==='totalQuotaForm'||input.validity.badInput||!validQuotaGb(Number(value)))throw Error(t('额度须为 0 或 0.000000001 到 9000000000 GB。'));return {capGb:Number(value)};}
- if(key==='ports'||key==='processNames')return {[key]:proxyConfigPatch(new Map([[key,value]]))[key]};
- if(key==='alias')return {alias:String(value).trim()};
- return {[key]:['interval','retention'].includes(key)?Number(value):value};
-}
-function editAutosave(input,immediate){
- if(!input.name)return;
- const save=formAutosave(input.form),raw=input.type==='checkbox'?input.checked:input.value;
- const previous=fieldEdits.get(input);
- if(previous?.raw===raw){if(immediate)save.expedite(input.name);return;}
- try{
-  const patch=fieldPatch(input);fieldEdits.set(input,{raw,patch});
-  const current=input.form.id==='settingsForm'?(windowFields.has(input.name)?windowPreferences:data.settings):input.form.id==='networkForm'?getNetwork(input.form.dataset.id):input.form.id==='totalQuotaForm'?data.totalQuota:data.proxy;
-  if(!save.has(input.name)&&Object.entries(patch).every(([key,value])=>JSON.stringify(current?.[key])===JSON.stringify(value)))return;
-  save.set(input.name,patch,immediate);
- }catch(error){fieldEdits.set(input,{raw});save.invalid(input.name,error.message);}
-}
+function discardAutosaves(ids){formAutosaves.discard(ids);}
+function formAutosave(form){return formAutosaves.saveFor(form);}
+function editAutosave(input,immediate){formAutosaves.edit(input,immediate);}
 let preparingUpdate=false;
 window.wifimeterPrepareUpdate=async()=>{
  if(pendingAutosaveCancel)return false;
@@ -541,65 +511,7 @@ function confirmAutosave(title,text){if(preparingUpdate)throw Error(t('请先保
  confirmModal(title,text,t('确认启用'),()=>resolve(true),true);
  pendingAutosaveCancel=()=>resolve(false);
 });}
-function restoreField(form,key,value,expected){const input=form.elements.namedItem(key);if(!input||fieldEdits.get(input)?.patch!==expected)return;fieldEdits.delete(input);if(input.type==='checkbox')input.checked=!!value;else input.value=value;}
-async function writeAutosave(form,fields){
- const patch=Object.assign({},...Object.values(fields));
- if(form.id==='settingsForm'){
-  const retentionField=fields.retention;
-  if(pendingRetentionFollowup&&data.settings.retention!==pendingRetentionFollowup.value)pendingRetentionFollowup=null;
-  let retentionTask=retentionField&&(retentionFollowups.get(retentionField)||(retentionField.retention===pendingRetentionFollowup?.value?pendingRetentionFollowup:null));
-  // 已提交的保留期只补齐清理与刷新，避免失败重试漏掉后续步骤。
-  if(retentionTask&&retentionTask.stage!=='settings'){
-   delete patch.retention;
-   if(data.settings.retention!==retentionTask.value){retentionFollowups.delete(retentionField);retentionTask=null;}
-  }
-  if(Object.hasOwn(patch,'retention')){
-   const previous=data.settings.retention,shortening=patch.retention>0&&(previous===0||patch.retention<previous);
-   if(shortening&&!retentionTask){
-    if(!await confirmAutosave(t('应用新的保留时长？'),t('缩短保留期将删除范围外的历史记录，建议先备份。'))){restoreField(form,'retention',previous,fields.retention);delete patch.retention;}
-    else {retentionTask={value:patch.retention,stage:'settings'};retentionFollowups.set(retentionField,retentionTask);}
-   }
-  }
-  const prefs=Object.fromEntries(Object.entries(patch).filter(([key])=>windowFields.has(key)));
-  const settings=Object.fromEntries(Object.entries(patch).filter(([key])=>!windowFields.has(key)));
-  if(Object.keys(prefs).length){receiveWindowPreferences(await window.desktop.windowPreferences.update(prefs));if(Object.hasOwn(prefs,'closeAction'))settings.minimizeToTray=prefs.closeAction==='tray';}
-  if(Object.keys(settings).length){
-   const result=await store.updateSettings(settings);
-   if(Object.hasOwn(settings,'retention')){
-    if(retentionTask?.stage==='settings'&&data.settings.retention===retentionTask.value){retentionTask.stage='prune';pendingRetentionFollowup=retentionTask;}
-    else if(pendingRetentionFollowup&&data.settings.retention!==pendingRetentionFollowup.value)pendingRetentionFollowup=null;
-   }
-   if(Object.hasOwn(settings,'autoStart')&&result.system){
-    const error=result.system.autoStartError;
-    if(error||result.system.autoStart!==Boolean(settings.autoStart)){
-     const message=t(settings.autoStart?'偏好已保存，但开启开机启动失败。':'偏好已保存，但关闭开机启动失败。');
-     throw Error(error?`${message} ${error}`:message);
-    }
-   }
-  }
-  if(retentionTask&&data.settings.retention===retentionTask.value){
-   if(retentionTask.stage==='prune'){await store.pruneUsage();retentionTask.stage='reload';}
-   if(retentionTask.stage==='reload'){await store.reload();retentionFollowups.delete(retentionField);if(pendingRetentionFollowup===retentionTask)pendingRetentionFollowup=null;}
-  }
-  if(Object.hasOwn(settings,'language')){setLanguage(settings.language);languageRenderNeeded=true;}
-  restartSampler();return;
- }
- if(form.id==='proxyConfigForm'){
-  // This endpoint replaces the configuration, so merge only with committed values.
-  await store.updateProxyConfig({ports:data.proxy?.ports||[],processNames:data.proxy?.processNames||[],...patch});return;
- }
- const current=form.id==='networkForm'?getNetwork(form.dataset.id):data.totalQuota;
- if(patch.autoDisconnect&&!current.autoDisconnect){
-  const accepted=await confirmAutosave(t('启用自动断开规则？'),form.id==='networkForm'?tr`达到所设额度后，应用会断开当前连接的网络：${networkName(current)}。断开只在确认连的正是这个网络时执行。`:t('总额度达到上限时将断开全部 Wi-Fi。'));
-  if(!accepted){restoreField(form,'autoDisconnect',current.autoDisconnect,fields.autoDisconnect);delete patch.autoDisconnect;}
- }
- if(!Object.keys(patch).length)return;
- if(form.id==='networkForm'){
-  if((patch.autoDisconnect||patch.notify)&&!(patch.capGb??current.capGb))throw Error(t('请先设置大于 0 的额度，或关闭该网络的提醒与自动断网。'));
-  await store.updateNetwork(form.dataset.id,patch);
- }else await store.updateTotalQuota(patch);
-}
-document.addEventListener('focusout',event=>{const input=event.target;if(autosaveForms.has(input.form?.id)&&input.name&&input.type!=='checkbox'&&input.tagName!=='SELECT')formSaves.get(input.form)?.expedite(input.name);});
+document.addEventListener('focusout',event=>{const input=event.target;if(autosaveForms.has(input.form?.id)&&input.name&&input.type!=='checkbox'&&input.tagName!=='SELECT')formAutosaves.expedite(input);});
 let nativeWindowHidden = false;
 const renderingHidden = () => document.hidden || nativeWindowHidden;
 function refreshAfterTick(){

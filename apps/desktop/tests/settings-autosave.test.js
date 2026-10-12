@@ -2,16 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createAutosave } from '../renderer/ui/autosave.js';
+import { createFormAutosave } from '../renderer/ui/form-autosave.js';
 
 const source = fs.readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
 function settingsHarness({ pruneFailure = false, reloadFailure = false, failRetentions = [] } = {}) {
     const calls = [];
-    const context = vm.createContext({
-        data: { settings: { retention: 90 } }, windowFields: new Set(), windowPreferences: null, window: {},
-        retentionFollowups: new WeakMap(), pendingRetentionFollowup: null, Object, t: text => text,
-        confirmAutosave: async () => { calls.push('confirm'); return true; },
-        restartSampler() { calls.push('restartSampler'); }, setLanguage() {}, receiveWindowPreferences() {},
+    const context = { data: { settings: { retention: 90 } } };
+    const controller = createFormAutosave({
+        getData: () => context.data,
+        confirm: async () => { calls.push('confirm'); return true; },
+        onSettingsSaved() { calls.push('restartSampler'); },
         store: {
             async updateSettings(patch) {
                 calls.push(['updateSettings', patch]);
@@ -22,14 +22,9 @@ function settingsHarness({ pruneFailure = false, reloadFailure = false, failRete
             async reload() { calls.push('reload'); if (reloadFailure) { reloadFailure = false; throw Error('snapshot unavailable'); } }
         }
     });
-    const start = source.indexOf('async function writeAutosave(');
-    const end = source.indexOf("\ndocument.addEventListener('focusout'", start);
-    const discardStart = source.indexOf('function discardAutosaves('), discardEnd = source.indexOf('function formAutosave(', discardStart);
-    vm.runInContext(source.slice(start, end) + source.slice(discardStart, discardEnd) + ';globalThis.writeAutosave = writeAutosave;globalThis.discardAutosaves = discardAutosaves;', context);
-    const form = { id: 'settingsForm' };
-    const save = createAutosave({ write: fields => context.writeAutosave(form, fields) });
-    context.activeSaves = new Set([{ form, save }]); context.syncSaveFlags = () => {};
-    return { calls, context, save };
+    const form = () => ({ id: 'settingsForm', isConnected: true, querySelector() { return null; } });
+    const save = controller.saveFor(form());
+    return { calls, context, controller, form, save };
 }
 
 test('retention retry completes failed pruning after settings already committed', async () => {
@@ -102,10 +97,10 @@ test('discarded retention followups do not prune a subsequently restored data se
     const oldField = { retention: 30 };
     h.save.set('retention', oldField); await h.save.flush();
     assert.equal(h.save.state, 'error');
-    h.context.discardAutosaves(['settingsForm']);
+    h.controller.discard(['settingsForm']);
     // 恢复的设置恰好相同，旧草稿对象也不能继续对新数据执行清理。
     h.context.data.settings = { retention: 30 };
-    const save = createAutosave({ write: fields => h.context.writeAutosave({ id: 'settingsForm' }, fields) });
+    const save = h.controller.saveFor(h.form());
     save.set('retention', oldField); await save.flush();
     assert.equal(save.state, 'saved');
     assert.equal(h.calls.filter(call => call === 'pruneUsage').length, 1);
