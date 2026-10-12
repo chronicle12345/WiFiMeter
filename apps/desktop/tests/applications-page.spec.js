@@ -51,7 +51,7 @@ test.beforeEach(async({},testInfo)=>{
     },snapshot);
     await page.reload();await expect(page).toHaveTitle(/流量总览/);await expect(page.locator('#pageHead')).toHaveCount(0);await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
 });
-test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
+test.afterEach(async()=>{if(app){await app.evaluate(({app:fixtureApp,BrowserWindow})=>{fixtureApp.removeAllListeners('window-all-closed');for(const window of BrowserWindow.getAllWindows())window.destroy();});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 
 async function openApplications(){

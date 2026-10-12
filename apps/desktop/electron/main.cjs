@@ -12,6 +12,7 @@ const { createWindowControls } = require('./window-controls.cjs');
 const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
+const timers = require('node:timers');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
 const pageURL = pathToFileURL(pagePath).href;
@@ -26,6 +27,94 @@ let migrationStatus = { found: false };
 let migrationBusy = false;
 let speedUnit = 'auto';
 let preserveUnmatchedLoginItem = false;
+let quitFlight = null;
+let exitConfirmed = false;
+let startupSettled = false;
+let collectorRecoveryNeeded = false;
+let recoveryFlight = null;
+let recoveryTimer = null;
+let stableTimer = null;
+let recoveryAttempts = 0;
+const RECOVERY_DELAYS = [250, 1000, 4000];
+
+function cancelRecoveryTimers() {
+    if (recoveryTimer) timers.clearTimeout(recoveryTimer);
+    if (stableTimer) timers.clearTimeout(stableTimer);
+    recoveryTimer = stableTimer = null;
+}
+
+function canRecoverCollector() {
+    return startupSettled && backend && !backend.shutdownPending && !migrationBusy && !migrationStatus.error
+        && !installingUpdate && !quitting && !quitFlight && !system?.quitting;
+}
+
+function publishCollectorStatus(collector, message = '') {
+    const remembered = backend?.collectionState ?? { paused: true, appsEnabled: false };
+    const event = { event: 'collectorStatus', collector, message, updatedAt: new Date().toISOString(),
+        appCollection: { enabled: remembered.appsEnabled,
+            state: !remembered.appsEnabled ? 'disabled' : collector === 'paused' ? 'paused'
+                : collector === 'running' || collector === 'starting' ? 'starting' : 'unavailable' } };
+    try {
+        windowControls?.publishLive(event);
+        if (window && !window.isDestroyed()) window.webContents.send('backend:event', event);
+    } catch (error) { console.error(`[backend] 发送采集状态失败：${error.message}`); }
+}
+
+function scheduleCollectorRecovery() {
+    if (!collectorRecoveryNeeded || !canRecoverCollector() || recoveryFlight || recoveryTimer) return;
+    if (recoveryAttempts >= RECOVERY_DELAYS.length) {
+        publishCollectorStatus('offline', '采集器连续恢复失败，请重新打开 WiFiMeter 后重试。');
+        return;
+    }
+    recoveryTimer = timers.setTimeout(() => {
+        recoveryTimer = null;
+        recoverCollector().catch(error => console.error(`[backend] 恢复采集失败：${error.message}`));
+    }, RECOVERY_DELAYS[recoveryAttempts]);
+    recoveryTimer.unref?.();
+}
+
+function recoverCollector() {
+    if (recoveryFlight) return recoveryFlight;
+    if (!canRecoverCollector() || recoveryAttempts >= RECOVERY_DELAYS.length) return Promise.reject(Error('采集器无法自动恢复，请重新打开 WiFiMeter 后重试。'));
+    if (recoveryTimer) timers.clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+    const remembered = { ...backend.collectionState };
+    recoveryAttempts++;
+    recoveryFlight = Promise.resolve().then(async () => {
+        try {
+            publishCollectorStatus('starting', '正在恢复采集器。');
+            if (!backend.running) backend.start();
+            if (remembered.appsEnabled) await backend.request('setAppCollection', { enabled: true });
+            if (!canRecoverCollector()) throw Error('采集恢复已暂停，等待当前操作完成。');
+            await backend.request('setPaused', { paused: remembered.paused });
+            collectorRecoveryNeeded = false;
+            publishCollectorStatus(remembered.paused ? 'paused' : 'running');
+            // 持续稳定运行后才重置次数，避免刚恢复就崩溃时无限重启。
+            const restored = backend.child;
+            stableTimer = timers.setTimeout(() => {
+                stableTimer = null;
+                if (backend?.child === restored && backend.running && !collectorRecoveryNeeded) recoveryAttempts = 0;
+            }, 30000);
+            stableTimer.unref?.();
+        } catch (error) {
+            publishCollectorStatus('offline', `恢复采集失败：${error.message}`);
+            throw error;
+        } finally {
+            recoveryFlight = null;
+            scheduleCollectorRecovery();
+        }
+    });
+    return recoveryFlight;
+}
+
+async function requestBackend(method, params = {}, options) {
+    await startup;
+    if (installingUpdate || quitting || !backend) throw Error('The application is stopping for an update or exit.');
+    if (collectorRecoveryNeeded && canRecoverCollector()) await recoverCollector();
+    if (recoveryFlight) await recoveryFlight;
+    if (collectorRecoveryNeeded && !backend.running) throw Error('采集器尚未恢复，请重新打开 WiFiMeter 后重试。');
+    return backend.request(method, params, options);
+}
 
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
 // 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
@@ -76,6 +165,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.webContents.on('will-prevent-unload', event => {
+        if (quitting && exitConfirmed) { event.preventDefault(); return; }
         const choice = dialog.showMessageBoxSync(window, {
             type: 'question', title: `退出 ${productName}`,
             message: '有尚未保存的设置，仍然退出？',
@@ -115,7 +205,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         userData: app.getPath('userData'), getWindow: () => window,
         hideToTray: () => system.hideToTray(), requestQuit: () => app.quit(),
         isQuitting: () => quitting || system.quitting,
-        requestMiniSnapshot: params => backend.request('snapshot', params),
+        requestMiniSnapshot: params => requestBackend('snapshot', params),
         logger: message => console.log(`[window-controls] ${message}`) });
     await windowControls.read();
 
@@ -142,7 +232,13 @@ if (primaryInstance) app.whenReady().then(async () => {
         if (message.event === 'alert') system.notify(message);
     });
     backend.on('exit', ({ unexpected }) => {
-        if (unexpected) console.error('[backend] 进程意外退出，下一次请求会重新拉起。');
+        if (unexpected) {
+            cancelRecoveryTimers();
+            collectorRecoveryNeeded = true;
+            console.error('[backend] 进程意外退出，将按原采集状态尝试恢复。');
+            publishCollectorStatus('offline', '采集器已退出，正在等待恢复。');
+            scheduleCollectorRecovery();
+        }
     });
     backend.start();
 
@@ -163,6 +259,9 @@ if (primaryInstance) app.whenReady().then(async () => {
                     migrationStatus.error = resumeError.message;
                 }
             }
+        } finally {
+            startupSettled = true;
+            scheduleCollectorRecovery();
         }
     })();
 
@@ -193,7 +292,7 @@ if (primaryInstance) app.whenReady().then(async () => {
                 if (choice.response !== 0) throw Error(migrationStatus.error);
                 migrationStatus = { ...migrationStatus, error: '', importWarning: migrationStatus.error };
             }
-            const result = await backend.request(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
+            const result = await requestBackend(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
             // 设置改动后立刻作用于系统，并把实际生效的结果回给页面。
             if (method === 'updateSettings' && result?.settings) {
                 speedUnit = result.settings.speedUnit || 'auto';
@@ -209,7 +308,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         }
     });
 
-    registerAppIcons({ ipcMain, trusted, app, request: async (method, params) => { await startup; if (installingUpdate || !backend) throw Error('Backend unavailable.'); return backend.request(method, params); } });
+    registerAppIcons({ ipcMain, trusted, app, request: (method, params) => requestBackend(method, params) });
 
     ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
     ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.update(patch); });
@@ -222,6 +321,7 @@ if (primaryInstance) app.whenReady().then(async () => {
         if (!trusted(event)) throw Error('Unsupported page.');
         await startup;
         if (installingUpdate) return { error: '正在更新或恢复采集，暂时不能导入数据。' };
+        if (recoveryFlight || collectorRecoveryNeeded) return { error: '采集器正在恢复，请稍后重试导入。' };
         if (migrationBusy) return { error: 'An import is already running.' };
         migrationBusy = true;
         let previousPaused = true;
@@ -293,11 +393,13 @@ if (primaryInstance) app.whenReady().then(async () => {
         openExternal: url => shell.openExternal(url),
         beforeInstall: async () => {
             await startup;
+            if (quitFlight || quitting || recoveryFlight || collectorRecoveryNeeded) throw Error('请等待退出确认或采集恢复完成后重试更新。');
             if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
             const saved = app.prepareUpdateExit ? await app.prepareUpdateExit()
                 : window.webContents.executeJavaScript ? await window.webContents.executeJavaScript('window.wifimeterPrepareUpdate?.()') : false;
             if (saved !== true) throw Error('有尚未保存的设置，请先完成设置保存后重试更新。');
             installingUpdate = true;
+            cancelRecoveryTimers();
             updateRecovery = { paused: null, pauseRequested: false };
             const original = await backend.request('hello');
             if (typeof original.paused !== 'boolean') throw Error('无法确认原采集状态，更新取消。');
@@ -367,19 +469,39 @@ app.on('window-all-closed', () => app.quit());
 // 退出前先让后端收尾（提交数据库、结束未完成的空档），避免计数差丢在退出瞬间。
 app.on('before-quit', event => {
     if (installingUpdate && !quitting) { event.preventDefault(); app.cancelQuit?.(); return; }
-    system?.beginQuit();
     if (quitting || !backend) {
         windowControls?.dispose();
         return;
     }
     event.preventDefault();
-    quitting = true;
-    backend.stop().catch(error => console.error(`[backend] 停止失败：${error.message}`))
-        .finally(() => {
-            backend = null;
-            windowControls?.dispose();
-            system?.dispose();
-            if (app.finishQuit) app.finishQuit();
-            else app.quit();
-        });
+    if (quitFlight) return;
+    quitFlight = (async () => {
+        let confirmed;
+        if (!window || window.isDestroyed()) confirmed = true;
+        else if (app.confirmExit) confirmed = await app.confirmExit();
+        else {
+            let unsaved = true;
+            try {
+                const value = await window?.webContents.executeJavaScript?.('window.wifimeterHasUnsavedChanges?.()');
+                if (typeof value === 'boolean') unsaved = value;
+            } catch { /* 页面断开时先询问，避免默认放弃未保存内容。 */ }
+            confirmed = !unsaved || (await dialog.showMessageBox(window, {
+                type: 'question', title: `退出 ${productName}`, message: '有尚未保存的设置，仍然退出？',
+                buttons: ['继续编辑', '放弃更改并退出'], defaultId: 0, cancelId: 0
+            })).response === 1;
+        }
+        if (!confirmed) { app.cancelQuit?.(); return; }
+        exitConfirmed = true;
+        quitting = true;
+        cancelRecoveryTimers();
+        system?.beginQuit();
+        try { await backend.stop(); }
+        catch (error) { console.error(`[backend] 停止失败：${error.message}`); }
+        backend = null;
+        windowControls?.dispose();
+        system?.dispose();
+        if (app.finishQuit) app.finishQuit();
+        else app.quit();
+    })().catch(error => { app.cancelQuit?.(); console.error(`[app] 退出确认失败：${error.message}`); })
+        .finally(() => { quitFlight = null; scheduleCollectorRecovery(); });
 });

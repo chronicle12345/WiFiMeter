@@ -57,6 +57,7 @@ class BackendClient extends EventEmitter {
         this.fragments = [];
         this.stopping = false;
         this.shutdownChild = null;
+        this.collectionState = { paused: args.includes('--paused'), appsEnabled: false };
     }
 
     get running() {
@@ -72,25 +73,31 @@ class BackendClient extends EventEmitter {
         this.fragments = [];
         const args = [...this.args, '--db', this.databasePath];
         this.logger(`启动后端：${this.executable} ${args.join(' ')}`);
-        this.child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-
-        this.child.stdout.setEncoding('utf8');
-        this.child.stdout.on('data', chunk => this.consume(chunk));
-        this.child.stderr.setEncoding('utf8');
-        this.child.stderr.on('data', text => this.logger(`后端日志：${text.trimEnd()}`));
-        this.child.on('error', error => {
-            this.logger(`后端进程错误：${error.message}`);
-            this.failAll(new Error(`后端进程启动失败：${error.message}`));
-        });
-        const child = this.child;
-        this.child.on('exit', (code, signal) => {
+        const child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+        this.child = child;
+        child.stdout.setEncoding('utf8');
+        child.stdout.on('data', chunk => { if (this.child === child) this.consume(chunk); });
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', text => this.logger(`后端日志：${text.trimEnd()}`));
+        const fail = error => {
+            if (this.child === child) this.logger(`后端进程或管道错误：${error.message}`);
+            this.failAll(error, child);
+        };
+        // write 回调拒绝请求后，Writable 仍会发出 error；必须持续处理管道错误。
+        for (const stream of [child.stdin, child.stdout, child.stderr]) stream.on('error', fail);
+        child.on('error', error => fail(new Error(`后端进程启动失败：${error.message}`)));
+        const exited = (code, signal) => {
             if (this.shutdownChild === child) this.shutdownChild = null;
+            if (this.child !== child) { this.failAll(new Error('原后端进程已退出。'), child); return; }
             const unexpected = !this.stopping;
             this.child = null;
             this.fragments = [];
-            this.failAll(new Error(`后端进程已退出（code=${code}, signal=${signal}）。`));
+            this.failAll(new Error(`后端进程已退出（code=${code}, signal=${signal}）。`), child);
             this.emit('exit', { code, signal, unexpected });
-        });
+        };
+        child.on('exit', exited);
+        // spawn 失败时只有 error 和 close，没有 exit。
+        child.on('close', (code, signal) => { if (this.child === child && !child.pid) exited(code, signal); });
     }
 
     consume(chunk) {
@@ -136,7 +143,13 @@ class BackendClient extends EventEmitter {
         }
         this.pending.delete(id);
         clearTimeout(entry.timer);
-        if (message.ok) entry.resolve(message.result ?? {});
+        if (message.ok) {
+            const result = message.result ?? {};
+            if (entry.method === 'setPaused' && typeof result.paused === 'boolean') this.collectionState.paused = result.paused;
+            if (entry.method === 'setAppCollection' && typeof result.appCollection?.enabled === 'boolean') this.collectionState.appsEnabled = result.appCollection.enabled;
+            if (['restore', 'clearUsage'].includes(entry.method) && typeof result.paused === 'boolean') this.collectionState.paused = result.paused;
+            entry.resolve(result);
+        }
         else {
             const error = new Error(message.error?.message ?? '后端返回失败。');
             error.code = message.error?.code ?? 'unknown';
@@ -144,12 +157,13 @@ class BackendClient extends EventEmitter {
         }
     }
 
-    failAll(error) {
-        for (const [, entry] of this.pending) {
+    failAll(error, child) {
+        for (const [id, entry] of this.pending) {
+            if (child && entry.child !== child) continue;
             clearTimeout(entry.timer);
+            this.pending.delete(id);
             entry.reject(error);
         }
-        this.pending.clear();
     }
 
     request(method, params = {}, { timeout = this.requestTimeout } = {}) {
@@ -163,6 +177,7 @@ class BackendClient extends EventEmitter {
         }
 
         const id = this.nextId++;
+        const child = this.child;
         const payload = JSON.stringify({ id, protocol: 1, method, params });
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -171,8 +186,8 @@ class BackendClient extends EventEmitter {
                 error.code = 'timeout';
                 reject(error);
             }, timeout);
-            this.pending.set(id, { resolve, reject, timer });
-            this.child.stdin.write(payload + '\n', error => {
+            this.pending.set(id, { resolve, reject, timer, child, method });
+            child.stdin.write(payload + '\n', error => {
                 if (!error) return;
                 this.pending.delete(id);
                 clearTimeout(timer);
@@ -219,6 +234,7 @@ class BackendClient extends EventEmitter {
         if (!this.child) return;
         this.stopping = true;
         const child = this.child;
+        this.shutdownChild = child;
         try {
             await this.request('shutdown', {}, { timeout });
         } catch {

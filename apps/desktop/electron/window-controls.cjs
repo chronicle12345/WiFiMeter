@@ -30,7 +30,8 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     let miniSnapshot = null, miniFlight = null, miniRefreshedAt = 0, miniRevision = 0, miniSnapshotRevision = -1;
 
     async function applicationUsage(force = false) {
-        const canQuery = () => !disposed && mini && !mini.isDestroyed() && preferences.miniExpanded;
+        const canQuery = () => !disposed && mini && !mini.isDestroyed() && preferences.miniExpanded
+            && !['offline', 'starting'].includes(lastLive?.collector);
         if (canQuery() && requestMiniSnapshot && (force || !miniSnapshot || timers.now() - miniRefreshedAt >= 5000)) {
             do {
                 if (!miniFlight) {
@@ -315,7 +316,18 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     return {
         read, update, onMainClose,
         publishLive(event) {
-            if (disposed || event?.event !== 'live') return;
+            if (disposed) return;
+            if (event?.event === 'collectorStatus') {
+                lastLive = { ...lastLive, event: 'live', collector: event.collector, updatedAt: event.updatedAt,
+                    collectorMessage: event.message || '', appCollection: { ...lastLive?.appCollection, ...event.appCollection },
+                    appProcesses: [], connections: (lastLive?.connections || []).map(connection => ({ ...connection, rxPerSecond: 0, txPerSecond: 0 })) };
+                if (mini && !mini.isDestroyed() && loaded) {
+                    mini.webContents.send('mini:live', lastLive);
+                    if (preferences.miniExpanded) mini.webContents.send('mini:applications', miniApplicationRows(miniSnapshot, lastLive, miniRange(preferences, timers.now())));
+                }
+                return;
+            }
+            if (event?.event !== 'live') return;
             lastLive = event;
             if (mini && !mini.isDestroyed() && loaded) mini.webContents.send('mini:live', event);
             if (mini && loaded && preferences.miniExpanded) applicationUsage().catch(error => {

@@ -1,0 +1,288 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
+import { runInNewContext } from 'node:vm';
+
+const require = createRequire(import.meta.url);
+const directory = fileURLToPath(new URL('../electron/', import.meta.url));
+const flush = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
+
+// 进程、窗口、系统设置和计时器均为内存替身，不读写用户数据。
+function backendHarness({ answer = true, crashRestarts = false } = {}) {
+    const children = [], module = { exports: {} };
+    runInNewContext(fs.readFileSync(path.join(directory, 'backend.cjs'), 'utf8'), {
+        module, setTimeout, clearTimeout, process,
+        require: name => name === 'node:child_process' ? { spawn(_file, args) {
+            const child = new EventEmitter();
+            Object.assign(child, { pid: children.length + 100, exitCode: null, killed: false,
+                stdout: new PassThrough(), stderr: new PassThrough(), paused: args.includes('--paused'), appsEnabled: false });
+            child.stdin = new Writable({ write(chunk, _encoding, done) {
+                const request = JSON.parse(chunk.toString());
+                child.requests.push(request);
+                if (crashRestarts && children.length > 1) {
+                    queueMicrotask(() => { child.exitCode = 1; child.emit('exit', 1, null); });
+                    done(); return;
+                }
+                if (!answer) { done(); return; }
+                if (request.method === 'setPaused') child.paused = request.params.paused;
+                if (['clearUsage', 'restore'].includes(request.method)) child.paused = true;
+                if (request.method === 'setAppCollection') child.appsEnabled = request.params.enabled;
+                child.stdout.write(JSON.stringify({ id: request.id, ok: true, result: {
+                    paused: child.paused, appCollection: { enabled: child.appsEnabled }, settings: {}
+                } }) + '\n');
+                done();
+                if (request.method === 'shutdown') queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); });
+            } });
+            child.requests = [];
+            child.kill = () => { child.killed = true; queueMicrotask(() => { child.exitCode = 1; child.emit('exit', 1, 'SIGKILL'); }); };
+            children.push(child); return child;
+        } } : require(name)
+    });
+    const { BackendClient } = module.exports;
+    const client = new BackendClient({ executable: 'fixture', args: ['--paused'], databasePath: ':memory:' });
+    const dispose = () => { for (const child of children) { if (child.exitCode === null) { child.exitCode = 0; child.emit('exit', 0, null); } } };
+    return { BackendClient, client, children, dispose };
+}
+
+function clock() {
+    let id = 0;
+    const pending = new Map();
+    return { pending,
+        setTimeout(callback, delay) { const handle = { id: ++id, unref() {} }; pending.set(handle, { callback, delay }); return handle; },
+        clearTimeout(handle) { pending.delete(handle); },
+        async next() {
+            const entry = [...pending].sort((a, b) => a[1].delay - b[1].delay)[0];
+            if (!entry) return false;
+            pending.delete(entry[0]); entry[1].callback(); await flush(); return true;
+        }
+    };
+}
+
+async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = false, crashRestarts = false } = {}) {
+    const transport = backendHarness({ crashRestarts }), timers = clock();
+    const handlers = new Map(), statuses = [], calls = [];
+    let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
+    const app = new EventEmitter();
+    Object.assign(app, { isPackaged: false, getVersion: () => '1.3.2', getPath: () => 'fixture', setPath() {},
+        requestSingleInstanceLock: () => true, whenReady: () => ({ then(callback) { ready = callback(); return ready; } }),
+        quit() { quitCount++; const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; app.emit('before-quit', event); if (!event.defaultPrevented) window?.webContents.emit('will-prevent-unload', { preventDefault() { calls.push('unload-approved'); } }); }
+    });
+    class Window extends EventEmitter {
+        constructor() {
+            super(); window = this; this.webContents = new EventEmitter();
+            Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {},
+                send(channel, value) { if (channel === 'backend:event') statuses.push(value); },
+                session: { setPermissionRequestHandler() {} },
+                async executeJavaScript(script) { if (script.includes('wifimeterHasUnsavedChanges')) { calls.push('checkUnsaved'); return !prepare; } assert.match(script, /wifimeterPrepareUpdate/); calls.push('prepare'); return prepare; } });
+        }
+        isDestroyed() { return false; }
+        isVisible() { return true; }
+        isMinimized() { return false; }
+        async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
+    }
+    const imports = {
+        electron: { app, BrowserWindow: Window, dialog: {
+            async showMessageBox() { calls.push('confirm'); return { response: quitChoice }; },
+            showMessageBoxSync() { calls.push('late-confirm'); return quitChoice; }, showErrorBox() {}
+        }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
+        'node:fs': { existsSync: () => true }, 'node:timers': timers,
+        './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
+        './files.cjs': { createFileActions: () => ({}) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() {}, applySettings: async () => {}, beginQuit() { calls.push('beginQuit'); }, dispose() { disposed++; } }) },
+        './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
+        './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
+        './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
+        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({}), publishLive() {}, onMainClose() {}, dispose() {} }; } },
+        './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({}) },
+        './update-handoff.cjs': { launchUpdateHandoff: async () => { await handoff; throw Error('fixture handoff failed'); } },
+        './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), async install() {
+            try { await options.beforeInstall(); await options.launchInstaller('fixture.exe', [], { digest: '0'.repeat(64) }); return { state: 'installing' }; }
+            catch (error) { return { state: 'error', error: error.message }; }
+        } }; } }
+    };
+    let releaseHandoff;
+    const handoff = new Promise(resolve => { releaseHandoff = resolve; });
+    runInNewContext(fs.readFileSync(path.join(directory, 'main.cjs'), 'utf8'), {
+        require: name => imports[name] || require(name), __dirname: directory, Buffer, console,
+        process: { platform: 'win32', arch: 'x64', pid: 42, env: { WIFIMETER_USER_DATA: 'fixture' }, resourcesPath: 'fixture' }
+    });
+    await ready; await flush(); calls.length = 0;
+    const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
+    return { app, backend, timers, statuses, calls, hooks, children: transport.children, releaseHandoff,
+        get disposed() { return disposed; }, get quitCount() { return quitCount; }, window,
+        invoke: (name, payload) => handlers.get(name)(event, payload), miniRequest: () => miniRequest({ includeMinutes: true }),
+        crash() { const child = backend.child; child.exitCode = 1; child.emit('exit', 1, null); },
+        dispose() { timers.pending.clear(); transport.dispose(); timers.pending.clear(); }
+    };
+}
+
+test('backend pipe errors reject pending requests without an uncaught EventEmitter error', async t => {
+    const h = backendHarness({ answer: false }); t.after(h.dispose);
+    const request = h.client.request('hello'); request.catch(() => {});
+    assert.doesNotThrow(() => h.children[0].stdin.emit('error', Object.assign(Error('broken pipe'), { code: 'EPIPE' })));
+    await assert.rejects(request, /broken pipe|管道/);
+    assert.equal(h.client.pending.size, 0);
+});
+
+test('late exit, output and stream errors from an old child do not change the new child', async t => {
+    const h = backendHarness({ answer: false }); t.after(h.dispose);
+    h.client.start(); const old = h.client.child; old.killed = true;
+    h.client.start(); const current = h.client.child;
+    const request = h.client.request('hello'); request.catch(() => {});
+    old.stdout.write('{"id":1,"ok":true,"result":{"old":true}}\n');
+    old.exitCode = 1; old.emit('exit', 1, null);
+    assert.equal(h.client.child, current);
+    assert.equal(h.client.pending.size, 1);
+    assert.doesNotThrow(() => old.stdin.emit('error', Error('old broken pipe')));
+    current.stdout.write('{"id":1,"ok":true,"result":{"current":true}}\n');
+    assert.equal((await request).current, true);
+});
+
+test('a collector crash publishes offline status and restores the last successful collection settings', async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    await h.invoke('backend:request', { method: 'setAppCollection', params: { enabled: true } });
+    h.crash();
+    assert.equal(h.statuses.at(-1).event, 'collectorStatus');
+    assert.equal(h.statuses.at(-1).collector, 'offline');
+    assert.equal(h.statuses.at(-1).appCollection.enabled, true);
+    assert.equal(await h.timers.next(), true);
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, false);
+    assert.equal(h.children[1].appsEnabled, true);
+    assert.equal(h.statuses.at(-1).collector, 'running');
+});
+
+test('crash recovery keeps an explicitly paused collector paused', async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    await h.invoke('backend:request', { method: 'setPaused', params: { paused: true } });
+    h.crash(); await h.timers.next();
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, true);
+    assert.equal(h.statuses.at(-1).collector, 'paused');
+});
+
+for (const method of ['clearUsage', 'restore']) test(`crash recovery preserves the pause required by ${method}`, async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    await h.invoke('backend:request', { method });
+    h.crash(); await h.timers.next();
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, true);
+    assert.equal(h.statuses.at(-1).collector, 'paused');
+});
+
+test('concurrent page requests share one collector recovery before reading data', async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    h.crash();
+    const results = await Promise.all(['hello', 'snapshot'].map(method => h.invoke('backend:request', { method })));
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, false);
+    assert.equal(h.children[1].requests.filter(request => request.method === 'setPaused').length, 1);
+    assert.ok(results.every(result => result.ok));
+});
+
+test('repeated crashes stop after three recovery attempts', async t => {
+    const h = await mainHarness({ crashRestarts: true }); t.after(h.dispose);
+    h.crash();
+    for (let attempt = 0; attempt < 5; attempt++) await h.timers.next();
+    assert.equal(h.children.length, 4);
+    assert.equal(h.timers.pending.size, 0);
+    assert.equal(h.statuses.at(-1).collector, 'offline');
+    assert.match(h.statuses.at(-1).message, /重试|重新打开/);
+});
+
+test('startup migration failure never schedules automatic collector recovery', async t => {
+    const h = await mainHarness({ legacyFailure: true }); t.after(h.dispose);
+    h.crash(); await h.timers.next();
+    assert.equal(h.children.length, 1);
+    assert.equal(h.timers.pending.size, 0);
+});
+
+test('mini requests cannot restart a stopped collector during update handoff', async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    const installation = h.invoke('updates:install');
+    await flush(); assert.equal(h.backend.running, false);
+    await assert.rejects(h.miniRequest(), /update|更新|unavailable/i);
+    assert.equal(h.children.length, 1);
+    assert.equal(h.timers.pending.size, 0);
+    h.releaseHandoff(); await installation;
+});
+
+test('canceling an exit with unsaved settings preserves the collector and tray', async t => {
+    const h = await mainHarness({ prepare: false, quitChoice: 0 }); t.after(h.dispose);
+    const original = h.backend.child;
+    h.app.quit(); await flush();
+    assert.equal(h.backend.child, original);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.disposed, 0);
+    assert.deepEqual(h.calls, ['checkUnsaved', 'confirm']);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+});
+
+test('confirmed exit stops the collector only after checking saved settings', async t => {
+    const h = await mainHarness({ prepare: false, quitChoice: 1 }); t.after(h.dispose);
+    h.app.quit(); await flush();
+    assert.equal(h.backend.running, false);
+    assert.equal(h.disposed, 1);
+    assert.deepEqual(h.calls.slice(0, 3), ['checkUnsaved', 'confirm', 'beginQuit']);
+    assert.equal(h.calls.includes('late-confirm'), false);
+});
+
+test('exiting after the isolated window is destroyed does not ask for drafts', async t => {
+    const h = await mainHarness({ prepare: false }); t.after(h.dispose);
+    h.window.isDestroyed = () => true;
+    h.app.quit(); await flush();
+    assert.equal(h.backend.running, false);
+    assert.equal(h.disposed, 1);
+    assert.equal(h.calls.includes('confirm'), false);
+    assert.equal(h.calls.includes('checkUnsaved'), false);
+});
+
+test('mini collector status clears rates and application activity without a backend query', async t => {
+    const { createWindowControls } = require('../electron/window-controls.cjs');
+    const windows = [], handlers = new Map();
+    let queries = 0;
+    class Window extends EventEmitter {
+        constructor(options) {
+            super(); this.bounds = options; this.sent = [];
+            this.webContents = new EventEmitter();
+            Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {},
+                send: (channel, value) => this.sent.push([channel, value]) });
+            windows.push(this);
+        }
+        isDestroyed() { return false; }
+        getBounds() { return this.bounds; }
+        showInactive() {}
+        destroy() {}
+        async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
+    }
+    const screen = new EventEmitter();
+    screen.getPrimaryDisplay = () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } });
+    const controls = createWindowControls({ BrowserWindow: Window, screen,
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler), removeHandler: name => handlers.delete(name) },
+        dialog: {}, userData: 'fixture', getWindow: () => null, hideToTray() {}, requestQuit() {},
+        platform: 'win32', backgroundTest: true,
+        fileSystem: { readFile: async () => JSON.stringify({ miniWindow: true, miniExpanded: true }) },
+        requestMiniSnapshot: async () => { queries++; return { appMinuteRecords: [], live: {} }; }
+    });
+    t.after(() => controls.dispose());
+    await controls.read(); const mini = windows[0];
+    controls.publishLive({ event: 'live', state: 'connected', collector: 'running',
+        connections: [{ rxPerSecond: 500, txPerSecond: 100 }],
+        appCollection: { enabled: true, state: 'running' }, appProcesses: [{ appId: 'browser', rxPerSecond: '500', txPerSecond: '100' }] });
+    mini.webContents.emit('did-finish-load'); await flush();
+    assert.equal(queries, 1);
+    controls.publishLive({ event: 'collectorStatus', collector: 'offline', updatedAt: new Date().toISOString(),
+        appCollection: { enabled: true, state: 'unavailable' } });
+    const live = mini.sent.findLast(([channel]) => channel === 'mini:live')[1];
+    assert.equal(live.connections[0].rxPerSecond, 0);
+    assert.deepEqual(live.appProcesses, []);
+    const applications = await handlers.get('mini:applications')({ sender: mini.webContents, senderFrame: mini.webContents.mainFrame });
+    assert.equal(applications.status, 'unavailable');
+    assert.deepEqual(applications.rows, []);
+    assert.equal(queries, 1);
+});
