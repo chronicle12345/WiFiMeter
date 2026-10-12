@@ -10,6 +10,7 @@ Changes are listed by release.
 
 - Recover renderer initialization and live subscriptions after a startup failure without replacing a newer selected range. Recheck lifecycle state before update shutdown and resume collector recovery after canceling an import dialog. Query collection gaps using local calendar days and complete retained history; hide backend build consoles.
 - Retry one network-usage batch after a temporary database write failure, preserving its time, network attribution and quota increments. Flush it before normal shutdown, and discard it after successful clear or restore.
+- Derive the compiled backend version from the root package metadata and verify that native binaries match the desktop release version.
 - Keep personal agent rules out of Git, use English by default with matching Chinese project guides, and consolidate release preparation requirements into the public packaging documentation.
 - Archive unused Node runtime trimming, Zig/Wine cross-build and old PowerShell product tools. Consolidate outdated module README files, move demo snapshots into test fixtures, and remove uncalled backend interfaces while retaining current sampling and migration coverage.
 - Remove Electron and electron-builder dependencies and legacy build entry points. Move shared Node business modules into host, run renderer regressions in a headless browser through the Tauri bridge, and validate native desktop behavior in actual Tauri packages. Preserve existing data locations, upgrade handoff and profile locks.
@@ -20,6 +21,7 @@ Changes are listed by release.
 
 - 启动失败后恢复页面初始化和实时订阅，保留最新选择的范围；更新关闭采集器前重新检查生命周期，取消导入对话框后继续恢复采集。采集缺失区间按本地日历日及完整保留历史查询，后端构建也隐藏控制台。
 - 数据库暂时写入失败时重试一轮流量批次，保留原时间、网络归属和额度增量；正常退出前成功补写，清空或恢复成功后不再重放旧批次。
+- 编译后端版本从根包元数据读取，并核对原生程序与桌面发行版本一致。
 - 个人代理规则取消 Git 跟踪，项目文档默认英文并提供对应中文版，发布准备要求统一保存在正式打包文档。
 - 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
 - 移除 Electron、electron-builder 依赖与旧构建入口，共享 Node 业务归入 host。页面回归使用无头浏览器和真实 Tauri 桥接，原生桌面行为通过实际 Tauri 安装包验证；保留原数据目录、升级握手和实例互斥保护。

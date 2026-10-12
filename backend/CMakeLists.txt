@@ -1,9 +1,20 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Read the release version from the repository's package metadata using CMake 3.16 APIs.
+get_filename_component(WIFIMETER_PACKAGE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../package.json" ABSOLUTE)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${WIFIMETER_PACKAGE_FILE}")
+file(READ "${WIFIMETER_PACKAGE_FILE}" WIFIMETER_PACKAGE_JSON)
+string(REGEX MATCH "\"version\"[ \t\r\n]*:[ \t\r\n]*\"([^\"]+)\"" WIFIMETER_VERSION_MATCH "${WIFIMETER_PACKAGE_JSON}")
+set(WIFIMETER_VERSION "${CMAKE_MATCH_1}")
+if(NOT WIFIMETER_VERSION MATCHES "^([0-9]+\\.[0-9]+\\.[0-9]+)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$")
+    message(FATAL_ERROR "The root package.json must contain a semantic version.")
+endif()
+set(WIFIMETER_PROJECT_VERSION "${CMAKE_MATCH_1}")
+
 # C 语言用于仓库内置的 SQLite 合并源码（third_party/sqlite），其余代码都是 C++。
 # Distributable Windows binaries must not depend on a developer's compiler DLLs.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-project(wifimeter-backend VERSION 1.3.2 LANGUAGES C CXX)
+project(wifimeter-backend VERSION "${WIFIMETER_PROJECT_VERSION}" LANGUAGES C CXX)
 if(WIN32)
     add_compile_definitions(NOMINMAX)
 endif()

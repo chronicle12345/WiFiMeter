@@ -41,6 +41,7 @@ NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ，AppImage 使用官方插�
 创建或推送 `v<版本>` 标签前，依次核对以下内容：
 
 1. 同步 `package.json`、`apps/desktop/package.json`、`apps/desktop/src-tauri/tauri.conf.json`、`apps/desktop/src-tauri/Cargo.toml` 及锁文件中的本项目版本。标签与这些文件必须一致，第三方依赖版本不随本项目版本改动。
+   CMake 从根 `package.json` 读取后端构建版本，两个平台入口不得写死发行版本号。发布前运行编译产物的 `--version`，核对桌面元数据与实际后端版本一致。
 2. 同一提交更新 `README.md` 和 `README.zh-CN.md` 的版本徽章、发布说明链接、功能、安装与升级方法、平台支持及限制，并在 `CHANGELOG.md` 记录对应版本。涉及架构、打包或数据格式时，同时更新相关文档。
 3. 发布说明保存为 `docs/releases/v<版本>.md`，固定将 `## English` 放在前面，`## 中文` 放在后面，两种语言的功能、修复、安装方法及限制必须对应；GitHub Release 正文使用同一份文件。尚未发布的修改只写入未发布记录。
 4. 标签提交的完整 CI/CD 检查必须通过。优先复用同一提交已验证的产物；附件名称、大小、内部 SHA-256 和验证结果来自实际产物，不能沿用旧版本记录。公开附件仅包含上表九个安装包。

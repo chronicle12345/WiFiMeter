@@ -135,7 +135,7 @@ int main()
         }
         if (argument == "--version")
         {
-            std::printf("wifimeter-backend 1.3.2（协议版本 %d）\n", ipc::kProtocolVersion);
+            std::printf("wifimeter-backend %s（协议版本 %d）\n", WIFIMETER_VERSION, ipc::kProtocolVersion);
             done = true;
             continue;
         }
