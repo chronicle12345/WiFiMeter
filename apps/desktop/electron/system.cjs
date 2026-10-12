@@ -77,6 +77,7 @@ X-GNOME-Autostart-enabled=true
     }
 
     function showWindow() {
+        if (backgroundTest) return;
         const window = getWindow();
         if (!window || window.isDestroyed()) return;
         if (window.isMinimized()) window.restore();

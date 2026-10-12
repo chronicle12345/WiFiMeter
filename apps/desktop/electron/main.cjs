@@ -142,6 +142,7 @@ if (backgroundTest) { app.commandLine?.appendSwitch('disable-renderer-background
 const primaryInstance = app.requestSingleInstanceLock();
 if (!primaryInstance) app.quit();
 app.on('second-instance', () => {
+    if (backgroundTest) return;
     if (window && !window.isDestroyed()) { window.show(); if (window.isMinimized()) window.restore(); window.focus(); }
 });
 if (primaryInstance) app.whenReady().then(async () => {
@@ -153,10 +154,13 @@ if (primaryInstance) app.whenReady().then(async () => {
         icon: path.join(__dirname, '../assets/icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.cjs'),
-            contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false
+            contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
+            ...(backgroundTest ? { backgroundThrottling: false } : {})
         }
     });
-    const sendVisibility = () => window.webContents.send('window:visibility', window.isVisible() && !window.isMinimized());
+    const sendVisibility = () => window.webContents.send('window:visibility', {
+        visible: backgroundTest || (window.isVisible() && !window.isMinimized()), backgroundTest
+    });
     for (const event of ['hide', 'show', 'minimize', 'restore']) window.on(event, sendVisibility);
     window.webContents.on('did-finish-load', sendVisibility);
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -454,7 +458,6 @@ if (primaryInstance) app.whenReady().then(async () => {
         return updateResult(result);
     });
     await window.loadFile(pagePath);
-    if (backgroundTest) window.showInactive();
     await startup;
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
         checkForUpdates({ automatic: true }).catch(error => updateResult({ state: 'error', error: error.message }));

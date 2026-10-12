@@ -377,7 +377,13 @@ test('后台测试小窗不因屏幕变化或定时器返回前台', async t => 
     const f = await fixture(t, { backgroundTest: true, timers: { setInterval: () => starts++, clearInterval() {}, now: () => 0 } });
     await f.controls.update({ miniWindow: true });
     const mini = f.windows[0]; mini.webContents.emit('did-finish-load');
-    await f.controls.update({ miniShape: 'circle' });
+    assert.equal(mini.shown, undefined, '后台测试加载完成后仍须保持原生小窗隐藏');
+    mini.webContents.mainFrame.url = pathToFileURL(mini.file).href;
+    f.handlers.get('mini:open-main')({ sender: mini.webContents, senderFrame: mini.webContents.mainFrame });
+    assert.equal(f.state.shows, 0, '后台测试不能通过小窗显示主窗口');
+    assert.equal(mini.options.focusable, false);
+    await f.controls.update({ miniShape: 'circle', miniExpanded: true });
+    assert.equal(mini.focusable, false, '后台测试展开小窗后也不能获得焦点');
     mini.emit('moved');
     assert.equal(mini.bounds.x, -32000); assert.equal(mini.bounds.y, -32000);
     assert.equal(starts, 0);

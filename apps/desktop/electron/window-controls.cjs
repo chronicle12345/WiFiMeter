@@ -144,9 +144,10 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             ...(backgroundTest ? { x: -32000, y: -32000 } : {}),
             title: 'WiFiMeter', frame: false, resizable: false, maximizable: false,
             minimizable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
-            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: preferences.miniExpanded,
+            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: !backgroundTest && preferences.miniExpanded,
             webPreferences: { preload: path.join(__dirname, 'mini', 'preload.cjs'),
-                contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false }
+                contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
+                ...(backgroundTest ? { backgroundThrottling: false } : {}) }
         });
         mini = window;
         expanded = window.getBounds();
@@ -169,7 +170,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             sendPreferences();
             if (lastLive) window.webContents.send('mini:live', lastLive);
             if (preferences.miniExpanded) applicationUsage().catch(error => logger(`小窗应用查询失败：${error.message}`));
-            window.showInactive();
+            if (!backgroundTest) window.showInactive();
         });
         window.on('close', event => {
             if (disposed || isQuitting()) return;
@@ -232,7 +233,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             await persist(next);
             const previous = preferences;
             preferences = next;
-            mini?.setFocusable?.(next.miniExpanded);
+            mini?.setFocusable?.(!backgroundTest && next.miniExpanded);
             if (mini && (previous.miniShape !== next.miniShape || previous.miniSnap !== next.miniSnap || previous.miniExpanded !== next.miniExpanded)) {
                 if (backgroundTest) setBounds({ ...mini.getBounds(), ...miniSize(next.miniShape, next.miniExpanded) });
                 else placeMini({ resize: true });
@@ -263,6 +264,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     const handlers = {
         'mini:open-main': event => {
             trustedMini(event);
+            if (backgroundTest) return;
             const window = getWindow();
             if (!window || window.isDestroyed()) return;
             if (window.isMinimized()) window.restore();

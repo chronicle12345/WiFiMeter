@@ -54,7 +54,7 @@ test('hidden windows do not redraw for backend events and catch up when shown', 
         globalThis.observer = new MutationObserver(records => { globalThis.mutations += records.length; });
         observer.observe(document.getElementById('content'), {childList:true,subtree:true,characterData:true});
     });
-    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].hide());
+    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].webContents.send('window:visibility', { visible: false, backgroundTest: true }));
     await expect.poll(() => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false);
     await page.waitForTimeout(100);
     await page.evaluate(() => { globalThis.mutations = 0; });
@@ -64,8 +64,8 @@ test('hidden windows do not redraw for backend events and catch up when shown', 
     });
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => globalThis.mutations)).toBe(0);
-    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].showInactive());
-    await expect.poll(() => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(true);
+    await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].webContents.send('window:visibility', { visible: true, backgroundTest: true }));
+    await expect.poll(() => app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].isVisible())).toBe(false);
     await expect.poll(() => page.evaluate(() => globalThis.mutations)).toBeGreaterThan(0);
 });
 test('failed update recovers collection despite an unsaved draft and removes the recovery action', async () => {

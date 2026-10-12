@@ -376,10 +376,14 @@ test('额度提醒按设置转成系统通知', async () => {
     rmSync(home, { recursive: true, force: true });
 });
 
-test('后台测试即使开启额度提醒也不调用系统通知接口', async t => {
-    const { home, state, integration } = createFakes({ backgroundTest: true });
+test('后台测试不显示原生窗口或系统通知', async t => {
+    const { home, state, integration, window } = createFakes({ backgroundTest: true });
     t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
     await integration.applySettings({ notifications: true });
+    window.isMinimized = () => true;
+    for (const method of ['restore', 'show', 'focus']) window[method] = () => state.shown++;
+    state.menu.template[0].click();
+    assert.equal(state.shown, 0, '后台测试的托盘操作不能恢复、显示或聚焦原生窗口');
     const results = ['quotaWarn', 'quotaLimit', 'quotaDisconnect'].map(kind =>
         integration.notify({ kind, ssid: 'Fixture Wi-Fi', percent: 100, outcome: 0 }));
     assert.equal(state.notificationsShown, 0, '后台测试不能显示额度通知');

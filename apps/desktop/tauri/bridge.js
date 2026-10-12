@@ -44,7 +44,7 @@
             update: patch => request('window-preferences:update', patch),
             onChanged: handler => subscribe('window-preferences:changed', handler)
         },
-        onVisibility: handler => subscribe('window:visibility', handler),
+        onVisibility: handler => subscribe('window:visibility', state => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true)),
         updates: {
             openLink: url => request('updates:open-link', url),
             status: () => request('updates:status'),

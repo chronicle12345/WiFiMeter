@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('desktop', {
         }
     },
     onVisibility: handler => {
-        const listener = (_event, visible) => handler(visible);
+        const listener = (_event, state) => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true);
         ipcRenderer.on('window:visibility', listener);
         return () => ipcRenderer.removeListener('window:visibility', listener);
     },

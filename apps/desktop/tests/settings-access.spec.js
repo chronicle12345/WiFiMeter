@@ -78,7 +78,8 @@ test('remembered close preference updates automatically without reverting saved 
  await page.locator('[name="closeAction"]').selectOption('ask');await expect.poll(preferences).toMatchObject({closeAction:'ask'});
  await page.locator('[name="interval"]').selectOption('10');await expect.poll(async()=>(await snapshot()).settings.interval).toBe(10);
  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:true});});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
- await expect.poll(preferences).toMatchObject({closeAction:'tray'});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].showInactive());
+ await expect.poll(preferences).toMatchObject({closeAction:'tray'});
+ await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(window=>window.isVisible()))).toBe(false);
  await expect(page.locator('[name="closeAction"]')).toHaveValue('tray');await expect(page.locator('[name="interval"]')).toHaveValue('10');
 });
 

@@ -512,8 +512,8 @@ function confirmAutosave(title,text){if(preparingUpdate)throw Error(t('请先保
  pendingAutosaveCancel=()=>resolve(false);
 });}
 document.addEventListener('focusout',event=>{const input=event.target;if(autosaveForms.has(input.form?.id)&&input.name&&input.type!=='checkbox'&&input.tagName!=='SELECT')formAutosaves.expedite(input);});
-let nativeWindowHidden = false;
-const renderingHidden = () => document.hidden || nativeWindowHidden;
+let nativeWindowHidden = false, backgroundWindow = false;
+const renderingHidden = () => (!backgroundWindow && document.hidden) || nativeWindowHidden;
 function refreshAfterTick(){
  if(renderingHidden())return;
  renderChrome();
@@ -551,7 +551,7 @@ function showAlert(alert){
 function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
 const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden()){scheduleAutomaticRange(true);refreshLive();}};
 document.addEventListener('visibilitychange',visibilityChanged);
-window.desktop.onVisibility?.(visible=>{nativeWindowHidden=!visible;visibilityChanged();});
+window.desktop.onVisibility?.((visible,backgroundTest)=>{backgroundWindow=backgroundTest===true;nativeWindowHidden=!visible;visibilityChanged();});
 window.addEventListener('unload',()=>{appIcons.stop();liveRender.stop();clearInterval(samplerTimer);});
 async function pauseCollector(){
  const paused=data.live.collector==='paused';
