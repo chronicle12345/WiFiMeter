@@ -144,6 +144,104 @@ test('首次加载仅查询指定区间一次，reload沿用区间，All仍显�
  assert.equal(calls.at(-1).params.from,'0001-01-01');
 });
 
+for (const failedMethod of ['hello', 'snapshot']) {
+    test(`首次 ${failedMethod} 失败后刷新重新初始化，恢复实时订阅和原有日期范围`, async t => {
+        const original = globalThis.window; t.after(() => { globalThis.window = original; });
+        const calls = [], range = { from: '2026-10-01', to: '2026-10-02' };
+        let fail = true, receive, subscriptions = 0;
+        globalThis.window = { desktop: { backend: {
+            request: async (method, params) => {
+                calls.push({ method, params });
+                return fail && method === failedMethod ? { ok: false, error: { message: 'temporarily unavailable' } }
+                    : { ok: true, result: {} };
+            },
+            onEvent: handler => { subscriptions++; receive = handler; return () => {}; }
+        } } };
+        const client = createDataClient(); t.after(() => client.stop());
+        await assert.rejects(client.start(range), /temporarily unavailable/);
+        assert.equal(client.ready, false); assert.equal(client.storageFailed, true);
+
+        fail = false; await client.reload();
+        assert.equal(client.ready, true); assert.equal(client.storageFailed, false);
+        assert.equal(subscriptions, 1);
+        assert.deepEqual(calls.at(-1), { method: 'snapshot', params: range });
+        receive({ event: 'usage', day: range.to, networks: [{ networkId: 'home', rxBytes: '10', txBytes: '1' }] });
+        assert.equal(client.snapshot.records[0].rxBytes, '10');
+        receive({ event: 'usage', day: '2026-10-03', networks: [{ networkId: 'home', rxBytes: '20', txBytes: '2' }] });
+        assert.equal(client.snapshot.records.length, 1);
+        await client.reload();
+        assert.equal(subscriptions, 1);
+        assert.deepEqual(calls.at(-1), { method: 'snapshot', params: range });
+    });
+}
+
+for (const completed of [true, false]) {
+    test(`启动恢复握手期间切换日期，${completed ? '已完成' : '进行中'}的新查询不会被旧范围覆盖`, async t => {
+        const original = globalThis.window; t.after(() => { globalThis.window = original; });
+        const ranges = [], oldRange = { from: '2026-10-01', to: '2026-10-02' }, nextRange = { from: '2026-10-03', to: '2026-10-04' };
+        let fail = true, finishHello, finishSnapshot;
+        globalThis.window = { desktop: { backend: {
+            request: async (method, params) => {
+                if (method === 'hello') return fail ? { ok: false, error: { message: 'temporarily unavailable' } }
+                    : new Promise(resolve => { finishHello = () => resolve({ ok: true, result: {} }); });
+                ranges.push(params);
+                const response = { ok: true, result: { records: [{ date: params.to, networkId: 'home', rxBytes: '10', txBytes: '0' }] } };
+                return completed ? response : new Promise(resolve => { finishSnapshot = () => resolve(response); });
+            },
+            onEvent: () => () => {}
+        } } };
+        const client = createDataClient(); t.after(() => client.stop());
+        await assert.rejects(client.start(oldRange), /temporarily unavailable/);
+        fail = false; const reload = client.reload();
+        const selection = client.queryRange(nextRange);
+        if (completed) await selection;
+        finishHello(); await new Promise(resolve => setImmediate(resolve));
+        assert.deepEqual(ranges, [nextRange]);
+        if (!completed) finishSnapshot();
+        await Promise.all([selection, reload]);
+        assert.equal(client.ready, true); assert.equal(client.storageFailed, false);
+        assert.equal(client.snapshot.records[0].date, nextRange.to);
+    });
+}
+
+for (const completed of [true, false]) {
+    test(`启动恢复期间${completed ? '已完成' : '进行中'}的新范围查询失败，刷新保留失败状态并按新范围重试`, async t => {
+        const original = globalThis.window; t.after(() => { globalThis.window = original; });
+        const ranges = [], oldRange = { from: '2026-10-01', to: '2026-10-02' }, nextRange = { from: '2026-10-03', to: '2026-10-04' };
+        let failHello = true, failSnapshot = true, finishHello, finishSnapshot;
+        globalThis.window = { desktop: { backend: {
+            request: async (method, params) => {
+                if (method === 'hello') return failHello ? { ok: false, error: { message: 'temporarily unavailable' } }
+                    : new Promise(resolve => { finishHello = () => resolve({ ok: true, result: {} }); });
+                ranges.push(params);
+                const response = failSnapshot ? { ok: false, error: { message: 'new range unavailable' } }
+                    : { ok: true, result: { records: [{ date: params.to, networkId: 'home', rxBytes: '10', txBytes: '0' }] } };
+                return completed ? response : new Promise(resolve => { finishSnapshot = () => resolve(response); });
+            },
+            onEvent: () => () => {}
+        } } };
+        const client = createDataClient(); t.after(() => client.stop());
+        await assert.rejects(client.start(oldRange), /temporarily unavailable/);
+        failHello = false;
+        const reload = assert.rejects(client.reload(), /new range unavailable/);
+        const selection = assert.rejects(client.queryRange(nextRange), /new range unavailable/);
+        if (completed) await selection;
+        finishHello(); await new Promise(resolve => setImmediate(resolve));
+        if (!completed) finishSnapshot();
+        await Promise.all([selection, reload]);
+        assert.equal(client.ready, false); assert.equal(client.storageFailed, true);
+        assert.deepEqual(ranges, [nextRange]);
+
+        failSnapshot = false;
+        const retry = client.reload(); finishHello(); await new Promise(resolve => setImmediate(resolve));
+        if (!completed) finishSnapshot();
+        await retry;
+        assert.equal(client.ready, true); assert.equal(client.storageFailed, false);
+        assert.deepEqual(ranges, [nextRange, nextRange]);
+        assert.equal(client.snapshot.records[0].date, nextRange.to);
+    });
+}
+
 test('连续应用缺失事件合并相邻同语义区间，保留原因差异且不重载历史',async t=>{
  const original=globalThis.window;t.after(()=>{globalThis.window=original;});
  let receive;const calls=[];

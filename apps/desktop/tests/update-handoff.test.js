@@ -16,7 +16,7 @@ const { createNativeAdapter } = require('../tauri/native-adapter.cjs');
 const digest = createHash('sha256').update('verified fixture').digest('hex');
 const directory = fileURLToPath(new URL('../host/', import.meta.url));
 
-async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions, prepareUpdateResult = true, missingPrepareHook = false } = {}) {
+async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions, prepareUpdateResult = true, missingPrepareHook = false, dialog = {} } = {}) {
     let ready, window, backend, hooks, quitCount = 0, releaseReady;
     const handlers = new Map(), calls = [], updates = [], nativeMessages = [];
     const native = nativeExitDecisions ? createNativeAdapter({
@@ -27,7 +27,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
             else if (message.type === 'native') {
                 assert.ok(['app:confirmQuit', 'app:prepareUpdateQuit'].includes(message.method));
                 const result = message.method === 'app:prepareUpdateQuit' ? prepareUpdateResult : nativeExitDecisions.shift();
-                queueMicrotask(() => native.receive({ type: 'native-result', id: message.id, ok: true, result }));
+                Promise.resolve(result).then(result => native.receive({ type: 'native-result', id: message.id, ok: true, result }));
             }
         }
     }) : null;
@@ -62,7 +62,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
     if (!native && !missingPrepareHook) app.prepareUpdateExit = async () => { calls.push('prepareUpdate'); return prepareUpdateResult; };
     if (!native) app.quit = () => { quitCount++; app.emit('before-quit', { preventDefault() {} }); };
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog, ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true },
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
@@ -156,6 +156,33 @@ test('main quits only after handoff READY', async () => {
     assert.equal(h.quitCount, 1);
 });
 
+test('update preparation rechecks an import started while settings are saving', async () => {
+    let finishPreparation, cancelImport;
+    const preparationResponse = new Promise(resolve => { finishPreparation = resolve; });
+    const h = await harness({ nativeExitDecisions: [false], prepareUpdateResult: preparationResponse, dialog: {
+        showOpenDialog: () => new Promise(resolve => { cancelImport = resolve; })
+    } });
+    const preparation = h.hooks.beforeInstall();
+    await new Promise(setImmediate);
+    const importing = h.invoke('legacy:import');
+    await new Promise(setImmediate);
+    finishPreparation(true);
+    try {
+        await assert.rejects(preparation, /migration|导入|迁移/i);
+        assert.equal(h.backend.running, true);
+        assert.equal(h.backend.paused, false);
+        assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+        assert.equal(h.calls.includes('handoff'), false);
+        h.app.quit();
+        await new Promise(setImmediate);
+        assert.equal(h.nativeMessages.filter(message => message.method === 'app:confirmQuit').length, 1);
+        assert.equal(h.backend.running, true);
+    } finally {
+        cancelImport({ canceled: true, filePaths: [] });
+        await importing;
+    }
+});
+
 function handoffHarness({ appPid = process.pid } = {}) {
     const child = new EventEmitter(); child.stdout = new PassThrough(); child.stdin = new PassThrough(); child.stderr = new PassThrough(); child.unref = () => {};
     let spawned;
@@ -233,21 +260,66 @@ test('bridge keeps PowerShell attached to its surviving Node host and preserves 
     assert.equal(fakeProcess.exitCode, 0);
 });
 
-function backendHarness() {
+function backendHarness({ shutdownError, answerShutdown = true } = {}) {
     const children = [], module = { exports: {} };
+    let refusal = shutdownError;
     runInNewContext(fs.readFileSync(path.join(directory, 'backend.cjs'), 'utf8'), {
         module, setTimeout, clearTimeout, process,
         require: name => name === 'node:child_process' ? { spawn() {
             const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.exitCode = null; child.killed = false;
             child.stdin = new Writable({ write(chunk, encoding, done) {
                 const request = JSON.parse(chunk.toString());
+                if (request.method === 'shutdown') {
+                    if (!answerShutdown) { done(); return; }
+                    if (refusal) {
+                        child.stdout.write(JSON.stringify({ id: request.id, ok: false,
+                            error: { code: refusal, message: 'pending usage could not be saved' } }) + '\n');
+                        done(); return;
+                    }
+                }
                 child.stdout.write(JSON.stringify({ id: request.id, ok: true, result: {} }) + '\n'); done();
             } });
             child.kill = () => { throw Error('must not kill a collector'); };
             children.push(child); return child;
         } } : require(name)
     });
-    return { children, client: new module.exports.BackendClient({ executable: 'fixture', databasePath: 'memory' }) };
+    return { children, allowShutdown() { refusal = null; },
+        client: new module.exports.BackendClient({ executable: 'fixture', databasePath: 'memory' }) };
+}
+
+test('a storage refusal of shutdown keeps the original collector usable for recovery and retry', async () => {
+    const h = backendHarness({ shutdownError: 'storageFailure' });
+    await h.client.request('hello');
+    const original = h.children[0];
+    await assert.rejects(h.client.stopGracefully({ timeout: 1000 }), error => error.code === 'storageFailure');
+    assert.equal(h.client.shutdownPending, false);
+    assert.equal(h.client.stopping, false);
+    await h.client.waitForShutdown({ timeout: 15 });
+    await h.client.request('setPaused', { paused: false });
+    assert.equal(h.children.length, 1);
+    assert.equal(h.client.child, original);
+
+    h.allowShutdown();
+    const retried = h.client.stopGracefully({ timeout: 1000 });
+    await new Promise(setImmediate);
+    original.exitCode = 0; original.emit('exit', 0, null);
+    await retried;
+    assert.equal(h.client.running, false);
+});
+
+for (const options of [{ shutdownError: 'unknown' }, { answerShutdown: false }]) {
+    test(`ambiguous shutdown ${options.shutdownError ? 'failure' : 'timeout'} preserves the original-process guard`, async () => {
+        const h = backendHarness(options);
+        await h.client.request('hello');
+        await assert.rejects(h.client.stopGracefully({ timeout: 15 }));
+        assert.equal(h.client.shutdownPending, true);
+        await assert.rejects(h.client.request('hello'), /shutdown|退出/i);
+        assert.throws(() => h.client.start(), /shutdown|退出/i);
+        assert.equal(h.children.length, 1);
+        const waiting = h.client.waitForShutdown({ timeout: 1000 });
+        h.children[0].exitCode = 0; h.children[0].emit('exit', 0, null);
+        await waiting;
+    });
 }
 test('timed-out shutdown blocks restarts until the original child actually emits exit', async () => {
     const { client, children } = backendHarness();

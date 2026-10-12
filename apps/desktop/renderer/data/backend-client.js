@@ -41,6 +41,8 @@ export function createDataClient(handlers = {}) {
     let rangeVersion = 0;
     let eventRevision = 0;
     let pendingSnapshot = null;
+    // 查询结束后仍保留结果，让启动恢复能识别握手期间已经失败的新范围。
+    let latestRangeQuery = null;
 
     function collectorStatusFields(message) {
         const collector = message.collector;
@@ -276,6 +278,8 @@ export function createDataClient(handlers = {}) {
 
         // 首次加载先订阅，再查询快照，恢复查询期间在快照之后提交的采样。
         async start(params = {}) {
+            const version = rangeVersion, queryPending = pendingSnapshot !== null;
+            if (!state.ready && !queryPending) activeRange = { ...params };
             if (!state.available) {
                 state.storageFailed = true;
                 return snapshot;
@@ -283,8 +287,16 @@ export function createDataClient(handlers = {}) {
             try {
                 await request('hello');
                 subscribe();
-                await this.queryRange(params);
+                if (version === rangeVersion && !queryPending) this.queryRange(params);
+                // 握手期间选择了新范围时，等最新查询完成后再恢复初始化状态。
+                for (;;) {
+                    const query = latestRangeQuery;
+                    try { await query.promise; }
+                    catch (error) { if (query === latestRangeQuery) throw error; }
+                    if (query === latestRangeQuery) break;
+                }
                 state.ready = true;
+                state.storageFailed = false;
             } catch (error) {
                 state.storageFailed = true;
                 throw error;
@@ -292,23 +304,29 @@ export function createDataClient(handlers = {}) {
             return snapshot;
         },
 
-        async queryRange(params) {
+        queryRange(params) {
             const version = ++rangeVersion;
             const pending = { revision: eventRevision, groups: new Map(), fields: new Map(), usage: [] };
             pendingSnapshot = pending;
-            try {
-                const next = await request('snapshot', params);
-                if (version !== rangeVersion) return false;
-                activeRange = { ...params };
-                applySnapshot(next);
-                restorePendingEvents(pending, next);
-                return true;
-            } finally {
-                if (pendingSnapshot === pending) pendingSnapshot = null;
-            }
+            const query = { params: { ...params }, promise: null };
+            latestRangeQuery = query;
+            query.promise = (async () => {
+                try {
+                    const next = await request('snapshot', query.params);
+                    if (version !== rangeVersion) return false;
+                    activeRange = { ...query.params };
+                    applySnapshot(next);
+                    restorePendingEvents(pending, next);
+                    return true;
+                } finally {
+                    if (pendingSnapshot === pending) pendingSnapshot = null;
+                }
+            })();
+            return query.promise;
         },
 
         async reload() {
+            if (state.storageFailed && !state.ready) return this.start(latestRangeQuery?.params ?? activeRange);
             await this.queryRange(activeRange);
             return snapshot;
         },

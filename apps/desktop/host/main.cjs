@@ -322,7 +322,7 @@ app.whenReady().then(async () => {
             await backend.request('setPaused', { paused: true }).catch(pauseError => console.error('[migration] Pause failed:', pauseError.message));
             migrationStatus = { found: true, error: error.message }; return migrationStatus;
         }
-        finally { migrationBusy = false; }
+        finally { migrationBusy = false; scheduleCollectorRecovery(); }
     });
     let updateState = { state: 'unchecked', status: 'unchecked', currentVersion: app.getVersion(), checkOnStartup: true, progress: null, busy: false };
     let updateRecovery = null;
@@ -365,10 +365,16 @@ app.whenReady().then(async () => {
         openExternal: url => shell.openExternal(url),
         beforeInstall: async () => {
             await startup;
-            if (quitFlight || quitting || recoveryFlight || collectorRecoveryNeeded) throw Error('请等待退出确认或采集恢复完成后重试更新。');
-            if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
+            const assertReady = () => {
+                if (quitFlight || quitting || recoveryFlight || collectorRecoveryNeeded) throw Error('请等待退出确认或采集恢复完成后重试更新。');
+                if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
+            };
+            assertReady();
             const saved = typeof app.prepareUpdateExit === 'function' && await app.prepareUpdateExit();
             if (saved !== true) throw Error('有尚未保存的设置，请先完成设置保存后重试更新。');
+            // 保存确认等待期间可能开始导入、退出或恢复，停止采集前再核对一次。
+            try { assertReady(); }
+            catch (error) { app.cancelQuit?.(); throw error; }
             installingUpdate = true;
             cancelRecoveryTimers();
             updateRecovery = { paused: null, pauseRequested: false };

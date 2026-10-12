@@ -73,7 +73,7 @@ function clock() {
     };
 }
 
-async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false } = {}) {
+async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false, dialogs = {} } = {}) {
     const transport = backendHarness({ crashRestarts, restoreThenHelloFails }), timers = clock();
     const handlers = new Map(), statuses = [], calls = [], systemSettings = [], miniEvents = [];
     let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
@@ -97,7 +97,7 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {} },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {}, ...dialogs },
             ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
         './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
@@ -229,6 +229,24 @@ test('startup migration failure never schedules automatic collector recovery', a
     h.crash(); await h.timers.next();
     assert.equal(h.children.length, 1);
     assert.equal(h.timers.pending.size, 0);
+});
+
+test('canceling an import resumes recovery of a collector that crashed during directory selection', async t => {
+    let cancelImport;
+    const h = await mainHarness({ dialogs: {
+        showOpenDialog: () => new Promise(resolve => { cancelImport = resolve; })
+    } });
+    t.after(h.dispose);
+    const importing = h.invoke('legacy:import');
+    await flush();
+    h.crash();
+    assert.equal(h.timers.pending.size, 0, 'directory selection must keep collector recovery paused');
+    cancelImport({ canceled: true, filePaths: [] });
+    assert.equal((await importing).canceled, true);
+    assert.equal(await h.timers.next(), true, 'closing the canceled import must schedule recovery without a page request');
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, false);
+    assert.equal(h.statuses.at(-1).collector, 'running');
 });
 
 test('mini requests cannot restart a stopped collector during update handoff', async t => {

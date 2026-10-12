@@ -226,7 +226,12 @@ class BackendClient extends EventEmitter {
         const completion = exited.catch(error => { throw error; });
         completion.catch(() => {});
         try { await this.request('shutdown', {}, { timeout }); await completion; }
-        catch (error) { this.stopping = this.shutdownPending; throw error; }
+        catch (error) {
+            // 后端明确拒绝保存并关停时仍在运行，可恢复原采集；超时继续等待实际退出。
+            if (error.code === 'storageFailure' && this.shutdownChild === child) this.shutdownChild = null;
+            this.stopping = this.shutdownPending;
+            throw error;
+        }
         finally { cleanup(); }
     }
 

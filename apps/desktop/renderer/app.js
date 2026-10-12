@@ -22,7 +22,7 @@ import { createAppControlModel, legacyMessage } from './data/desktop-actions.js'
 import { historyRange, applicationRows, applicationCsv, recordInRange } from './data/history.js';
 import { minuteUsageRows } from './data/minute-usage.js';
 import { validTime } from './data/model.js';
-import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
+import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
 import { createDataClient } from './data/backend-client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -82,7 +82,7 @@ const applications={appSearch:'',appSort:'total',appAll:false,appPage:1,appGroup
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
 function applicationsPage(){return tr`${toolbar()}${liveRankingPanel()}<section class="panel applications-page app-history-panel"><div class="panel-head"><div><h2>应用用量记录</h2><div class="panel-sub">${esc(periodName())} · ${esc(rangeText())}</div></div></div><div class="applications-content">${drawerApps({id:ui.networkId})}</div></section><details class="panel app-proxy-panel"><summary>代理估算设置</summary>${proxyForm(data.proxy)}</details><div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
-let samplerTimer=null,lastTick=performance.now(),settingsDirty=false,appCollectionBusy=false;
+let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
 function fmtNumber(bytes,hasRecords=true){if(!hasRecords)return '—';const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value}<span>${unit}</span>`;}
@@ -548,7 +548,7 @@ function showAlert(alert){
  else if(alert.kind==='quotaWarn')toast(tr`额度提醒：${alert.alias||alert.ssid} 已用 ${Number(alert.percent).toFixed(0)}%。`);
  else if(alert.kind==='quotaDisconnect')toast(alert.outcome===0?tr`已达到额度上限，已断开 ${alert.alias||alert.ssid}。`:tr`已达到额度上限，但未能断开 ${alert.alias||alert.ssid}：${alert.detail||t('请检查系统状态')}`,true);
 }
-function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
+function restartSampler(){clearInterval(samplerTimer);if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
 const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden()){scheduleAutomaticRange(true);refreshLive();}};
 document.addEventListener('visibilitychange',visibilityChanged);
 window.addEventListener('unload',()=>{appIcons.stop();liveRender.stop();clearInterval(samplerTimer);});

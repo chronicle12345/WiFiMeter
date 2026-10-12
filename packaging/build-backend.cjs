@@ -47,11 +47,11 @@ function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.incl
             cachedArch = arch;
         }
         const generator = process.env.CMAKE_GENERATOR;
-        const generators = cache || generator ? [] : JSON.parse(execFileSync(cmake, ['-E', 'capabilities'], { encoding: 'utf8' })).generators.map(item => item.name);
+        const generators = cache || generator ? [] : JSON.parse(execFileSync(cmake, ['-E', 'capabilities'], { encoding: 'utf8', windowsHide: true })).generators.map(item => item.name);
         options.push(...windowsGeneratorOptions({ arch, cache, generator, generators, cachedArch, toolchain: process.env.CMAKE_TOOLCHAIN_FILE }));
     }
-    execFileSync(cmake, ['-S', 'backend', '-B', buildDirectory, '-DCMAKE_BUILD_TYPE=Release', ...options], { cwd: root, stdio: 'inherit' });
-    execFileSync(cmake, ['--build', buildDirectory, '--target', 'wifimeter-backend', '--config', 'Release'], { cwd: root, stdio: 'inherit' });
+    execFileSync(cmake, ['-S', 'backend', '-B', buildDirectory, '-DCMAKE_BUILD_TYPE=Release', ...options], { cwd: root, stdio: 'inherit', windowsHide: true });
+    execFileSync(cmake, ['--build', buildDirectory, '--target', 'wifimeter-backend', '--config', 'Release'], { cwd: root, stdio: 'inherit', windowsHide: true });
 }
 
 module.exports = { buildBackend, windowsGeneratorOptions };

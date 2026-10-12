@@ -2,9 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import os from 'node:os';
+import vm from 'node:vm';
 const require = createRequire(import.meta.url);
+
+test('后台后端构建的工具发现、配置和编译均隐藏 Windows 控制台', () => {
+    const calls = [];
+    const module = { exports: {} };
+    const script = require.resolve('../../../packaging/build-backend.cjs');
+    const context = vm.createContext({ module, exports: module.exports,
+        __dirname: path.dirname(script),
+        process: { platform: 'win32', arch: 'x64', env: {}, argv: [] },
+        require: name => {
+            if (name === 'node:fs') return { existsSync: () => false };
+            if (name === 'node:child_process') return { execFileSync: (command, args, options) => {
+                calls.push({ command, args, options });
+                return JSON.stringify({ generators: [{ name: 'Visual Studio 17 2022' }] });
+            } };
+            return name === './targets.cjs' ? require('../../../packaging/targets.cjs') : require(name);
+        }
+    });
+    new vm.Script(readFileSync(script, 'utf8')).runInContext(context);
+    module.exports.buildBackend({ arch: 'x64' });
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls.map(call => call.args[0]), ['-E', '-S', '--build']);
+    for (const call of calls) assert.equal(call.options.windowsHide, true, `${call.args[0]} must hide its console`);
+});
 
 test('后端构建拒绝跨系统目标，Windows 本机仍可选择 Visual Studio 支持的架构', () => {
     const { validateNativeTarget } = require('../../../packaging/targets.cjs');
