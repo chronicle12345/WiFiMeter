@@ -211,7 +211,7 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     await expect(totalHeading).toHaveAttribute('aria-sort','ascending');
     await expect(months).toHaveText(['2020-02','2020-01']);
     await page.locator('[data-action="export-apps"]').click();
-    await expect.poll(async()=>{const exported=await readFile(file,'utf8');return exported.indexOf('2020-02')<exported.indexOf('2020-01');}).toBe(true);
+    await expect.poll(async()=>{const exported=await readFile(file,'utf8'),february=exported.indexOf('2020-02'),january=exported.indexOf('2020-01');return february>=0&&january>=0&&february<january;}).toBe(true);
     await page.locator('#appGrouping').selectOption('day');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);
 });
 
