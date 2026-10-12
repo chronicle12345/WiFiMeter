@@ -1,4 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const visibilityListeners = new Set();
+let visibilityState;
+const deliverVisibility = (handler, state) => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true);
+ipcRenderer.on('window:visibility', (_event, state) => {
+    visibilityState = state;
+    for (const handler of visibilityListeners) deliverVisibility(handler, state);
+});
 
 // 页面只能通过这里访问桌面能力：文件对话框，以及与后端进程通信的请求 / 事件通道。
 //
@@ -18,9 +25,9 @@ contextBridge.exposeInMainWorld('desktop', {
         }
     },
     onVisibility: handler => {
-        const listener = (_event, state) => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true);
-        ipcRenderer.on('window:visibility', listener);
-        return () => ipcRenderer.removeListener('window:visibility', listener);
+        visibilityListeners.add(handler);
+        if (visibilityState !== undefined) deliverVisibility(handler, visibilityState);
+        return () => visibilityListeners.delete(handler);
     },
     updates: {
         openLink: url => ipcRenderer.invoke('updates:open-link', url),

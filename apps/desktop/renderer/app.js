@@ -551,7 +551,6 @@ function showAlert(alert){
 function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
 const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden()){scheduleAutomaticRange(true);refreshLive();}};
 document.addEventListener('visibilitychange',visibilityChanged);
-window.desktop.onVisibility?.((visible,backgroundTest)=>{backgroundWindow=backgroundTest===true;nativeWindowHidden=!visible;visibilityChanged();});
 window.addEventListener('unload',()=>{appIcons.stop();liveRender.stop();clearInterval(samplerTimer);});
 async function pauseCollector(){
  const paused=data.live.collector==='paused';
@@ -763,6 +762,8 @@ const stopPreferences=window.desktop.windowPreferences?.onChanged(receiveWindowP
 window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEventListener('change',applyTheme);},{once:true});
 window.addEventListener('focus',()=>reloadWindowPreferences().catch(console.error));
 // 启动：先取一份快照再渲染；后端不可用时给出明确提示而不是显示空数据。
+const stopVisibility=window.desktop.onVisibility?.((visible,backgroundTest)=>{backgroundWindow=backgroundTest===true;nativeWindowHidden=!visible;visibilityChanged();});
+window.addEventListener('unload',()=>stopVisibility?.(),{once:true});
 renderMain();
 loadAppRules().catch(console.error);
 const initialRange=getRange();

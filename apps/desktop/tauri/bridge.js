@@ -2,6 +2,7 @@
     'use strict';
     const isMini = location.pathname.endsWith('/mini/index.html');
     const listeners = new Map();
+    let visibilityState;
     const invoke = (channel, ...args) => window.__TAURI__.core.invoke('desktop_request', { channel, args });
     const subscribe = (channel, handler) => {
         if (typeof handler !== 'function') throw new TypeError('事件处理函数无效。');
@@ -28,6 +29,7 @@
             confirm().catch(error => console.error(error));
             return;
         }
+        if (message.channel === 'window:visibility') visibilityState = message.payload;
         for (const handler of listeners.get(message.channel) || []) {
             try { handler(message.payload); } catch (error) { console.error(error); }
         }
@@ -44,7 +46,12 @@
             update: patch => request('window-preferences:update', patch),
             onChanged: handler => subscribe('window-preferences:changed', handler)
         },
-        onVisibility: handler => subscribe('window:visibility', state => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true)),
+        onVisibility: handler => {
+            const receive = state => handler(typeof state === 'boolean' ? state : state.visible, state?.backgroundTest === true);
+            const stop = subscribe('window:visibility', receive);
+            if (visibilityState !== undefined) receive(visibilityState);
+            return stop;
+        },
         updates: {
             openLink: url => request('updates:open-link', url),
             status: () => request('updates:status'),

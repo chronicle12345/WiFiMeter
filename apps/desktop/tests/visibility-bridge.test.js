@@ -14,7 +14,7 @@ function bridge(runtime) {
             process: { platform: 'win32' }, require: () => ({ ipcRenderer,
                 contextBridge: { exposeInMainWorld: (name, value) => { if (name === 'desktop') desktop = value; } } })
         });
-        return { desktop, send: state => receive({}, state) };
+        return { desktop, send: state => receive?.({}, state) };
     }
     const window = { __TAURI__: { core: { invoke: async () => {} }, event: {
         listen: async (_channel, listener) => { receive = listener; }
@@ -34,4 +34,15 @@ for (const runtime of ['Electron', 'Tauri']) test(`${runtime} visibility bridge 
     fixture.send(false);
     fixture.send(true);
     assert.deepEqual(received, [[true, true], [false, true], [true, false], [false, false], [true, false]]);
+});
+
+for (const runtime of ['Electron', 'Tauri']) test(`${runtime} replays the latest visibility state after delayed page initialization`, () => {
+    const fixture = bridge(runtime), received = [];
+    fixture.send({ visible: true, backgroundTest: true });
+    fixture.send({ visible: false, backgroundTest: true });
+    const stop = fixture.desktop.onVisibility((visible, backgroundTest) => received.push([visible, backgroundTest]));
+    assert.deepEqual(received, [[false, true]], '初始化期间只保留最新可见状态');
+    stop();
+    fixture.send({ visible: true, backgroundTest: true });
+    assert.deepEqual(received, [[false, true]], '取消订阅后不再发送状态');
 });
