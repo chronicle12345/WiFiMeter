@@ -48,16 +48,9 @@ ETW 组枚举本机已配置且可绑定的非回环地址，使用本地 TCP/UD
 
 回环组分别建立 IPv4/IPv6 TCP 长连接，等待两个端点的 EStats 零基线出现后才传输。每个端点必须准确读到 rx=65536、tx=65536，source 必须为 WindowsTcpEStats，且不得出现 ETW 重复行。连接在完成读取前保持打开；关闭后允许采样行消失，不要求保留 ETW 风格的最终行。测试使用生产 helper，没有绕过回环过滤的测试开关。
 
-无需管理员权限的脚本自测可运行 `python backend/tests/windows_app_capture_smoke_test.py`，验证等待预热、保持连接以及无非回环地址时明确失败。helper 和地址查询子进程使用 CREATE_NO_WINDOW。`--require-native` 在非原生系统或非管理员环境中返回失败，不把跳过视为验收成功。新版完整 hybrid 管理员验证的 RunAs 请求已被用户取消：hybrid-native.ps1 未执行，也未生成本次验证日志。因此新版 hybrid CI 脚本尚未完成本机管理员验收，非回环 ETW 与回环 EStats 的整组验证不能标记为通过。此前 EStats IPv4/IPv6 与 7897 真实链路的成功验收仍有效，但不代替这一项；取消后不再触发授权。
+无需管理员权限的脚本自测可运行 `python backend/tests/windows_app_capture_smoke_test.py`，验证等待预热、保持连接以及无非回环地址时明确失败。helper 和地址查询子进程使用 CREATE_NO_WINDOW。`--require-native` 在非原生系统或非管理员环境中返回失败，不把跳过视为验收成功。
 
-本机已完成以下验收：
-
-- Windows 全量构建成功；普通权限 ctest 为 32 项通过、1 项管理员测试跳过。
-- 明确授权的管理员隐藏 runner 运行 EStats 真机测试，IPv4/IPv6 客户端均测得 rx=32768、tx=65536，8 项检查、0 失败、退出码 0。日志为 `artifacts/estats-admin-test.log`。
-- 7897 真实代理链路授权隐藏采样共 4 次，间隔 5 秒；collector 均为 running，4 个客户端具有实测值，采样连接数 14–15，回环行数 50–54。客户端汇总 rx 从 0 增至 352699、tx 从 0 增至 19808，退出码 0。日志为 `artifacts/proxy-estats-native.log`。
-- 父任务报告 renderer 的 proxy/live 聚合测试 8 项全部通过。此项验证界面数据消费，独立于原生日志的字节验证。
-
-上述 EStats、7897 退出码和 renderer 测试结果由执行验收的父任务确认。随后修复 hybrid 必选验证脚本，并新增原生来源字段及握手自测；此前的真实采样记录与新版 hybrid 验证分别记录。
+原生验收应分别记录非回环 ETW 与回环 EStats 的执行结果，并以对应提交的 CI 和目标机器记录为准。界面夹具测试、单独的 EStats 采样以及旧版真实链路记录，都不能替代完整 hybrid 验证。个人网络采样日志和历史本机诊断文件保留在忽略的本地目录，不提交到仓库；整理时移动到 `del/`。
 
 系统接口参考：
 [TCP/IP](https://learn.microsoft.com/en-us/windows/win32/etw/tcpip)、

@@ -27,8 +27,25 @@
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.pem
+*.key
+*.pfx
+*.p12
+credentials.json
+secrets.json
+.npmrc
+.netrc
+*.dmp
+*.stackdump
 
 # Personal editor and agent configuration.
 .agent/
@@ -36,6 +53,9 @@
 .vscode/
 .idea/
 *.code-workspace
+/docs/superpowers/
+/apps/desktop/test-results*/
+/apps/desktop/playwright-report/
 
 # Python test caches.
 __pycache__/

@@ -1,6 +1,6 @@
 # 项目架构
 
-共享的 Tauri 桌面应用位于 `apps/desktop/`，同一套页面和宿主代码面向 Windows/Linux。Rust 提供系统 WebView 和原生桌面能力，Node 辅助进程复用已有业务模块。真实网络采集与业务存储由本机 C++ 后端负责，两个平台层都已实现。1.3.0 本轮验收与发布仅面向 Windows x64。
+共享的 Tauri 桌面应用位于 `apps/desktop/`，同一套页面和宿主代码面向 Windows/Linux。Rust 提供系统 WebView 和原生桌面能力，Node 辅助进程复用已有业务模块。真实网络采集与业务存储由本机 C++ 后端负责，两个平台层都已实现。当前发布覆盖 Windows x64、x86、ARM64 和 Linux x64、ARM64，具体能力与验证边界见[构建与发布矩阵](PACKAGING-MATRIX.md)。
 
 ## 当前数据流
 
@@ -12,6 +12,8 @@ renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node
 ```
 
 `client.js` 是页面创建数据对象的唯一入口，统一使用 `backend-client.js` 读取本机后端。`mock.js` 仅用于测试。数据定义与计算放在 `model.js`。
+
+`renderer/app.js` 组合页面渲染、导航与事件。可复用的输入和显示逻辑放在 `renderer/ui/`，数据访问与计算放在 `renderer/data/`。`ui/form-autosave.js` 管理设置、网络额度、总额度与代理表单的字段校验、保存状态、重试、保留期清理及草稿放弃；它通过回调调用现有宿主和数据接口，页面入口负责确认窗口及刷新界面。新增业务应按职责进入对应模块，并直接测试模块接口。
 
 Node 业务进程用 `electron/backend.cjs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端失败以 `{ ok: false, error }` 形式回给页面，保留错误码与消息。历史、额度和网络设置以 C++ 后端为准。
 
@@ -61,8 +63,8 @@ platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注
 
 根目录 npm 命令转发到桌面应用，锁文件与依赖保留在应用目录。
 
-- **Linux 源码构建**：`npm run dist:linux` 使用本机工具链构建采集器与 Tauri；不在 1.3.0 本轮验收与发布范围内。
-- **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，准备 Node、原生控制模块和页面，再由 Tauri CLI 构建 NSIS 和便携包，输出到 `dist/windows/`。
+- **Linux 源码构建**：`npm run dist:linux` 使用本机工具链构建采集器与 Tauri，生成 deb、rpm、AppImage。
+- **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，准备 Node、原生控制模块和页面，再由 Tauri CLI 构建 NSIS 安装包，输出到 `dist/windows/`。
 - **迁移回归**：`start:electron` 和 `dist:windows:electron` 等显式命令保留旧宿主测试入口；Tauri 发行资源不携带 Electron 运行时。
 
 C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
@@ -72,8 +74,8 @@ C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `bui
 身份定义集中在 `apps/desktop/electron/product.cjs` 并有单元测试；显示名称更新时保留
 Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
 
-Electron 1.2.x 用户通过下载 Windows x64 Tauri 安装版完成迁移；Tauri 后续更新只选择对应的 Tauri 安装包。
+Electron 1.2.x 用户通过下载对应系统和 CPU 架构的 Tauri 安装版完成迁移；Tauri 后续更新只选择对应的 Tauri 安装包。
 
 Windows 宿主在启动 Node 和后端之前持有 Electron 使用的 `lockfile`，锁的范围为用户数据目录。新旧版本不能同时使用同一目录采集，进程退出后由系统释放锁；WebView2 的缓存保存在该目录下独立的 `webview2` 子目录。
 
-`.github/workflows/tauri.yml` 负责 Windows x64 Tauri 构建、测试和 `v1.3.*` 标签发布。`desktop.yml` 与其调用的 `windows-app.yml` 保留旧 Electron 的多架构检查和 `v1.2.*` 发布入口；`legacy-powershell.yml` 用于旧 PowerShell 版本。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。`desktop.yml` 与其调用的 `windows-app.yml` 保留旧 Electron 的多架构检查和 `v1.2.*` 发布入口；`legacy-powershell.yml` 用于旧 PowerShell 版本。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。

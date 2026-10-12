@@ -4,6 +4,34 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## Unreleased / 未发布
+
+- Consolidate Windows startup registration, report synchronization failures and hide collector and test helper consoles. Reuse verified complete update downloads instead of downloading them again.
+- Preserve form drafts and failed-save retries, finish retention cleanup after a partial failure, synchronize restored settings and collection gaps, and retain failed database transactions for rollback or retry.
+- Preserve directional firewall rules, improve history and proxy refreshes, and reuse network filters and application icon extraction. Move form persistence into a dedicated renderer module.
+- Keep native windows hidden throughout background tests and simulate visibility changes for renderer checks. Organize local diagnostics under ignored directories, document module and tag requirements, discover new renderer tests automatically, and reject release tags with outdated README version information. These changes are not included in the published 1.3.2 installers.
+
+- 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
+- 保留表单草稿和保存失败重试，补齐保留期清理失败后的后续操作，同步恢复的设置与采集缺失区间；数据库提交失败后保留事务以便回滚或重试。
+- 保留单向防火墙规则，改进历史与代理数据刷新，复用网络筛选和应用图标提取；表单保存逻辑移入独立页面模块。
+- 后台测试全程保持原生窗口隐藏，通过可见状态替身验证页面刷新；本地诊断文件归入忽略目录，补齐模块与标签规范。CI 自动发现新增界面测试，并阻止 README 版本信息过期的标签发布。这些改动尚未包含在已发布的 1.3.2 安装包中。
+
+## [1.3.2]
+
+- Automate Windows update download, length and SHA-256 verification, data saving, silent installation and restart, with progress and failure recovery. Recover matching WiFiMeter installations when an old uninstall entry points to a missing uninstaller.
+- Require corresponding Chinese and English release notes, reuse verified five-platform artifacts and compilation caches, and package a pinned official Node.js runtime. See the [release notes](docs/releases/v1.3.2.md) for installation and platform limits.
+
+- Windows 更新自动完成下载、长度与 SHA-256 校验、数据保存、静默安装和重启，显示进度并恢复失败状态；匹配 WiFiMeter 身份的旧卸载记录缺少卸载程序时可继续升级。
+- 发布说明必须中英对应，复用五平台已验证产物和编译缓存，随包使用固定版本的官方 Node.js。安装方法和平台限制见[发布说明](docs/releases/v1.3.2.md)。
+
+## [1.3.1]
+
+- Restore the complete Windows x64, x86 and ARM64 and Linux x64 and ARM64 release matrix, providing nine installers after all required checks pass.
+- Remove public portable archives and checksum TXT assets while retaining internal SHA-256 verification. Preserve existing features and user data. See the [release notes](docs/releases/v1.3.1.md) for this version's runtime configuration and validation.
+
+- 恢复 Windows x64、x86、ARM64 与 Linux x64、ARM64 完整发布矩阵，全部必要检查通过后公开九个安装包。
+- 取消公开便携压缩包和校验 TXT 附件，保留内部 SHA-256 验证，沿用现有功能与用户数据。本版运行时配置和验证结果见[发布说明](docs/releases/v1.3.1.md)。
+
 ## [1.3.0] - 2026-10-10
 
 - Migrate the desktop host to Tauri and the system WebView, with Windows x64 as the only release target for this version. Bundle the Node business worker and C++ collector while retaining the existing data directory. Electron 1.2.x users migrate with the Tauri installer from Releases; subsequent Tauri updates select Tauri installers.
@@ -96,3 +124,5 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 [1.2.3]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.3
 [1.2.2]: https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.2.2
 [1.3.0]: docs/releases/v1.3.0.md
+[1.3.1]: docs/releases/v1.3.1.md
+[1.3.2]: docs/releases/v1.3.2.md
