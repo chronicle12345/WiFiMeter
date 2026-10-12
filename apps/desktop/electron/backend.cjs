@@ -72,7 +72,7 @@ class BackendClient extends EventEmitter {
         this.fragments = [];
         const args = [...this.args, '--db', this.databasePath];
         this.logger(`启动后端：${this.executable} ${args.join(' ')}`);
-        this.child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+        this.child = spawn(this.executable, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
         this.child.stdout.setEncoding('utf8');
         this.child.stdout.on('data', chunk => this.consume(chunk));

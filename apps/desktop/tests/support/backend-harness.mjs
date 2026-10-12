@@ -21,7 +21,7 @@ function counters(rx, tx) {
 
 // 与后端对话的最小客户端：按行写请求，按行读响应（事件直接忽略）。
 function createSession(executable, databasePath, adapterPath, countersPath) {
-    const child = spawn(executable, ['--db', databasePath, '--fake-adapter', adapterPath, '--fake-counters', countersPath], { stdio: ['pipe', 'pipe', 'ignore'] });
+    const child = spawn(executable, ['--db', databasePath, '--fake-adapter', adapterPath, '--fake-counters', countersPath], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
     let buffer = '';
     const waiters = new Map();
     child.stdout.setEncoding('utf8');
