@@ -27,7 +27,7 @@ async function launch(extraEnv = {}) {
 }
 
 async function navigate(name) {
-    const id = { '总览': 'overview', '网络': 'networks', '历史': 'history', '设置': 'settings' }[name];
+    const id = { '总览': 'overview', '应用': 'apps', '网络': 'networks', '历史': 'history', '设置': 'settings' }[name];
     await page.locator(`.nav [data-page="${id}"]`).click();
 }
 
@@ -121,7 +121,7 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
 
 test('总览保留用量、连接、趋势与额度，网络明细只在网络页展示', async () => {
     await expect(page.locator('.overview-summary table, #networkTableRegion')).toHaveCount(0);
-    await expect(page.locator('.live-ranking-panel')).toHaveCount(1);
+    await expect(page.locator('.live-ranking-panel')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: '网络用量', exact: true })).toHaveCount(0);
     await expect(page.locator('.collector-sub')).toHaveCount(0);
     await expect(page.locator('#collector')).toContainText('正在采集');
@@ -138,6 +138,11 @@ test('总览保留用量、连接、趋势与额度，网络明细只在网络�
     await expect(page.locator('.quota-card .progress-meta')).toContainText('已用 3.6 GB / 5 GB');
     await expect(page.getByRole('button', { name: '设置该网络额度', exact: true })).toBeEnabled();
     await expect(page.locator('#footer')).toBeEmpty();
+
+    await navigate('应用');
+    await expect(page.locator('.live-ranking-panel')).toHaveCount(1);
+    await expect(page.locator('#liveRankingRegion')).toHaveCount(1);
+    await expect(page.locator('.live-ranking-panel h2')).toHaveText('实时流量排行');
 
     await navigate('网络');
     await expect(page.locator('#networkTableRegion table')).toHaveCount(1);

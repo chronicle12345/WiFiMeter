@@ -91,6 +91,8 @@ test('同日结束时间早于开始时间时保留弹窗并给出错误',async(
 });
 
 test('跨午夜后今日范围自动查询新一天，网络与应用总量同步且不重复查询',async()=>{
+    const clockSession=await page.context().newCDPSession(page);
+    await clockSession.send('Emulation.setTimezoneOverride',{timezoneId:'Asia/Shanghai'});
     await page.clock.setFixedTime('2026-10-31T12:00:00+08:00');
     await app.evaluate(()=>{
         const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
@@ -120,6 +122,8 @@ test('跨午夜后今日范围自动查询新一天，网络与应用总量同�
 });
 
 test('设置页跨月自动更新范围时保留未保存代理输入和焦点',async()=>{
+    const clockSession=await page.context().newCDPSession(page);
+    await clockSession.send('Emulation.setTimezoneOverride',{timezoneId:'Asia/Shanghai'});
     await page.clock.setFixedTime('2026-10-31T12:00:00+08:00');
     await page.locator('[data-value="month"]').click();
     await expect(page.locator('.date-text')).toContainText('10 / 01');

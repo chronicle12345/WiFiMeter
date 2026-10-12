@@ -151,7 +151,14 @@ test('status section shows live data and preserves expanded diagnostics during u
  await category('status');
  await expect(page.locator('[data-status="network"] .status-value')).toHaveText('Connected');
  await page.locator('.status-guide summary').click();
- await app.evaluate(({BrowserWindow})=>{for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',state:'unreadable',collector:'running',connections:[],updatedAt:new Date().toISOString(),message:'fixture diagnostic',appCollection:{available:true,enabled:true,state:'permission',detail:'permission fixture'},proxy:{available:true,status:'ready',clients:[],ports:[7897]}});});
+ await app.evaluate(({BrowserWindow})=>{
+  for(const win of BrowserWindow.getAllWindows()){
+   const send=win.webContents.send.bind(win.webContents);
+   // 隔离定时采集事件，避免真实连接状态覆盖本次诊断夹具。
+   win.webContents.send=(channel,...args)=>{if(channel!=='backend:event')return send(channel,...args);};
+   send('backend:event',{event:'live',state:'unreadable',collector:'running',connections:[],updatedAt:new Date().toISOString(),message:'fixture diagnostic',appCollection:{available:true,enabled:true,state:'permission',detail:'permission fixture'},proxy:{available:true,status:'ready',clients:[],ports:[7897]}});
+  }
+ });
  await expect(page.locator('[data-status="network"] .status-value')).toHaveText('Network unreadable');
  await expect(page.locator('[data-status="apps"] .status-value')).toHaveText('Permission required');
  await expect(page.locator('.status-guide')).toHaveAttribute('open','');

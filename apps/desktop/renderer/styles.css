@@ -298,7 +298,7 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .live-ranking-panel .applications-content{padding-top:0}
 .minute-history-note{margin:0;padding:0 22px 14px;line-height:1.8}
 
-/* 总览首屏将剩余高度分配给趋势图和额度卡片，实时排行在下方随文档滚动。 */
+/* 总览首屏将剩余高度分配给趋势图和额度卡片。 */
 html[data-page="overview"] #content>.panel,
 html[data-page="overview"] .overview-summary>.panel,
 html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
@@ -374,9 +374,10 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] .overview-summary>.metrics,
  html[data-page="overview"] .overview-summary>.total-quota-card,
  html[data-page="overview"] .overview-summary>.chart-row{margin-bottom:6px}
- html[data-page="overview"] #content .quota-summary{padding:12px 16px}
+ html[data-page="overview"] #content .chart-row{grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr)}
+ html[data-page="overview"] #content .quota-summary{padding:12px 16px;margin-top:0}
  html[data-page="overview"] #content .quota-main{font-size:34px;margin-top:6px}
- html[data-page="overview"] #content .quota-body{padding-bottom:10px;gap:14px}
+ html[data-page="overview"] #content .quota-body{padding-bottom:8px;gap:10px}
  html[data-page="overview"] #content .quota-foot{padding-top:8px}
 }
 .release-notes{margin:20px 23px;border:1px solid var(--line);border-radius:12px;overflow:hidden}

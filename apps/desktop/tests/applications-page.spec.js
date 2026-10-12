@@ -42,8 +42,14 @@ test.beforeEach(async({},testInfo)=>{
             const from=params.from||'2026-01-01',to=params.to||'2026-12-31';
             return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to)}};
         });
-        ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
-        ipcMain.removeHandler('app-control:list');ipcMain.handle('app-control:list',()=>({ok:true,records:globalThis.rendererFixture.rules||[]}));
+        ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>{
+            globalThis.rendererFixture.calls.push({method:'app-control:choose'});
+            return {ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}};
+        });
+        ipcMain.removeHandler('app-control:list');ipcMain.handle('app-control:list',()=>{
+            globalThis.rendererFixture.calls.push({method:'app-control:list'});
+            return {ok:true,records:globalThis.rendererFixture.rules||[]};
+        });
         ipcMain.removeHandler('app-control:request');ipcMain.handle('app-control:request',(_event,input)=>{
             globalThis.rendererFixture.calls.push({method:'app-control',params:input});
             return input.action==='throttle'?{ok:false,error:{message:'partial failure'},result:{path:input.path,state:{Blocked:null,QosError:'readback failed'}}}:{ok:true,result:{path:input.path,state:{Blocked:input.action==='block',Throttled:false}}};
@@ -80,12 +86,23 @@ test('应用流量页展示全部实时排行并按下载、上传速度排序',
 });
 
 test('已设置的应用限制可从列表查询并进入调整，无需应用正在运行',async()=>{
-    test.skip(process.platform!=='win32','应用网络控制仅支持 Windows');
     await app.evaluate(()=>{globalThis.rendererFixture.rules=[{
         path:'C:\\Apps\\OfflineTool.exe',name:'OfflineTool.exe',savedAt:'2026-10-12T00:00:00.000Z',
         state:{Blocked:true,Throttled:true,UploadKbps:1024,DownloadThrottled:false}
     }];});
     await openApplications();
+    if(process.platform!=='win32'){
+        await expect(page.locator('.app-rules-panel, .app-rule-row, [data-action="app-rules-refresh"]')).toHaveCount(0);
+        await page.locator('[data-action="application-control"]').click();
+        await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
+        await expect(page.locator('[data-action="choose-program"], [data-operation], #uploadKBps, #downloadKBps')).toHaveCount(0);
+        expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
+        await page.keyboard.press('Escape');
+        await page.reload();
+        await expect(page.locator('.app-rules-panel, .app-rule-row')).toHaveCount(0);
+        expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
+        return;
+    }
     await page.locator('[data-action="app-rules-refresh"]').click();
     const row=page.locator('.app-rule-row');
     await expect(row).toHaveCount(1);

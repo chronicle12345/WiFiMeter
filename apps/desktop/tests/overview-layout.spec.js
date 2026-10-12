@@ -97,6 +97,39 @@ for (const language of ['zh-CN', 'en']) {
     }
 }
 
+test('overview fits 900x650 in en with notice and wider font without clipping', async ({}, testInfo) => {
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { language: 'en' } }));
+    await page.reload();
+    await page.addStyleTag({ content: 'body{font-family:Verdana,sans-serif}' });
+    await resizeWindow(900, 650);
+    await expect(page.locator('.notice-line')).toBeVisible();
+    const layout = await page.evaluate(() => {
+        const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
+        const boxes = selectors.map(selector => {
+            const element = document.querySelector(selector), rect = element.getBoundingClientRect();
+            return { selector, top: rect.top, bottom: rect.bottom, height: rect.height, left: rect.left, right: rect.right };
+        });
+        return {
+            width: innerWidth, height: innerHeight,
+            scrollWidth: document.scrollingElement.scrollWidth, scrollHeight: document.scrollingElement.scrollHeight,
+            bottomGap: innerHeight - document.querySelector('.overview-summary').getBoundingClientRect().bottom,
+            outside: boxes.filter(rect => rect.top < 0 || rect.bottom > innerHeight || rect.left < 0 || rect.right > innerWidth).map(rect => rect.selector),
+            clipping: [document.documentElement, document.body, document.querySelector('.main'), document.querySelector('#content'), document.querySelector('.overview-summary'), ...document.querySelectorAll('#content .panel')]
+                .filter(element => ['hidden', 'clip'].includes(getComputedStyle(element).overflowY)).map(element => element.className || element.tagName),
+            font: getComputedStyle(document.body).fontFamily, boxes
+        };
+    });
+    console.log('en wider font 900x650: ' + JSON.stringify(layout));
+    await page.screenshot({ path: testInfo.outputPath('overview-wide-font.png'), fullPage: true });
+    expect(layout.scrollHeight).toBeLessThanOrEqual(layout.height);
+    expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
+    expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
+    expect(layout.bottomGap).toBeLessThanOrEqual(24);
+    expect(layout.outside).toEqual([]);
+    expect(layout.clipping).toEqual([]);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
+});
+
 test('narrow overview keeps both quotas accessible by scrolling', async ({}, testInfo) => {
     await resizeWindow(390, 650);
     await expect(page.locator('.quota-card')).toBeVisible();
@@ -122,17 +155,28 @@ test('settings retain continuous document scrolling after leaving overview', asy
 test('proxy table wraps long paths, aligns rates and scrolls with the applications page', async ({}, testInfo) => {
     await resizeWindow(900, 650);
     await page.locator('.nav [data-page="apps"]').click();
-    await page.evaluate(async () => {
+    const snapshot = await page.evaluate(async () => {
         await window.desktop.backend.request('setPaused', { paused: true });
-        const { proxyClientsView } = await import('./ui/proxy.js');
+        const response = await window.desktop.backend.request('snapshot');
+        if (!response.ok) throw Error(response.error.message);
+        return response.result;
+    });
+    await app.evaluate(({ BrowserWindow }, snapshot) => {
         const clients = Array.from({ length: 12 }, (_, i) => ({
             appId: `C:\\Applications\\Browser${i}.exe`,
             name: `BrowserWithALongUnbrokenApplicationName${i}.exe`,
             proxyName: 'C:\\Users\\Example\\Applications\\ProxyClientWithALongName\\proxy.exe',
             connections: 12, measurementAvailable: true, rxPerSecond: '999000000', txPerSecond: '125000'
         }));
-        document.querySelector('#proxyClientsRegion').innerHTML = proxyClientsView({ clients });
-    });
+        for (const window of BrowserWindow.getAllWindows()) {
+            const send = window.webContents.send.bind(window.webContents);
+            // 暂停采集后仍有 live 事件，布局夹具只接收本次受控数据。
+            window.webContents.send = (channel, ...args) => {
+                if (channel !== 'backend:event') return send(channel, ...args);
+            };
+            send('backend:event', { event: 'live', ...snapshot.live, proxy: { ...snapshot.proxy, clients } });
+        }
+    }, snapshot);
     const table = page.locator('.proxy-client-table');
     await expect(table.locator('tbody tr')).toHaveCount(12);
     const layout = await table.evaluate(table => ({

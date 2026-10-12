@@ -8,12 +8,12 @@ Changes are listed by release.
 
 - Consolidate Windows startup registration, report synchronization failures and hide collector and test helper consoles. Reuse verified complete update downloads instead of downloading them again.
 - Preserve form drafts and failed-save retries, finish retention cleanup after a partial failure, synchronize restored settings and collection gaps, and retain failed database transactions for rollback or retry.
-- Preserve directional firewall rules, improve history and proxy refreshes, and reuse network filters and application icon extraction. Move form persistence into a dedicated renderer module.
+- Preserve directional firewall rules, improve history and proxy refreshes, and reuse network filters and application icon extraction. Move form persistence into a dedicated renderer module and keep quota notices visible in short windows with wider fonts.
 - Keep native windows hidden throughout background tests, retain their latest visibility state until page initialization completes, and simulate visibility changes for renderer checks. Organize local diagnostics under ignored directories, document module and tag requirements, discover new renderer tests automatically, and reject release tags with outdated README version information. These changes are not included in the published 1.3.2 installers.
 
 - 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
 - 保留表单草稿和保存失败重试，补齐保留期清理失败后的后续操作，同步恢复的设置与采集缺失区间；数据库提交失败后保留事务以便回滚或重试。
-- 保留单向防火墙规则，改进历史与代理数据刷新，复用网络筛选和应用图标提取；表单保存逻辑移入独立页面模块。
+- 保留单向防火墙规则，改进历史与代理数据刷新，复用网络筛选和应用图标提取；表单保存逻辑移入独立页面模块，矮窗口使用较宽字体时也能完整显示额度提示。
 - 后台测试全程保持原生窗口隐藏，页面初始化完成后读取最新可见状态，通过状态替身验证页面刷新；本地诊断文件归入忽略目录，补齐模块与标签规范。CI 自动发现新增界面测试，并阻止 README 版本信息过期的标签发布。这些改动尚未包含在已发布的 1.3.2 安装包中。
 
 ## [1.3.2]
