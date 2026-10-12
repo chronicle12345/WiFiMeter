@@ -230,14 +230,16 @@ function updateSettingsScroll(){
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
 function renderMain(){
- const proxyDraft=proxyDirty?$('#proxyConfigForm'):null,proxyOpen=$('.app-proxy-panel')?.open;
+ const drafts=[...activeSaves].filter(({form,save})=>form.isConnected&&save.dirty&&['settingsForm','totalQuotaForm','proxyConfigForm'].includes(form.id)).map(({form})=>form);
+ const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd,proxyOpen=$('.app-proxy-panel')?.open;
  renderChrome();
  renderUpdateBanner();
  updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
- if(proxyDraft&&$('#proxyConfigForm')!==proxyDraft){
-  const replacement=$('#proxyConfigForm');
-  if(replacement)replacement.replaceWith(proxyDraft);else $('.proxy-config-region')?.append(proxyDraft);
+ for(const draft of drafts){
+  const replacement=$('#'+draft.id);
+  if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
  }
+ if(focused?.isConnected&&drafts.some(form=>form.contains(focused))){focused.focus({preventScroll:true});if(selectionStart!=null&&focused.setSelectionRange)focused.setSelectionRange(selectionStart,selectionEnd);}
  if(proxyOpen&&$('.app-proxy-panel'))$('.app-proxy-panel').open=true;
  syncSaveFlags();
  syncInert();
@@ -319,7 +321,7 @@ async function controlOperation(action,rate){
 function legacyPanel(){return `<div id="legacyRegion"><p class="small muted" role="status">${esc(legacyMessage(legacyResult))}</p>${button('legacy-status',t('检查旧版数据'),'','small-btn',`type="button" ${legacyBusy?'disabled':''}`)}${button('legacy-import',t('导入旧版目录'),'folder','small-btn',`type="button" ${legacyBusy?'disabled':''}`)}</div>`;}
 async function legacyAction(importing){
  if(legacyBusy||!window.desktop.legacy)return;legacyBusy=true;const render=()=>{const region=$('#legacyRegion');if(region)region.outerHTML=legacyPanel();};render();
- try{legacyResult=await (importing?window.desktop.legacy.importDirectory():window.desktop.legacy.status());if(legacyResult.imported){await store.reload();renderMain();}}
+ try{if(importing&&!await saveBeforeDataChange())return;legacyResult=await (importing?window.desktop.legacy.importDirectory():window.desktop.legacy.status());if(legacyResult.imported){await store.reload();renderMain();}}
  catch(error){legacyResult={error:error.message};}
  finally{legacyBusy=false;render();}
 }
@@ -453,6 +455,7 @@ async function backup(){
  if(await dataDownload(`WiFiMeter_backup_${today()}.json`,JSON.stringify(document,null,2)))toast(t('已导出完整数据备份。'));
 }
 async function restore(){
+ if(!await saveBeforeDataChange())return;
  const result=await window.desktop.openBackup();
  if(result.canceled)return;
  if(result.error)throw Error(result.error);
@@ -460,14 +463,20 @@ async function restore(){
  try{document=JSON.parse(result.body);}catch{throw Error(t('这个文件不是有效的备份文件。'));}
  if(document?.backupType!=='wifimeter-backend-backup')throw Error(t('请选择备份功能生成的完整文件。'));
  confirmModal(t('恢复这份备份？'),tr`包含 ${document.networks?.length??0} 个网络和 ${document.records?.length??0} 条每日记录。当前数据将被替换。`,t('确认恢复'),async()=>{
+  if(!await saveBeforeDataChange())return;
   await store.restore(document);
   ui.networkId='all';ui.search='';ui.historyPage=1;
   restartSampler();closeDrawer();renderMain();toast(t('已恢复备份，采集已暂停。'));
  });
 }
-function clearRecords(){confirmModal(t('清空全部用量记录？'),t('此操作删除每日与小时记录、覆盖说明，并重置当前额度计数；保留网络备注与提醒设置。不能撤销。'),t('清空记录'),async()=>{await store.clearRecords();restartSampler();renderMain();toast(t('记录已清空，采集已暂停。'));},true,true);}
+async function clearRecords(){
+ if(!await saveBeforeDataChange())return;
+ confirmModal(t('清空全部用量记录？'),t('此操作删除每日与小时记录、覆盖说明，并重置当前额度计数；保留网络备注与提醒设置。不能撤销。'),t('清空记录'),async()=>{if(!await saveBeforeDataChange())return;await store.clearRecords();restartSampler();renderMain();toast(t('记录已清空，采集已暂停。'));},true,true);
+}
 const autosaveForms=new Set(['settingsForm','networkForm','totalQuotaForm','proxyConfigForm']);
 const formSaves=new WeakMap(), activeSaves=new Set(), fieldEdits=new WeakMap(), statusTimers=new WeakMap();
+let retentionFollowups=new WeakMap();
+let pendingRetentionFollowup=null;
 const windowFields=new Set(['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']);
 let pendingAutosaveCancel=null, languageRenderNeeded=false;
 function syncSaveFlags(){
@@ -476,7 +485,16 @@ function syncSaveFlags(){
  settingsDirty=dirty('settingsForm');networkDirty=dirty('networkForm');totalQuotaDirty=dirty('totalQuotaForm');proxyDirty=dirty('proxyConfigForm');
 }
 async function flushAutosaves(ids){await Promise.all([...activeSaves].filter(entry=>ids.includes(entry.form.id)).map(entry=>entry.save.flush()));}
-function discardAutosaves(ids){for(const entry of activeSaves)if(ids.includes(entry.form.id)){entry.save.discard();activeSaves.delete(entry);}syncSaveFlags();}
+async function saveBeforeDataChange(){
+ await flushAutosaves(['settingsForm','totalQuotaForm','proxyConfigForm','networkForm']);
+ if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return false;}
+ return true;
+}
+function discardAutosaves(ids){
+ for(const entry of activeSaves)if(ids.includes(entry.form.id)){entry.save.discard();activeSaves.delete(entry);}
+ if(ids.includes('settingsForm')){retentionFollowups=new WeakMap();pendingRetentionFollowup=null;}
+ syncSaveFlags();
+}
 function formAutosave(form){
  if(formSaves.has(form))return formSaves.get(form);
  const save=createAutosave({write:patch=>writeAutosave(form,patch),onState:status=>{
@@ -527,17 +545,30 @@ function restoreField(form,key,value,expected){const input=form.elements.namedIt
 async function writeAutosave(form,fields){
  const patch=Object.assign({},...Object.values(fields));
  if(form.id==='settingsForm'){
-  let retentionShortened=false;
+  const retentionField=fields.retention;
+  if(pendingRetentionFollowup&&data.settings.retention!==pendingRetentionFollowup.value)pendingRetentionFollowup=null;
+  let retentionTask=retentionField&&(retentionFollowups.get(retentionField)||(retentionField.retention===pendingRetentionFollowup?.value?pendingRetentionFollowup:null));
+  // 已提交的保留期只补齐清理与刷新，避免失败重试漏掉后续步骤。
+  if(retentionTask&&retentionTask.stage!=='settings'){
+   delete patch.retention;
+   if(data.settings.retention!==retentionTask.value){retentionFollowups.delete(retentionField);retentionTask=null;}
+  }
   if(Object.hasOwn(patch,'retention')){
    const previous=data.settings.retention,shortening=patch.retention>0&&(previous===0||patch.retention<previous);
-   if(shortening&&!await confirmAutosave(t('应用新的保留时长？'),t('缩短保留期将删除范围外的历史记录，建议先备份。'))){restoreField(form,'retention',previous,fields.retention);delete patch.retention;}
-   retentionShortened=shortening&&Object.hasOwn(patch,'retention');
+   if(shortening&&!retentionTask){
+    if(!await confirmAutosave(t('应用新的保留时长？'),t('缩短保留期将删除范围外的历史记录，建议先备份。'))){restoreField(form,'retention',previous,fields.retention);delete patch.retention;}
+    else {retentionTask={value:patch.retention,stage:'settings'};retentionFollowups.set(retentionField,retentionTask);}
+   }
   }
   const prefs=Object.fromEntries(Object.entries(patch).filter(([key])=>windowFields.has(key)));
   const settings=Object.fromEntries(Object.entries(patch).filter(([key])=>!windowFields.has(key)));
   if(Object.keys(prefs).length){receiveWindowPreferences(await window.desktop.windowPreferences.update(prefs));if(Object.hasOwn(prefs,'closeAction'))settings.minimizeToTray=prefs.closeAction==='tray';}
   if(Object.keys(settings).length){
    const result=await store.updateSettings(settings);
+   if(Object.hasOwn(settings,'retention')){
+    if(retentionTask?.stage==='settings'&&data.settings.retention===retentionTask.value){retentionTask.stage='prune';pendingRetentionFollowup=retentionTask;}
+    else if(pendingRetentionFollowup&&data.settings.retention!==pendingRetentionFollowup.value)pendingRetentionFollowup=null;
+   }
    if(Object.hasOwn(settings,'autoStart')&&result.system){
     const error=result.system.autoStartError;
     if(error||result.system.autoStart!==Boolean(settings.autoStart)){
@@ -546,7 +577,10 @@ async function writeAutosave(form,fields){
     }
    }
   }
-  if(retentionShortened){await store.pruneUsage();await store.reload();}
+  if(retentionTask&&data.settings.retention===retentionTask.value){
+   if(retentionTask.stage==='prune'){await store.pruneUsage();retentionTask.stage='reload';}
+   if(retentionTask.stage==='reload'){await store.reload();retentionFollowups.delete(retentionField);if(pendingRetentionFollowup===retentionTask)pendingRetentionFollowup=null;}
+  }
   if(Object.hasOwn(settings,'language')){setLanguage(settings.language);languageRenderNeeded=true;}
   restartSampler();return;
  }
