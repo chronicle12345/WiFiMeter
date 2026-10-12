@@ -1,3 +1,7 @@
+# WinDivert notices and download limiting
+
+English | [简体中文](README.zh-CN.md)
+
 WinDivert 2.2.2-A is bundled without modification under LGPL v3.
 
 Official release: https://github.com/basil00/WinDivert/releases/tag/v2.2.2
@@ -5,7 +9,7 @@ Source: https://github.com/basil00/WinDivert/tree/v2.2.2
 Archive: https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip
 Archive SHA256: 63CB41763BB4B20F600B6DE04E991A9C2BE73279E317D4D82F237B150C5F3F15
 
-The complete upstream license is in LICENSE. DLLs remain outside app.asar and
+The complete upstream license is in LICENSE. DLLs are distributed as separate native resources and
 can be replaced with compatible user-built WinDivert 2.2 libraries.
 The x64 and x86 directories contain upstream DLLs and signed drivers.
 ARM64 is unsupported by this upstream release.

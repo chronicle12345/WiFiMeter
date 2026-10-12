@@ -1,27 +1,29 @@
-# 多架构打包
+# Multi-architecture packaging
 
-## Tauri 安装包
+English | [简体中文](README.zh-CN.md)
 
-从仓库根目录运行，版本由 package metadata 读取。Windows x64、x86、ARM64 使用对应架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器；Linux x64、ARM64 使用本机工具链及 WebKitGTK 4.1。完整发布矩阵见[平台说明](../docs/PACKAGING-MATRIX.md)。
+## Tauri installers
+
+Run commands from the repository root; the version is read from package metadata. Windows x64, x86, and ARM64 use Node.js for the target architecture, a Rust MSVC toolchain, CMake, and a C++20 compiler. Linux x64 and ARM64 use native toolchains and WebKitGTK 4.1. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for the complete release matrix.
 
 ```powershell
 npm ci --prefix apps/desktop --ignore-scripts
 npm run dist:windows
 ```
 
-Windows 默认只生成 NSIS 安装程序，Linux 默认生成 deb、rpm、AppImage。便携 ZIP 已取消。内部 SHA-256 清单仍用于构建及 CI 验证，不作为 Release 附件。
+Windows generates only an NSIS installer by default; Linux generates deb, rpm, and AppImage packages. Portable ZIP files have been discontinued. Internal SHA-256 manifests remain part of build and CI validation, but are not Release attachments.
 
 ```text
 dist/windows/WiFiMeter-1.3.2-windows-x64-Tauri-Setup.exe
 ```
 
-Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
+Tauri uses the system WebView and bundles the Node business process and C++ collector. The Windows installer downloads WebView2 when it is missing; Linux uses system WebKitGTK 4.1. User data retains its original directory.
 
-未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，目标架构与 Node.js、Rust 和 C++ 采集器必须一致。[runtime-check.cjs](tauri/runtime-check.cjs) 验证 TLS、中文排序、原子文件保存、子进程与下载流等实际能力，发行包同时保留对应的 Node.js 许可证。
+Packaging uses the current Node.js executable unless `WIFIMETER_NODE_EXECUTABLE` is set. Release CI uses the official Node.js 22.23.3 binaries supplied by `actions/setup-node`. The target architecture must match Node.js, Rust, and the C++ collector. [runtime-check.cjs](tauri/runtime-check.cjs) validates actual capabilities including TLS, Chinese collation, atomic file saves, subprocesses, and download streams. Release packages also retain the corresponding Node.js license.
 
-旧运行时裁剪和交叉编译工具已归档，当前源码只保留本机 Tauri 构建、验证及当前业务所需的安装辅助工具。NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ 压缩，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
+Legacy runtime trimming and cross-compilation tools have been archived. Current sources retain native Tauri builds, validation, and installation helpers used by the current application. NSIS uses a 64 MiB LZMA dictionary. Linux RPM uses XZ compression, AppImage uses ZSTD supported by the official plugin, and deb retains Tauri's compression configuration.
 
-本机复现 CI 发行配置时，在仓库根目录执行以下命令。当前 Node.js 架构须与目标一致。Windows 还需 Python 3、完整 7-Zip 和 Visual Studio C++ 工具链；原生校验需 WebView2 Runtime。
+To reproduce the CI release configuration locally, run these commands from the repository root. The current Node.js architecture must match the target. Windows also requires Python 3, a complete 7-Zip installation, and the Visual Studio C++ toolchain; native validation requires WebView2 Runtime.
 
 ```powershell
 $nodeArch = node -p 'process.arch'
@@ -37,13 +39,13 @@ if ($LASTEXITCODE) { throw 'Tauri build failed' }
 node packaging/tauri/verify-windows.cjs --arch $nodeArch --target $rustTarget
 ```
 
-明确指定目标架构时，Node.js 必须是该架构，Rust target 必须对应：
+When specifying a target architecture explicitly, Node.js must use that architecture and the Rust target must match:
 
 ```powershell
 node packaging/tauri/build.cjs --platform win32 --arch ia32 --target i686-pc-windows-msvc --formats nsis
 ```
 
-Linux 在对应架构主机执行，先安装 [tauri-linux-deps.sh](../.github/workflows/scripts/tauri-linux-deps.sh) 中所列系统依赖：
+On Linux, run on a host with the target architecture and first install the system dependencies listed in [tauri-linux-deps.sh](../.github/workflows/scripts/tauri-linux-deps.sh):
 
 ```bash
 set -euo pipefail
@@ -55,27 +57,27 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。当前安装方法与限制见[发布说明](../docs/releases/v1.3.2.md)，检查结果以对应提交的 CI 记录为准。
+Windows package validation extracts the package, checks every runtime resource, and launches actual WebView2 with the bundled backend. Linux extracts and validates all three formats separately and runs actual WebKitGTK. See the [release notes](../docs/releases/v1.3.2.md) for current installation instructions and limitations; validation results are established by the corresponding commit's CI records.
 
-RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
+RPM validation first checks package digests, then performs strict extraction using `bsdtar` from `libarchive-tools`, accommodating packages whose archive length fields are omitted by Tauri's packaging library. Any failed digest, extraction, resource, or native UI check prevents release.
 
-安装与系统交互验收使用独立的测试安装和数据目录：核对安装、升级、快捷方式、托盘、唯一开机启动登记、设置与备份恢复，以及退出后重新打开的数据完整性。额度通知、真实断网和下载限速需在目标机器按实际权限与网络条件验证；卸载保留用户数据。包内 WebView 自动检查与完整安装/卸载验收分别记录，不能将前者当作后者的结果。
+Installation and system interaction validation uses separate test installations and data directories. Check installation, upgrades, shortcuts, the tray, a single startup registration, settings and backup restoration, and data integrity after exiting and reopening. Quota notifications, actual network disconnection, and download limiting require target-machine validation under actual permissions and network conditions. Uninstallation preserves user data. Record packaged WebView automation and complete installation/uninstallation validation separately; the former does not establish the latter's results.
 
-## 测试与发布
+## Testing and release
 
-共享桌面业务位于 apps/desktop/host，Tauri 适配位于 apps/desktop/tauri。开发态页面回归使用无头浏览器与真实页面桥接，并在隔离目录运行 Node 业务与 C++ 后端。测试替身负责窗口、对话框和系统设置，不启动 Electron。五个平台的真实采集、Rust 和包内 WebView 验证仍为发布必要检查，完整流程见[CI 与发布矩阵](../docs/PACKAGING-MATRIX.md)。
+Shared desktop business logic is in `apps/desktop/host`; Tauri adaptation is in `apps/desktop/tauri`. Development page regression tests use headless browsers and the actual page bridge, running Node business logic and the C++ backend in isolated directories. Test doubles handle windows, dialogs, and system settings; Electron is not launched. Actual capture, Rust, and packaged WebView validation for all five platform targets remain required release checks. See the [CI and release matrix](../docs/PACKAGING-MATRIX.md) for the complete workflow.
 
-本机优先复用现有浏览器、依赖和构建缓存；测试截图、日志及临时数据写入项目 del，归档时只移动文件。性能比较使用同一测试范围和实际 CI 耗时，不把开发态浏览器结果描述为原生 WebView 验收。
+Local work should reuse existing browsers, dependencies, and build caches. Store test screenshots, logs, and temporary data in the project's `del` directory; archive files by moving them only. Compare performance using the same test scope and actual CI durations. Development browser results do not establish native WebView validation.
 
-## 图标来源与核对
+## Icon sources and validation
 
-正式 logo 为 docs/assets/logo.svg，桌面 SVG、PNG 和 Windows ICO 由 node packaging/generate-icons.cjs 生成。窗口、托盘与安装包使用同一套资源。Windows ICO 包含 16、24、32、48、64、128、256 px 七种尺寸，保留透明圆角。
+The canonical logo is `docs/assets/logo.svg`. `node packaging/generate-icons.cjs` generates the desktop SVG, PNG, and Windows ICO. Windows, tray icons, and installers use the same resources. The Windows ICO contains seven sizes: 16, 24, 32, 48, 64, 128, and 256 px, retaining transparent rounded corners.
 
-图标检查验证实际 ICO 图像、SVG 对应关系及 Tauri 安装图标配置。在已安装 Microsoft Edge 的 Windows 环境可运行：
+Icon checks validate actual ICO images, their correspondence with the SVG, and Tauri's installer icon configuration. On Windows with Microsoft Edge installed, run:
 
 ```powershell
 $env:PLAYWRIGHT_CHANNEL = 'msedge'
 node --test packaging/icons.test.cjs
 ```
 
-已安装 Playwright Chromium 时可以省略环境变量。发布时仍须检查最终 PE 图标与对应安装包资源。历史 Electron 构建入口已归档，已发布版本的说明继续保存对应历史事实。
+The environment variable can be omitted when Playwright Chromium is installed. Release validation must still check the final PE icons and corresponding installer resources. Historical Electron build entry points have been archived; published version notes retain the facts of those releases.

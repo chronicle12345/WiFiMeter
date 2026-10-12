@@ -50,9 +50,16 @@ secrets.json
 # Personal editor and agent configuration.
 .agent/
 .agents/
+.claude/
+.gemini/
 .vscode/
 .idea/
 *.code-workspace
+AGENTS.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
 /docs/superpowers/
 /apps/desktop/test-results*/
 /apps/desktop/playwright-report/

@@ -6,6 +6,7 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+- Keep personal agent rules out of Git, use English by default with matching Chinese project guides, and consolidate release preparation requirements into the public packaging documentation.
 - Archive unused Node runtime trimming, Zig/Wine cross-build and old PowerShell product tools. Consolidate outdated module README files, move demo snapshots into test fixtures, and remove uncalled backend interfaces while retaining current sampling and migration coverage.
 - Remove Electron and electron-builder dependencies and legacy build entry points. Move shared Node business modules into host, run renderer regressions in a headless browser through the Tauri bridge, and validate native desktop behavior in actual Tauri packages. Preserve existing data locations, upgrade handoff and profile locks.
 - Consolidate Windows startup registration, report synchronization failures and hide collector and test helper consoles. Reuse verified complete update downloads instead of downloading them again.
@@ -13,6 +14,7 @@ Changes are listed by release.
 - Preserve directional firewall rules, improve history and proxy refreshes, and reuse network filters and application icon extraction. Move form persistence into a dedicated renderer module and keep quota notices visible in short windows with wider fonts.
 - Keep native windows hidden throughout background tests, retain their latest visibility state until page initialization completes, and simulate visibility changes for renderer checks. Organize local diagnostics under ignored directories, document module and tag requirements, discover new renderer tests automatically, and reject release tags with outdated README version information. These changes are not included in the published 1.3.2 installers.
 
+- 个人代理规则取消 Git 跟踪，项目文档默认英文并提供对应中文版，发布准备要求统一保存在正式打包文档。
 - 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
 - 移除 Electron、electron-builder 依赖与旧构建入口，共享 Node 业务归入 host。页面回归使用无头浏览器和真实 Tauri 桥接，原生桌面行为通过实际 Tauri 安装包验证；保留原数据目录、升级握手和实例互斥保护。
 - 归档未使用的 Node 裁剪、Zig/Wine 交叉编译和旧 PowerShell 产品构建工具，合并过时模块 README；演示快照移入测试夹具，移除未调用的后端接口，保留当前采集与迁移验证。

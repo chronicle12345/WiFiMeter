@@ -1,16 +1,11 @@
-# Linux 应用图标
+# Linux Application Icons
 
-Tauri 桌面壳通过 Freedesktop desktop 文件的 `Exec` 和 `Icon` 关联应用图标。
-优先读取用户的 `XDG_DATA_HOME/applications`，再读取 `XDG_DATA_DIRS/applications`；
-同名用户条目会覆盖系统条目。desktop 文件只用于读取元数据，其中的命令不会执行。
+English | [简体中文](LINUX_APPLICATION_ICONS.zh-CN.md)
 
-PNG 图标可直接读取。主题查找遵循 `index.theme` 的继承关系，最后查找 `hicolor` 和
-`pixmaps`。当前主题优先从 `GTK_ICON_THEME` 或 GTK 的 `settings.ini` 读取；
-系统存在 `gsettings` 时，也可以读取 GNOME 当前主题。这些系统工具都需要位于 `PATH`。
+The Tauri desktop shell associates application icons using `Exec` and `Icon` from Freedesktop desktop files. It reads the user's `XDG_DATA_HOME/applications` first, then `XDG_DATA_DIRS/applications`. A user entry overrides a system entry with the same name. Desktop files are read only as metadata; their commands are never executed.
 
-SVG 和 XPM 图标转换需要系统已有的 `gdk-pixbuf-thumbnailer`，属于 GdkPixbuf 工具。
-WiFiMeter 不会自动安装它，也不会要求 Electron 或管理员权限。缺少转换工具、找不到图标
-或图标格式无效时，应用列表继续显示默认图标。PNG 图标不依赖这个转换工具。
+PNG icons can be read directly. Theme lookup follows inheritance in `index.theme`, with `hicolor` and `pixmaps` as the final fallbacks. The current theme is first read from `GTK_ICON_THEME` or GTK's `settings.ini`. When `gsettings` is available, it can also read the current GNOME theme. These system tools must be available in `PATH`.
 
-扫描数量、输入文件大小、主题候选数量和缓存数量均设有上限。只有转换时会在系统临时目录
-创建 PNG，读取并验证后立即删除临时目录。图标查询不修改应用程序、desktop 文件或系统主题。
+Converting SVG and XPM icons requires an existing system installation of `gdk-pixbuf-thumbnailer`, a GdkPixbuf tool. WiFiMeter does not install it automatically, and icon lookup does not require administrator permissions. If the converter is missing, the icon cannot be found, or its format is invalid, the application list continues to show the default icon. PNG icons do not depend on this converter.
+
+Limits apply to scan counts, input file sizes, theme candidates, and cache entries. Only conversion creates a PNG in the system temporary directory; the temporary directory is removed immediately after the PNG is read and validated. Icon lookup does not modify applications, desktop files, or system themes.

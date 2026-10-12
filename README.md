@@ -5,12 +5,12 @@
 <p align="center">
   <a href="docs/releases/v1.3.2.md"><img src="https://img.shields.io/badge/version-1.3.2-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.2" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
-  <a href="docs/ARCHITECTURE.md#c-后端"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
+  <a href="docs/ARCHITECTURE.md#c-backend"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
 
 <p align="center">
-  <a href="docs/ARCHITECTURE.md#当前数据流"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Tauri interface" /></a>
+  <a href="docs/ARCHITECTURE.md#current-data-flow"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Tauri interface" /></a>
   <a href="docs/MIGRATION.md"><img src="https://img.shields.io/badge/storage-SQLite-2563EB?style=for-the-badge&amp;labelColor=182033" alt="SQLite storage" /></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/languages-EN%20%2F%20ZH-DB7093?style=for-the-badge&amp;labelColor=182033" alt="English and Simplified Chinese" /></a>
 </p>
@@ -81,6 +81,16 @@ node packaging/tauri/verify-windows.cjs
 ```
 
 Platform dependencies and other source build commands are documented in [packaging](packaging/README.md). Tests use synthetic fixtures and isolated profiles. Builds, runtime data, traces and local credentials are excluded from Git. The 1.3.x release workflow requires all five targets to pass backend, Rust host and package checks before publishing the complete set of nine packages.
+
+## Documentation
+
+English is the default documentation language. Major project guides have a matching `.zh-CN.md` edition with a language switch at the top. Commands, features, limitations and validation results must stay consistent between editions. Release notes and the changelog contain both languages in one file, with English first. Third-party license texts remain in their original form.
+
+- [Architecture](docs/ARCHITECTURE.md), [data contracts](contracts/README.md) and [migration](docs/MIGRATION.md).
+- [Windows capture](docs/WINDOWS_APP_CAPTURE.md), [Linux capture](docs/LINUX_APP_CAPTURE.md) and [Linux application icons](docs/LINUX_APPLICATION_ICONS.md).
+- [Floating window](docs/FLOATING_WINDOW.md).
+- [Source packaging](packaging/README.md), [CI and release requirements](docs/PACKAGING-MATRIX.md) and [Windows installer sources](packaging/tauri/windows/SOURCES.md).
+- [Third-party notices](backend/third_party/README.md) and [WinDivert notices](apps/desktop/native/windows/WinDivert/README.md).
 
 ## Performance and license
 

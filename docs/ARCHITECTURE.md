@@ -1,89 +1,90 @@
-# 项目架构
+# Project architecture
 
-共享的 Tauri 桌面应用位于 `apps/desktop/`，同一套页面和宿主代码面向 Windows/Linux。Rust 提供系统 WebView 和原生桌面能力，Node 辅助进程复用已有业务模块。真实网络采集与业务存储由本机 C++ 后端负责，两个平台层都已实现。当前发布覆盖 Windows x64、x86、ARM64 和 Linux x64、ARM64，具体能力与验证边界见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+English | [简体中文](ARCHITECTURE.zh-CN.md)
 
-## 当前数据流
+The shared Tauri desktop application lives in `apps/desktop/`. Windows and Linux use the same renderer and host code. Rust provides the system WebView and native desktop capabilities, while a Node helper process reuses the existing business modules. The local C++ backend handles native network collection and business storage; both platform implementations are in place. Current releases cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64. See the [build and release matrix](PACKAGING-MATRIX.md) for capabilities and verification limits.
+
+## Current data flow
 
 ```text
-renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node 业务进程 → wifimeter-backend（按行 JSON）
-       └──────────────────────────────────→ data/model.js（校验与计算）
-页面 → tauri/bridge.js → Rust → 系统文件对话框、窗口、托盘、系统通知
-                           → Node → 开机启动、数据导入、文件读写、更新和流量控制
+renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node business process → wifimeter-backend (JSON Lines)
+       └──────────────────────────────────→ data/model.js (validation and calculations)
+renderer → tauri/bridge.js → Rust → system file dialogs, windows, tray, system notifications
+                                → Node → autostart, data import, file I/O, updates and traffic control
 ```
 
-页面直接通过 `backend-client.js` 创建数据对象并读取本机后端。数据定义与计算放在 `model.js`，合成快照位于 `tests/fixtures/snapshot.js`，测试夹具不会复制到正式页面资源中。
+The renderer creates data objects and reads the local backend through `backend-client.js`. Data definitions and calculations live in `model.js`. Synthetic snapshots live in `tests/fixtures/snapshot.js`; test fixtures are not copied into production renderer assets.
 
-`renderer/app.js` 组合页面渲染、导航与事件。可复用的输入和显示逻辑放在 `renderer/ui/`，数据访问与计算放在 `renderer/data/`。`ui/form-autosave.js` 管理设置、网络额度、总额度与代理表单的字段校验、保存状态、重试、保留期清理及草稿放弃；它通过回调调用现有宿主和数据接口，页面入口负责确认窗口及刷新界面。新增业务应按职责进入对应模块，并直接测试模块接口。
+`renderer/app.js` composes page rendering, navigation and events. Reusable input and display logic belongs in `renderer/ui/`; data access and calculations belong in `renderer/data/`. `ui/form-autosave.js` manages field validation, save state, retries, retention cleanup and draft discard for settings, network quota, total quota and proxy forms. It calls existing host and data interfaces through callbacks; the page entry point handles confirmation dialogs and interface refreshes. New business logic should go into the module responsible for it, with tests that call the module interface directly.
 
-Node 业务进程用 `host/backend.cjs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端失败以 `{ ok: false, error }` 形式回给页面，保留错误码与消息。历史、额度和网络设置以 C++ 后端为准。
+The Node business process uses `host/backend.cjs` to launch the backend and match requests with responses by id. Events (`live`, `usage`, `alert`) are pushed separately. Backend failures reach the renderer as `{ ok: false, error }`, preserving their error codes and messages. The C++ backend is authoritative for history, quotas and network settings.
 
-`host/desktop-runtime.cjs` 显式接收 `tauri/native-adapter.cjs` 提供的桌面能力，`host/main.cjs` 调用该接口组合业务，不拦截 Node 模块加载，也不依赖 Electron SDK。业务单元测试使用接口替身。开发态界面回归在无头浏览器中加载真实页面及 Tauri 桥接，并运行隔离的 Node 业务宿主；操作系统窗口、托盘和对话框由测试替身处理。真实 WebView、窗口、安装资源和原生采集继续由对应平台的安装包集成测试验证。
+`host/desktop-runtime.cjs` explicitly receives the desktop capabilities provided by `tauri/native-adapter.cjs`. `host/main.cjs` uses that interface to compose business behavior without intercepting Node module loading or depending on the Electron SDK. Business unit tests use interface substitutes. Development UI regression tests load the real renderer and Tauri bridge in a headless browser and run an isolated Node business host; test substitutes handle operating-system windows, tray and dialogs. Integration tests of each platform's installation packages continue to verify the real WebView, windows, installed resources and native collection.
 
-页面先完成当前范围查询，再按需读取分钟历史；同范围的并发分钟查询共用请求，晚到的旧请求不会覆盖当前范围。小时导出由后端处理，完整日期可导出旧小时记录，部分时段按分钟边界计算小时合计。自定义范围使用本地日期和时分，完整包含结束分钟。
+The renderer completes the current range query before loading minute history as needed. Concurrent minute queries for the same range share a request, and late responses from older requests cannot replace the current range. The backend handles hourly exports: complete dates can export existing hourly records, while partial ranges aggregate hours at minute boundaries. Custom ranges use local dates and hours/minutes and include the entire ending minute.
 
-## C++ 后端
+## C++ backend
 
-`backend/platform/network_platform.h` 定义平台无关的采集、身份识别与断开控制接口，两个实现：
+`backend/platform/network_platform.h` defines platform-independent interfaces for collection, identity lookup and disconnect control, with two implementations:
 
-| 实现 | 计数来源 | 身份来源 | 断开方式 |
+| Implementation | Counter source | Identity source | Disconnect method |
 | --- | --- | --- | --- |
-| `backend/platform/linux/` | `/proc/net/dev` | `nmcli`（只解析与语言环境无关的部分） | `nmcli dev disconnect` + 复核 |
-| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN API `WlanQueryInterface` | `WlanDisconnect` + 轮询复核 |
+| `backend/platform/linux/` | `/proc/net/dev` | `nmcli` (only locale-independent output is parsed) | `nmcli dev disconnect`, followed by verification |
+| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN API `WlanQueryInterface` | `WlanDisconnect`, followed by polling to verify the result |
 
-接口只报告事实与类型化失败，不生成界面文案；读取计数前后各确认一次身份，期间切换网络则丢弃样本；断开先判定、再执行、最后复核，只在关联到期望网络时才动手。
+These interfaces report facts and typed failures without generating UI text. They confirm identity before and after reading counters and discard a sample if the network changes between those checks. Disconnect control first checks the connection, then performs the operation and verifies the result; it acts only when the interface is associated with the expected network.
 
-Windows 的实现分成两层，这是它可测试的关键：
+The Windows implementation has two layers so that its decision logic can be tested:
 
 ```text
-platform/win32/      只做系统调用与字段搬运（WlanOpenHandle、GetIfTable2、WlanDisconnect）
-platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注入，不调用任何 Win32 API
+platform/win32/      System calls and field transfer only (WlanOpenHandle, GetIfTable2, WlanDisconnect)
+platform/windows/    Sampling and disconnect decisions, with SystemApi dependency injection and no Win32 API calls
 ```
 
-采样期间切换网络时丢弃样本、等待异步断开结果、区分未关联状态等判断，可以在 Linux 开发机上验证；`platform/win32/` 负责系统调用。身份字段（UTF-16 → UTF-8、代理对、非法字节）与计数器转换同样在 `platform/windows/` 里，不依赖 Windows 类型。
+Decisions such as discarding samples after a network switch, waiting for asynchronous disconnect results and distinguishing an unassociated state can be verified on a Linux development machine. `platform/win32/` handles the system calls. Identity conversion (UTF-16 to UTF-8, surrogate pairs and invalid bytes) and counter conversion also live in `platform/windows/`, without dependencies on Windows types.
 
-`core/` 实现与平台无关的业务规则：字节格式转换、本地日历键、网络键映射、用量累计与额度。计数回落、身份变化或网卡从完整报告中消失时，丢弃累计基线并上报类型化事件，避免把无法归属的流量记到错误的网络。
+`core/` implements platform-independent business rules: byte formatting, local calendar keys, network key mapping, usage accumulation and quotas. When counters fall, identity changes or an adapter disappears from a complete report, it discards the accumulation baseline and emits a typed event so that unassignable traffic is not attributed to the wrong network.
 
-`storage/` 用 SQLite 增量保存每日、小时、分钟及应用用量，并存储网络、额度账本和偏好。schema 6 新增 `minute_usage`、`app_minute_usage`，旧数据保留已有精度；采样跨分钟时按时间分配字节并保持总量不变。分钟记录纳入完整备份、恢复、清空、删除网络及保留策略。`coverage_gaps` 单独记录缺失区间，界面将其与真实零流量区分。Linux 用系统 `libsqlite3`，Windows（含交叉编译）用 `backend/third_party/sqlite` 的合并源码。
+`storage/` incrementally stores daily, hourly, minute and application usage in SQLite, together with networks, quota ledgers and preferences. Schema 6 adds `minute_usage` and `app_minute_usage`; existing data retains its original precision. Samples spanning minutes allocate bytes by time while preserving their total. Minute records participate in complete backups, restoration, clearing, network deletion and retention policies. `coverage_gaps` records missing intervals separately so that the interface can distinguish them from actual zero traffic. Linux uses the system `libsqlite3`; Windows uses the amalgamated source in `backend/third_party/sqlite`.
 
-`ipc/` 是协议与事件循环：请求 `{id, method, params}`、响应 `{id, ok, result|error}`、事件 `{event, ...}`。输入输出循环按平台选择——POSIX 用 `poll` 同时等待标准输入与采样定时器，Windows 用 `WaitForSingleObject` 等待管道句柄——协议与业务逻辑完全共用。
+`ipc/` implements the protocol and event loop: requests are `{id, method, params}`, responses are `{id, ok, result|error}`, and events are `{event, ...}`. The I/O loop is selected by platform: POSIX uses `poll` to wait for standard input and the sampling timer, while Windows uses `WaitForSingleObject` on the pipe handle. The protocol and business logic are shared in full.
 
-网卡累计计数只用于计算相邻有效样本的增量。首次采样、计数回退、身份变化或确认网卡消失时重建基线，避免将历史计数归到当前网络；身份暂时不可读时只在有限时间内保留基线。额度账本按本地日、月或累计周期独立保存，不根据保留期内的历史记录重算。字节在接口中使用十进制字符串，在 JavaScript 中使用 BigInt；写入 SQLite 前核对有符号 64 位范围，超出范围会拒绝写入。
+Cumulative adapter counters are used only to calculate increments between adjacent valid samples. The first sample, a counter rollback, an identity change or a confirmed adapter disappearance rebuilds the baseline so that historical counters are not attributed to the current network. If identity is temporarily unreadable, the baseline is retained for a limited time. Quota ledgers are stored independently for local daily, monthly or cumulative periods and are not recalculated from history within the retention period. Interfaces represent bytes as decimal strings, and JavaScript uses `BigInt`. Values are checked against the signed 64-bit range before SQLite writes; out-of-range values are rejected.
 
-采集进程通过本机管道通信，不主动发送外网请求。联网入口包括版本检查、更新下载安装包及用户打开官方版本页；Windows 缺少 WebView2 时安装器下载微软运行时。后端启动失败或意外退出会保留错误并恢复采集，数据库路径始终由 Node 业务宿主显式传入。协议与备份字段见[数据合约](../contracts/README.md)，旧数据导入规则见[迁移与恢复](MIGRATION.md)。
+The collection process communicates over local pipes and does not initiate external network requests. Network access is used for version checks, installation-package downloads during updates and user actions that open the official release page. On Windows, the installer downloads Microsoft's WebView2 runtime if it is missing. Backend startup failures or unexpected exits preserve the error and trigger collection recovery. The Node business host always passes the database path explicitly. See the [data contracts](../contracts/README.md) for protocol and backup fields, and [migration and recovery](MIGRATION.md) for legacy data import rules.
 
-## 职责边界
+## Responsibility boundaries
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| 页面 | 展示、输入、筛选、交互状态 |
-| Tauri / Rust | 系统 WebView、窗口、托盘、对话框、受限 IPC |
-| Node 辅助进程 | 后端进程管理、迁移、更新、文件读写、系统设置与流量控制 |
-| C++ 后端 | 真实采集、累计、额度判断、业务存储 |
-| 平台适配 | 隔离 Windows/Linux 系统 API |
-| contracts | 描述前后端需要共享的数据与协议约定 |
-| packaging | 按系统组装安装包 |
+| Renderer | Display, input, filtering and interaction state |
+| Tauri / Rust | System WebView, windows, tray, dialogs and restricted IPC |
+| Node helper process | Backend process management, migration, updates, file I/O, system settings and traffic control |
+| C++ backend | Native collection, accumulation, quota decisions and business storage |
+| Platform adapters | Isolation of Windows/Linux system APIs |
+| contracts | Shared data and protocol conventions for the frontend and backend |
+| packaging | Assembly of installation packages for each operating system |
 
-只有实际出现平台差异时才在宿主或后端中增加平台适配代码。
+Add platform adaptation code to the host or backend only when an actual platform difference requires it.
 
-## 构建与旧版隔离
+## Builds and separation from legacy versions
 
-根目录 npm 命令转发到桌面应用，锁文件与依赖保留在应用目录。
+Root npm commands forward to the desktop application. Its lockfile and dependencies remain in the application directory.
 
-- **Linux 源码构建**：`npm run dist:linux` 使用本机工具链构建采集器与 Tauri，生成 deb、rpm、AppImage。
-- **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，准备 Node、原生控制模块和页面，再由 Tauri CLI 构建 NSIS 安装包，输出到 `dist/windows/`。
-- **页面回归**：`npm run test:ui` 使用无头浏览器；当前源码、依赖与构建入口均不需要 Electron 运行时。
+- **Linux source build**: `npm run dist:linux` builds the collector and Tauri with the local toolchain, producing deb, rpm and AppImage packages.
+- **Windows native build**: `npm run dist:windows` builds the backend with local CMake, prepares Node, native control modules and renderer assets, then uses the Tauri CLI to build an NSIS installer in `dist/windows/`.
+- **UI regression tests**: `npm run test:ui` uses a headless browser. The current source, dependencies and build entry points do not require an Electron runtime.
 
-C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
+C++ intermediate artifacts live under the root `build/` directory (`build/` on Linux and `build/windows/` on Windows). Installation packages include the corresponding `wifimeter-backend` executable. Windows uses its own application identifier and data directory and does not read Linux runtime-component paths.
 
-两个平台的产品名统一为 `WiFiMeter`：Windows 沿用应用标识 `io.wifimeter.demo`
-与数据目录 `%APPDATA%\WiFiMeter Demo`；Linux 使用 `WiFiMeter` 与标准的 XDG 目录。
-身份定义集中在 `apps/desktop/host/product.cjs` 并有单元测试；显示名称更新时保留
-Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
+Both platforms use the product name `WiFiMeter`. Windows retains the application identifier `io.wifimeter.demo` and the data directory `%APPDATA%\WiFiMeter Demo`; Linux uses `WiFiMeter` and standard XDG directories. Identity definitions are centralized in `apps/desktop/host/product.cjs` and have unit tests. Display-name updates preserve the existing Windows application identifier and data path so that upgrades can still read existing records.
 
-Electron 1.2.x 用户通过下载对应系统和 CPU 架构的 Tauri 安装版完成迁移；Tauri 后续更新只选择对应的 Tauri 安装包。
+Electron 1.2.x users migrate by downloading the Tauri installer for their operating system and CPU architecture. Subsequent Tauri updates select only the corresponding Tauri installation package.
 
-Windows 宿主在启动 Node 和后端之前持有 Electron 使用的 `lockfile`，锁的范围为用户数据目录。新旧版本不能同时使用同一目录采集，进程退出后由系统释放锁；WebView2 的缓存保存在该目录下独立的 `webview2` 子目录。
+Before starting Node and the backend, the Windows host holds the `lockfile` used by Electron, scoped to the user data directory. Old and new versions cannot collect into the same directory simultaneously. The operating system releases the lock when the process exits. WebView2 caches live in a separate `webview2` subdirectory of that directory.
 
-`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。开发态页面回归在 Windows 与 Linux 的独立任务中分片并行执行，打包任务无需先等待完整页面回归；汇总和发布同时要求两类检查成功。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。旧 UI、历史独立产品构建和跨系统编译工具已归档，版本历史保留在对应标签与发布说明中。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+`.github/workflows/tauri.yml` handles Tauri builds and tests for the current five platform targets and release publication for `v1.3.*` tags. Development UI regression tests run in parallel shards in separate Windows and Linux jobs. Packaging jobs can begin before the full UI regression suite finishes; aggregation and publication require both sets of checks to succeed. Production CI uses a pinned official Node.js runtime and reuses verified compilation caches and release artifacts from the same commit. The old UI, historical standalone product builds and cross-platform compilation tools are archived; version history remains in the corresponding tags and release notes. See the [build and release matrix](PACKAGING-MATRIX.md) for each workflow's scope.
 
-性能对比工具集中在 `tools/performance/`：`ipc-and-autostart.cjs` 比较同一合成 IPC 消息和设置写入，`renderer-history.mjs` 比较同一历史数据集的事件处理。它们不进入安装包，耗时不能当作整机启动或整体内存的保证；本机夹具保留在 `del/`。使用历史基线时传入对应 Git 提交，结果须标明数据量、运行环境和对比提交。
+Performance comparison tools live in `tools/performance/`: `ipc-and-autostart.cjs` compares processing of the same synthetic IPC messages and settings writes, while `renderer-history.mjs` compares event handling for the same history dataset. They are not included in installation packages, and their timings do not guarantee overall startup time or total memory usage. Local fixtures remain in `del/`. Historical baselines require the corresponding Git commit; results must identify the data volume, runtime environment and comparison commit.
+
+Project documentation defaults to English. Main product, architecture, protocol, migration, platform and packaging documents have matching Simplified Chinese copies with the `.zh-CN.md` suffix and links between both versions. Private agent rules remain local and are not uploaded; public documentation must not depend on them.

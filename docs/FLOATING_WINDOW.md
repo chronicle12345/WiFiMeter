@@ -1,13 +1,15 @@
-# 悬浮窗
+# Floating Window
 
-在 Windows 版 WiFiMeter 设置的常规页打开桌面小窗。默认显示全部当前连接的下载、上传合计速度，支持条形、方形、圆形、配色、边缘吸附和自动隐藏。
+English | [简体中文](FLOATING_WINDOW.zh-CN.md)
 
-点击小窗的应用列表按钮，展开各应用的实时上传、下载速度和最近时段用量。列表可以滚动，继续保留顶部的全部网络速度；再次点击按钮收起列表。展开列表时允许键盘输入，收起后恢复原有形状。
+Enable the desktop floating window on the General page of WiFiMeter settings on Windows. By default it shows combined download and upload rates across all current connections. It supports bar, square, and circular shapes, colors, edge snapping, and automatic hiding.
 
-最近时段可选 1 分钟、5 分钟、1 小时，以及 1 到 10080 分钟的自定义时长。时段和自定义值自动保存，重新打开程序继续使用。列表显示实际起止日期和时分。
+Click the floating window's application-list button to expand each application's live upload/download rates and usage for a recent time range. The list scrolls while the combined network rates remain at the top. Click the button again to collapse the list. Keyboard input is enabled while the list is expanded; collapsing it restores the original shape.
 
-累计用量按本地分钟记录汇总，包含当前分钟，不按实时速度推算历史。最近 1 分钟显示当前分钟，5 分钟显示当前分钟和之前 4 个分钟，1 小时显示当前分钟和之前 59 个分钟。这些结果以数据库分钟精度为准，当前分钟尚未结束。旧记录不补造分钟明细。
+Choose 1 minute, 5 minutes, 1 hour, or a custom range of 1–10080 minutes. The selected range and custom value are saved automatically and reused after restarting the application. The list displays the actual start and end dates and times, to the minute.
 
-实时速度单位带 `/s`，时段用量显示字节单位。无法获取速度、未开启应用采集、权限不足或缺失记录时，界面显示相应状态或 `—`；没有记录不视为零流量。应用列表与主窗口共用原生采集数据，回环观测不重复计入网卡流量。
+Accumulated usage is summed from local calendar-minute records, including the current minute; historical usage is not extrapolated from live rates. The 1-minute range shows the current minute, the 5-minute range includes the current minute and the previous 4 minutes, and the 1-hour range includes the current minute and the previous 59 minutes. Results follow the database's minute precision, and the current minute is still in progress. Minute details are not fabricated for older records.
 
-应用采集需要相应系统权限。若列表提示未启用采集，打开主窗口，在应用页启用采集。后台仅在应用列表展开时读取该时段的分钟明细，收起或关闭小窗后停止发起历史查询；同一范围的快照最多每 5 秒更新一次，速度随实时采样刷新。
+Live rates use units ending in `/s`; range usage uses byte units. When a rate cannot be obtained, application capture is disabled, permissions are insufficient, or records are missing, the UI shows the corresponding status or `—`. Missing records are not treated as zero traffic. The application list and main window share native capture data; loopback observations are not counted again in network-interface traffic.
+
+Application capture requires the corresponding system permissions. If the list reports that capture is disabled, open the main window and enable capture on the Applications page. The background process reads minute details for the selected range only while the application list is expanded. Collapsing the list or closing the floating window stops further history queries. A snapshot for the same range is refreshed at most once every 5 seconds; rates refresh with live sampling.

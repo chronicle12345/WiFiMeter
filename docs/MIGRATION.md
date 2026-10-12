@@ -1,4 +1,6 @@
-# Data migration and recovery / 数据迁移与恢复
+# Data migration and recovery
+
+English | [简体中文](MIGRATION.zh-CN.md)
 
 ## Importing the file-based Windows version
 
@@ -18,26 +20,8 @@ A complete backup includes network records, hourly data, application history, co
 
 The application retains the cross-platform profile location. The Windows profile is `%APPDATA%\WiFiMeter Demo`; Linux retains its existing Electron profile. Keep these directories when reinstalling. Backups and import reports can contain network names and local paths; they are private user data and must not be committed or attached to public issues without review.
 
-## 导入旧 Windows 文件版
+## Backend migration interface
 
-先退出旧采集器，再启动新版。默认读取 `%LOCALAPPDATA%\WiFiMeter\data`；便携版或自定义目录可在设置中选择。目录需要包含 `state.json`，或可恢复的 `state.json.bak`。
+`importLegacy` accepts `{ sourceId, stateJson, settingsJson?, appUsageJson?, allowInitialSettings? }`. JSON parameters preserve the original file contents and numeric precision and allow a UTF-8 BOM. Importing the same `sourceId` again returns only the original result; changes to previously imported source contents return `LegacySourceChanged`. `allowInitialSettings` is used only for a new profile confirmed to have had no database before startup. The backend still checks that the current dataset is empty and preferences have not been modified.
 
-导入只读取原文件，不修改原目录。提交新记录前，程序会在新配置目录的 `migration-backups` 中保存原文及迁移前数据库备份。旧采集器占用、数据无效或同一网络日期发生冲突时会停止导入，数据库事务避免只写入一半。
-
-字节数由 C++ 按精确十进制整数解析，不经过 JavaScript 浮点转换。重复导入同一来源不会重复累计。成功导入后若原来源又有变化，会提示核对，避免再次相加。已有 SQLite 配置不会被旧目录直接覆盖。
-
-网络备注、可转换的额度策略及独立额度账本会映射到新格式。原设置和缓存原文仍保存在迁移档案中。无法确定完整日期或归属的应用缓存会在报告中列出并保留原文，不会伪装成完整的原生应用采集历史。
-
-原 JSON 目录只作为保留副本，新采集记录写入 SQLite，不会继续同步回旧目录。重新运行旧版时，看到的是旧目录中的记录，不包含新版随后采集的数据。
-
-## 备份与恢复
-
-完整备份包含网络记录、小时明细、应用历史、缺失区间、设置、额度账本和迁移档案；有代理配置及观测时也会包含它们。恢复会替换当前数据，并暂停采集。无效输入会回滚，不会只替换部分记录。只导出用量的 CSV 或 JSON 不能当作完整备份恢复。
-
-Windows 配置目录仍为 `%APPDATA%\WiFiMeter Demo`，Linux 沿用已有的 Electron 配置目录，重新安装时请保留。备份和导入报告可能包含网络名及本地路径，属于用户私有数据，不应直接提交到仓库或附在公开 issue 中。
-
-## 后端迁移接口
-
-`importLegacy` 接受 `{ sourceId, stateJson, settingsJson?, appUsageJson?, allowInitialSettings? }`。JSON 参数保留文件原文和数字精度，允许 UTF-8 BOM；同一 sourceId 重复导入只返回原结果，已导入的原文发生变化时返回 `LegacySourceChanged`。`allowInitialSettings` 仅用于确认启动前不存在数据库的新配置，后端仍会检查当前数据为空且偏好未被修改。
-
-无法映射到完整日期或明确网络的应用缓存只归档，不计入用量；已有网络设置、用量与账本不被旧缓存覆盖。导入报告保存 `settingsApplied`、转换数量和 `warnings`，可通过 `migrationStatus` 读取。完整备份保存原迁移文档、报告和网络映射；缺少新字段的旧备份保留原精度，不补造分钟数据。
+Application-cache entries that cannot be mapped to a complete day or an unambiguous network are archived without contributing to usage. Old caches do not overwrite existing network settings, usage or ledgers. The import report stores `settingsApplied`, conversion counts and `warnings`, and can be read through `migrationStatus`. Complete backups preserve the original migration documents, reports and network mappings. Older backups that lack new fields retain their original precision; no minute data is fabricated.
