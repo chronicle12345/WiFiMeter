@@ -42,6 +42,19 @@ export function createDataClient(handlers = {}) {
     let eventRevision = 0;
     let pendingSnapshot = null;
 
+    function collectorStatusFields(message) {
+        const collector = message.collector;
+        const inactive = collector === 'offline' || collector === 'starting' || collector === 'paused';
+        const appState = collector === 'offline' ? 'unavailable' : collector === 'paused' ? 'paused' : 'starting';
+        return {
+            live: { ...snapshot.live, collector, collectorMessage: message.message || '',
+                connections: inactive ? (snapshot.live.connections || []).map(connection => ({ ...connection, rxPerSecond: '0', txPerSecond: '0' })) : snapshot.live.connections || [] },
+            appCollection: { ...snapshot.appCollection,
+                ...(snapshot.appCollection.enabled ? { state: appState } : {}), ...message.appCollection },
+            appProcesses: []
+        };
+    }
+
     // 全量字段直接恢复；字节增量只按后端提交序号恢复，避免重复累计。
     function rememberEvent(message) {
         const revision = ++eventRevision;
@@ -50,6 +63,9 @@ export function createDataClient(handlers = {}) {
         const remember = (map, key, value) => map.set(key, { revision, updatedAt, usageRevision: usageRevisionOf(message.usageRevision), value: structuredClone(value) });
         if (message.event === 'usage' || message.event === 'appUsage') pendingSnapshot.usage.push(structuredClone(message));
         if (message.totalQuota) remember(pendingSnapshot.fields, 'totalQuota', message.totalQuota);
+        if (message.event === 'collectorStatus') {
+            for (const [key, value] of Object.entries(collectorStatusFields(message))) remember(pendingSnapshot.fields, key, value);
+        }
         if (message.event === 'live') {
             remember(pendingSnapshot.fields, 'live', payloadOf(message));
             for (const key of ['appCollection', 'proxy', 'appProcesses']) {
@@ -84,7 +100,10 @@ export function createDataClient(handlers = {}) {
                 : Number.isFinite(snapshotTime) && Number.isFinite(updatedAt) && updatedAt > snapshotTime;
             if (!newer) continue;
             if (message.event === 'usage') applyUsageEvent(message);
-            else applyAppUsageEvent(message);
+            else {
+                applyAppUsageEvent(message);
+                appendCoverageGaps(snapshot.appGaps, message.gaps ?? []);
+            }
         }
     }
 
@@ -211,6 +230,11 @@ export function createDataClient(handlers = {}) {
         state.unsubscribe = window.desktop.backend.onEvent(message => {
             rememberEvent(message);
             if (message.totalQuota) snapshot.totalQuota = message.totalQuota;
+            if (message.event === 'collectorStatus') {
+                Object.assign(snapshot, collectorStatusFields(message));
+                handlers.onLive?.();
+                return;
+            }
             if (message.event === 'live') {
                 applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
                 snapshot.live = payloadOf(message);

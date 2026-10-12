@@ -51,7 +51,7 @@ test.beforeEach(async({},testInfo)=>{
     },snapshot);
     await page.reload();await expect(page).toHaveTitle(/流量总览/);await expect(page.locator('#pageHead')).toHaveCount(0);await expect(page.locator('h1, .breadcrumbs')).toHaveCount(0);
 });
-test.afterEach(async()=>{if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
+test.afterEach(async()=>{if(app){await app.evaluate(({app:fixtureApp,BrowserWindow})=>{fixtureApp.removeAllListeners('window-all-closed');for(const window of BrowserWindow.getAllWindows())window.destroy();});await app.close();}harness?.cleanup();if(profile)await rm(profile,{recursive:true,force:true});expect(errors).toEqual([]);});
 
 async function allHistory(){await page.locator('[data-action="period"][data-value="all"]').click();await expect(page.locator('.date-text')).toHaveText('全部已保留历史');}
 async function apps(){await page.locator('.nav [data-page="networks"]').click();await page.locator('button.network-name').first().click();await page.getByRole('tab',{name:'应用分布'}).click();}
@@ -88,6 +88,55 @@ test('同日结束时间早于开始时间时保留弹窗并给出错误',async(
     await page.getByRole('button',{name:'应用筛选',exact:true}).click();
     await expect(page.locator('#rangeError')).toContainText('结束时间不早于开始时间');
     await expect(page.locator('.modal')).toBeVisible();
+});
+
+test('跨午夜后今日范围自动查询新一天，网络与应用总量同步且不重复查询',async()=>{
+    await page.clock.setFixedTime('2026-10-31T12:00:00+08:00');
+    await app.evaluate(()=>{
+        const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
+        s.usageRevision='2';
+        s.records=[{networkId:id,date:'2026-10-31',rxBytes:'1000',txBytes:'100'},
+            {networkId:id,date:'2026-11-01',rxBytes:'2000',txBytes:'200'}];
+        s.appRecords=s.records.map(row=>({...row,appId:'C:\\Apps\\Browser.exe',name:'Browser'}));
+    });
+    await page.locator('[data-value="today"]').click();
+    await expect(page.locator('.date-text')).toContainText('2026 / 10 / 31');
+    await expect(page.locator('.metric.featured')).toContainText('1.1');
+    await page.clock.setFixedTime('2026-11-01T00:00:05+08:00');
+    await app.evaluate(({BrowserWindow})=>{
+        BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{
+            event:'usage',usageRevision:'2',day:'2026-11-01',networks:[],minuteRecords:[]
+        });
+    });
+    await expect(page.locator('.date-text')).toContainText('2026 / 11 / 01');
+    await expect(page.locator('.metric.featured')).toContainText('2.2');
+    await page.locator('.nav [data-page="apps"]').click();
+    await expect(page.locator('#appListRegion')).toContainText('Browser');
+    await expect(page.locator('#appListRegion')).toContainText('2.2 KB');
+    const count=()=>app.evaluate(()=>globalThis.rendererFixture.calls.filter(call=>call.method==='snapshot'&&call.params.from==='2026-11-01'&&call.params.to==='2026-11-01').length);
+    expect(await count()).toBe(1);
+    await app.evaluate(({BrowserWindow})=>{for(let i=0;i<20;i++)BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'usage',usageRevision:'2',day:'2026-11-01',networks:[],minuteRecords:[]});});
+    await page.waitForTimeout(200);expect(await count()).toBe(1);
+});
+
+test('设置页跨月自动更新范围时保留未保存代理输入和焦点',async()=>{
+    await page.clock.setFixedTime('2026-10-31T12:00:00+08:00');
+    await page.locator('[data-value="month"]').click();
+    await expect(page.locator('.date-text')).toContainText('10 / 01');
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-category="proxy"]').click();
+    const ports=page.locator('#proxyPorts');
+    await ports.fill('invalid-port');
+    await expect(page.locator('#proxyConfigForm .form-error')).not.toBeEmpty();
+    await ports.focus();
+    await page.clock.setFixedTime('2026-11-01T00:00:05+08:00');
+    await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{
+        event:'usage',usageRevision:'3',day:'2026-11-01',networks:[],minuteRecords:[]
+    }));
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.calls.some(call=>call.method==='snapshot'&&call.params.from==='2026-11-01'&&call.params.to==='2026-11-01'))).toBe(true);
+    await expect(ports).toHaveValue('invalid-port');await expect(ports).toBeFocused();
+    await expect(page.locator('#proxyConfigForm .form-error')).not.toBeEmpty();
+    expect(await page.evaluate(()=>window.wifimeterHasUnsavedChanges())).toBe(true);
 });
 
 test('切换预设范围后返回历史和应用页继续显示已选分钟分组',async()=>{

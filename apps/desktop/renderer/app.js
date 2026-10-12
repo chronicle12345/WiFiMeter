@@ -584,7 +584,10 @@ const liveRender = createRenderScheduler({ render: paintLive, hidden: renderingH
  requestFrame: callback => requestAnimationFrame(callback), cancelFrame: id => cancelAnimationFrame(id) });
 function refreshLive(){liveRender.schedule();}
 function paintLive(){
+ scheduleAutomaticRange();
  refreshAfterTick();renderStatusHelp();refreshApplicationDetails();
+ updateRegion($('#content .toolbar .date-text'),icon('calendar')+esc(rangeText()),{selection:window.getSelection()});
+ if(ui.page==='apps')updateRegion($('#content .app-history-panel > .panel-head .panel-sub'),esc(periodName())+' · '+esc(rangeText()),{selection:window.getSelection()});
  if(!ui.modal){
   renderAppList();
   renderCapture();const ranking=$('#liveRankingRegion');
@@ -600,7 +603,7 @@ function showAlert(alert){
  else if(alert.kind==='quotaDisconnect')toast(alert.outcome===0?tr`已达到额度上限，已断开 ${alert.alias||alert.ssid}。`:tr`已达到额度上限，但未能断开 ${alert.alias||alert.ssid}：${alert.detail||t('请检查系统状态')}`,true);
 }
 function restartSampler(){clearInterval(samplerTimer);lastTick=performance.now();if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
-const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden())refreshLive();};
+const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden()){scheduleAutomaticRange(true);refreshLive();}};
 document.addEventListener('visibilitychange',visibilityChanged);
 window.desktop.onVisibility?.(visible=>{nativeWindowHidden=!visible;visibilityChanged();});
 window.addEventListener('unload',()=>{appIcons.stop();liveRender.stop();clearInterval(samplerTimer);});
@@ -612,18 +615,38 @@ async function pauseCollector(){
  toast(paused?t('已恢复统计，从新的基线继续。'):t('已暂停统计。暂停期间不会补记到任何网络。'));
 }
 let rangeRequest=0,pendingRangeQuery=null,minuteHistoryQuery=null;
-async function selectRange(period,custom=ui){
+let automaticRangeQuery=null,automaticRangeVersion=0,automaticRangeRetryKey='',automaticRangeRetryAt=0;
+function syncAutomaticRange({force=false}={}){
+ if(pendingRangeQuery&&pendingRangeQuery.version!==automaticRangeVersion)return force?pendingRangeQuery.promise:Promise.resolve(false);
+ if(automaticRangeQuery)return automaticRangeQuery;
+ if(!store.ready||ui.period==='custom')return Promise.resolve(false);
+ const range=getRange();
+ if(range.start===ui.start&&range.end===ui.end)return Promise.resolve(false);
+ const key=JSON.stringify([ui.period,range.start,range.end]);
+ if(!force&&automaticRangeRetryKey===key&&Date.now()<automaticRangeRetryAt)return Promise.resolve(false);
+ const selected=selectRange(ui.period,ui,{automatic:true});automaticRangeVersion=rangeRequest;
+ const query=selected.then(applied=>{if(applied){automaticRangeRetryKey='';automaticRangeRetryAt=0;}return applied;},error=>{
+  automaticRangeRetryKey=key;automaticRangeRetryAt=Date.now()+Math.max(2000,(data.settings.interval||5)*1000);throw error;
+ }).finally(()=>{if(automaticRangeQuery===query)automaticRangeQuery=null;});
+ automaticRangeQuery=query;return query;
+}
+function scheduleAutomaticRange(force=false){
+ if(renderingHidden()||pendingRangeQuery||automaticRangeQuery)return;
+ syncAutomaticRange({force}).catch(console.error);
+}
+async function selectRange(period,custom=ui,{automatic=false}={}){
  const version=++rangeRequest,range=historyRange(period,today(),custom);
  document.getElementById('content').setAttribute('aria-busy','true');
  const query={version,promise:store.queryRange({from:range.start,to:range.end,...(period==='custom'?{fromTime:range.startTime,toTime:range.endTime}:{}),includeMinutes:period==='custom'||ui.page==='apps'&&['minute','hour'].includes(appContext().appGrouping)||ui.page==='history'&&ui.historyGrouping!=='day'})};
  pendingRangeQuery=query;
  try {
   const applied=await query.promise;
-  if(version!==rangeRequest||!applied)return;
+  if(version!==rangeRequest||!applied)return false;
   ui.period=period;ui.start=range.start;ui.end=range.end;ui.startTime=range.startTime||'00:00';ui.endTime=range.endTime||'23:59';ui.historyPage=1;appContext().appPage=1;if(period==='custom')ui.historyGrouping='minute';
   pendingRangeQuery=null;
   if(ui.page==='history'&&ui.historyGrouping!=='day'||ui.page==='apps'&&['minute','hour'].includes(appContext().appGrouping))await ensureMinuteHistory();
-  if(version===rangeRequest)renderMain();
+  if(version===rangeRequest){if(automatic)refreshLive();else renderMain();return true;}
+  return false;
  } finally {
   if(pendingRangeQuery===query)pendingRangeQuery=null;
   if(version===rangeRequest)document.getElementById('content').removeAttribute('aria-busy');
@@ -672,7 +695,7 @@ const actions={
  refresh:async e=>{
   if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return;}
   e.disabled=true;
-  try{await store.reload();await reloadWindowPreferences();storageFailed=false;renderMain();if(ui.drawer)renderDrawer();}
+  try{if(!await syncAutomaticRange({force:true}))await store.reload();await reloadWindowPreferences();storageFailed=false;renderMain();if(ui.drawer)renderDrawer();}
   finally{e.disabled=false;}
  },
  navigate:e=>navigate(e.dataset.page),
@@ -787,7 +810,8 @@ function showTooltip(point,x,y){
 document.addEventListener('pointermove',e=>{const point=e.target.closest('[data-chart-point]');if(point)showTooltip(point,e.clientX,e.clientY);else $('#tooltip').style.display='none';});
 document.addEventListener('focusin',e=>{const point=e.target.closest('[data-chart-point]');if(point){const r=point.getBoundingClientRect();showTooltip(point,r.left+r.width/2,r.top+40);}else $('#tooltip').style.display='none';});
 window.addEventListener('blur',()=>$('#tooltip').style.display='none');
-window.addEventListener('beforeunload',event=>{if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){event.preventDefault();event.returnValue='';}});
+window.wifimeterHasUnsavedChanges=()=>settingsDirty||networkDirty||totalQuotaDirty||proxyDirty;
+window.addEventListener('beforeunload',event=>{if(window.wifimeterHasUnsavedChanges()){event.preventDefault();event.returnValue='';}});
 window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(['overview','networks','apps','history','settings'].includes(p))navigate(p);});
 const stopPreferences=window.desktop.windowPreferences?.onChanged(receiveWindowPreferences);
 window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEventListener('change',applyTheme);},{once:true});

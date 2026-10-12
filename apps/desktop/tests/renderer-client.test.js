@@ -402,3 +402,53 @@ test('superseded completion and failed queries do not retain or clear another re
     pending[3]({ proxyEstimatedRecords: raceGroup('600').records }); await last;
     assert.deepEqual(client.snapshot.proxyEstimatedRecords, raceGroup('600').records);
 });
+
+test('晚到快照保留较新的应用采集缺失区间，已包含的区间不会重复追加', async t => {
+    const { client, pending, receive } = await snapshotRaceClient(t);
+    const gap = { networkId: 'home', reason: 'offline', scope: 'application',
+        startedAt: '2026-10-02T10:00:00Z', endedAt: '2026-10-02T10:00:05Z', spanSeconds: 5 };
+    const reload = client.reload();
+    receive({ event: 'appUsage', usageRevision: '2', records: [], gaps: [gap] });
+    assert.equal(client.snapshot.appGaps.length, 1);
+    pending.shift()({ usageRevision: '1', appGaps: [] }); await reload;
+    assert.deepEqual(client.snapshot.appGaps, [gap]);
+
+    const included = client.reload();
+    receive({ event: 'appUsage', usageRevision: '2', records: [], gaps: [gap] });
+    pending.shift()({ usageRevision: '2', appGaps: [{ ...gap }] }); await included;
+    assert.deepEqual(client.snapshot.appGaps, [gap]);
+});
+
+test('采集进程故障立即清空实时速率和进程，恢复状态保留应用采集开关', async t => {
+    const { client, receive } = await snapshotRaceClient(t);
+    receive({ event: 'live', collector: 'running', connections: [{ networkId: 'home', rxPerSecond: '100', txPerSecond: '10' }],
+        appCollection: { enabled: true, available: true, state: 'running' }, appProcesses: [{ appId: 'browser' }] });
+    receive({ event: 'collectorStatus', collector: 'offline', message: 'collector exited',
+        appCollection: { enabled: true, available: true, state: 'unavailable' } });
+    assert.equal(client.snapshot.live.collector, 'offline');
+    assert.equal(client.snapshot.live.collectorMessage, 'collector exited');
+    assert.equal(client.snapshot.live.connections[0].rxPerSecond, '0');
+    assert.equal(client.snapshot.live.connections[0].txPerSecond, '0');
+    assert.deepEqual(client.snapshot.appProcesses, []); assert.equal(client.snapshot.appCollection.enabled, true);
+    assert.equal(client.snapshot.appCollection.state, 'unavailable');
+    receive({ event: 'collectorStatus', collector: 'paused', appCollection: { enabled: true, state: 'paused' } });
+    assert.equal(client.snapshot.live.collector, 'paused'); assert.equal(client.snapshot.appCollection.state, 'paused');
+    receive({ event: 'collectorStatus', collector: 'running', appCollection: { enabled: true, state: 'starting' } });
+    assert.equal(client.snapshot.live.collector, 'running'); assert.equal(client.snapshot.live.collectorMessage, '');
+    receive({ event: 'live', collector: 'running', connections: [{ networkId: 'home', rxPerSecond: '20', txPerSecond: '2' }],
+        appCollection: { enabled: true, state: 'running' }, appProcesses: [{ appId: 'browser' }] });
+    assert.equal(client.snapshot.live.connections[0].rxPerSecond, '20'); assert.equal(client.snapshot.appProcesses.length, 1);
+});
+
+test('故障事件晚于旧快照时不会被快照恢复为正常采集', async t => {
+    const { client, pending, receive } = await snapshotRaceClient(t);
+    const reload = client.reload();
+    receive({ event: 'collectorStatus', collector: 'offline', updatedAt: '2026-10-02T10:00:01Z',
+        appCollection: { enabled: true, state: 'unavailable' } });
+    pending.shift()({ live: { updatedAt: '2026-10-02T10:00:00Z', collector: 'running',
+        connections: [{ networkId: 'home', rxPerSecond: '100', txPerSecond: '10' }] },
+        appCollection: { enabled: true, state: 'running' }, appProcesses: [{ appId: 'browser' }] });
+    await reload;
+    assert.equal(client.snapshot.live.collector, 'offline'); assert.deepEqual(client.snapshot.appProcesses, []);
+    assert.equal(client.snapshot.appCollection.state, 'unavailable');
+});
