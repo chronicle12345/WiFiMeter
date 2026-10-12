@@ -1,5 +1,18 @@
 import { getLocale, t, tr } from '../i18n.js';
 
+function firewallStatus(state = {}) {
+    if (state.FirewallError || state.FirewallErrorCode) return { label: t('未知'), tone: 'warn' };
+    if (state.Blocked === true || state.InboundBlocked === true && state.OutboundBlocked === true) return { label: t('已配置'), tone: 'red' };
+    if (state.InboundBlocked === true) return { label: t(state.OutboundBlocked === false ? '仅阻止入站' : '入站已配置'), tone: 'warn' };
+    if (state.OutboundBlocked === true) return { label: t(state.InboundBlocked === false ? '仅阻止出站' : '出站已配置'), tone: 'warn' };
+    if (state.FirewallRuleCount > 0) {
+        const disabled = state.InboundBlocked === false && state.OutboundBlocked === false;
+        return { label: t(disabled ? '规则未启用' : '未知'), tone: disabled ? 'gray' : 'warn' };
+    }
+    if (['InboundBlocked', 'OutboundBlocked', 'FirewallRuleCount'].some(field => state[field] === null)) return { label: t('未知'), tone: 'warn' };
+    return { label: t(state.Blocked === false ? '未配置' : '未知'), tone: state.Blocked === false ? 'gray' : 'warn' };
+}
+
 export function appRulesView(control, { button, esc }) {
     if (!control.supported) return '';
     const value = state => state === true ? t('已配置') : state === false ? t('未配置') : t('未知');
@@ -8,13 +21,13 @@ export function appRulesView(control, { button, esc }) {
     const rules = control.rules || [];
     const rows = rules.map(record => {
         const state = record.state || {}, saved = new Date(record.savedAt);
-        const blocked = state.FirewallError || state.FirewallErrorCode ? null : state.Blocked;
+        const firewall = firewallStatus(state);
         const upload = state.QosError || state.QosErrorCode ? null : state.Throttled;
         const download = state.DownloadError || state.DownloadErrorCode ? null : state.DownloadThrottled;
         const savedAt = Number.isFinite(saved.getTime()) ? saved.toLocaleString(getLocale(), { hour12: false }) : t('未知');
         return tr`<li class="app-rule-row"><span class="app-avatar" aria-hidden="true">${esc((record.name || record.path).slice(0, 1).toUpperCase())}</span>
             <div class="app-rule-meta"><div class="app-rule-name">${esc(record.name || record.path)}</div><div class="app-source">${esc(record.path)}</div>
-            <div class="app-rule-limits" aria-label="上次记录的状态"><span class="pill ${blocked === true ? 'red' : blocked === false ? 'gray' : 'warn'}">${t('防火墙规则')} · ${value(blocked)}</span>
+            <div class="app-rule-limits" aria-label="上次记录的状态"><span class="pill ${firewall.tone}">${t('防火墙规则')} · ${firewall.label}</span>
             <span class="pill ${upload === true ? '' : upload === false ? 'gray' : 'warn'}">${t('上传限速')} · ${rate(upload, state.UploadKbps)}</span>
             <span class="pill ${download === true ? '' : download === false ? 'gray' : 'warn'}">${t('下载限速')} · ${rate(download, state.DownloadKbps)}</span></div>
             <div class="small muted">最近保存 <time datetime="${esc(record.savedAt)}">${esc(savedAt)}</time></div>
@@ -36,7 +49,7 @@ export function appControlView(control, { button, esc }) {
     const value=state=>state===true?t('已配置'):state===false?t('未配置'):t('未知');
     const actions=[['read',t('查询状态')],['block',t('阻止联网')],['unblock',t('解除阻止')]];
     const selected=control.path?tr`<dl><dt>完整路径</dt><dd data-selected-app-path>${esc(control.path)}</dd>
-        <dt>防火墙规则</dt><dd>${value(state?.Blocked)}</dd><dt>上传限速</dt>
+        <dt>防火墙规则</dt><dd>${firewallStatus(state || {}).label}</dd><dt>上传限速</dt>
         <dd>${state?.Throttled===true&&state?.UploadKbps!=null?esc(state.UploadKbps/8)+' KB/s':value(state?.Throttled)}</dd>
         <dt>下载限速</dt><dd>${state?.DownloadThrottled===true&&state?.DownloadKbps!=null?esc(state.DownloadKbps/8)+' KB/s':value(state?.DownloadThrottled)}</dd></dl>
         <div class="settings-actions">${actions.map(([action,label])=>button('app-control',label,'','small-btn',`type="button" data-operation="${action}" ${disabled}`)).join('')}</div>

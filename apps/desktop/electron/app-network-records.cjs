@@ -4,8 +4,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const clone = value => JSON.parse(JSON.stringify(value));
-const restricted = state => ['Blocked', 'Throttled', 'DownloadThrottled'].some(field => state[field] === true);
+const restricted = state => ['Blocked', 'InboundBlocked', 'OutboundBlocked', 'Throttled', 'DownloadThrottled'].some(field => state[field] === true)
+    || (Number.isFinite(state.FirewallRuleCount) && state.FirewallRuleCount > 0);
+// 旧版缺少方向和规则数量字段仍可解除；新版返回 null 时保留未知状态。
 const cleared = state => ['Blocked', 'Throttled', 'DownloadThrottled'].every(field => state[field] === false)
+    && ['InboundBlocked', 'OutboundBlocked'].every(field => !Object.hasOwn(state, field) || state[field] === false)
+    && (!Object.hasOwn(state, 'FirewallRuleCount') || state.FirewallRuleCount === 0)
     && !state.FirewallError && !state.FirewallErrorCode && !state.QosError && !state.QosErrorCode && !state.DownloadError && !state.DownloadErrorCode;
 
 // 仅保存主进程已取得的结果。读取列表不查询系统策略，也不会恢复下载限制。

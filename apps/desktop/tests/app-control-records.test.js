@@ -103,6 +103,60 @@ test('部分解除不会丢失其他方向的限制，全部确认解除后移�
     assert.deepEqual((await h.makeControl().list()).records, []);
 });
 
+test('主动查询保留单向阻止和尚未移除的防火墙规则，确认全部解除后移除记录', async t => {
+    for (const firewall of [
+        { InboundBlocked: true, OutboundBlocked: false, FirewallRuleCount: 1 },
+        { InboundBlocked: false, OutboundBlocked: true, FirewallRuleCount: 1 },
+        { InboundBlocked: false, OutboundBlocked: false, FirewallRuleCount: 2 }
+    ]) {
+        const h = await harness(t), control = h.makeControl();
+        const state = { ...clear, ...firewall };
+        h.setResponse({ Status: 'Succeeded', State: state });
+        await control.request({ action: 'read', path: program });
+        const records = (await h.makeControl().list()).records;
+        assert.equal(records.length, 1);
+        assert.deepEqual(records[0].state, state);
+        h.setResponse({ Status: 'Succeeded', State: {
+            ...clear, InboundBlocked: false, OutboundBlocked: false, FirewallRuleCount: 0
+        } });
+        await control.request({ action: 'read', path: program });
+        assert.deepEqual((await h.makeControl().list()).records, []);
+    }
+});
+
+test('解除操作回读仍有单向阻止或残留规则时保留原应用记录', async t => {
+    for (const firewall of [
+        { InboundBlocked: true, OutboundBlocked: false, FirewallRuleCount: 1 },
+        { InboundBlocked: false, OutboundBlocked: true, FirewallRuleCount: 1 },
+        { InboundBlocked: false, OutboundBlocked: false, FirewallRuleCount: 1 }
+    ]) {
+        const h = await harness(t), control = h.makeControl();
+        await control.request({ action: 'block', path: program });
+        const state = { ...clear, ...firewall };
+        h.setResponse({ Status: 'Succeeded', State: state });
+        await control.request({ action: 'unblock', path: program });
+        const records = (await h.makeControl().list()).records;
+        assert.equal(records.length, 1);
+        assert.deepEqual(records[0].state, state);
+    }
+});
+
+test('防火墙方向或规则数量未知时不移除已有记录，旧版缺失字段仍兼容', async t => {
+    for (const field of ['InboundBlocked', 'OutboundBlocked', 'FirewallRuleCount']) {
+        const h = await harness(t), control = h.makeControl();
+        await control.request({ action: 'block', path: program });
+        const state = { ...clear, InboundBlocked: false, OutboundBlocked: false, FirewallRuleCount: 0, [field]: null };
+        h.setResponse({ Status: 'Succeeded', State: state });
+        await control.request({ action: 'read', path: program });
+        const records = (await h.makeControl().list()).records;
+        assert.equal(records.length, 1);
+        assert.deepEqual(records[0].state, state);
+        h.setResponse({ Status: 'Succeeded', State: clear });
+        await control.request({ action: 'read', path: program });
+        assert.deepEqual((await h.makeControl().list()).records, []);
+    }
+});
+
 test('首次设置部分失败仍保存已生效的下载限制和错误，取消不新增记录', async t => {
     const h = await harness(t), control = h.makeControl();
     h.setResponse({ Status: 'Failed', ErrorCode: 'QosUnsupported', Error: 'upload unavailable', State: {
