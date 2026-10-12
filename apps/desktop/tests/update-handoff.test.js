@@ -293,6 +293,7 @@ function fixtureUpdateService(options, { runtime = 'electron', downloadFails = f
         module, AbortSignal, globalThis, process: { env: { WIFIMETER_DESKTOP_RUNTIME: runtime } },
         require: name => name === 'node:fs/promises' ? {
             readFile: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
+            lstat: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
             mkdir: async () => {}, rename: async () => {}, unlink: async () => {}
         } : name === 'node:fs' ? { createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }) } : require(name)
     });

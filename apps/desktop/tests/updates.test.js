@@ -5,8 +5,11 @@ const require = createRequire(import.meta.url);
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
-const os = require('node:os');
+const nativeFs = require('node:fs');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
+const { Readable, Writable } = require('node:stream');
+const { runInNewContext } = require('node:vm');
 const { createHash } = require('node:crypto');
 const { createUpdateService } = require('../electron/updates.cjs');
 
@@ -32,8 +35,9 @@ function tauriRelease() {
     })) };
 }
 async function fixture(t, options = {}) {
-    const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'wifimeter-updates-'));
-    t.after(() => fs.rm(userData, { recursive: true, force: true }));
+    const directory = fileURLToPath(new URL('../../../del/', import.meta.url));
+    await fs.mkdir(directory, { recursive: true });
+    const userData = await fs.mkdtemp(path.join(directory, 'wifimeter-updates-'));
     const calls = [], events = [];
     const config = { currentVersion: '1.2.0', platform: 'win32', arch: 'x64', userData,
         fetch: async (url, init) => {
@@ -114,14 +118,122 @@ test('a failed automatic preparation can retry and clears the old error', async 
         if (++preparations === 1) throw Error('save timeout');
     } });
     assert.equal((await f.service.check({ automatic: true })).errorPhase, 'preparing');
-    assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates')), []);
+    const cached = await fs.readdir(path.join(f.userData, 'updates'));
+    assert.equal(cached.length, 1);
+    assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', cached[0])), bytes);
     const retried = await f.service.install();
     assert.equal(retried.state, 'installing');
     assert.equal(retried.error, undefined);
     assert.equal(retried.errorPhase, undefined);
-    assert.equal(f.calls.length, 4);
+    assert.equal(f.calls.length, 3);
     assert.deepEqual(f.events, ['launch']);
 });
+
+for (const failedHook of ['beforeInstall', 'launchInstaller']) {
+    test(`verified cache avoids repeated downloads after ${failedHook} failures and a restart`, async t => {
+        let attempts = 0;
+        const states = [];
+        const f = await fixture(t, { onProgress: value => states.push(value.state),
+            [failedHook]: async () => { if (++attempts < 4) throw Error('injected local failure'); }
+        });
+        assert.equal((await f.service.check({ automatic: true })).state, 'error');
+        assert.equal((await f.service.install()).state, 'error');
+        const restarted = createUpdateService(f.config);
+        assert.equal((await restarted.check({ automatic: true })).state, 'error');
+        assert.equal((await restarted.install()).state, 'installing');
+        assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 1);
+        assert.equal(f.calls.filter(call => call.url.includes('api.github.com')).length, 4);
+        assert.equal(states.filter(state => state === 'verifying').length, 4);
+        const files = await fs.readdir(path.join(f.userData, 'updates'));
+        assert.deepEqual(files, ['WiFiMeter-1.3.0-x64-Setup.exe']);
+        assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', files[0])), bytes);
+    });
+}
+
+for (const contents of [bytes.subarray(0, 4), Buffer.alloc(bytes.length)]) {
+    test(`changed cache is verified and replaced before installation, length=${contents.length}`, async t => {
+        let attempts = 0;
+        const f = await fixture(t, { beforeInstall: async () => {
+            if (++attempts === 1) throw Error('save timeout');
+        } });
+        assert.equal((await f.service.install()).state, 'error');
+        const directory = path.join(f.userData, 'updates');
+        const files = await fs.readdir(directory);
+        assert.equal(files.length, 1);
+        const cached = path.join(directory, files[0]);
+        await fs.writeFile(cached, contents);
+        assert.equal((await createUpdateService(f.config).check({ automatic: true })).state, 'installing');
+        assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 2);
+        assert.deepEqual(await fs.readFile(cached), bytes);
+        assert.deepEqual(await fs.readdir(directory), ['WiFiMeter-1.3.0-x64-Setup.exe']);
+        assert.deepEqual(f.events, ['launch']);
+    });
+}
+
+function cacheReadService(config, { lstat = fs.lstat, mkdir = fs.mkdir,
+    createReadStream = nativeFs.createReadStream, createWriteStream = nativeFs.createWriteStream } = {}) {
+    const module = { exports: {} };
+    runInNewContext(nativeFs.readFileSync(new URL('../electron/updates.cjs', import.meta.url), 'utf8'), {
+        module, Buffer, AbortSignal, globalThis, process,
+        require: name => name === 'node:fs/promises' ? { ...fs, lstat, mkdir }
+            : name === 'node:fs' ? { ...nativeFs, createReadStream, createWriteStream } : require(name)
+    });
+    return module.exports.createUpdateService(config);
+}
+
+for (const kind of ['symbolic link', 'directory', 'denied metadata', 'denied read', 'interrupted read']) {
+    test(`unsafe or unreadable cache (${kind}) fails without another download`, async t => {
+        const f = await fixture(t, { beforeInstall: async () => { throw Error('save timeout'); } });
+        assert.equal((await f.service.install()).state, 'error');
+        const inaccessible = () => Object.assign(Error('cache denied'), { code: 'EACCES' });
+        const readers = {};
+        if (kind === 'denied metadata') readers.lstat = async () => { throw inaccessible(); };
+        if (kind === 'symbolic link' || kind === 'directory') readers.lstat = async () => ({
+            size: bytes.length, isSymbolicLink: () => kind === 'symbolic link', isFile: () => kind !== 'directory'
+        });
+        if (kind === 'denied read') readers.createReadStream = () => new Readable({ read() { this.destroy(inaccessible()); } });
+        if (kind === 'interrupted read') readers.createReadStream = () => new Readable({ read() {
+            this.push(bytes.subarray(0, 4));
+            this.destroy(Object.assign(Error('cache read interrupted'), { code: 'EIO' }));
+        } });
+        const result = await cacheReadService(f.config, readers).check({ automatic: true });
+        assert.equal(result.state, 'error');
+        assert.equal(result.errorPhase, 'verifying');
+        assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 1);
+        assert.equal((await fs.readdir(path.join(f.userData, 'updates'))).length, 1);
+    });
+}
+
+for (const kind of ['directory', 'temporary file']) {
+    test(`first download storage permission failure (${kind}) stays in the download phase`, async t => {
+        const f = await fixture(t);
+        const denied = () => Object.assign(Error('storage denied'), { code: 'EACCES' });
+        const readers = kind === 'directory' ? { mkdir: async () => { throw denied(); } }
+            : { createWriteStream: () => new Writable({ write(chunk, encoding, next) { next(denied()); } }) };
+        const result = await cacheReadService(f.config, readers).install();
+        assert.equal(result.state, 'error');
+        assert.equal(result.errorPhase, 'downloading');
+        assert.equal(result.errorCode, 'EACCES');
+        assert.deepEqual(f.events, []);
+        assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates')).catch(() => []), []);
+    });
+}
+
+for (const invalidDigest of [undefined, 'sha256:invalid']) {
+    test(`an existing verified cache cannot bypass invalid release digest ${invalidDigest}`, async t => {
+        const f = await fixture(t, { beforeInstall: async () => { throw Error('save timeout'); } });
+        assert.equal((await f.service.install()).state, 'error');
+        const data = release();
+        data.assets.forEach(asset => { asset.digest = invalidDigest; });
+        const result = await createUpdateService({ ...f.config, fetch: async url => {
+            assert.ok(url.includes('api.github.com'));
+            return Response.json(data);
+        } }).check({ automatic: true });
+        assert.equal(result.state, 'available');
+        assert.equal(result.canInstall, false);
+        assert.deepEqual(f.events, []);
+    });
+}
 
 test('a failed automatic download can retry on the next launch without being cached', async t => {
     let downloads = 0;
@@ -345,7 +457,9 @@ test('backend stop failure prevents installer launch', async t => {
     await f.service.check({ autoInstall: false });
     assert.equal((await f.service.install()).status, 'error');
     assert.deepEqual(f.events, []);
-    assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates')), []);
+    const files = await fs.readdir(path.join(f.userData, 'updates'));
+    assert.equal(files.length, 1);
+    assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', files[0])), bytes);
 });
 
 test('installation does not require a confirmation callback', async t => {

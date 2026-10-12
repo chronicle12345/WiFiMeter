@@ -1,5 +1,5 @@
 const fs = require('node:fs/promises');
-const { createWriteStream } = require('node:fs');
+const { createReadStream, createWriteStream } = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { Transform } = require('node:stream');
@@ -247,12 +247,35 @@ function createUpdateService({ currentVersion, platform, arch, userData,
         }
     }
 
+    async function verifiedCache(destination, asset) {
+        let stat;
+        try {
+            stat = await fs.lstat(destination);
+        } catch (error) {
+            if (error.code === 'ENOENT') return false;
+            phase('verifying', { receivedBytes: 0, totalBytes: asset.size });
+            throw error;
+        }
+        phase('verifying', { receivedBytes: asset.size, totalBytes: asset.size });
+        if (stat.isSymbolicLink() || !stat.isFile()) throw Error('Installer must be a verified executable in the update directory.');
+        if (stat.size !== asset.size) return false;
+        const hash = createHash('sha256');
+        let receivedBytes = 0;
+        for await (const chunk of createReadStream(destination)) {
+            receivedBytes += chunk.length;
+            if (receivedBytes > asset.size) return false;
+            hash.update(chunk);
+        }
+        return receivedBytes === asset.size && hash.digest('hex') === asset.digest;
+    }
+
     async function download(asset) {
-        phase('downloading', { receivedBytes: 0, totalBytes: asset.size });
         const directory = path.join(userData, 'updates');
+        const destination = path.join(directory, asset.name);
+        if (await verifiedCache(destination, asset)) return destination;
+        phase('downloading', { receivedBytes: 0, totalBytes: asset.size });
         await fs.mkdir(directory, { recursive: true });
-        const destination = path.join(directory, `${randomUUID()}-${asset.name}`);
-        const temporary = `${destination}.tmp`;
+        const temporary = `${destination}.${randomUUID()}.tmp`;
         const signal = AbortSignal.timeout(10 * 60_000);
         let url = asset.url;
         try {
@@ -307,7 +330,6 @@ function createUpdateService({ currentVersion, platform, arch, userData,
 
     // The caller already owns the check/install guard and serial queue.
     async function installSelected({ status, asset }, { manual = false } = {}) {
-        let file;
         try {
             if (status.state !== 'available') return status;
             if (!asset) {
@@ -317,18 +339,16 @@ function createUpdateService({ currentVersion, platform, arch, userData,
                 return publish({ state: 'manual', manual: true, progress: null, error: undefined });
             }
             if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
-            file = await download(asset);
+            const file = await download(asset);
             phase('preparing');
             await beforeInstall();
             phase('installing');
             await launchInstaller(file, ['/S', '/R'], { digest: asset.digest });
-            file = null; // 保留已交接文件，安装器将在当前应用退出后读取。
+            // 保留完整安装包；准备或交接失败后的重试会重新验证并复用。
             return result();
         } catch (error) {
             const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
             return publish({ state: 'error', progress: null, ...failure });
-        } finally {
-            if (file) await fs.unlink(file).catch(() => {});
         }
     }
 
