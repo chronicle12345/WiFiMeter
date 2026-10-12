@@ -41,6 +41,61 @@ test('bounded cache evicts old icons', async () => {
     for (const appId of [id, ids[1], id]) await service.get({ appId });
     assert.deepEqual(calls, [id, ids[1], id]);
 });
+test('different history dates share extraction after each application lookup is validated', async () => {
+    const { service, calls } = setup();
+    for (let day = 1; day <= 20; day++) {
+        assert.equal(await service.get({ appId: id, date: `2026-10-${String(day).padStart(2, '0')}` }), png);
+    }
+    assert.deepEqual(calls, [id]);
+});
+test('cached executable icons cannot authorize an unknown application in another month', async () => {
+    const queries = [];
+    const { service, calls } = setup({ request: async (_method, params) => {
+        queries.push(params.from);
+        return { appRecords: params.from === '2026-10-01' ? [{ appId: id }] : [] };
+    } });
+    assert.equal(await service.get({ appId: id, date: '2026-10-12' }), png);
+    assert.equal(await service.get({ appId: id, date: '2026-09-12' }), null);
+    assert.deepEqual(queries, ['2026-10-01', '2026-09-01']);
+    assert.deepEqual(calls, [id]);
+});
+test('shared executable extraction failures are retried on a subsequent date', async () => {
+    let attempts = 0;
+    const { service } = setup({ getFileIcon: async () => {
+        if (++attempts === 1) throw Error('temporarily unavailable');
+        return { isEmpty: () => false, toDataURL: () => png };
+    } });
+    assert.equal(await service.get({ appId: id, date: '2026-10-12' }), null);
+    assert.equal(await service.get({ appId: id, date: '2026-10-13' }), png);
+    assert.equal(attempts, 2);
+});
+test('executable sharing expires so a new history date can refresh an updated icon', async t => {
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
+    const { service, calls } = setup();
+    assert.equal(await service.get({ appId: id, date: '2026-10-12' }), png);
+    now += 4999;
+    assert.equal(await service.get({ appId: id, date: '2026-10-13' }), png);
+    assert.equal(calls.length, 1);
+    now++;
+    assert.equal(await service.get({ appId: id, date: '2026-10-14' }), png);
+    assert.equal(calls.length, 2);
+});
+test('concurrent different dates share an in-progress executable extraction', async () => {
+    let release, attempts = 0;
+    const ready = new Promise(resolve => { release = resolve; });
+    const { service } = setup({ getFileIcon: async () => {
+        attempts++;
+        await ready;
+        return { isEmpty: () => false, toDataURL: () => png };
+    } });
+    const first = service.get({ appId: id, date: '2026-10-12' });
+    const second = service.get({ appId: id, date: '2026-10-13' });
+    await new Promise(setImmediate);
+    assert.equal(attempts, 1);
+    release();
+    assert.deepEqual(await Promise.all([first, second]), [png, png]);
+});
 test('IPC rejects untrusted frames before querying the backend', async () => {
     let handler, queried = false;
     registerAppIcons({ ipcMain: { handle: (_name, fn) => { handler = fn; } }, trusted: event => event.main === true,

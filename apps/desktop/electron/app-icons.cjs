@@ -20,7 +20,7 @@ function validDate(date) {
 }
 
 function createAppIcons({ request, getFileIcon, platform = process.platform, maxEntries = 256 }) {
-    const icons = new Map(), snapshots = new Map();
+    const icons = new Map(), files = new Map(), snapshots = new Map();
     let active = 0;
     const remember = (map, key, value, limit) => {
         map.delete(key); map.set(key, value);
@@ -47,6 +47,23 @@ function createAppIcons({ request, getFileIcon, platform = process.platform, max
         remember(snapshots, month, { promise, expires: Date.now() + 5000 }, 8);
         return promise;
     }
+    function fileIcon(file) {
+        const cached = files.get(file);
+        if (cached && cached.expires > Date.now()) return cached.promise;
+        const entry = { expires: Infinity, promise: null };
+        entry.promise = Promise.resolve().then(() => getFileIcon(file, { size: 'normal' })).then(image => {
+            if (image.isEmpty()) return null;
+            const url = image.toDataURL();
+            return /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(url) && url.length <= 512 * 1024 ? url : null;
+        }).catch(() => null).then(value => {
+            if (value) entry.expires = Date.now() + 5000;
+            else if (files.get(file) === entry) files.delete(file);
+            return value;
+        });
+        // 多个历史日期可指向同一程序；先查验快照归属，再复用短期系统提取结果。
+        remember(files, file, entry, maxEntries);
+        return entry.promise;
+    }
     return {
         async get(input) {
             if (!input || typeof input.appId !== 'string' || !input.appId || input.appId.length > 4096 || /[\x00-\x1f]/.test(input.appId)) return null;
@@ -62,10 +79,7 @@ function createAppIcons({ request, getFileIcon, platform = process.platform, max
                     const data = await snapshot(date);
                     const file = data.get(input.appId);
                     if (!file) return null;
-                    const image = await getFileIcon(file, { size: 'normal' });
-                    if (image.isEmpty()) return null;
-                    const url = image.toDataURL();
-                    return /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(url) && url.length <= 512 * 1024 ? url : null;
+                    return await fileIcon(file);
                 } catch { return null; }
                 finally { active--; }
             })();
