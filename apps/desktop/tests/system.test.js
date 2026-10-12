@@ -300,28 +300,6 @@ test('系统设置同步保留托盘，退出时销毁，不可用时不影响�
     rmSync(broken.home, { recursive: true, force: true });
 });
 
-test('关闭窗口时按设置隐藏或放行', async () => {
-    const { home, state, integration } = createFakes();
-    const event = { prevented: false, preventDefault() { this.prevented = true; } };
-
-    await integration.applySettings({ minimizeToTray: false });
-    assert.equal(integration.handleWindowClose(event), false);
-    assert.equal(event.prevented, false, '未开启托盘时应当正常关闭');
-
-    await integration.applySettings({ minimizeToTray: true });
-    assert.equal(integration.handleWindowClose(event), true);
-    assert.equal(event.prevented, true);
-    assert.equal(state.hidden, 1, '开启托盘时应当隐藏窗口');
-
-    // 退出流程中不能被拦下。
-    integration.beginQuit();
-    const quitEvent = { prevented: false, preventDefault() { this.prevented = true; } };
-    assert.equal(integration.handleWindowClose(quitEvent), false);
-    assert.equal(quitEvent.prevented, false);
-
-    rmSync(home, { recursive: true, force: true });
-});
-
 test('canceling a Tauri tray quit preserves hiding to the tray until a confirmed quit', async t => {
     const messages = [];
     const native = createNativeAdapter({ configuration: { userData: 'fixture' }, send: message => messages.push(message) });
@@ -423,16 +401,6 @@ test('language changes update an existing tray and quota notifications', async t
     await integration.applySettings({ language: 'zh-CN', minimizeToTray: true });
     assert.equal(state.menu.template[0].label, '打开 WiFiMeter');
     assert.equal(state.trayCount, 1);
-});
-
-test('unavailable tray never hides a window that cannot be reopened from the tray', async t => {
-    const { home, state, integration } = createFakes({ trayThrows: true });
-    t.after(() => { integration.dispose(); rmSync(home, { recursive: true, force: true }); });
-    await integration.applySettings({ minimizeToTray: true });
-    const event = { prevented: false, preventDefault() { this.prevented = true; } };
-    assert.equal(integration.handleWindowClose(event), false);
-    assert.equal(event.prevented, false);
-    assert.equal(state.hidden, 0);
 });
 
 test('limit notification reports reaching the quota without inventing a failed disconnect', async t => {

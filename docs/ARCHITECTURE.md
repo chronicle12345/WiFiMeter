@@ -11,7 +11,7 @@ renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node
                            → Node → 开机启动、数据导入、文件读写、更新和流量控制
 ```
 
-`client.js` 是页面创建数据对象的唯一入口，统一使用 `backend-client.js` 读取本机后端。`mock.js` 仅用于测试。数据定义与计算放在 `model.js`。
+页面直接通过 `backend-client.js` 创建数据对象并读取本机后端。数据定义与计算放在 `model.js`，合成快照位于 `tests/fixtures/snapshot.js`，测试夹具不会复制到正式页面资源中。
 
 `renderer/app.js` 组合页面渲染、导航与事件。可复用的输入和显示逻辑放在 `renderer/ui/`，数据访问与计算放在 `renderer/data/`。`ui/form-autosave.js` 管理设置、网络额度、总额度与代理表单的字段校验、保存状态、重试、保留期清理及草稿放弃；它通过回调调用现有宿主和数据接口，页面入口负责确认窗口及刷新界面。新增业务应按职责进入对应模块，并直接测试模块接口。
 
@@ -47,6 +47,10 @@ platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注
 
 `ipc/` 是协议与事件循环：请求 `{id, method, params}`、响应 `{id, ok, result|error}`、事件 `{event, ...}`。输入输出循环按平台选择——POSIX 用 `poll` 同时等待标准输入与采样定时器，Windows 用 `WaitForSingleObject` 等待管道句柄——协议与业务逻辑完全共用。
 
+网卡累计计数只用于计算相邻有效样本的增量。首次采样、计数回退、身份变化或确认网卡消失时重建基线，避免将历史计数归到当前网络；身份暂时不可读时只在有限时间内保留基线。额度账本按本地日、月或累计周期独立保存，不根据保留期内的历史记录重算。字节在接口中使用十进制字符串，在 JavaScript 中使用 BigInt；写入 SQLite 前核对有符号 64 位范围，超出范围会拒绝写入。
+
+采集进程通过本机管道通信，不主动发送外网请求。联网入口包括版本检查、更新下载安装包及用户打开官方版本页；Windows 缺少 WebView2 时安装器下载微软运行时。后端启动失败或意外退出会保留错误并恢复采集，数据库路径始终由 Node 业务宿主显式传入。协议与备份字段见[数据合约](../contracts/README.md)，旧数据导入规则见[迁移与恢复](MIGRATION.md)。
+
 ## 职责边界
 
 | 模块 | 职责 |
@@ -80,4 +84,6 @@ Electron 1.2.x 用户通过下载对应系统和 CPU 架构的 Tauri 安装版�
 
 Windows 宿主在启动 Node 和后端之前持有 Electron 使用的 `lockfile`，锁的范围为用户数据目录。新旧版本不能同时使用同一目录采集，进程退出后由系统释放锁；WebView2 的缓存保存在该目录下独立的 `webview2` 子目录。
 
-`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。开发态页面回归在 Windows 与 Linux 的独立任务中分片并行执行，打包任务无需先等待完整页面回归；汇总和发布同时要求两类检查成功。`legacy-powershell.yml` 用于保留的旧 PowerShell 版本。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。开发态页面回归在 Windows 与 Linux 的独立任务中分片并行执行，打包任务无需先等待完整页面回归；汇总和发布同时要求两类检查成功。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。旧 UI、历史独立产品构建和跨系统编译工具已归档，版本历史保留在对应标签与发布说明中。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+
+性能对比工具集中在 `tools/performance/`：`ipc-and-autostart.cjs` 比较同一合成 IPC 消息和设置写入，`renderer-history.mjs` 比较同一历史数据集的事件处理。它们不进入安装包，耗时不能当作整机启动或整体内存的保证；本机夹具保留在 `del/`。使用历史基线时传入对应 Git 提交，结果须标明数据量、运行环境和对比提交。

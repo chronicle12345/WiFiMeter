@@ -41,15 +41,6 @@ const WifiLink* findLink(const std::vector<WifiLink>& links, const std::string& 
 
 }  // namespace
 
-LinkReport linksFrom(LinkSource& source)
-{
-    const LinkReadResult result = source.readLinks();
-    LinkReport report;
-    report.links = result.links;
-    report.failures = result.failures;
-    return report;
-}
-
 SampleReport sampleFrom(LinkSource& source)
 {
     SampleReport report;
@@ -58,10 +49,10 @@ SampleReport sampleFrom(LinkSource& source)
 
     const bool anyAssociated = std::any_of(before.links.begin(), before.links.end(), isAssociated);
 
-    // 没有已关联网卡：不读计数，也不报告失败（“未关联”不是错误）。
+    // 没有已关联网卡时不读计数，未关联状态也不报告失败。
     const CounterReadResult counters = anyAssociated ? source.readCounters() : CounterReadResult{};
-    // 计数整体读不到时仍然要把确认过的网卡状态报上去：界面要显示“连着但读不到计数”，
-    // 而不是显示成没有网卡。因此这里只跳过样本，不提前返回。
+    // 计数整体读不到时仍返回已确认的网卡状态，界面据此显示连接存在但计数不可用。
+    // 这里只跳过样本，不提前返回。
     const bool countersAvailable = !anyAssociated || counters.failures.empty();
     report.failures.insert(report.failures.end(), counters.failures.begin(), counters.failures.end());
 
@@ -74,7 +65,7 @@ SampleReport sampleFrom(LinkSource& source)
     else
     {
         // 没有已关联网卡：直接把第一次读到的状态报上去，
-        // 界面据此显示“有网卡但未连接”，而不是显示成没有网卡。
+        // 界面据此显示网卡存在但尚未连接。
         after = before;
     }
 

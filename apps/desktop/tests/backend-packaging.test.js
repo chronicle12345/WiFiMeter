@@ -6,6 +6,19 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 const require = createRequire(import.meta.url);
 
+test('后端构建拒绝跨系统目标，Windows 本机仍可选择 Visual Studio 支持的架构', () => {
+    const { validateNativeTarget } = require('../../../packaging/targets.cjs');
+    const linux = { platform: 'linux', arch: 'x64' };
+    const windows = { platform: 'win32', arch: 'x64' };
+    assert.throws(() => validateNativeTarget('win32', 'x64', linux), /Windows/);
+    assert.throws(() => validateNativeTarget('linux', 'x64', windows), /Linux/);
+    assert.throws(() => validateNativeTarget('linux', 'arm64', linux), /Linux/);
+    assert.deepEqual(validateNativeTarget('linux', 'x64', linux), { platform: 'linux', arch: 'x64' });
+    for (const arch of ['x64', 'ia32', 'arm64']) {
+        assert.deepEqual(validateNativeTarget('win32', arch, windows), { platform: 'win32', arch });
+    }
+});
+
 test('读取 PE 和 ELF 架构，拒绝混合架构、截断文件和伪造文件头', t => {
     const { binaryArchitecture, assertArchitecture } = require('../../../packaging/targets.cjs');
     const directory = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-arch-'));

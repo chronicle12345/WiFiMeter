@@ -6,7 +6,7 @@
 // 老用户的数据看起来消失（旧目录还在，但新版本不再读它）。它们又是纯平台判断，
 // 不需要启动原生窗口就能验证，因此从主进程里抽出来并加测试。
 //
-// 名称与路径与打包文档一致（packaging/windows/README.md、apps/desktop/README.md）：
+// 名称与路径与 docs/ARCHITECTURE.md 和 docs/MIGRATION.md 保持一致：
 //   * 应用名 / 产品名：各平台统一为 "WiFiMeter"；
 //   * App User Model ID：io.wifimeter.demo（Windows 通知与任务栏分组用）；
 //   * 数据目录：沿用 %APPDATA%\WiFiMeter Demo，升级后继续读取已有数据，卸载默认保留。
@@ -34,11 +34,9 @@ function productIdentityFor(platform, appDataPath) {
     };
 }
 
-// 把身份写入宿主的 app 对象。测试可以传一个假的 app。
+// 应用需要兼容的数据目录，产品名与原生身份由返回值和 Rust 宿主提供。
 function applyProductIdentity(app, platform, appDataPath) {
     const identity = productIdentityFor(platform, appDataPath);
-    app.setName(identity.productName);
-    if (identity.appUserModelId) app.setAppUserModelId(identity.appUserModelId);
     if (identity.userDataPath) app.setPath('userData', identity.userDataPath);
     return identity;
 }

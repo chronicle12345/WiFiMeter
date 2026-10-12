@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { applicationRows, historyRange } from '../renderer/data/history.js';
 import { createDataClient } from '../renderer/data/backend-client.js';
 import { validateSnapshot, validTime } from '../renderer/data/model.js';
-import { generateDemo } from '../renderer/data/mock.js';
+import { generateDemo } from './fixtures/snapshot.js';
 
 const minuteRow = (date, time, patch = {}) => ({ date, time, hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)),
     networkId: 'home', appId: '/apps/browser', name: 'Browser', rxBytes: '10', txBytes: '1', ...patch });

@@ -238,7 +238,7 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
     let trayInitializations = 0;
     let ready, window;
     class Window extends EventEmitter {
-        constructor() { super(); window = this; this.webContents = { mainFrame: { url: '' }, setWindowOpenHandler() {}, on() {}, send() {}, session: { setPermissionRequestHandler() {} } }; }
+        constructor() { super(); window = this; this.webContents = { mainFrame: { url: '' }, on() {}, send() {} }; }
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
         isDestroyed() { return false; }
     }
@@ -253,16 +253,16 @@ async function mainHarness({ legacy, env = { WIFIMETER_USER_DATA: 'isolated' }, 
             return { settings };
         }
     }
-    const app = { isPackaged: true, getVersion: () => '1.2.0', getPath: () => 'isolated', setPath() {}, setName() {}, setAppUserModelId() {}, disableHardwareAcceleration() {}, requestSingleInstanceLock: () => true,
+    const app = { isPackaged: true, getVersion: () => '1.2.0', getPath: () => 'isolated', setPath() {},
         whenReady: () => ({ then(fn) { ready = fn(); return ready; } }), on() {}, quit() {},
         getLoginItemSettings(options) { loginReads.push(options); return { openAtLogin: login }; } };
     const dialog = { showMessageBox: async (_window, options) => { confirmations.push(options); return { response: confirmResponse }; }, showOpenDialog: async () => ({ filePaths: ['fictional-legacy'] }), showErrorBox() {} };
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } }) },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog, ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:path': path, 'node:fs': { existsSync: () => true }, 'node:url': { pathToFileURL }, 'node:timers': await import('node:timers'),
         './files.cjs': { createFileActions: () => ({ saveFile() {}, openBackup() {} }) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fake' },
-        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async (value, options = {}) => { systemCalls.push(value); return systemApply ? systemApply(value, options) : {}; }, handleWindowClose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { trayInitializations++; }, applySettings: async (value, options = {}) => { systemCalls.push(value); return systemApply ? systemApply(value, options) : {}; } }) },
         './windows-autostart.cjs': { createWindowsAutostart: () => ({ getLoginItemSettings: app.getLoginItemSettings, setLoginItemSettings() {} }) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'Fixture' }) },
         './legacy.cjs': { legacyDirectory: () => 'fictional-legacy', importLegacyDirectory: legacy || (async () => ({ found: false })) },

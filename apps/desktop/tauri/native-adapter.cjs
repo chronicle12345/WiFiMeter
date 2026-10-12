@@ -35,15 +35,10 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
     const paths = { home, appData: process.env.APPDATA || process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
         userData: configuration.userData, documents: path.join(home, 'Documents') };
     app.isPackaged = configuration.isPackaged === true;
-    app.setName = value => { app.name = value; };
-    app.setAppUserModelId = () => {};
     app.getPath = name => paths[name] || configuration.userData;
     app.setPath = (name, value) => { paths[name] = value; };
     app.getVersion = () => configuration.version || '1.3.0';
-    app.requestSingleInstanceLock = () => true; // Rust 的 single-instance 插件先获得互斥锁。
     app.whenReady = () => Promise.resolve();
-    app.disableHardwareAcceleration = () => {};
-    app.commandLine = { appendSwitch() {} };
     app.confirmExit = () => {
         if (stopped || exitConfirmed) return Promise.resolve(true);
         if (!exitFlight) exitFlight = call('app:confirmQuit').then(accepted => {
@@ -103,8 +98,7 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
             this.webContents = new EventEmitter();
             Object.assign(this.webContents, {
                 mainFrame: { url: '' }, isDestroyed: () => this.destroyed,
-                send: (channel, payload) => send({ type: 'event', window: this.label, channel, payload }),
-                setWindowOpenHandler() {}, session: { setPermissionRequestHandler() {} }
+                send: (channel, payload) => send({ type: 'event', window: this.label, channel, payload })
             });
             windows.set(this.label, this);
         }
@@ -155,8 +149,7 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         showOpenDialog: (...args) => call('dialog:open', { options: dialogOptions(args) }),
         showSaveDialog: (...args) => call('dialog:save', { options: dialogOptions(args) }),
         showMessageBox: (...args) => call('dialog:message', { options: dialogOptions(args) }),
-        showErrorBox: (title, message) => fire('dialog:message', { options: { title, message, type: 'error', buttons: ['确定 / OK'] } }),
-        showMessageBoxSync() { throw Error('同步对话框应由 Tauri 的页面关闭确认处理。'); }
+        showErrorBox: (title, message) => fire('dialog:message', { options: { title, message, type: 'error', buttons: ['确定 / OK'] } })
     };
     const screen = new EventEmitter();
     screen.getPrimaryDisplay = () => displays[0];
@@ -202,8 +195,7 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
                 const event = preventable();
                 window.emit('close', event);
                 if (!event.defaultPrevented) app.quit();
-            } else if (message.event === 'second-instance') app.emit('second-instance');
-            else window.emit(message.event);
+            } else window.emit(message.event);
         } else if (message.type === 'tray-event') {
             if (message.event === 'click') tray?.emit('click');
             else if (message.event === 'menu') tray?.items?.[Number(message.id)]?.click?.();
@@ -223,7 +215,7 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         app.quit();
     }
     return { receive, disconnect, app, api: { app, BrowserWindow, dialog, ipcMain, Tray, Notification, screen,
-        Menu: { setApplicationMenu() {}, buildFromTemplate: items => items }, nativeImage: { createFromPath: file => ({ file }) },
+        Menu: { buildFromTemplate: items => items }, nativeImage: { createFromPath: file => ({ file }) },
         shell: { openExternal: url => call('shell:open', { url }) } } };
 }
 

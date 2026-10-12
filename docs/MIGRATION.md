@@ -35,3 +35,9 @@ The application retains the cross-platform profile location. The Windows profile
 完整备份包含网络记录、小时明细、应用历史、缺失区间、设置、额度账本和迁移档案；有代理配置及观测时也会包含它们。恢复会替换当前数据，并暂停采集。无效输入会回滚，不会只替换部分记录。只导出用量的 CSV 或 JSON 不能当作完整备份恢复。
 
 Windows 配置目录仍为 `%APPDATA%\WiFiMeter Demo`，Linux 沿用已有的 Electron 配置目录，重新安装时请保留。备份和导入报告可能包含网络名及本地路径，属于用户私有数据，不应直接提交到仓库或附在公开 issue 中。
+
+## 后端迁移接口
+
+`importLegacy` 接受 `{ sourceId, stateJson, settingsJson?, appUsageJson?, allowInitialSettings? }`。JSON 参数保留文件原文和数字精度，允许 UTF-8 BOM；同一 sourceId 重复导入只返回原结果，已导入的原文发生变化时返回 `LegacySourceChanged`。`allowInitialSettings` 仅用于确认启动前不存在数据库的新配置，后端仍会检查当前数据为空且偏好未被修改。
+
+无法映射到完整日期或明确网络的应用缓存只归档，不计入用量；已有网络设置、用量与账本不被旧缓存覆盖。导入报告保存 `settingsApplied`、转换数量和 `warnings`，可通过 `migrationStatus` 读取。完整备份保存原迁移文档、报告和网络映射；缺少新字段的旧备份保留原精度，不补造分钟数据。

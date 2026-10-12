@@ -44,7 +44,7 @@ jobs:
       - name: Validate packaging and release helpers
         run: |
           npm run test:packaging:tauri
-          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/legacy-powershell.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs
+          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs
       - name: Check workflow syntax with pinned actionlint
         run: |
           set -euo pipefail
@@ -290,7 +290,7 @@ jobs:
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
       - name: Validate the official Node runtime and NSIS extraction tool
         run: |
-          node packaging/tauri/lean-node-check.cjs
+          node packaging/tauri/runtime-check.cjs
           if ($LASTEXITCODE) { throw 'Official Node runtime validation failed' }
           node -e "require('./packaging/tauri/prepare.cjs').nodeLicense(); require('./packaging/tauri/verify-windows.cjs').sevenZipExecutable()"
           if ($LASTEXITCODE) { throw 'Node license or 7-Zip lookup failed' }
@@ -384,7 +384,7 @@ jobs:
           npm run test:unit
       - name: Validate the official Node runtime and locate its license
         run: |
-          node packaging/tauri/lean-node-check.cjs
+          node packaging/tauri/runtime-check.cjs
           node -e "const fs = require('node:fs'), path = require('node:path'); const license = require('./packaging/tauri/prepare.cjs').nodeLicense({ license: path.resolve(path.dirname(process.execPath), '..', 'LICENSE') }); fs.appendFileSync(process.env.GITHUB_ENV, 'WIFIMETER_NODE_LICENSE=' + license + '\n')"
       - name: Build Tauri deb, rpm and AppImage packages
         env:

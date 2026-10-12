@@ -17,7 +17,7 @@ async function fixture(t, extra = {}) {
     t.after(() => fs.rm(userData, { recursive: true, force: true }));
     const windows = [], handlers = new Map();
     class Window extends EventEmitter {
-        constructor(options) { super(); this.options = options; this.bounds = { x: options.x, y: options.y, width: options.width, height: options.height }; this.destroyed = false; this.sent = []; this.webContents = new EventEmitter(); this.webContents.mainFrame = { url: '' }; this.webContents.send = (...args) => this.sent.push(args); this.webContents.setWindowOpenHandler = () => {}; windows.push(this); }
+        constructor(options) { super(); this.options = options; this.bounds = { x: options.x, y: options.y, width: options.width, height: options.height }; this.destroyed = false; this.sent = []; this.webContents = new EventEmitter(); this.webContents.mainFrame = { url: '' }; this.webContents.send = (...args) => this.sent.push(args); windows.push(this); }
         isDestroyed() { return this.destroyed; }
         loadFile(file) { this.file = file; return Promise.resolve(); }
         show() { assert.fail('小窗不能抢焦点'); }
@@ -88,7 +88,7 @@ test('Windows 小窗位于工作区右下角，复用 live，关闭仅更新小�
     const f = await fixture(t); await f.controls.update({ miniWindow: true });
     const mini = f.windows[0], o = mini.options;
     assert.equal(o.x + o.width, -12); assert.equal(o.y + o.height, 768);
-    assert.equal(o.frame, false); assert.equal(o.webPreferences.sandbox, true);
+    assert.equal(o.frame, false);
     const live = { event: 'live', state: 'connected', collector: 'running', connections: [{ rxPerSecond: 300, txPerSecond: 100 }] };
     f.controls.publishLive(live); mini.webContents.emit('did-finish-load');
     assert.deepEqual(mini.sent.at(-1), ['mini:live', live]);
@@ -188,7 +188,7 @@ test('主进程更新退出分支在后端已停止后仍释放小窗', async ()
     const filename = fileURLToPath(new URL('../host/main.cjs', import.meta.url));
     const require = createRequire(import.meta.url);
     const app = new EventEmitter();
-    Object.assign(app, { getPath: () => 'fixture', requestSingleInstanceLock: () => false, quit() {} });
+    Object.assign(app, { getPath: () => 'fixture', whenReady: () => ({ then() {} }), quit() {} });
     const calls = [];
     const context = createContext({
         require: name => name === './desktop-runtime.cjs' ? { getDesktopRuntime: () => ({ app }) } : name === './product.cjs'

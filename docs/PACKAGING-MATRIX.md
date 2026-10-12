@@ -26,7 +26,7 @@ Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微�
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。悬浮窗当前仅支持 Windows；Linux 集成检查验证应用分钟查询、偏好保存与重载，并确认请求小窗后不创建原生窗口。
 
-正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，核对目标架构、必要能力和许可证。此前的 `lean-node.cjs` 与运行时裁剪配置保留为历史工具，当前流程不再从源码编译 Node.js，也不增加体积压缩实验。运行时配置和本机构建方法见[打包说明](../packaging/README.md#tauri-安装包)。
+正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，通过 `runtime-check.cjs` 核对必要能力并检查目标架构与许可证。运行时源码裁剪、Zig/Wine 交叉编译和旧版独立产品构建工具已归档，当前 Windows 与 Linux 目标使用各自本机工具链。运行时配置和本机构建方法见[打包说明](../packaging/README.md#tauri-安装包)。
 
 NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ，AppImage 使用官方插件支持的 ZSTD。RPM 的摘要校验和 `bsdtar` 解包均须成功，三个格式继续逐个执行完整资源与原生界面检查。
 

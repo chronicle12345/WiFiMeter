@@ -144,10 +144,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             ...(backgroundTest ? { x: -32000, y: -32000 } : {}),
             title: 'WiFiMeter', frame: false, resizable: false, maximizable: false,
             minimizable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
-            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: !backgroundTest && preferences.miniExpanded,
-            webPreferences: {
-                contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
-                ...(backgroundTest ? { backgroundThrottling: false } : {}) }
+            transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: !backgroundTest && preferences.miniExpanded
         });
         mini = window;
         expanded = window.getBounds();
@@ -161,8 +158,6 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (!moving && expected && Object.keys(actual).every(key => actual[key] === expected[key])) return;
             moving = false; placeMini();
         });
-        window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-        window.webContents.on('will-navigate', event => event.preventDefault());
         window.webContents.on('did-finish-load', () => {
             if (disposed || mini !== window) return;
             placeMini();

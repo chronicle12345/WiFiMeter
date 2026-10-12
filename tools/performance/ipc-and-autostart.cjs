@@ -3,14 +3,13 @@
 // 对比 Git 基线与工作区；只使用合成 IPC 消息和临时自启动目录。
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
-const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 const { execFileSync } = require('node:child_process');
 const { performance } = require('node:perf_hooks');
 const assert = require('node:assert/strict');
-const root = path.resolve(__dirname, '..');
+const root = path.resolve(__dirname, '../..');
 const revision = process.argv[2] || 'c87496f';
 
 function load(file, baseline, overrides = {}) {
@@ -51,7 +50,9 @@ function measureIpc(baseline) {
 }
 
 async function measureAutostart(baseline) {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-benchmark-'));
+    const temporaryRoot = path.join(root, 'del', 'performance');
+    fs.mkdirSync(temporaryRoot, { recursive: true });
+    const directory = fs.mkdtempSync(path.join(temporaryRoot, 'ipc-and-autostart-'));
     const calls = { mkdir: 0, writeFile: 0, readFile: 0 };
     const counted = { ...fsp };
     for (const name of Object.keys(calls)) counted[name] = (...args) => { calls[name]++; return fsp[name](...args); };
@@ -61,8 +62,7 @@ async function measureAutostart(baseline) {
         for (let i = 0; i < 21; i++) await integration.applySettings({ autoStart: true, notifications: i % 2 === 0 });
         return calls;
     } finally {
-        // directory 由 mkdtemp 直接生成，始终位于系统临时目录中。
-        fs.rmSync(directory, { recursive: true, force: true });
+        // 独立测试目录已经位于 del，保留文件以便核对结果。
     }
 }
 

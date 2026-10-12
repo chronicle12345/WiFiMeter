@@ -8,6 +8,7 @@ WiFiMeter 是 Windows / Linux 桌面流量统计工具。Tauri 提供系统 WebV
 - `apps/desktop/host/` 与 `apps/desktop/tauri/`：Node 桌面业务及 Tauri 宿主适配；`apps/desktop/src-tauri/` 保存 Rust 宿主。
 - `backend/`：按 `core`、`storage`、`platform`、`ipc` 划分职责，测试放在 `backend/tests/`。
 - `packaging/`：构建、安装和发布验证；`.github/` 保存 CI/CD 配置，`docs/` 保存产品和维护文档。
+- `tools/performance/`：可复现的性能对比工具；独立夹具留在测试目录，演示存储和历史构建工具不得混入正式资源。
 
 ## 约定
 
@@ -16,6 +17,7 @@ WiFiMeter 是 Windows / Linux 桌面流量统计工具。Tauri 提供系统 WebV
 - 新功能优先放入已有的对应业务模块；职责独立且能直接验证时再新建模块。页面入口只负责组合和交互协调，不继续集中保存、更新、进程管理等完整业务实现。
 - 通用逻辑不得在多个宿主重复实现；平台差异放在适配层。模块移动后同步修改导入、测试、打包配置和架构文档，避免遗留无引用代码或重复入口。
 - 当前桌面宿主统一使用 Tauri，禁止重新加入 Electron、electron-builder 或旧 Electron 构建入口。开发态页面回归使用无头浏览器与受控系统接口；原生桌面能力在实际 Tauri 安装包中按平台验证。旧用户的数据目录、导入、升级握手和实例互斥协议继续保留。
+- 模块说明统一维护在根 README、`docs/ARCHITECTURE.md`、`docs/MIGRATION.md` 与现行打包文档；不新增重复的模块 README 或把本地验收记录当作当前产品结论。第三方许可证和对外协议说明按各自用途保留。
 
 ## 目录与清理规则
 

@@ -73,22 +73,23 @@ function clock() {
     };
 }
 
-async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false } = {}) {
+async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false } = {}) {
     const transport = backendHarness({ crashRestarts, restoreThenHelloFails }), timers = clock();
     const handlers = new Map(), statuses = [], calls = [], systemSettings = [], miniEvents = [];
     let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
     const app = new EventEmitter();
     Object.assign(app, { isPackaged: false, getVersion: () => '1.3.2', getPath: () => 'fixture', setPath() {},
-        requestSingleInstanceLock: () => true, whenReady: () => ({ then(callback) { ready = callback(); return ready; } }),
-        quit() { quitCount++; const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; app.emit('before-quit', event); if (!event.defaultPrevented) window?.webContents.emit('will-prevent-unload', { preventDefault() { calls.push('unload-approved'); } }); }
+        whenReady: () => ({ then(callback) { ready = callback(); return ready; } }),
+        async prepareUpdateExit() { calls.push('prepare'); return prepare; },
+        async confirmExit() { calls.push('confirmExit'); return exitDecision ?? (prepare || quitChoice === 1); },
+        quit() { quitCount++; const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } }; app.emit('before-quit', event); }
     });
+    if (missingConfirmHook) delete app.confirmExit;
     class Window extends EventEmitter {
         constructor() {
             super(); window = this; this.webContents = new EventEmitter();
-            Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {},
-                send(channel, value) { if (channel === 'backend:event') statuses.push(value); },
-                session: { setPermissionRequestHandler() {} },
-                async executeJavaScript(script) { if (script.includes('wifimeterHasUnsavedChanges')) { calls.push('checkUnsaved'); return !prepare; } assert.match(script, /wifimeterPrepareUpdate/); calls.push('prepare'); return prepare; } });
+            Object.assign(this.webContents, { mainFrame: { url: '' },
+                send(channel, value) { if (channel === 'backend:event') statuses.push(value); } });
         }
         isDestroyed() { return false; }
         isVisible() { return true; }
@@ -96,10 +97,8 @@ async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = fal
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {
-            async showMessageBox() { calls.push('confirm'); return { response: quitChoice }; },
-            showMessageBoxSync() { calls.push('late-confirm'); return quitChoice; }, showErrorBox() {}
-        }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } }) },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {} },
+            ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
         './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
         './files.cjs': { createFileActions: () => ({}) },
@@ -249,7 +248,7 @@ test('canceling an exit with unsaved settings preserves the collector and tray',
     assert.equal(h.backend.child, original);
     assert.equal(h.backend.running, true);
     assert.equal(h.disposed, 0);
-    assert.deepEqual(h.calls, ['checkUnsaved', 'confirm']);
+    assert.deepEqual(h.calls, ['confirmExit']);
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
 
@@ -258,8 +257,8 @@ test('confirmed exit stops the collector only after checking saved settings', as
     h.app.quit(); await flush();
     assert.equal(h.backend.running, false);
     assert.equal(h.disposed, 1);
-    assert.deepEqual(h.calls.slice(0, 3), ['checkUnsaved', 'confirm', 'beginQuit']);
-    assert.equal(h.calls.includes('late-confirm'), false);
+    assert.deepEqual(h.calls.slice(0, 2), ['confirmExit', 'beginQuit']);
+    assert.equal(h.calls.filter(call => call === 'confirmExit').length, 1);
 });
 
 test('exiting after the isolated window is destroyed does not ask for drafts', async t => {
@@ -268,9 +267,21 @@ test('exiting after the isolated window is destroyed does not ask for drafts', a
     h.app.quit(); await flush();
     assert.equal(h.backend.running, false);
     assert.equal(h.disposed, 1);
-    assert.equal(h.calls.includes('confirm'), false);
-    assert.equal(h.calls.includes('checkUnsaved'), false);
+    assert.equal(h.calls.includes('confirmExit'), false);
 });
+
+for (const options of [{ missingConfirmHook: true }, { exitDecision: 'accepted' }]) {
+    test(`missing or invalid native exit confirmation preserves the collector (${Object.keys(options)[0]})`, async t => {
+        const h = await mainHarness({ prepare: false, quitChoice: 1, ...options }); t.after(h.dispose);
+        const original = h.backend.child;
+        h.app.quit(); await flush();
+        assert.equal(h.backend.child, original);
+        assert.equal(h.backend.running, true);
+        assert.equal(h.disposed, 0);
+        assert.equal(h.calls.includes('beginQuit'), false);
+        assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+    });
+}
 
 test('mini collector status clears rates and application activity without a backend query', async t => {
     const { createWindowControls } = require('../host/window-controls.cjs');
@@ -280,7 +291,7 @@ test('mini collector status clears rates and application activity without a back
         constructor(options) {
             super(); this.bounds = options; this.sent = [];
             this.webContents = new EventEmitter();
-            Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {},
+            Object.assign(this.webContents, { mainFrame: { url: '' },
                 send: (channel, value) => this.sent.push([channel, value]) });
             windows.push(this);
         }

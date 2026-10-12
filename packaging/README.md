@@ -17,9 +17,9 @@ dist/windows/WiFiMeter-1.3.2-windows-x64-Tauri-Setup.exe
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
 
-未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，目标架构与 Node.js、Rust 和 C++ 采集器必须一致。[lean-node-check.cjs](tauri/lean-node-check.cjs) 验证运行时需要的功能和架构，发行包同时保留对应的 Node.js 许可证。
+未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，目标架构与 Node.js、Rust 和 C++ 采集器必须一致。[runtime-check.cjs](tauri/runtime-check.cjs) 验证 TLS、中文排序、原子文件保存、子进程与下载流等实际能力，发行包同时保留对应的 Node.js 许可证。
 
-此前的 [lean-node.cjs](tauri/lean-node.cjs) 与 [node-size.props](tauri/windows/node-size.props) 保留为历史构建工具，当前 CI 不再从源码裁剪 Node.js。后续不增加安装包体积实验或运行时裁剪任务，优先复用缓存、保持功能和减少本机下载。NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ 压缩，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
+旧运行时裁剪和交叉编译工具已归档，当前源码只保留本机 Tauri 构建、验证及当前业务所需的安装辅助工具。NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ 压缩，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
 
 本机复现 CI 发行配置时，在仓库根目录执行以下命令。当前 Node.js 架构须与目标一致。Windows 还需 Python 3、完整 7-Zip 和 Visual Studio C++ 工具链；原生校验需 WebView2 Runtime。
 
@@ -28,7 +28,7 @@ $nodeArch = node -p 'process.arch'
 $rustTarget = @{ x64 = 'x86_64-pc-windows-msvc'; ia32 = 'i686-pc-windows-msvc'; arm64 = 'aarch64-pc-windows-msvc' }[$nodeArch]
 rustup target add $rustTarget
 if ($LASTEXITCODE) { throw 'Rust target installation failed' }
-node packaging/tauri/lean-node-check.cjs
+node packaging/tauri/runtime-check.cjs
 if ($LASTEXITCODE) { throw 'Official Node runtime validation failed' }
 node -e "require('./packaging/tauri/prepare.cjs').nodeLicense(); require('./packaging/tauri/verify-windows.cjs').sevenZipExecutable()"
 if ($LASTEXITCODE) { throw 'Node license or 7-Zip lookup failed' }
@@ -48,7 +48,7 @@ Linux 在对应架构主机执行，先安装 [tauri-linux-deps.sh](../.github/w
 ```bash
 set -euo pipefail
 node_arch=$(node -p 'process.arch')
-node packaging/tauri/lean-node-check.cjs
+node packaging/tauri/runtime-check.cjs
 export WIFIMETER_NODE_LICENSE=$(node -p "require('./packaging/tauri/prepare.cjs').nodeLicense({ license: require('node:path').resolve(require('node:path').dirname(process.execPath), '..', 'LICENSE') })")
 npm run dist:linux
 cargo install tauri-driver --version 2.0.5 --locked
@@ -58,6 +58,8 @@ node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。Linux 对三个格式分别解包校验并运行真实 WebKitGTK。当前安装方法与限制见[发布说明](../docs/releases/v1.3.2.md)，检查结果以对应提交的 CI 记录为准。
 
 RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
+
+安装与系统交互验收使用独立的测试安装和数据目录：核对安装、升级、快捷方式、托盘、唯一开机启动登记、设置与备份恢复，以及退出后重新打开的数据完整性。额度通知、真实断网和下载限速需在目标机器按实际权限与网络条件验证；卸载保留用户数据。包内 WebView 自动检查与完整安装/卸载验收分别记录，不能将前者当作后者的结果。
 
 ## 测试与发布
 

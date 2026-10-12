@@ -47,13 +47,13 @@ Linux 原生采集接入 eBPF，Windows 接入 ETW；不会把网卡总量按比
 Linux 原生源仅在构建辅助进程时可用，仍默认不采集；统计口径与授权验证见 [Linux 应用采集](../docs/LINUX_APP_CAPTURE.md)。
 Windows 原生源也默认不采集，通过专用管道连接授权辅助进程；详见 [Windows 应用采集](../docs/WINDOWS_APP_CAPTURE.md)。
 
-## 待定的接入约定
+## 数据与平台约定
 
 - 网络身份：`core/network_key.h` 已确定取键策略——优先用连接配置 UUID（跨重启稳定，天然满足 `network.id` 的 `^[-a-zA-Z0-9_]+$`），拿不到时退回 `ssid_` 加 SSID 的 FNV-1a 散列。代价是删除并重建 Wi-Fi 配置会让历史分成两条记录，上层可按 `ssid` 归并显示。
-- 记录层：`storage/` 已确定落盘结构（`daily_usage` / `hourly_usage` / `networks` / `quota_ledgers` / `settings` / `coverage_gaps`），账本是当前周期用量的权威来源，跨周期归零而不是从记录重算。仍需在接口层定下来的是：界面查询的粒度（按区间取记录还是取聚合值）、以及备份文件格式。
+- 记录层：`storage/` 增量保存日、小时、分钟与应用记录，账本是当前周期用量的权威来源，跨周期归零而不是从记录重算。`snapshot` 按日期和网络范围查询，分钟查询按需启用；完整备份标记为 `wifimeter-backend-backup`，与用量导出分开。具体查询与备份字段见下文和[迁移与恢复](../docs/MIGRATION.md)。
 - 覆盖空档：数据库用 `reason` 记录 `paused` / `offline` / `counter_reset` / `reattributed` / `detached` / `identity_unknown`，这些取值会进入协议，属于对外约定，改动需要兼容处理。
-- `live.connections[].since`：Linux 侧目前没有可靠的“本次连接开始时间”来源，可由上层根据身份变化的时间自行记录。
-- `live.connections[].adapterAlias`：Linux 侧当前取网卡的厂商与产品名（如 `AICSemi AIC8800DC`），是否再加工成更短的名称待定。
+- `live.connections[].since`：后端记录首次观察到当前连接的时间，不能将它当作系统报告的实际连接开始时间。
+- `live.connections[].adapterAlias`：Linux 侧取网卡的厂商与产品名，取不到时回退到内核接口名。
 
 ## 多档额度提醒
 

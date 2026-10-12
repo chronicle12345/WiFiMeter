@@ -7,7 +7,7 @@ const snapshot=()=>page.evaluate(async()=>{const r=await window.desktop.backend.
 const preferences=()=>page.evaluate(()=>window.desktop.windowPreferences.read());
 const category=id=>page.locator(`[data-category="${id}"]`).click();
 test.beforeEach(async()=>{app=null;page=null;harness=await createHarness();await launch();await page.evaluate(()=>window.desktop.backend.request('updateSettings',{settings:{language:'en'}}));await page.reload();await page.locator('.nav [data-page="settings"]').click();});
-test.afterEach(async()=>{if(app){await app.evaluate(({dialog})=>{dialog.showMessageBoxSync=()=>1;});await app.close();}harness?.cleanup();});
+test.afterEach(async()=>{if(app)await app.close();harness?.cleanup();});
 
 test('settings save on change, survive categories and have no manual save buttons',async()=>{
  await expect(page.locator('#pageHead')).toHaveCount(0);

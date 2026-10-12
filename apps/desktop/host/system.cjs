@@ -166,17 +166,6 @@ X-GNOME-Autostart-enabled=true
             window.hide();
             return true;
         },
-        // 窗口关闭时按设置决定隐藏还是退出。
-        handleWindowClose(event) {
-            if (quitting || !settings.minimizeToTray) return false;
-            ensureTray();
-            if (!tray) return false;
-            event.preventDefault();
-            const window = getWindow();
-            if (window && !window.isDestroyed()) window.hide();
-            return true;
-        },
-
         // 后端的额度提醒转成系统通知；后台测试不向用户显示真实通知。
         notify(alert) {
             if (backgroundTest || !settings.notifications || !Notification) return false;

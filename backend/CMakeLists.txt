@@ -28,9 +28,9 @@ enable_testing()
 # 统一的告警级别（按编译器区分），见 cmake/warnings.cmake。
 include(cmake/warnings.cmake)
 
-# 目标系统为 Windows 但构建主机不是 Windows（例如在 Linux 上用 MinGW 交叉编译）时，
-# 生成的 .exe 无法在本机直接运行：此时默认只构建后端程序，测试目标交给
-# packaging/windows 的交叉编译脚本用 Wine 执行（-DWIFIMETER_BUILD_TESTS=ON 可强制打开）。
+# 目标系统为 Windows 但构建主机不是 Windows 时，生成的 .exe 无法在本机直接运行。
+# 此时默认只构建后端程序；-DWIFIMETER_BUILD_TESTS=ON 可额外编译测试，
+# 测试程序须在对应 Windows 系统中运行。
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
     set(WIFIMETER_CROSS_COMPILING ON)
     set(WIFIMETER_TEST_DEFAULT OFF)

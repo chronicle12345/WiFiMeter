@@ -1,6 +1,7 @@
 #include "fake_source.h"
 
 #include "../support/json.h"
+#include "counter_source.h"
 
 namespace wifimeter::platform::fake
 {
@@ -50,11 +51,9 @@ std::optional<std::vector<FakeAdapter>> parseAdapters(std::string_view text)
             return std::nullopt;
         adapter.description = item.stringOr("description");
         adapter.connected = readBool(item, "connected", false);
-        adapter.mode = static_cast<std::uint32_t>(item.intOr("mode", 0));
         adapter.profileName = item.stringOr("profile");
         adapter.signalPercent = readOptionalInt(item, "signal");
         adapter.frequencyMhz = readOptionalInt(item, "frequency");
-        adapter.channel = readOptionalInt(item, "channel");
         adapter.type = item.stringOr("type", "wifi");
         adapter.stableId = item.stringOr("stableId");
 
@@ -110,43 +109,6 @@ std::optional<std::vector<FakeAdapter>> readOverriddenAdapters()
     if (!text)
         return std::nullopt;
     return parseAdapters(*text);
-}
-
-LinkReadResult FakeLinkSource::readLinks()
-{
-    LinkReadResult result;
-    const auto adapters = readOverriddenAdapters();
-    if (!adapters)
-    {
-        result.failures.push_back({FailureKind::unavailable, {}, "测试用网卡数据不可用。"});
-        return result;
-    }
-    result.links = linksFromAdapters(*adapters);
-    return result;
-}
-
-CounterReadResult FakeLinkSource::readCounters()
-{
-    CounterReadResult result;
-    const auto counters = readOverriddenCounters();
-    if (!counters)
-    {
-        result.failures.push_back({FailureKind::unavailable, {}, "测试用计数数据不可用。"});
-        return result;
-    }
-    result.counters = *counters;
-    return result;
-}
-
-DisconnectOutcome FakeLinkSource::requestDisconnect(const std::string& interfaceId, std::string& detail)
-{
-    (void)interfaceId;
-    if (!acceptDisconnect)
-    {
-        detail = "测试数据拒绝断开。";
-        return DisconnectOutcome::commandFailed;
-    }
-    return DisconnectOutcome::disconnected;
 }
 
 }  // namespace wifimeter::platform::fake

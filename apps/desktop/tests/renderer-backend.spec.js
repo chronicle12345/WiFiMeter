@@ -74,7 +74,7 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
         expect((await page.evaluate(()=>window.desktop.backend.request('snapshot'))).result.settings.language).toBe('en');
         expect(errors).toEqual([]);
     }finally{
-        if(app){await app.evaluate(({BrowserWindow})=>{for(const window of BrowserWindow.getAllWindows())window.webContents.on('will-prevent-unload',event=>event.preventDefault());});await app.close();}
+        if(app)await app.close();
         harness.cleanup();await rm(profile,{recursive:true,force:true});
     }
 });

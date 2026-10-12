@@ -1,13 +1,11 @@
-# 测试目标按“依赖哪些平台实现”分组：
+# 测试目标按依赖的平台实现分组：
 #
-#   * Windows 用例不调用系统接口，因此在 Linux 与 Windows 上都能构建并运行；
+#   * Windows 的平台判断用例不调用系统接口，在 Linux 与 Windows 上都能构建并运行；
 #   * Linux 用例依赖 platform/linux，只在本机为 Linux 时构建；
 #   * core/storage/support/ipc 与平台无关，两种系统都构建。
 #
-# 交叉编译到 Windows 时 ctest 无法直接运行 .exe，因此这些用例只在构建主机就是
-# 目标系统时注册到 ctest；交叉编译脚本改用 Wine 逐个运行（见 packaging/windows/）。
-
-set(WIFIMETER_COMMON_TEST_OPTIONS -Wall -Wextra -Wpedantic)
+# 交叉编译到 Windows 时 ctest 无法直接运行 .exe，通用测试仅在本机目标上注册。
+# 交叉编译产物须在对应 Windows 系统中运行。
 
 # 通用测试：只依赖给定库。
 function(wifimeter_add_test test_name)
@@ -37,8 +35,8 @@ foreach(test_name IN LISTS WIFIMETER_WINDOWS_TESTS)
 endforeach()
 
 # 真机冒烟：只读地调用 WLAN API 与 IP Helper，验证别名一致性与断开守卫。
-# 只能在 Windows 上构建；交叉编译时它不能由 Wine 代表（Wine 的 WLAN 实现与真实系统不同），
-# 因此不进 ctest，需要时在 Windows 机器上单独运行 build/windows/tests/windows_smoke_test.exe。
+# 只能在 Windows 上构建，Windows 本机的 ctest 会运行这些目标。
+# 真实系统行为由 Windows CI 验证，其他系统不代替原生采集验收。
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     wifimeter_add_test(windows_wlan_query_test wifimeter-platform-win32)
     wifimeter_add_test(windows_smoke_test wifimeter-platform-win32)
@@ -112,8 +110,7 @@ endif()
 
 # 端到端：真的拉起后端进程按协议对话。测试数据（假网卡、假计数）在两端是同一份，
 # 断言也共用 backend_process_support.h，因此 Windows 侧能跑与 Linux 完全相同的用例。
-# 交叉编译时后端是 Windows 程序、本机无法运行，因此不在这里构建；
-# 交叉编译脚本会把 Windows 版一起编译出来，交给 Wine 执行。
+# Windows 交叉编译时仍生成测试程序，执行时须使用对应 Windows 系统。
 if(NOT WIFIMETER_CROSS_COMPILING OR CMAKE_SYSTEM_NAME STREQUAL "Windows")
     if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         set(WIFIMETER_PROCESS_TEST_SOURCE backend_process_win_test.cpp)

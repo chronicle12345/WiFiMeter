@@ -2,7 +2,7 @@
 
 // 采样与断开的编排（实现见 sampling.cpp）。
 //
-// 采样正确性的关键是“这次计数属于哪个网络”，因此时序必须是：
+// 采样必须确认本次计数属于哪个网络，时序如下：
 //
 //   1. 读一次链路状态，得到身份；
 //   2. 只对已关联的网卡读累计计数（没有已关联网卡时不读，也不算失败）；
@@ -34,7 +34,7 @@ struct CounterReadResult
     std::vector<Failure> failures;
 };
 
-// 采集数据源。实现者只负责“取数据”，时序由 sampleFrom 决定。
+// 采集数据源。实现者只负责读取数据，时序由 sampleFrom 决定。
 class LinkSource
 {
 public:
@@ -59,9 +59,6 @@ protected:
 // 已关联时返回网络名，未关联或身份缺失时返回空字符串。
 std::string ssidOfLink(const std::vector<WifiLink>& links, const std::string& interfaceId);
 
-// 读取数据源的网卡状态。
-LinkReport linksFrom(LinkSource& source);
-
 // 按上面的时序采样一次。
 SampleReport sampleFrom(LinkSource& source);
 
@@ -69,7 +66,7 @@ SampleReport sampleFrom(LinkSource& source);
 DisconnectOutcome decideDisconnect(std::string_view currentSsid, std::string_view expectedSsid);
 
 // 断开的执行 + 复核。onAccepted 返回 true 表示系统接受了断开请求；
-// recheck 由平台提供，因为“断开是否生效”的判定方式不同
+// recheck 由平台提供，断开是否生效的判定方式不同
 // （Linux 直接重查，Windows 需要轮询等状态变化）。
 template <typename Recheck>
 DisconnectReport disconnectFrom(LinkSource& source, const std::string& interfaceId, const std::string& expectedSsid, Recheck recheck)
@@ -79,8 +76,7 @@ DisconnectReport disconnectFrom(LinkSource& source, const std::string& interface
     const LinkReadResult before = source.readLinks();
     if (before.links.empty() && !before.failures.empty())
     {
-        // 读不到状态就不能断言“没有关联”。当成“无需断开”会让调用方以为设备本来就没连，
-        // 而真实原因可能是查询失败，因此如实上报失败。
+        // 读不到状态时上报查询失败，避免调用方将查询失败当作设备未连接。
         report.outcome = before.failures.front().kind == FailureKind::unavailable ? DisconnectOutcome::unavailable : DisconnectOutcome::commandFailed;
         report.detail = before.failures.front().detail;
         return report;

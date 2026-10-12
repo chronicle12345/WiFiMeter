@@ -32,7 +32,7 @@ function windowsGeneratorOptions({ arch, cache = '', generator, generators = [],
 
 function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.includes('--linux-app-capture') } = {}) {
     const root = path.resolve(__dirname, '..');
-    const { validateNativeTarget, buildPaths, binaryArchitecture, assertArchitecture } = require('./targets.cjs');
+    const { validateNativeTarget, buildPaths, assertArchitecture } = require('./targets.cjs');
     validateNativeTarget(process.platform, arch);
     const buildDirectory = buildPaths(process.platform, arch).backend;
     const options = linuxAppCapture ? ['-DWIFIMETER_LINUX_APP_CAPTURE=ON'] : [];
@@ -44,7 +44,7 @@ function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.incl
         let cachedArch;
         if (cache && fs.existsSync(executable)) {
             assertArchitecture(executable, 'win32', arch);
-            cachedArch = binaryArchitecture(executable).arch;
+            cachedArch = arch;
         }
         const generator = process.env.CMAKE_GENERATOR;
         const generators = cache || generator ? [] : JSON.parse(execFileSync(cmake, ['-E', 'capabilities'], { encoding: 'utf8' })).generators.map(item => item.name);

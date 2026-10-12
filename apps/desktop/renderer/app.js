@@ -23,7 +23,7 @@ import { historyRange, applicationRows, applicationCsv, recordInRange } from './
 import { minuteUsageRows } from './data/minute-usage.js';
 import { validTime } from './data/model.js';
 import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dayKey, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, bytePercent, sortApps } from './data/model.js';
-import { createDataClient } from './data/client.js';
+import { createDataClient } from './data/backend-client.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];

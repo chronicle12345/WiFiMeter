@@ -6,6 +6,7 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+- Archive unused Node runtime trimming, Zig/Wine cross-build and old PowerShell product tools. Consolidate outdated module README files, move demo snapshots into test fixtures, and remove uncalled backend interfaces while retaining current sampling and migration coverage.
 - Remove Electron and electron-builder dependencies and legacy build entry points. Move shared Node business modules into host, run renderer regressions in a headless browser through the Tauri bridge, and validate native desktop behavior in actual Tauri packages. Preserve existing data locations, upgrade handoff and profile locks.
 - Consolidate Windows startup registration, report synchronization failures and hide collector and test helper consoles. Reuse verified complete update downloads instead of downloading them again.
 - Preserve form drafts and failed-save retries, finish retention cleanup after a partial failure, synchronize restored settings and collection gaps, and retain failed database transactions for rollback or retry.
@@ -14,6 +15,7 @@ Changes are listed by release.
 
 - 合并 Windows 重复开机启动登记，显示同步失败原因，隐藏采集器和测试辅助进程控制台；更新重试复用已完整校验的安装包。
 - 移除 Electron、electron-builder 依赖与旧构建入口，共享 Node 业务归入 host。页面回归使用无头浏览器和真实 Tauri 桥接，原生桌面行为通过实际 Tauri 安装包验证；保留原数据目录、升级握手和实例互斥保护。
+- 归档未使用的 Node 裁剪、Zig/Wine 交叉编译和旧 PowerShell 产品构建工具，合并过时模块 README；演示快照移入测试夹具，移除未调用的后端接口，保留当前采集与迁移验证。
 - 保留表单草稿和保存失败重试，补齐保留期清理失败后的后续操作，同步恢复的设置与采集缺失区间；数据库提交失败后保留事务以便回滚或重试。
 - 保留单向防火墙规则，改进历史与代理数据刷新，复用网络筛选和应用图标提取；表单保存逻辑移入独立页面模块，矮窗口使用较宽字体时也能完整显示额度提示。
 - 后台测试全程保持原生窗口隐藏，页面初始化完成后读取最新可见状态，通过状态替身验证页面刷新；本地诊断文件归入忽略目录，补齐模块与标签规范。CI 自动发现新增界面测试，并阻止 README 版本信息过期的标签发布。这些改动尚未包含在已发布的 1.3.2 安装包中。

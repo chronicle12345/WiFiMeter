@@ -14,23 +14,13 @@ const { pipeline } = require('node:stream/promises');
 const { createWriteStream } = require('node:fs');
 
 async function check() {
-    if (process.argv.includes('--lean')) {
-        const configuration = process.config.variables;
-        assert.equal(process.features.inspector, false);
-        assert.equal(configuration.node_use_node_snapshot, false);
-        assert.equal(configuration.node_use_node_code_cache, false);
-        assert.equal(configuration.node_use_sqlite, false);
-        assert.equal(configuration.node_use_amaro, false);
-        assert.equal(configuration.icu_small, true);
-        assert.equal(configuration.v8_enable_webassembly, 1);
-    }
     assert.equal(process.features.tls, true);
     assert.ok(tls.rootCertificates.length > 100, '必须保留 Node 的公开 TLS 根证书。');
     assert.deepEqual(Intl.Collator.supportedLocalesOf(['en-US', 'zh-CN', 'zh-TW']), ['en-US', 'zh-CN', 'zh-TW']);
     assert.deepEqual(['张', '阿', '波'].sort((left, right) => left.localeCompare(right, 'zh-CN')), ['阿', '波', '张']);
     assert.equal(crypto.createHash('sha256').update('abc').digest('hex'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
     assert.match(crypto.randomUUID(), /^[a-f0-9-]{36}$/);
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wifimeter-lean-node-'));
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'wifimeter-node-runtime-'));
     let server;
     try {
         const temporary = path.join(directory, 'preferences.tmp'), saved = path.join(directory, 'preferences.json');
@@ -51,7 +41,7 @@ async function check() {
     } finally {
         if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
         assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
-        assert.ok(path.basename(directory).startsWith('wifimeter-lean-node-'));
+        assert.ok(path.basename(directory).startsWith('wifimeter-node-runtime-'));
         await fs.rm(directory, { recursive: true, force: true });
     }
 }

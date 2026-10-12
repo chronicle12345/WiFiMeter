@@ -22,7 +22,7 @@ test('Windows 的数据目录与 App User Model ID 固定', () => {
     const identity = productIdentityFor('win32', 'C:\\Users\\someone\\AppData\\Roaming');
     assert.equal(identity.productName, 'WiFiMeter');
     assert.equal(identity.appUserModelId, 'io.wifimeter.demo');
-    // 与旧版 WPF 应用的数据目录不同，卸载示例版不会影响旧版数据。
+    // 与旧文件版的数据目录分开，保持当前数据库路径稳定。
     assert.equal(identity.userDataPath, path.join('C:\\Users\\someone\\AppData\\Roaming', 'WiFiMeter Demo'));
 });
 
@@ -33,28 +33,21 @@ test('其他平台沿用宿主的数据目录', () => {
     assert.equal(identity.userDataPath, null, '不设置 userData 时使用宿主默认目录');
 });
 
-test('applyProductIdentity 只设置该平台需要的项', () => {
-    const windowsCalls = { names: [], appIds: [], paths: [] };
+test('Node 宿主只应用兼容数据目录，保留产品与原生身份', () => {
+    const windowsCalls = { paths: [] };
     const windowsApp = {
-        setName: value => windowsCalls.names.push(value),
-        setAppUserModelId: value => windowsCalls.appIds.push(value),
         setPath: (key, value) => windowsCalls.paths.push([key, value])
     };
     const identity = applyProductIdentity(windowsApp, 'win32', 'C:\\AppData');
     assert.equal(identity.productName, 'WiFiMeter');
-    assert.deepEqual(windowsCalls.names, ['WiFiMeter']);
-    assert.deepEqual(windowsCalls.appIds, ['io.wifimeter.demo']);
+    assert.equal(identity.appUserModelId, 'io.wifimeter.demo', '原生身份仍返回给调用方，设置由 Rust 完成');
     assert.deepEqual(windowsCalls.paths, [['userData', path.join('C:\\AppData', 'WiFiMeter Demo')]]);
 
-    const linuxCalls = { names: [], appIds: [], paths: [] };
+    const linuxCalls = { paths: [] };
     const linuxApp = {
-        setName: value => linuxCalls.names.push(value),
-        setAppUserModelId: value => linuxCalls.appIds.push(value),
         setPath: (key, value) => linuxCalls.paths.push([key, value])
     };
     applyProductIdentity(linuxApp, 'linux', '/home/someone/.config');
-    assert.deepEqual(linuxCalls.names, ['WiFiMeter']);
-    assert.deepEqual(linuxCalls.appIds, [], '非 Windows 不设置 App User Model ID');
     assert.deepEqual(linuxCalls.paths, [], '非 Windows 不改数据目录');
 });
 

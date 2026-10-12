@@ -28,7 +28,6 @@ let migrationBusy = false;
 let speedUnit = 'auto';
 let preserveUnmatchedLoginItem = false;
 let quitFlight = null;
-let exitConfirmed = false;
 let startupSettled = false;
 let collectorRecoveryNeeded = false;
 let recoveryFlight = null;
@@ -131,46 +130,21 @@ if (process.env.WIFIMETER_TEST_ISOLATION === '1') {
     }
 }
 
-if (process.env.WIFIMETER_SOFTWARE_RENDERING === '1') app.disableHardwareAcceleration();
 const backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1' && Boolean(process.env.WIFIMETER_USER_DATA);
-if (backgroundTest) { app.commandLine?.appendSwitch('disable-renderer-backgrounding'); app.commandLine?.appendSwitch('disable-backgrounding-occluded-windows'); }
-const primaryInstance = app.requestSingleInstanceLock();
-if (!primaryInstance) app.quit();
-app.on('second-instance', () => {
-    if (backgroundTest) return;
-    if (window && !window.isDestroyed()) { window.show(); if (window.isMinimized()) window.restore(); window.focus(); }
-});
-if (primaryInstance) app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null);
+app.whenReady().then(async () => {
     window = new BrowserWindow({
         width: 1280, height: 900, minWidth: 900, minHeight: 650,
         ...(backgroundTest ? { show: false, x: -32000, y: -32000, skipTaskbar: true, focusable: false } : {}),
         title: productName, backgroundColor: '#f4f7fc',
-        icon: path.join(__dirname, '../assets/icon.png'),
-        webPreferences: {
-            contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
-            ...(backgroundTest ? { backgroundThrottling: false } : {})
-        }
+        icon: path.join(__dirname, '../assets/icon.png')
     });
     const sendVisibility = () => window.webContents.send('window:visibility', {
         visible: backgroundTest || (window.isVisible() && !window.isMinimized()), backgroundTest
     });
     for (const event of ['hide', 'show', 'minimize', 'restore']) window.on(event, sendVisibility);
     window.webContents.on('did-finish-load', sendVisibility);
-    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     // 窗口控制器按偏好询问、隐藏到托盘或退出应用。
     window.on('close', event => { if (!quitting && !system?.quitting) windowControls?.onMainClose(event); });
-    window.webContents.on('will-navigate', event => event.preventDefault());
-    window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    window.webContents.on('will-prevent-unload', event => {
-        if (quitting && exitConfirmed) { event.preventDefault(); return; }
-        const choice = dialog.showMessageBoxSync(window, {
-            type: 'question', title: `退出 ${productName}`,
-            message: '有尚未保存的设置，仍然退出？',
-            buttons: ['继续编辑', '放弃更改并退出'], defaultId: 0, cancelId: 0
-        });
-        if (choice === 1) event.preventDefault();
-    });
     const files = createFileActions(dialog, () => window);
     for (const [channel, handler] of [['files:save', files.saveFile], ['files:open-backup', files.openBackup]]) {
         ipcMain.handle(channel, (event, payload) => {
@@ -393,8 +367,7 @@ if (primaryInstance) app.whenReady().then(async () => {
             await startup;
             if (quitFlight || quitting || recoveryFlight || collectorRecoveryNeeded) throw Error('请等待退出确认或采集恢复完成后重试更新。');
             if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
-            const saved = app.prepareUpdateExit ? await app.prepareUpdateExit()
-                : window.webContents.executeJavaScript ? await window.webContents.executeJavaScript('window.wifimeterPrepareUpdate?.()') : false;
+            const saved = typeof app.prepareUpdateExit === 'function' && await app.prepareUpdateExit();
             if (saved !== true) throw Error('有尚未保存的设置，请先完成设置保存后重试更新。');
             installingUpdate = true;
             cancelRecoveryTimers();
@@ -461,8 +434,6 @@ if (primaryInstance) app.whenReady().then(async () => {
         else dialog.showErrorBox('WiFiMeter data import / 数据导入', migrationStatus.error + '\nCollection is paused. Original files are unchanged. / 统计已暂停，原文件未修改。');
     }
 });
-app.on('window-all-closed', () => app.quit());
-
 // 退出前先让后端收尾（提交数据库、结束未完成的空档），避免计数差丢在退出瞬间。
 app.on('before-quit', event => {
     if (installingUpdate && !quitting) { event.preventDefault(); app.cancelQuit?.(); return; }
@@ -473,22 +444,9 @@ app.on('before-quit', event => {
     event.preventDefault();
     if (quitFlight) return;
     quitFlight = (async () => {
-        let confirmed;
-        if (!window || window.isDestroyed()) confirmed = true;
-        else if (app.confirmExit) confirmed = await app.confirmExit();
-        else {
-            let unsaved = true;
-            try {
-                const value = await window?.webContents.executeJavaScript?.('window.wifimeterHasUnsavedChanges?.()');
-                if (typeof value === 'boolean') unsaved = value;
-            } catch { /* 页面断开时先询问，避免默认放弃未保存内容。 */ }
-            confirmed = !unsaved || (await dialog.showMessageBox(window, {
-                type: 'question', title: `退出 ${productName}`, message: '有尚未保存的设置，仍然退出？',
-                buttons: ['继续编辑', '放弃更改并退出'], defaultId: 0, cancelId: 0
-            })).response === 1;
-        }
-        if (!confirmed) { app.cancelQuit?.(); return; }
-        exitConfirmed = true;
+        const confirmed = !window || window.isDestroyed() ? true
+            : typeof app.confirmExit === 'function' && await app.confirmExit();
+        if (confirmed !== true) { app.cancelQuit?.(); return; }
         quitting = true;
         cancelRecoveryTimers();
         system?.beginQuit();

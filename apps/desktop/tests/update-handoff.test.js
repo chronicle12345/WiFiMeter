@@ -33,8 +33,8 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
     }) : null;
     const handoffReady = new Promise(resolve => { releaseReady = resolve; });
     class Window extends EventEmitter {
-        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, { mainFrame: { url: '' }, setWindowOpenHandler() {}, send(channel, value) { if (channel === 'updates:status') updates.push(value); }, session: { setPermissionRequestHandler() {} },
-            ...(missingPrepareHook ? {} : { async executeJavaScript(script) { assert.equal(script, 'window.wifimeterPrepareUpdate?.()'); calls.push('prepareUpdate'); return prepareUpdateResult; } }) }); }
+        constructor() { super(); window = this; this.webContents = new EventEmitter(); Object.assign(this.webContents, {
+            mainFrame: { url: '' }, send(channel, value) { if (channel === 'updates:status') updates.push(value); } }); }
         isDestroyed() { return false; }
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
@@ -57,15 +57,16 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         async stop() { this.running = false; }
     }
     const app = native?.app || new EventEmitter();
-    Object.assign(app, { isPackaged: false, getVersion: () => '1.2.0', getPath: () => 'fixture', setPath() {}, requestSingleInstanceLock: () => true,
+    Object.assign(app, { isPackaged: false, getVersion: () => '1.2.0', getPath: () => 'fixture', setPath() {},
         whenReady: () => ({ then(fn) { ready = fn(); return ready; } }) });
+    if (!native && !missingPrepareHook) app.prepareUpdateExit = async () => { calls.push('prepareUpdate'); return prepareUpdateResult; };
     if (!native) app.quit = () => { quitCount++; app.emit('before-quit', { preventDefault() {} }); };
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } }) },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true },
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
-        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, handleWindowClose() {}, dispose() {} }) },
+        './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, dispose() {} }) },
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => ({ found: false }) },

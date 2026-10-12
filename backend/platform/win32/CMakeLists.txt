@@ -15,7 +15,7 @@ target_link_libraries(wifimeter-platform-win32 PUBLIC wifimeter-platform-windows
 target_link_libraries(wifimeter-platform-win32 PRIVATE wifimeter-warnings)
 
 # netioapi.h 需要 Winsock 的地址族类型，并且只在定义了目标 Windows 版本时才完整。
-# MSVC 显式指定 Windows 10；Zig 与 MinGW 已给出默认值，避免重复定义。
+# MSVC 显式指定 Windows 10；MinGW 已给出默认值，避免重复定义。
 target_compile_definitions(wifimeter-platform-win32 PUBLIC $<$<CXX_COMPILER_ID:MSVC>:_WIN32_WINNT=0x0A00>)
 
 add_executable(wifimeter-app-capture "${CMAKE_SOURCE_DIR}/app/app_capture_windows.cpp")

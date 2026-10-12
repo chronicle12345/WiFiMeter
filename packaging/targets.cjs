@@ -10,8 +10,8 @@ function validateNativeTarget(platform, arch, host = process) {
     if (platform === 'linux' && (host.platform !== 'linux' || host.arch !== arch)) {
         throw new Error('Linux 构建需要对应架构的 Linux 本机工具链。');
     }
-    if (platform === 'win32' && host.platform !== 'win32' && !(host.platform === 'linux' && host.arch === 'x64' && arch === 'x64')) {
-        throw new Error('现有 Zig/Wine 交叉工具链仅支持 Linux x64 到 Windows x64；其他目标需要 Windows Visual Studio 工具链。');
+    if (platform === 'win32' && host.platform !== 'win32') {
+        throw new Error('Windows 构建需要 Windows 本机工具链；跨架构编译需要 Visual Studio 或显式工具链配置。');
     }
     return { platform, arch };
 }
