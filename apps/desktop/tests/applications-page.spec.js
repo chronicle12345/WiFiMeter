@@ -147,6 +147,123 @@ test('采集控制位于时间工具栏，启停状态明显且代理设置保�
     await page.locator('#closeDrawer').click();
 });
 
+test('历史应用详情随用量事件刷新，保留限速输入和日期分组',async()=>{
+    await openApplications();
+    await page.locator('[data-action="select-app"]').click();
+    const total=page.locator('.drawer .application-summary dt').filter({hasText:/^总用量$/}).locator('+ dd');
+    await expect(total).toHaveText('520.11 KB');
+    let input;
+    if(process.platform==='win32'){
+        await expect(page.locator('#uploadKBps')).toBeEnabled();
+        await page.locator('#uploadKBps').fill('96');
+        input=await page.locator('#uploadKBps').elementHandle();
+    }
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'appUsage',records:[{...s.appRecords[0],rxBytes:'1000000',txBytes:'0'}]});
+    });
+    await expect(total).toHaveText('1.52 MB');
+    if(input){
+        expect(await input.evaluate(element=>element.isConnected)).toBe(true);
+        await expect(page.locator('#uploadKBps')).toHaveValue('96');
+    }
+    await page.keyboard.press('Escape');
+    await page.locator('#appGrouping').selectOption('day');
+    await page.locator('#appListRegion tbody tr').filter({hasText:'2020-01-01'}).getByRole('button',{name:'Browser',exact:true}).click();
+    await expect(total).toHaveText('1.52 MB');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'appUsage',records:[
+            {...s.appRecords[2],rxBytes:'2000000',txBytes:'0'},
+            {...s.appRecords[0],rxBytes:'1000000',txBytes:'0'}
+        ]});
+    });
+    await expect(total).toHaveText('2.52 MB');
+    await expect(page.locator('.drawer .application-summary')).toContainText('2020-01-01');
+});
+
+test('代理采样失败和恢复后保留无效草稿，修正后可以保存并离开',async()=>{
+    await openApplications();
+    await page.locator('.app-proxy-panel summary').click();
+    const original=await page.locator('#proxyConfigForm').elementHandle();
+    await page.locator('#proxyPorts').fill('not-a-port');
+    await expect(page.locator('#proxyConfigForm .form-error')).toContainText('代理端口须为 1 到 65535 的整数');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        Object.assign(s.proxy,{available:false,status:'failed',detail:'TCP query failed'});
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
+    });
+    await page.locator('[data-action="period"][data-value="today"]').click();
+    await expect(page.locator('[data-action="period"][data-value="today"]')).toHaveAttribute('aria-pressed','true');
+    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
+    expect(await original.evaluate(element=>element.isConnected)).toBe(true);
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        Object.assign(s.proxy,{available:true,status:'ready',detail:''});
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
+    });
+    await page.locator('[data-action="period"][data-value="all"]').click();
+    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
+    expect(await original.evaluate(element=>element.isConnected)).toBe(true);
+    await page.locator('#proxyPorts').fill('7890');
+    await page.locator('#appSort').selectOption('rx');
+    await expect(page.locator('#proxySaveStatus')).toContainText('已自动保存');
+    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890]);
+    await page.locator('.nav [data-page="networks"]').click();
+    await expect(page).toHaveTitle(/我的网络/);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.locator('.nav [data-page="settings"]').click();
+    await page.locator('[data-action="settings-category"][data-category="proxy"]').click();
+    const settingsForm=await page.locator('#proxyConfigForm').elementHandle();
+    await page.locator('#proxyPorts').fill('not-a-port');
+    await expect(page.locator('#proxyConfigForm .form-error')).toContainText('代理端口须为 1 到 65535 的整数');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        Object.assign(s.proxy,{available:false,status:'failed',detail:'TCP query failed'});
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
+    });
+    await page.locator('.sidebar [data-action="pause"]').click();
+    await expect(page.locator('#settings-proxy')).toContainText('TCP query failed');
+    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
+    expect(await settingsForm.evaluate(element=>element.isConnected)).toBe(true);
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        Object.assign(s.proxy,{available:true,status:'ready',detail:''});
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
+    });
+    await page.locator('.sidebar [data-action="pause"]').click();
+    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
+    expect(await settingsForm.evaluate(element=>element.isConnected)).toBe(true);
+    await page.locator('#proxyPorts').fill('1080');
+    await page.locator('[data-action="settings-category"][data-category="general"]').click();
+    await expect(page.locator('#proxySaveStatus')).toContainText('已自动保存');
+    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([1080]);
+    await page.locator('.nav [data-page="apps"]').click();
+    await expect(page).toHaveTitle(/应用流量/);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('应用采集重试按钮在无变化和状态变化的实时刷新后保留键盘焦点',async()=>{
+    await openApplications();
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        s.appCollection={available:true,enabled:true,state:'permission',detail:'permission denied'};
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection});
+    });
+    const retry=page.locator('#appCaptureRegion [data-action="app-collection-retry"]');
+    await expect(retry).toBeVisible();
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    const original=await retry.elementHandle();
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,collector:'running',appCollection:s.appCollection});
+    });
+    await expect(page.locator('.collector-title')).toHaveText('正在采集');
+    expect(await original.evaluate(element=>element.isConnected)).toBe(true);
+    await expect(retry).toBeFocused();
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        s.appCollection={available:true,enabled:true,state:'unavailable',detail:'helper unavailable'};
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,collector:'running',appCollection:s.appCollection});
+    });
+    await expect(page.locator('#appCaptureRegion')).toContainText('应用采集暂不可用');
+    expect(await original.evaluate(element=>element.isConnected)).toBe(false);
+    await expect(retry).toBeFocused();
+});
+
+
 test('下载限速提交和取消使用独立方向',async()=>{
     await openApplications();await page.locator('[data-action="application-control"]').click();
     if(process.platform!=='win32'){

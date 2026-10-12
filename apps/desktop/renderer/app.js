@@ -230,11 +230,14 @@ function updateSettingsScroll(){
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
 function renderMain(){
- const proxyDraft=ui.page==='apps'&&proxyDirty?$('#proxyConfigForm'):null,proxyOpen=$('.app-proxy-panel')?.open;
+ const proxyDraft=proxyDirty?$('#proxyConfigForm'):null,proxyOpen=$('.app-proxy-panel')?.open;
  renderChrome();
  renderUpdateBanner();
  updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
- if(proxyDraft&&$('#proxyConfigForm')!==proxyDraft)$('#proxyConfigForm')?.replaceWith(proxyDraft);
+ if(proxyDraft&&$('#proxyConfigForm')!==proxyDraft){
+  const replacement=$('#proxyConfigForm');
+  if(replacement)replacement.replaceWith(proxyDraft);else $('.proxy-config-region')?.append(proxyDraft);
+ }
  if(proxyOpen&&$('.app-proxy-panel'))$('.app-proxy-panel').open=true;
  syncSaveFlags();
  syncInert();
@@ -300,7 +303,10 @@ function appCaptureControl(){
  const c=data.appCollection||{},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
  return `<div class="app-capture-control"><span class="capture-status" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
 }
-function renderCapture(){const region=$('#appCaptureRegion'),focused=region?.contains(document.activeElement);updateRegion(region,appCaptureControl());if(focused)region.querySelector('button')?.focus();}
+function renderCapture(){
+ const region=$('#appCaptureRegion'),focused=region?.contains(document.activeElement)?document.activeElement.dataset.action:null;
+ if(updateRegion(region,appCaptureControl())&&focused)region.querySelector(`[data-action="${focused}"]`)?.focus();
+}
 function renderRules(){updateRegion($('#appRulesRegion'),appRulesView(appControl,{button,esc}));}
 async function loadAppRules(){const pending=appControl.loadRules();renderRules();await pending;renderRules();}
 function currentAppRows(){const range=getRange();if(appContext().appGrouping==='summary')return sortApps(displayedAppSummary(appNetworkId(),range.start,range.end),appContext().appSort,appContext().appSearch);return applicationRows(displayedAppRecords(),{...range,networkId:appNetworkId(),grouping:appContext().appGrouping,sort:appContext().historySort,direction:appContext().historyDirection,search:appContext().appSearch});}
@@ -350,9 +356,14 @@ function appList(n,summary){
  return tr`<div class="small muted">共 ${list.length} 个应用 · 显示 ${visible.length} 个</div><ol class="app-list">${visible.map(a=>{const percent=bytePercent(a.total,sum);return tr`<li class="app-row">${applicationAvatar(a,esc)}<div class="app-description"><button class="network-name" data-action="select-app" data-app-id="${esc(a.id)}" data-key="${esc(a.key)}">${esc(a.name)}</button>${a.estimated?`<span class="pill warn">${estimateLabel(a)}</span>`:''}<div class="app-source">下载 ${fmtWithUnit(a.rx)} · 上传 ${fmtWithUnit(a.tx)}</div><div class="progress" aria-hidden="true"><span style="width:${percent}%"></span></div></div><div class="app-value"><strong>${fmtWithUnit(a.total)}</strong><div class="app-source">${sum?percent.toFixed(1)+'%':'—'}</div></div></li>`;}).join('')}</ol>${list.length>10?button('apps-expand',appContext().appAll?t('收起列表'):t('显示全部应用'),'','small-btn'):''}`;
 }
 function refreshApplicationDetails(){
- if(ui.drawer?.kind!=='app'||!ui.drawer.app.key||ui.drawer.app.processId==null)return;
- const current=applicationLiveRows(namedAppProcesses()).find(p=>p.key===ui.drawer.app.key);
- ui.drawer.app={...ui.drawer.app,...current,rxPerSecond:current?.rxPerSecond??null,txPerSecond:current?.txPerSecond??null};
+ if(ui.drawer?.kind!=='app'||!ui.drawer.app.key)return;
+ if(ui.drawer.app.processId!=null){
+  const current=applicationLiveRows(namedAppProcesses()).find(p=>p.key===ui.drawer.app.key);
+  ui.drawer.app={...ui.drawer.app,...current,rxPerSecond:current?.rxPerSecond??null,txPerSecond:current?.txPerSecond??null};
+ }else{
+  const current=currentAppRows().find(row=>row.key===ui.drawer.app.key);
+  if(current)ui.drawer.app={...ui.drawer.app,...current};
+ }
  const section=$('.application-summary');
  if(section){const wrapper=document.createElement('div');wrapper.innerHTML=applicationDetails(ui.drawer.app,{esc,fmtWithUnit,appRate,estimateLabel});updateRegion(section,wrapper.firstElementChild.innerHTML);}
 }

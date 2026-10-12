@@ -13,7 +13,7 @@ export function proxyForm(proxy) {
         <div class="field"><label for="proxyProcesses">代理进程名（可选）</label><input class="input" id="proxyProcesses" name="processNames" value="${esc((proxy.processNames||[]).join(', '))}" placeholder="Clash.exe, v2ray.exe"></div>
         <div class="form-error" role="alert"></div>${autosaveStatus('proxySaveStatus')}
     </form>` : '';
-    return tr`<section class="panel settings-group"><div class="panel-head"><div><h2>代理流量估算</h2>${!proxy?.available?`<p class="panel-sub">${proxyStatus(proxy)}</p>`:''}${proxy?.status&&proxy.status!=='ready'?`<p class="small muted">${esc(proxy.status)}</p>`:''}${proxy?.detail?`<p class="small muted">${esc(proxy.detail)}</p>`:''}</div></div>${fields}</section>`;
+    return tr`<section class="panel settings-group proxy-config-region"><div class="panel-head"><div><h2>代理流量估算</h2>${!proxy?.available?`<p class="panel-sub">${proxyStatus(proxy)}</p>`:''}${proxy?.status&&proxy.status!=='ready'?`<p class="small muted">${esc(proxy.status)}</p>`:''}${proxy?.detail?`<p class="small muted">${esc(proxy.detail)}</p>`:''}</div></div>${fields}</section>`;
 }
 export function proxySourceSelector(proxy, estimated) {
     return tr`<div class="field"><label for="appDataSource">应用数据来源</label><select class="select" id="appDataSource">
