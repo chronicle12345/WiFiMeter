@@ -1,12 +1,12 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { createHarness } from './support/backend-harness.mjs';
 
 let app, page, harness;
 test.beforeEach(async () => {
     harness = await createHarness({ rxStep: 4100000000 });
     const env = { ...process.env, ...harness.env, WIFIMETER_BACKGROUND_TEST: '1' };
-    delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: ['.', '--force-device-scale-factor=1'], env });
+    app = await desktop.launch({ env });
     page = await app.firstWindow();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.notice-line')).toBeVisible();
@@ -18,7 +18,7 @@ test.afterEach(async () => {
 });
 
 async function resizeWindow(width, height) {
-    // Electron 的视口模拟可能不更新媒体查询，使用原生窗口并补偿平台边框尺寸。
+    // 通过宿主适配器更新视口，布局断言使用实际页面尺寸。
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setMinimumSize(0, 0));
     let windowWidth = width, windowHeight = height;
     for (let attempt = 0; attempt < 3; attempt++) {

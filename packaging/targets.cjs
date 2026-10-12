@@ -3,30 +3,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-function buildOptions(platform, args = [], host = process) {
+function validateNativeTarget(platform, arch, host = process) {
     if (!['win32', 'linux'].includes(platform)) throw new Error(`不支持的平台：${platform}。`);
     const arches = platform === 'win32' ? ['x64', 'arm64', 'ia32'] : ['x64', 'arm64'];
-    const allowed = platform === 'win32' ? ['nsis', 'portable', 'dir'] : ['deb', 'rpm', 'AppImage', 'dir'];
-    let arch = host.arch;
-    let skipRebuild = false;
-    let formats = platform === 'win32' ? ['nsis', 'portable'] : ['deb'];
-    for (let i = 0; i < args.length; i += 2) {
-        if (args[i] === '--skip-rebuild') { skipRebuild = true; i--; continue; }
-        if (!['--arch', '--formats'].includes(args[i]) || !args[i + 1] || args[i + 1].startsWith('--')) {
-            throw new Error(`不支持的参数：${args[i]}；使用 --arch 和 --formats。`);
-        }
-        if (args[i] === '--arch') arch = args[i + 1];
-        else formats = [...new Set(args[i + 1].split(','))];
-    }
     if (!arches.includes(arch)) throw new Error(`不支持 ${platform}/${arch}。`);
-    if (formats.some(format => !allowed.includes(format))) throw new Error(`不支持的格式：${formats.join(',')}。`);
     if (platform === 'linux' && (host.platform !== 'linux' || host.arch !== arch)) {
-        throw new Error('Linux 打包需要对应架构的 Linux 本机工具链，不支持跨架构编译。');
+        throw new Error('Linux 构建需要对应架构的 Linux 本机工具链。');
     }
     if (platform === 'win32' && host.platform !== 'win32' && !(host.platform === 'linux' && host.arch === 'x64' && arch === 'x64')) {
         throw new Error('现有 Zig/Wine 交叉工具链仅支持 Linux x64 到 Windows x64；其他目标需要 Windows Visual Studio 工具链。');
     }
-    return { platform, arch, formats, skipRebuild };
+    return { platform, arch };
 }
 
 function buildPaths(platform, arch) {
@@ -34,8 +21,7 @@ function buildPaths(platform, arch) {
     const suffix = arch === 'x64' ? '' : `-${arch}`;
     return {
         backend: platform === 'linux' && arch === 'x64' ? 'build' : `build/${name}${suffix}`,
-        output: `dist/${name}${suffix}`,
-        unpacked: platform === 'win32' ? (arch === 'x64' ? 'win-unpacked' : `win-${arch}-unpacked`) : (arch === 'x64' ? 'linux-unpacked' : `linux-${arch}-unpacked`)
+        output: `dist/${name}${suffix}`
     };
 }
 
@@ -78,38 +64,4 @@ function checkBackend(directory, platform, arch) {
     }
 }
 
-function checkPackaged(directory, platform, arch) {
-    assertArchitecture(path.join(directory, platform === 'win32' ? 'WiFiMeter.exe' : 'wifimeter'), platform, arch);
-    checkBackend(path.join(directory, 'resources'), platform, arch);
-}
-
-function packagingConfig({ platform, arch }) {
-    const root = path.resolve(__dirname, '..');
-    const base = require(platform === 'win32' ? './windows/electron-builder.cjs' : './linux/electron-builder.cjs');
-    const paths = buildPaths(platform, arch);
-    let installedVersion = '';
-    try { installedVersion = require('../apps/desktop/node_modules/electron/package.json').version; } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
-    const selectedVersion = platform === 'win32' && arch === 'ia32' ? '43.7.7' : require('../apps/desktop/package.json').devDependencies.electron;
-    const localRuntime = path.join(root, 'apps/desktop/node_modules/electron/dist');
-    let runtime = {};
-    const localExecutable = path.join(localRuntime, platform === 'win32' ? 'electron.exe' : 'electron');
-    if (platform === process.platform && installedVersion === selectedVersion && fs.existsSync(localExecutable)) {
-        const actual = binaryArchitecture(localExecutable);
-        if (actual.platform === platform && actual.arch === arch) runtime = { electronDist: localRuntime };
-    }
-    return {
-        ...base,
-        ...runtime,
-        // Electron 44 no longer publishes Windows ia32; use the maintained 43 branch for that target.
-        ...(platform === 'win32' && arch === 'ia32' ? { electronVersion: '43.7.7' } : {}),
-        directories: { ...base.directories, output: path.join(root, paths.output) },
-        extraResources: base.extraResources.map(resource => ({
-            ...resource,
-            from: resource.from.startsWith('../../build/')
-                ? path.join(root, paths.backend, 'app', path.basename(resource.from)) : resource.from
-        })),
-        afterPack: async context => checkPackaged(context.appOutDir, platform, arch)
-    };
-}
-
-module.exports = { buildOptions, buildPaths, binaryArchitecture, assertArchitecture, checkBackend, checkPackaged, packagingConfig };
+module.exports = { validateNativeTarget, buildPaths, binaryArchitecture, assertArchitecture, checkBackend };

@@ -10,6 +10,8 @@ const repository = 'example/WiFiMeter';
 const sha = 'a'.repeat(40);
 const requiredNames = [
     'Workflow checks and Tauri release metadata',
+    'Windows browser UI shard 1/2', 'Windows browser UI shard 2/2',
+    'Linux browser UI shard 1/2', 'Linux browser UI shard 2/2',
     'Windows x64 Tauri', 'Windows ia32 Tauri', 'Windows arm64 Tauri',
     'Linux x64 Tauri', 'Linux arm64 Tauri', 'Required Tauri checks'
 ];
@@ -24,7 +26,7 @@ function fixtures() {
         },
         jobs: [...requiredNames, 'Publish verified multi-platform Tauri v1.3 release'].map((name, index) => ({
             id: 1000 + index, run_id: 456, head_sha: sha, name, status: 'completed',
-            conclusion: index === 7 ? 'skipped' : 'success'
+            conclusion: name.startsWith('Publish ') ? 'skipped' : 'success'
         })),
         artifacts: ['tauri-release-windows-x64', 'tauri-release-windows-ia32', 'tauri-release-windows-arm64',
             'tauri-release-linux-x64', 'tauri-release-linux-arm64'].map((name, index) => ({
@@ -67,7 +69,7 @@ function find(fetchImpl, overrides = {}) {
     return findValidatedRun({ repository, sha, refType: 'tag', token: 'fixture-token', fetchImpl, ...overrides });
 }
 
-test('a tag reuses only its same-commit main run with all seven required jobs successful', async () => {
+test('a tag reuses only its same-commit main run with all eleven required jobs successful', async () => {
     const data = fixtures();
     assert.equal(await find(api(data)), '456');
 });

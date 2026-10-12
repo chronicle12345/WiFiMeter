@@ -1,11 +1,12 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { createHarness } from './support/backend-harness.mjs';
 let app, page, harness;
 test.beforeEach(async () => {
     app = null; page = null;
     harness = await createHarness();
-    const env = { ...process.env, ...harness.env }; delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: ['.'], env });
+    const env = { ...process.env, ...harness.env };
+    app = await desktop.launch({ env });
     page = await app.firstWindow();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
 });

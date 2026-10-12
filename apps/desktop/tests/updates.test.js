@@ -11,7 +11,7 @@ const { fileURLToPath } = require('node:url');
 const { Readable, Writable } = require('node:stream');
 const { runInNewContext } = require('node:vm');
 const { createHash } = require('node:crypto');
-const { createUpdateService } = require('../electron/updates.cjs');
+const { createUpdateService } = require('../host/updates.cjs');
 
 const page = 'https://github.com/chronicle12345/WiFiMeter/releases/tag/v1.3.0';
 const bytes = Buffer.from('mock installer');
@@ -19,8 +19,8 @@ const digest = 'sha256:' + createHash('sha256').update(bytes).digest('hex');
 function release() {
     return { tag_name: 'v1.3.0', body: 'Release notes', html_url: page, draft: false, prerelease: false,
         assets: ['x64', 'ia32', 'arm64'].map(arch => ({
-            name: `WiFiMeter-1.3.0-${arch}-Setup.exe`, digest, size: bytes.length,
-            browser_download_url: `${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-${arch}-Setup.exe`
+            name: `WiFiMeter-1.3.0-windows-${arch}-Tauri-Setup.exe`, digest, size: bytes.length,
+            browser_download_url: `${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-windows-${arch}-Tauri-Setup.exe`
         })) };
 }
 function tauriRelease() {
@@ -145,7 +145,7 @@ for (const failedHook of ['beforeInstall', 'launchInstaller']) {
         assert.equal(f.calls.filter(call => call.url.includes('api.github.com')).length, 4);
         assert.equal(states.filter(state => state === 'verifying').length, 4);
         const files = await fs.readdir(path.join(f.userData, 'updates'));
-        assert.deepEqual(files, ['WiFiMeter-1.3.0-x64-Setup.exe']);
+        assert.deepEqual(files, ['WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe']);
         assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', files[0])), bytes);
     });
 }
@@ -165,7 +165,7 @@ for (const contents of [bytes.subarray(0, 4), Buffer.alloc(bytes.length)]) {
         assert.equal((await createUpdateService(f.config).check({ automatic: true })).state, 'installing');
         assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 2);
         assert.deepEqual(await fs.readFile(cached), bytes);
-        assert.deepEqual(await fs.readdir(directory), ['WiFiMeter-1.3.0-x64-Setup.exe']);
+        assert.deepEqual(await fs.readdir(directory), ['WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe']);
         assert.deepEqual(f.events, ['launch']);
     });
 }
@@ -173,7 +173,7 @@ for (const contents of [bytes.subarray(0, 4), Buffer.alloc(bytes.length)]) {
 function cacheReadService(config, { lstat = fs.lstat, mkdir = fs.mkdir,
     createReadStream = nativeFs.createReadStream, createWriteStream = nativeFs.createWriteStream } = {}) {
     const module = { exports: {} };
-    runInNewContext(nativeFs.readFileSync(new URL('../electron/updates.cjs', import.meta.url), 'utf8'), {
+    runInNewContext(nativeFs.readFileSync(new URL('../host/updates.cjs', import.meta.url), 'utf8'), {
         module, Buffer, AbortSignal, globalThis, process,
         require: name => name === 'node:fs/promises' ? { ...fs, lstat, mkdir }
             : name === 'node:fs' ? { ...nativeFs, createReadStream, createWriteStream } : require(name)
@@ -254,14 +254,15 @@ for (const mutation of ['duplicate', 'missing size', 'invalid size', 'missing di
         const data = tauriRelease();
         const target = data.assets[0];
         data.assets.push(...release().assets.map(asset => ({ ...asset,
-            name: asset.name.replace('1.3.0', '1.3.1'),
-            browser_download_url: asset.browser_download_url.replaceAll('1.3.0', '1.3.1')
+            name: asset.name.replace('1.3.0', '1.3.1').replace('-Tauri-', '-'),
+            browser_download_url: asset.browser_download_url.replaceAll('1.3.0', '1.3.1').replace('-Tauri-', '-')
         })));
         if (mutation === 'duplicate') data.assets.push({ ...target, digest: undefined });
         if (mutation === 'missing size') delete target.size;
         if (mutation === 'invalid size') target.size = -1;
         if (mutation === 'missing digest') delete target.digest;
         if (mutation === 'untrusted URL') target.browser_download_url = 'https://evil.example/installer.exe';
+        assert.equal(data.assets.filter(asset => asset.name === target.name).length, mutation === 'duplicate' ? 2 : 1);
         const f = await fixture(t, { fetch: async url => {
             assert.ok(url.includes('api.github.com'));
             return Response.json(data);
@@ -326,7 +327,7 @@ for (const [currentVersion, tag, expected] of [
     assert.equal((await f.service.check({ autoInstall: false })).state, expected);
 });
 
-for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} retains matching legacy Setup.exe support`, async t => {
+for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} selects only matching Tauri Setup.exe assets`, async t => {
     const f = await fixture(t, { arch });
     const result = await f.service.check({ autoInstall: false });
     assert.equal(result.canInstall, true);
@@ -335,7 +336,7 @@ for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} retains match
     assert.equal(result.latestVersion, '1.3.0');
     assert.equal(result.url, page);
     assert.equal((await f.service.install()).state, 'installing');
-    assert.match(f.calls[1].url, new RegExp(`-${arch}-Setup.exe$`));
+    assert.match(f.calls[1].url, new RegExp(`-windows-${arch}-Tauri-Setup.exe$`));
     assert.deepEqual(f.events, ['stop', 'launch']);
     assert.equal(f.calls[1].init.redirect, 'manual');
 });
@@ -478,20 +479,19 @@ test('latest version and unknown architecture never launch an installer', async 
     assert.deepEqual(unknown.events, [page]);
 });
 
-for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} prefers platform-qualified assets while retaining legacy names`, async t => {
+for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} ignores legacy installers when selecting the Tauri package`, async t => {
     const data = release();
-    data.assets.push(...data.assets.map(asset => ({ ...asset,
-        name: asset.name.replace('1.3.0-', '1.3.0-windows-'),
-        browser_download_url: asset.browser_download_url.replace('WiFiMeter-1.3.0-', 'WiFiMeter-1.3.0-windows-')
+    data.assets.unshift(...data.assets.map(asset => ({
+        ...asset, name: asset.name.replace('-Tauri-', '-'),
+        browser_download_url: asset.browser_download_url.replace('-Tauri-', '-')
     })));
     const downloads = [];
     const f = await fixture(t, { arch, fetch: async url => {
         if (url.includes('api.github.com')) return Response.json(data);
         downloads.push(url); return new Response(bytes);
     } });
-    assert.equal((await f.service.check({ autoInstall: false })).canInstall, true);
-    assert.equal((await f.service.install()).state, 'installing');
-    assert.deepEqual(downloads, [`${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-windows-${arch}-Setup.exe`]);
+    assert.equal((await f.service.check()).state, 'installing');
+    assert.deepEqual(downloads, [`${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-windows-${arch}-Tauri-Setup.exe`]);
 });
 
 test('a release without an asset array remains available for manual installation', async t => {

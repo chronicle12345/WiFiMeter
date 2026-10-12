@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAppIcons, registerAppIcons } from '../electron/app-icons.cjs';
+import { createAppIcons, registerAppIcons } from '../host/app-icons.cjs';
 
 const id = 'C:\\Apps\\Browser.exe';
 const png = 'data:image/png;base64,aWNvbg==';

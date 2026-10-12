@@ -9,11 +9,10 @@ const root = path.resolve(__dirname, '..');
 const desktopRequire = createRequire(path.join(root, 'apps/desktop/package.json'));
 const assets = path.join(root, 'apps/desktop/assets');
 
-test('Windows installer and uninstaller explicitly use the application logo', () => {
-    const config = require('./windows/electron-builder.cjs');
-    assert.equal(config.win.icon, 'assets/icon.ico');
-    assert.equal(config.nsis.installerIcon, config.win.icon);
-    assert.equal(config.nsis.uninstallerIcon, config.win.icon);
+test('Tauri desktop bundles use the application ICO and PNG logos', () => {
+    const config = JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8'));
+    assert.deepEqual(config.bundle.icon, ['../assets/icon.ico', '../assets/icon.png']);
+    for (const icon of config.bundle.icon) assert.ok(fs.statSync(path.resolve(root, 'apps/desktop/src-tauri', icon)).size > 0);
 });
 
 test('SVG, PNG and every ICO frame match the official logo with transparent corners', async () => {

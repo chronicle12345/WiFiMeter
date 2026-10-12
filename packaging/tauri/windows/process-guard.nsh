@@ -1,8 +1,7 @@
 !include "LogicLib.nsh"
-!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}\stop-legacy.ps1"
+!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}\..\..\windows\stop-legacy.ps1"
 
-; Runs at CHECK_APP_RUNNING after the installation directory has been selected.
-; Also replaces the uninstaller check; no fallback process termination is allowed.
+; Applies to installation and uninstallation. Never terminate an unsaved process.
 !macro customCheckAppRunning
   InitPluginsDir
   File /oname=$PLUGINSDIR\stop-legacy.ps1 "${WIFIMETER_LEGACY_HELPER}"

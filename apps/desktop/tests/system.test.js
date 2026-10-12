@@ -1,4 +1,4 @@
-// 系统级功能的单元测试：用假的 Electron 接口验证自启动文件、托盘开关、窗口关闭与通知。
+// 系统级功能的单元测试：用假的桌面宿主接口验证自启动文件、托盘开关、窗口关闭与通知。
 // 这样不必启动图形界面也能覆盖分支。
 
 import test from 'node:test';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { runInNewContext } from 'node:vm';
 
-import { createSystemIntegration, autostartFile } from '../electron/system.cjs';
+import { createSystemIntegration, autostartFile } from '../host/system.cjs';
 import { createNativeAdapter } from '../tauri/native-adapter.cjs';
 
 for (const requested of [false, true]) test(`autostart regression: rejected ${requested ? 'enable' : 'disable'} reports the actual state and a retryable error`, async () => {
@@ -40,7 +40,7 @@ test('autostart regression: unreadable status after a failed disable still repor
 for (const executable of ['/home/fixture/My Apps/WiFiMeter.AppImage', '/home/fixture/cash$"tick`\\100%/WiFiMeter.AppImage']) {
     test(`autostart regression: Desktop Entry quoting restores one executable argument for ${executable}`, async () => {
         const require = createRequire(import.meta.url), module = { exports: {} }, files = new Map();
-        runInNewContext(readFileSync(new URL('../electron/system.cjs', import.meta.url), 'utf8'), {
+        runInNewContext(readFileSync(new URL('../host/system.cjs', import.meta.url), 'utf8'), {
             module, process: { env: { APPIMAGE: executable }, execPath: '/usr/bin/node', platform: 'linux' },
             require: name => name === 'node:fs/promises' ? {
                 async readFile(file) { if (files.has(file)) return files.get(file); throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
@@ -243,7 +243,7 @@ test('Windows 旧宿主登记方法未返回状态时仍查询实际结果', asy
     assert.equal(getterCalls, 1);
 });
 
-test('开发态的 Windows 开机启动带上应用目录', async () => {
+test('开发态的 Windows 开机启动不附带旧宿主目录参数', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-system-win-dev-'));
     const calls = [];
     const integration = createSystemIntegration({
@@ -269,9 +269,8 @@ test('开发态的 Windows 开机启动带上应用目录', async () => {
     });
 
     await integration.applySettings({ autoStart: true });
-    // 未打包时 execPath 是 electron 本体，登录后要能加载到应用目录。
-    assert.ok(Array.isArray(calls[0].args));
-    assert.match(calls[0].args[0], /apps[\\/]desktop$/);
+    assert.equal(calls[0].path, process.env.WIFIMETER_APP_EXE || process.execPath);
+    assert.equal(calls[0].args, undefined);
 
     rmSync(home, { recursive: true, force: true });
 });

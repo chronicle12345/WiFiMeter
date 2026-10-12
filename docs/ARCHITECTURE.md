@@ -15,7 +15,9 @@ renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node
 
 `renderer/app.js` 组合页面渲染、导航与事件。可复用的输入和显示逻辑放在 `renderer/ui/`，数据访问与计算放在 `renderer/data/`。`ui/form-autosave.js` 管理设置、网络额度、总额度与代理表单的字段校验、保存状态、重试、保留期清理及草稿放弃；它通过回调调用现有宿主和数据接口，页面入口负责确认窗口及刷新界面。新增业务应按职责进入对应模块，并直接测试模块接口。
 
-Node 业务进程用 `electron/backend.cjs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端失败以 `{ ok: false, error }` 形式回给页面，保留错误码与消息。历史、额度和网络设置以 C++ 后端为准。
+Node 业务进程用 `host/backend.cjs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端失败以 `{ ok: false, error }` 形式回给页面，保留错误码与消息。历史、额度和网络设置以 C++ 后端为准。
+
+`host/desktop-runtime.cjs` 显式接收 `tauri/native-adapter.cjs` 提供的桌面能力，`host/main.cjs` 调用该接口组合业务，不拦截 Node 模块加载，也不依赖 Electron SDK。业务单元测试使用接口替身。开发态界面回归在无头浏览器中加载真实页面及 Tauri 桥接，并运行隔离的 Node 业务宿主；操作系统窗口、托盘和对话框由测试替身处理。真实 WebView、窗口、安装资源和原生采集继续由对应平台的安装包集成测试验证。
 
 页面先完成当前范围查询，再按需读取分钟历史；同范围的并发分钟查询共用请求，晚到的旧请求不会覆盖当前范围。小时导出由后端处理，完整日期可导出旧小时记录，部分时段按分钟边界计算小时合计。自定义范围使用本地日期和时分，完整包含结束分钟。
 
@@ -65,17 +67,17 @@ platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注
 
 - **Linux 源码构建**：`npm run dist:linux` 使用本机工具链构建采集器与 Tauri，生成 deb、rpm、AppImage。
 - **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，准备 Node、原生控制模块和页面，再由 Tauri CLI 构建 NSIS 安装包，输出到 `dist/windows/`。
-- **迁移回归**：`start:electron` 和 `dist:windows:electron` 等显式命令保留旧宿主测试入口；Tauri 发行资源不携带 Electron 运行时。
+- **页面回归**：`npm run test:ui` 使用无头浏览器；当前源码、依赖与构建入口均不需要 Electron 运行时。
 
 C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
 
 两个平台的产品名统一为 `WiFiMeter`：Windows 沿用应用标识 `io.wifimeter.demo`
 与数据目录 `%APPDATA%\WiFiMeter Demo`；Linux 使用 `WiFiMeter` 与标准的 XDG 目录。
-身份定义集中在 `apps/desktop/electron/product.cjs` 并有单元测试；显示名称更新时保留
+身份定义集中在 `apps/desktop/host/product.cjs` 并有单元测试；显示名称更新时保留
 Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
 
 Electron 1.2.x 用户通过下载对应系统和 CPU 架构的 Tauri 安装版完成迁移；Tauri 后续更新只选择对应的 Tauri 安装包。
 
 Windows 宿主在启动 Node 和后端之前持有 Electron 使用的 `lockfile`，锁的范围为用户数据目录。新旧版本不能同时使用同一目录采集，进程退出后由系统释放锁；WebView2 的缓存保存在该目录下独立的 `webview2` 子目录。
 
-`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。`desktop.yml` 与其调用的 `windows-app.yml` 保留旧 Electron 的多架构检查和 `v1.2.*` 发布入口；`legacy-powershell.yml` 用于旧 PowerShell 版本。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。
+`.github/workflows/tauri.yml` 负责当前五个平台目标的 Tauri 构建、测试和 `v1.3.*` 标签发布。开发态页面回归在 Windows 与 Linux 的独立任务中分片并行执行，打包任务无需先等待完整页面回归；汇总和发布同时要求两类检查成功。`legacy-powershell.yml` 用于保留的旧 PowerShell 版本。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的发布产物。各流程的范围见[构建与发布矩阵](PACKAGING-MATRIX.md)。

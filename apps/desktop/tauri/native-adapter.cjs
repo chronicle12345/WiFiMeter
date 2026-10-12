@@ -1,15 +1,15 @@
 'use strict';
 
-// 原有桌面业务通过这个适配器调用 Tauri；发行包无需 Electron。
+// 桌面业务通过这个适配器调用 Tauri 原生窗口和系统功能。
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { execFileSync, execFile } = require('node:child_process');
 const { promisify } = require('node:util');
-const packagedAutostart = path.join(__dirname, 'electron/windows-autostart.cjs');
+const packagedAutostart = path.join(__dirname, 'host/windows-autostart.cjs');
 const { createWindowsAutostart } = require(fs.existsSync(packagedAutostart)
-    ? packagedAutostart : path.join(__dirname, '../electron/windows-autostart.cjs'));
+    ? packagedAutostart : path.join(__dirname, '../host/windows-autostart.cjs'));
 
 function createNativeAdapter({ send, configuration = {}, execute = execFileSync, executeAsync = promisify(execFile) }) {
     let nextId = 1, stopped = false;

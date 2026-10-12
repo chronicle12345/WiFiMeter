@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const workflowPath = '.github/workflows/tauri.yml';
 const requiredJobs = [
     'Workflow checks and Tauri release metadata',
+    'Windows browser UI shard 1/2', 'Windows browser UI shard 2/2',
+    'Linux browser UI shard 1/2', 'Linux browser UI shard 2/2',
     'Windows x64 Tauri', 'Windows ia32 Tauri', 'Windows arm64 Tauri',
     'Linux x64 Tauri', 'Linux arm64 Tauri', 'Required Tauri checks'
 ];

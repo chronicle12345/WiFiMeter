@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,10 +9,9 @@ test('executable logo or nativeImage fixture updates only its avatar and preserv
     const profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-icons-'));
     const harness = await createHarness();
     const env = { ...process.env, WIFIMETER_BACKGROUND_TEST: '1', WIFIMETER_USER_DATA: profile, ...harness.env };
-    delete env.ELECTRON_RUN_AS_NODE;
     let app;
     try {
-        app = await electron.launch({ args: ['.'], env });
+        app = await desktop.launch({ env });
         const page = await app.firstWindow();
         await page.waitForLoadState('domcontentloaded');
         const url = await app.evaluate(async ({ app, nativeImage }) => {
@@ -72,21 +72,21 @@ test('executable logo or nativeImage fixture updates only its avatar and preserv
 test('application page resolves a known backend executable through the icon bridge',async()=>{
  const harness=await createHarness();let app;
  try{
-  const env={...process.env,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-  app=await electron.launch({args:['.'],env});const page=await app.firstWindow();await expect(page.locator('.connection-title')).toBeVisible();
+  const env={...process.env,...harness.env};
+  app=await desktop.launch({env});const page=await app.firstWindow();await expect(page.locator('.connection-title')).toBeVisible();
   const executable=await app.evaluate(()=>process.execPath);
   const result=await page.evaluate(async executable=>{
    await window.desktop.backend.request('setPaused',{paused:true});const r=await window.desktop.backend.request('backup');const backup=r.result.backup;
-   backup.appRecords=[{networkId:backup.networks[0].key,date:new Date().toLocaleDateString('en-CA'),appId:executable,name:'Electron',rxBytes:'100',txBytes:'10'}];
+    backup.appRecords=[{networkId:backup.networks[0].key,date:new Date().toLocaleDateString('en-CA'),appId:executable,name:'Node',rxBytes:'100',txBytes:'10'}];
    return window.desktop.backend.request('restore',{backup});
   },executable);expect(result.ok).toBe(true);
   await page.reload();await page.locator('.nav [data-page="apps"]').click();
   const icon=await page.evaluate(appId=>window.desktop.appIcons.get({appId}),executable);
   if(process.platform==='linux' && icon===null){
-   await expect(page.locator('.app-row .app-avatar')).toHaveText('E');
+   await expect(page.locator('.app-row .app-avatar')).toHaveText('N');
    await expect(page.locator('.app-row .app-avatar img')).toHaveCount(0);
    await page.locator('[data-action="select-app"]').click();
-   await expect(page.locator('#drawerTitle .app-avatar')).toHaveText('E');
+   await expect(page.locator('#drawerTitle .app-avatar')).toHaveText('N');
    await expect(page.locator('#drawerTitle .app-avatar img')).toHaveCount(0);
    // 继续走真实 IPC 和后端路径查验，仅替换系统图标提取结果。
    await app.evaluate(({app,nativeImage})=>{

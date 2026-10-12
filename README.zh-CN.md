@@ -73,7 +73,7 @@ npm run test:unit
 npm run test:ui
 ```
 
-后端测试由 CMake 构建，通过 CTest 执行。界面测试使用保留的 Electron 宿主验证共用页面。Windows x64 Tauri 需要另行构建安装包，并运行真实 WebView2 集成检查：
+后端测试由 CMake 构建，通过 CTest 执行。界面测试使用无头浏览器、真实 Tauri 页面桥接和隔离的 Node 业务宿主。Windows 默认复用已安装的 Microsoft Edge；其他环境可运行 `npm --prefix apps/desktop exec -- playwright install chromium` 安装对应版本的测试浏览器，无需 Electron。Windows x64 Tauri 需要另行构建安装包，并运行真实 WebView2 集成检查：
 
 ```sh
 node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis

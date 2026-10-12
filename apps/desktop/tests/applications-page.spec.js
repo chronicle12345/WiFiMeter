@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,9 +9,8 @@ let app,page,profile,harness,errors;
 test.beforeEach(async({},testInfo)=>{
     profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-renderer-'));
     harness=await createHarness();errors=[];
-    const env={...process.env,WIFIMETER_BACKGROUND_TEST:'1',WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-    const args=['.','--disable-renderer-backgrounding'];
-    app=await electron.launch({args,env});page=await app.firstWindow();
+    const env={...process.env,WIFIMETER_BACKGROUND_TEST:'1',WIFIMETER_USER_DATA:profile,...harness.env};
+    app=await desktop.launch({env});page=await app.firstWindow();
     page.on('pageerror',error=>errors.push(error.message));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.evaluate(()=>window.desktop.backend.request('setPaused',{paused:true}));

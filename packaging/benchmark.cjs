@@ -15,7 +15,8 @@ const revision = process.argv[2] || 'c87496f';
 
 function load(file, baseline, overrides = {}) {
     const filename = path.join(root, file);
-    const source = baseline ? execFileSync('git', ['show', `${revision}:${file}`], { cwd: root, encoding: 'utf8' }) : fs.readFileSync(filename, 'utf8');
+    const historicalFile = file.replace('apps/desktop/host/', 'apps/desktop/electron/');
+    const source = baseline ? execFileSync('git', ['show', `${revision}:${historicalFile}`], { cwd: root, encoding: 'utf8', windowsHide: true }) : fs.readFileSync(filename, 'utf8');
     const localRequire = createRequire(filename);
     const module = { exports: {} };
     vm.runInNewContext(source, { module, exports: module.exports,
@@ -25,7 +26,7 @@ function load(file, baseline, overrides = {}) {
 }
 
 function measureIpc(baseline) {
-    const { BackendClient } = load('apps/desktop/electron/backend.cjs', baseline);
+    const { BackendClient } = load('apps/desktop/host/backend.cjs', baseline);
     const wire = JSON.stringify({ event: 'snapshot', text: 'x'.repeat(4 * 1024 * 1024) }) + '\n';
     const times = [];
     const heaps = [];
@@ -55,7 +56,7 @@ async function measureAutostart(baseline) {
     const counted = { ...fsp };
     for (const name of Object.keys(calls)) counted[name] = (...args) => { calls[name]++; return fsp[name](...args); };
     try {
-        const { createSystemIntegration } = load('apps/desktop/electron/system.cjs', baseline, { 'node:fs/promises': counted });
+        const { createSystemIntegration } = load('apps/desktop/host/system.cjs', baseline, { 'node:fs/promises': counted });
         const integration = createSystemIntegration({ app: { getPath: () => directory }, platform: 'linux' });
         for (let i = 0; i < 21; i++) await integration.applySettings({ autoStart: true, notifications: i % 2 === 0 });
         return calls;

@@ -217,12 +217,8 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             const newer = compareVersions(latest, current) > 0;
             const url = `${REPOSITORY}/releases/tag/${encodeURIComponent(release.tag_name)}`;
             if (newer && platform === 'win32' && ['x64', 'ia32', 'arm64'].includes(arch)) {
-                // Electron 也可升级到当前 Tauri 发行版；Tauri 不切回旧运行时。
-                const names = [`WiFiMeter-${latest.version}-windows-${arch}-Tauri-Setup.exe`,
-                    ...(process.env.WIFIMETER_DESKTOP_RUNTIME === 'tauri' ? [] : [
-                        `WiFiMeter-${latest.version}-windows-${arch}-Setup.exe`, `WiFiMeter-${latest.version}-${arch}-Setup.exe`])];
                 const assets = Array.isArray(release.assets) ? release.assets : [];
-                const name = names.find(name => assets.some(asset => asset.name === name)) || names[0];
+                const name = `WiFiMeter-${latest.version}-windows-${arch}-Tauri-Setup.exe`;
                 const matches = assets.filter(asset => asset?.name === name);
                 if (matches.length === 1 && /^sha256:[a-fA-F0-9]{64}$/.test(matches[0].digest || '')
                     && Number.isSafeInteger(matches[0].size) && matches[0].size > 0

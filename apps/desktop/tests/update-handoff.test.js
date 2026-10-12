@@ -14,7 +14,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const require = createRequire(import.meta.url);
 const { createNativeAdapter } = require('../tauri/native-adapter.cjs');
 const digest = createHash('sha256').update('verified fixture').digest('hex');
-const directory = fileURLToPath(new URL('../electron/', import.meta.url));
+const directory = fileURLToPath(new URL('../host/', import.meta.url));
 
 async function harness({ failure, paused = false, appsEnabled = false, updateFactory, nativeExitDecisions, prepareUpdateResult = true, missingPrepareHook = false } = {}) {
     let ready, window, backend, hooks, quitCount = 0, releaseReady;
@@ -61,7 +61,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         whenReady: () => ({ then(fn) { ready = fn(); return ready; } }) });
     if (!native) app.quit = () => { quitCount++; app.emit('before-quit', { preventDefault() {} }); };
     const imports = {
-        electron: { app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {}, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } }) },
         'node:fs': { existsSync: () => true },
         './files.cjs': { createFileActions: () => ({}) },
         './backend.cjs': { BackendClient: Backend, resolveExecutable: () => 'fixture' },
@@ -186,7 +186,6 @@ test('READY is framed across chunks and only then authorizes the fixed installer
     assert.equal(args[0], '-e');
     assert.match(args[1], /WindowsPowerShell/);
     assert.equal(options.detached, true);
-    assert.equal(options.env.ELECTRON_RUN_AS_NODE, '1');
     assert.equal(options.windowsHide, true); assert.notEqual(options.shell, true);
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le');
     assert.match(script, /FileShare\]::Read/); assert.match(script, /SHA256/);
@@ -213,10 +212,10 @@ test('helper failures retain a bounded local diagnostic and an actionable code',
     });
 });
 
-test('bridge keeps PowerShell attached to its surviving host and removes Electron Node mode', () => {
+test('bridge keeps PowerShell attached to its surviving Node host and preserves the environment', () => {
     const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
     const fakeProcess = { argv: ['runtime', 'Zml4dHVyZQ=='], env: { SystemRoot: 'C:\\Windows',
-        ELECTRON_RUN_AS_NODE: '1', electron_run_as_node: '1', FIXTURE: 'preserved' },
+        FIXTURE: 'preserved' },
         stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() };
     let spawned;
     runInNewContext(fs.readFileSync(path.join(directory, 'update-bridge.cjs'), 'utf8'), {
@@ -228,8 +227,7 @@ test('bridge keeps PowerShell attached to its surviving host and removes Electro
     assert.notEqual(options.detached, true);
     assert.equal(options.windowsHide, true);
     assert.equal(options.env.FIXTURE, 'preserved');
-    assert.equal(Object.keys(options.env).some(name => name.toUpperCase() === 'ELECTRON_RUN_AS_NODE'), false);
-    assert.equal(fakeProcess.env.ELECTRON_RUN_AS_NODE, '1');
+    assert.equal(fakeProcess.env.FIXTURE, 'preserved');
     child.emit('exit', 0);
     assert.equal(fakeProcess.exitCode, 0);
 });
@@ -287,17 +285,17 @@ test('helper spawn error rejects without GO', async () => {
     assert.equal(h.child.stdin.read()?.toString().includes('GO'), undefined);
 });
 
-function fixtureUpdateService(options, { runtime = 'electron', downloadFails = false } = {}) {
+function fixtureUpdateService(options, { downloadFails = false } = {}) {
     const module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'updates.cjs'), 'utf8'), {
-        module, AbortSignal, globalThis, process: { env: { WIFIMETER_DESKTOP_RUNTIME: runtime } },
+        module, AbortSignal, globalThis,
         require: name => name === 'node:fs/promises' ? {
             readFile: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
             lstat: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
             mkdir: async () => {}, rename: async () => {}, unlink: async () => {}
         } : name === 'node:fs' ? { createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }) } : require(name)
     });
-    const assetName = runtime === 'tauri' ? 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe' : 'WiFiMeter-1.3.0-x64-Setup.exe';
+    const assetName = 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe';
     return module.exports.createUpdateService({
         ...options,
         currentVersion: '1.2.0', platform: 'win32', arch: 'x64', userData: 'fixture',
@@ -312,23 +310,22 @@ function fixtureUpdateService(options, { runtime = 'electron', downloadFails = f
     });
 }
 
-for (const runtime of ['electron', 'tauri']) test(`${runtime} download passes its verified release digest to the handoff hook`, async () => {
+test('Tauri download passes its verified release digest to the handoff hook', async () => {
     let metadata;
     const service = fixtureUpdateService({
         confirm: async () => true, beforeInstall: async () => {},
         launchInstaller: async (file, argv, verified) => {
-            assert.ok(file.endsWith(runtime === 'tauri' ? 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe' : 'WiFiMeter-1.3.0-x64-Setup.exe'));
+            assert.ok(file.endsWith('WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe'));
             assert.deepEqual(Array.from(argv), ['/S', '/R']); metadata = verified;
         }
-    }, { runtime });
+    });
     assert.equal((await service.install()).state, 'installing');
     assert.equal(metadata.digest, digest);
 });
 
-for (const runtime of ['electron', 'tauri']) test(`${runtime} automatic check refuses an unsaved draft before pausing, handoff, or quitting`, async () => {
+test('Tauri automatic check refuses an unsaved draft before pausing, handoff, or quitting', async () => {
     const h = await harness({ paused: true, appsEnabled: true, prepareUpdateResult: false,
-        nativeExitDecisions: runtime === 'tauri' ? [] : undefined,
-        updateFactory: options => fixtureUpdateService(options, { runtime }) });
+        nativeExitDecisions: [], updateFactory: options => fixtureUpdateService(options) });
     const result = await h.invoke('updates:check');
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'preparing');
@@ -342,9 +339,7 @@ for (const runtime of ['electron', 'tauri']) test(`${runtime} automatic check re
     assert.equal(h.calls.includes('handoff'), false);
     assert.equal(h.calls.includes('waitForShutdown'), false);
     assert.equal(h.quitCount, 0);
-    if (runtime === 'tauri') {
-        assert.deepEqual(h.nativeMessages.map(message => message.method), ['app:prepareUpdateQuit']);
-    } else assert.equal(h.calls.filter(call => call === 'prepareUpdate').length, 1);
+    assert.deepEqual(h.nativeMessages.map(message => message.method), ['app:prepareUpdateQuit']);
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
 
@@ -451,7 +446,7 @@ function Start-Process {
 }
 `;
     const child = require('node:child_process').spawn(h.spawned[0], ['-e', h.spawned[1][1], Buffer.from(stubs + script, 'utf16le').toString('base64')], {
-        detached: true, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe']
+        detached: true, windowsHide: true, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe']
     });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
@@ -554,15 +549,14 @@ test('in-flight checking rejects repeat actions without replacing the saved phas
 
 // Exercise the real runtime and helper script. Only Start-Process is replaced;
 // the .exe contains text and cannot be executed by this test.
-for (const runtime of ['Node', 'Electron', 'Electron ASAR', 'Node with separate GUI process']) test(`Windows ${runtime} handoff survives its parent and keeps the installer locked`, { skip: process.platform !== 'win32' }, async t => {
+for (const runtime of ['Node', 'Packaged Node', 'Node with separate GUI process']) test(`Windows ${runtime} handoff survives its parent and keeps the installer locked`, { skip: process.platform !== 'win32' }, async t => {
     const os = require('node:os');
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wifimeter-handoff-survival-'));
     const updates = path.join(root, 'updates'); fs.mkdirSync(updates);
     const installer = path.join(updates, "verified';fixture.exe");
     const marker = path.join(root, 'launch-stub.txt');
     const packageRoot = path.join(root, 'package');
-    const packageDirectory = path.join(packageRoot, 'electron');
-    const archive = path.join(root, 'app.asar');
+    const packageDirectory = path.join(packageRoot, 'host');
     let guiProcess, guiExit;
     fs.writeFileSync(installer, 'verified fixture');
     t.after(async () => {
@@ -578,7 +572,7 @@ for (const runtime of ['Node', 'Electron', 'Electron ASAR', 'Node with separate 
                 }
             }
         };
-        for (const file of [marker, installer, path.join(root, 'parent.cjs'), archive]) await removeFile(file);
+        for (const file of [marker, installer, path.join(root, 'parent.cjs')]) await removeFile(file);
         if (fs.existsSync(packageDirectory)) {
             for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) await removeFile(path.join(packageDirectory, file));
             await fs.promises.rmdir(packageDirectory); await fs.promises.rmdir(packageRoot);
@@ -587,11 +581,10 @@ for (const runtime of ['Node', 'Electron', 'Electron ASAR', 'Node with separate 
     });
     const source = fs.readFileSync(path.join(directory, 'update-handoff.cjs'), 'utf8');
     let bundleDirectory = directory;
-    if (runtime === 'Electron ASAR') {
+    if (runtime === 'Packaged Node') {
         fs.mkdirSync(packageDirectory, { recursive: true });
         for (const file of ['update-handoff.cjs', 'update-bridge.cjs']) fs.copyFileSync(path.join(directory, file), path.join(packageDirectory, file));
-        await require('@electron/asar').createPackage(packageRoot, archive);
-        bundleDirectory = path.join(archive, 'electron');
+        bundleDirectory = packageDirectory;
     }
     const encodedMarker = Buffer.from(marker, 'utf8').toString('base64');
     const fixture = path.join(root, 'parent.cjs');
@@ -600,7 +593,6 @@ $ProgressPreference='SilentlyContinue'
 Add-Type -TypeDefinition 'public class TestMessageBox { public static void Show(string message, string title) { System.Console.Error.WriteLine("MESSAGE-STUB: " + message); } }'
 function Start-Process {
     param($FilePath, $ArgumentList, $WindowStyle)
-    if($env:ELECTRON_RUN_AS_NODE){throw 'Installer inherited Electron Node mode'}
     if($WindowStyle -ne 'Hidden'){throw 'Wrong window style'}
     if(($ArgumentList -join ' ') -ne '/S /R'){throw 'Installer must be silent and restart the app'}
     $blocked=$false
@@ -614,7 +606,7 @@ function Start-Process {
 const cp = require('node:child_process'), fs = require('node:fs');
 const { runInNewContext } = require('node:vm');
 const moduleFixture = { exports: {} };
-runInNewContext(${runtime === 'Electron ASAR' ? `fs.readFileSync(${JSON.stringify(path.join(bundleDirectory, 'update-handoff.cjs'))}, 'utf8')` : JSON.stringify(source)}, {
+runInNewContext(${runtime === 'Packaged Node' ? `fs.readFileSync(${JSON.stringify(path.join(bundleDirectory, 'update-handoff.cjs'))}, 'utf8')` : JSON.stringify(source)}, {
     module: moduleFixture, __dirname: ${JSON.stringify(bundleDirectory)}, Buffer, process, setTimeout, clearTimeout,
     require: name => name === 'node:child_process' ? { spawn(host, args, options) {
         const script = Buffer.from(args.at(-1), 'base64').toString('utf16le').replaceAll('[System.Windows.Forms.MessageBox]', '[TestMessageBox]');
@@ -641,9 +633,9 @@ moduleFixture.exports.launchUpdateHandoff(${JSON.stringify(installer)}, {
             guiProcess.stdout.on('data', chunk => { output += chunk; if (output.includes('GUI-STAND-IN-READY')) finish(); });
         });
     }
-    const executable = runtime.startsWith('Node') ? process.execPath : require('electron');
+    const executable = process.execPath;
     const child = require('node:child_process').spawn(executable, [fixture], {
-        windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1',
+        windowsHide: true, env: { ...process.env,
             ...(guiProcess ? { WIFIMETER_APP_PID: String(guiProcess.pid) } : {}) }, stdio: ['ignore', 'pipe', 'pipe']
     });
     let stdout = '', stderr = '';

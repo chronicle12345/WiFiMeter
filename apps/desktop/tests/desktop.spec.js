@@ -3,20 +3,20 @@
 // 网卡数据由两端共用的 JSON 夹具注入，其余全是真实实现：
 // 主进程拉起 wifimeter-backend、按行交换 JSON、SQLite 落库、页面读取快照。
 
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
-import { createHarness, backendBinary } from './support/backend-harness.mjs';
+import { createHarness } from './support/backend-harness.mjs';
 
 let app, page, profile, errors, harness, fakeHome;
 
 async function launch(extraEnv = {}) {
     const env = { ...process.env, WIFIMETER_USER_DATA: profile, ...harness.env, ...extraEnv };
-    delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ executablePath: process.env.WIFIMETER_EXECUTABLE || undefined, args: process.env.WIFIMETER_EXECUTABLE ? [] : ['.'], env });
+    app = await desktop.launch({ env });
     page = await app.firstWindow();
     page.on('pageerror', error => errors.push(error.message));
     await expect(page).toHaveTitle(/流量总览/);
@@ -61,7 +61,6 @@ function query(sql) {
 }
 
 test.beforeEach(async () => {
-    test.skip(!existsSync(backendBinary), '未构建后端，跳过界面测试');
     profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-ui-'));
     errors = [];
     harness = await createHarness();
@@ -79,7 +78,7 @@ test.afterEach(async () => {
     expect(errors).toEqual([]);
 });
 
-test('四个页面展示真实采集结果，筛选、详情与键盘操作可用 @packaged-smoke', async () => {
+test('四个页面展示真实采集结果，筛选、详情与键盘操作可用 @backend-smoke', async () => {
     // 总览显示夹具注入的网络与用量。
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await expect(page.locator('.connection-details')).toContainText('Habitat_5G');

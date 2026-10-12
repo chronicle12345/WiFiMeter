@@ -69,6 +69,11 @@ test('build targets reject cross architecture Node resources before packaging', 
     assert.throws(() => buildOptions(['--target', 'i686-pc-windows-msvc'], host), /不匹配/);
     assert.deepEqual(buildOptions([], { platform: 'linux', arch: 'arm64' }).formats, ['deb', 'rpm', 'appimage']);
     assert.throws(() => buildOptions(['--formats', 'exe'], host), /不支持的 Tauri 格式/);
+    assert.throws(() => buildOptions(['--arch'], host), /参数/);
+    assert.throws(() => buildOptions(['--typo'], host), /参数/);
+    assert.throws(() => buildOptions([], { platform: 'linux', arch: 'ia32' }), /不支持/);
+    assert.throws(() => buildOptions(['--arch', 'arm64'], { platform: 'linux', arch: 'x64' }), /不能混用架构/);
+    assert.throws(() => buildOptions(['--platform', 'win32', '--arch', 'arm64'], { platform: 'linux', arch: 'x64' }), /不能混用架构/);
 });
 
 test('artifact collection selects the current version and rejects missing or ambiguous installers', t => {
@@ -85,7 +90,7 @@ test('artifact collection selects the current version and rejects missing or amb
 test('Windows staging contains native policy resources and a matching Node worker without Electron', { skip: process.platform !== 'win32' }, t => {
     const fixture = temporary(t);
     const fixtureApp = path.join(fixture, 'apps/desktop');
-    for (const folder of ['renderer', 'electron', 'assets', 'native/windows']) fs.cpSync(path.join(app, folder), path.join(fixtureApp, folder), { recursive: true });
+    for (const folder of ['renderer', 'host', 'assets', 'native/windows']) fs.cpSync(path.join(app, folder), path.join(fixtureApp, folder), { recursive: true });
     for (const dependency of ['marked', 'dompurify']) fs.cpSync(path.join(app, 'node_modules', dependency), path.join(fixtureApp, 'node_modules', dependency), { recursive: true });
     write(path.join(fixtureApp, 'package.json'), JSON.stringify({ version: '1.3.0' }));
     write(path.join(fixtureApp, 'LICENSE'), 'MIT fixture license');

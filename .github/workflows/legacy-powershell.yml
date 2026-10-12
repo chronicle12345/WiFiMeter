@@ -1,6 +1,7 @@
 name: Original 1.1.1 PowerShell portable
 
 on:
+  workflow_dispatch:
   workflow_call:
 
 permissions:

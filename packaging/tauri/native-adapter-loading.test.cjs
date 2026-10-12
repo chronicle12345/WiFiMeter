@@ -12,9 +12,9 @@ test('打包目录中的真实适配器能够加载共享自启动模块', () =>
     fs.mkdirSync(temporaryRoot, { recursive: true });
     const directory = fs.mkdtempSync(path.join(temporaryRoot, 'native-adapter-loading-'));
     const runtime = path.join(directory, 'runtime');
-    fs.mkdirSync(path.join(runtime, 'electron'), { recursive: true });
+    fs.mkdirSync(path.join(runtime, 'host'), { recursive: true });
     fs.copyFileSync(path.join(root, 'apps/desktop/tauri/native-adapter.cjs'), path.join(runtime, 'native-adapter.cjs'));
-    fs.copyFileSync(path.join(root, 'apps/desktop/electron/windows-autostart.cjs'), path.join(runtime, 'electron/windows-autostart.cjs'));
+    fs.copyFileSync(path.join(root, 'apps/desktop/host/windows-autostart.cjs'), path.join(runtime, 'host/windows-autostart.cjs'));
 
     const { createNativeAdapter } = require(path.join(runtime, 'native-adapter.cjs'));
     const appExe = 'C:\\Program Files\\WiFiMeter\\WiFiMeter.exe';

@@ -73,7 +73,7 @@ npm run test:unit
 npm run test:ui
 ```
 
-Backend tests are built with CMake and run with CTest. The UI suite uses the retained Electron host to check the shared renderer. Build the Windows x64 Tauri package and run its separate native WebView2 integration check with:
+Backend tests are built with CMake and run with CTest. The UI suite uses a headless browser, the actual Tauri page bridge and an isolated Node business host. On Windows it uses installed Microsoft Edge by default; otherwise install the Playwright Chromium version with `npm --prefix apps/desktop exec -- playwright install chromium`. No Electron runtime is required. Build the Windows x64 Tauri package and run its separate native WebView2 integration check with:
 
 ```sh
 node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis

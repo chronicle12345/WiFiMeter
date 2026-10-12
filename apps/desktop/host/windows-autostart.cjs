@@ -7,7 +7,7 @@ const runKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const approvedKey = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run';
 const names = ['WiFiMeter', 'io.wifimeter.demo'];
 
-// 两种桌面宿主共用同一登记名称，并只迁移当前程序的已知旧命令。
+// 开机启动统一使用一个登记名称，并只迁移当前程序的已知旧命令。
 function createWindowsAutostart({ executable, args = [], execute = execFileSync }) {
     const quote = value => `"${String(value).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/g, '$1$1')}"`;
     const argumentText = args.map(quote).join(' ');

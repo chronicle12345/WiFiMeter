@@ -9,9 +9,9 @@
 //   C:\Users\dev\AppData\Roaming\WiFiMeter Demo\wifimeter.db
 //
 // 逐段创建目录时把盘符 "C:" 也当成一个目录去 CreateDirectory。正常情况下它返回
-// ERROR_ALREADY_EXISTS 被忽略；但当进程的当前目录不可用时（Electron 拉起子进程时
+// ERROR_ALREADY_EXISTS 被忽略；但当进程的当前目录不可用时（宿主拉起子进程时
 // 常见），CreateDirectory("C:") 会返回 ERROR_ACCESS_DENIED，整个创建过程被判定为失败，
-// 后端直接以退出码 1 结束，界面永远停在“采集器未就绪”。
+// 后端直接以退出码 1 结束，界面永远停在采集器未就绪状态。
 
 #include <string>
 #include <string_view>

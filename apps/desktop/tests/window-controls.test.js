@@ -1,3 +1,4 @@
+import { tauriBridge } from './helpers/tauri-bridge.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
@@ -6,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import { createWindowControls } from '../electron/window-controls.cjs';
+import { createWindowControls } from '../host/window-controls.cjs';
 
 const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
     miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
@@ -117,8 +118,8 @@ test('dispose 后未完成的关闭对话框不再退出；非 Windows 不创建
     assert.equal(f.state.quits, 0);
 });
 
-import { createSystemIntegration } from '../electron/system.cjs';
-import { liveRates } from '../electron/mini/rates.js';
+import { createSystemIntegration } from '../host/system.cjs';
+import { liveRates } from '../host/mini/rates.js';
 
 test('hideToTray 确认托盘可用后才隐藏，不访问登录启动项', () => {
     for (const failure of ['none', 'constructor', 'menu']) {
@@ -184,13 +185,13 @@ test('主进程更新退出分支在后端已停止后仍释放小窗', async ()
     const { createRequire } = await import('node:module');
     const { createContext, runInContext } = await import('node:vm');
     const { fileURLToPath } = await import('node:url');
-    const filename = fileURLToPath(new URL('../electron/main.cjs', import.meta.url));
+    const filename = fileURLToPath(new URL('../host/main.cjs', import.meta.url));
     const require = createRequire(import.meta.url);
     const app = new EventEmitter();
     Object.assign(app, { getPath: () => 'fixture', requestSingleInstanceLock: () => false, quit() {} });
     const calls = [];
     const context = createContext({
-        require: name => name === 'electron' ? { app } : name === './product.cjs'
+        require: name => name === './desktop-runtime.cjs' ? { getDesktopRuntime: () => ({ app }) } : name === './product.cjs'
             ? { applyProductIdentity: () => ({ productName: 'fixture' }) } : require(name.startsWith('.') ? path.join(path.dirname(filename), name) : name),
         __dirname: path.dirname(filename), process: { platform: 'win32', env: {} }, console,
         fixtureControls: { dispose: () => calls.push('mini') },
@@ -290,32 +291,25 @@ test('小窗关闭 IPC 保存偏好并通知主窗口', async t => {
     assert.deepEqual(f.sent.at(-1), ['window-preferences:changed', { ...miniDefaults, miniWindow: false, closeAction: 'tray', theme: 'dark' }]);
 });
 
-test('preload 偏好订阅只传递数据，取消订阅不影响其他监听', async () => {
-    const ipcRenderer = new EventEmitter(), calls = [];
-    ipcRenderer.invoke = (...args) => { calls.push(args); return Promise.resolve(); };
-    let desktop;
-    const filename = fileURLToPath(new URL('../electron/preload.cjs', import.meta.url));
-    runInNewContext(await fs.readFile(filename, 'utf8'), {
-        require: () => ({ ipcRenderer, contextBridge: { exposeInMainWorld: (_name, api) => { desktop = api; } } }),
-        process: { platform: 'win32' }
-    });
+test('Tauri 偏好订阅只传递数据，取消订阅不影响其他监听', async () => {
+    const fixture = tauriBridge(), desktop = fixture.api;
     await desktop.windowPreferences.read();
     await desktop.windowPreferences.update({ theme: 'dark' });
-    assert.deepEqual(calls, [['window-preferences:read'], ['window-preferences:update', { theme: 'dark' }]]);
+    assert.deepEqual(fixture.calls, [['window-preferences:read'], ['window-preferences:update', { theme: 'dark' }]]);
     const received = [], other = [];
     const unsubscribe = desktop.windowPreferences.onChanged((...args) => received.push(args));
     const unsubscribeOther = desktop.windowPreferences.onChanged(value => other.push(value));
     const value = { ...miniDefaults, miniWindow: false, closeAction: 'tray', theme: 'dark' };
-    ipcRenderer.emit('window-preferences:changed', { sender: 'private' }, value);
+    fixture.send('window-preferences:changed', value);
     assert.deepEqual(received, [[value]]);
     unsubscribe(); unsubscribe();
-    ipcRenderer.emit('window-preferences:changed', {}, value);
+    fixture.send('window-preferences:changed', value);
     assert.equal(received.length, 1);
     assert.equal(other.length, 2);
     unsubscribeOther();
-    assert.equal(ipcRenderer.listenerCount('window-preferences:changed'), 0);
+    fixture.send('window-preferences:changed', value);
+    assert.equal(other.length, 2);
 });
-
 
 test('小窗新偏好校验、持久化、透明形状与实时通知', async t => {
     const f = await fixture(t);
@@ -388,7 +382,7 @@ test('后台测试小窗不因屏幕变化或定时器返回前台', async t => 
     assert.equal(mini.bounds.x, -32000); assert.equal(mini.bounds.y, -32000);
     assert.equal(starts, 0);
 });
-import { miniSize, snapBounds, collapsedBounds, isNear } from '../electron/mini-geometry.cjs';
+import { miniSize, snapBounds, collapsedBounds, isNear } from '../host/mini-geometry.cjs';
 
 test('负坐标工作区四边吸附，边条始终留在同一屏幕内', () => {
     const area = { x: -1920, y: -100, width: 1920, height: 1040 };
@@ -436,19 +430,16 @@ test('吸附屏幕移除后恢复可见位置，变更形状保留右边缘，�
     assert.equal(tasks.size, 0);
 });
 
-test('小窗 preload 订阅偏好与收起状态不泄露 Electron 事件，取消订阅清理监听', async () => {
-    const ipcRenderer = new EventEmitter(); let api;
-    const filename = fileURLToPath(new URL('../electron/mini/preload.cjs', import.meta.url));
-    runInNewContext(await fs.readFile(filename, 'utf8'), {
-        require: () => ({ ipcRenderer, contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } } })
-    });
+test('Tauri 小窗订阅偏好与收起状态只传递数据，取消订阅清理监听', () => {
+    const fixture = tauriBridge({ mini: true });
     for (const [method, channel] of [['onPreferences', 'window-preferences:changed'], ['onState', 'mini:state']]) {
         const values = [], payload = { collapsed: true, miniShape: 'circle' };
-        const unsubscribe = api[method]((...args) => values.push(args));
-        ipcRenderer.emit(channel, { sender: 'private' }, payload);
+        const unsubscribe = fixture.api[method]((...args) => values.push(args));
+        fixture.send(channel, payload);
         assert.deepEqual(values, [[payload]]);
         unsubscribe(); unsubscribe();
-        assert.equal(ipcRenderer.listenerCount(channel), 0);
+        fixture.send(channel, payload);
+        assert.equal(values.length, 1);
     }
 });
 

@@ -46,11 +46,9 @@ function tauriCsp(html) {
 
 function stageUi(appDirectory, uiDirectory) {
     copy(path.join(appDirectory, 'renderer'), path.join(uiDirectory, 'main'));
-    copy(path.join(appDirectory, 'electron/mini'), path.join(uiDirectory, 'mini'));
+    copy(path.join(appDirectory, 'host/mini'), path.join(uiDirectory, 'mini'));
     copy(path.join(appDirectory, 'assets/icon.png'), path.join(uiDirectory, 'assets/icon.png'));
     copy(path.join(appDirectory, 'assets/icon.ico'), path.join(uiDirectory, 'favicon.ico'));
-    const preload = path.join(uiDirectory, 'mini/preload.cjs');
-    if (fs.existsSync(preload)) fs.unlinkSync(preload);
     for (const page of ['main/index.html', 'mini/index.html']) {
         const file = path.join(uiDirectory, page);
         fs.writeFileSync(file, tauriCsp(fs.readFileSync(file, 'utf8')));
@@ -86,13 +84,14 @@ function validatePrepared(directory, { platform = process.platform, arch = proce
     const resources = path.join(directory, 'resources');
     checkBackend(resources, platform, arch);
     assertArchitecture(path.join(resources, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), platform, arch);
-    for (const file of ['runtime/host.cjs', 'runtime/native-adapter.cjs', 'runtime/electron/main.cjs', 'runtime/package.json', 'licenses/Nodejs-LICENSE.txt']) {
+    for (const file of ['runtime/host.cjs', 'runtime/native-adapter.cjs', 'runtime/host/main.cjs', 'runtime/host/desktop-runtime.cjs', 'runtime/package.json', 'licenses/Nodejs-LICENSE.txt']) {
         if (!fs.existsSync(path.join(resources, file))) throw new Error(`Tauri 资源不完整：${file}`);
     }
     for (const file of ['main/index.html', 'mini/index.html', 'main/shared/tokens.css', 'assets/icon.png', 'favicon.ico', 'vendor/marked.esm.js', 'vendor/purify.es.mjs']) {
         if (!fs.existsSync(path.join(directory, 'ui', file))) throw new Error(`Tauri 页面资源不完整：${file}`);
     }
-    if (fs.existsSync(path.join(resources, 'runtime/node_modules')) || fs.existsSync(path.join(resources, 'runtime/electron/preload.cjs'))
+    if (fs.existsSync(path.join(resources, 'runtime/node_modules')) || fs.existsSync(path.join(resources, 'runtime/electron'))
+        || fs.existsSync(path.join(resources, 'runtime/host/preload.cjs'))
         || fs.existsSync(path.join(directory, 'ui/mini/preload.cjs'))) throw new Error('Tauri 发布资源包含旧 Electron 运行时入口。');
 }
 
@@ -125,9 +124,9 @@ function prepare({ root = repositoryRoot, platform = process.platform, arch = pr
     for (const file of fs.readdirSync(path.join(appDirectory, 'tauri'))) {
         if (file.endsWith('.cjs') && !file.endsWith('.test.cjs')) copy(path.join(appDirectory, 'tauri', file), path.join(runtime, file));
     }
-    fs.mkdirSync(path.join(runtime, 'electron'), { recursive: true });
-    for (const file of fs.readdirSync(path.join(appDirectory, 'electron'))) {
-        if (file.endsWith('.cjs') && file !== 'preload.cjs') copy(path.join(appDirectory, 'electron', file), path.join(runtime, 'electron', file));
+    fs.mkdirSync(path.join(runtime, 'host'), { recursive: true });
+    for (const file of fs.readdirSync(path.join(appDirectory, 'host'))) {
+        if (file.endsWith('.cjs') && file !== 'preload.cjs') copy(path.join(appDirectory, 'host', file), path.join(runtime, 'host', file));
     }
     copy(path.join(appDirectory, 'assets'), path.join(runtime, 'assets'));
     fs.writeFileSync(path.join(runtime, 'package.json'), JSON.stringify({ name: 'wifimeter', version: metadata.version, private: true }, null, 2) + '\n');

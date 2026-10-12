@@ -2,7 +2,7 @@
 
 // A detached Node host survives the application, while Windows PowerShell keeps
 // working console streams in its ordinary child process. The launcher evaluates
-// this bundled source so the same code also works inside app.asar.
+// this bundled source from the packaged runtime without relying on its location.
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
@@ -11,10 +11,6 @@ if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
     throw Error('Missing update helper script.');
 }
 const env = { ...process.env };
-// The installer may start WiFiMeter when finished; it must launch the GUI.
-for (const name of Object.keys(env)) {
-    if (name.toUpperCase() === 'ELECTRON_RUN_AS_NODE') delete env[name];
-}
 const helper = spawn(path.win32.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
     ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
     { windowsHide: true, env, stdio: ['pipe', 'pipe', 'pipe'] });

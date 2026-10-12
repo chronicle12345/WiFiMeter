@@ -1,6 +1,6 @@
 // wifimeter-backend：本机采集与存储进程。
 //
-// Electron 主进程负责拉起它，通过标准输入输出按行交换 JSON；
+// Node 桌面宿主负责拉起它，通过标准输入输出按行交换 JSON；
 // 也可以单独运行用于排查：把请求写进标准输入即可。
 
 #include <sys/stat.h>

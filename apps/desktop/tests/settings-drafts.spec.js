@@ -1,11 +1,12 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { createHarness } from './support/backend-harness.mjs';
 
 let app, page, harness;
 test.beforeEach(async () => {
     harness = await createHarness();
-    const env = { ...process.env, ...harness.env }; delete env.ELECTRON_RUN_AS_NODE;
-    app = await electron.launch({ args: ['.'], env }); page = await app.firstWindow();
+    const env = { ...process.env, ...harness.env };
+    app = await desktop.launch({ env }); page = await app.firstWindow();
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.locator('.nav [data-page="settings"]').click();
     await page.locator('[data-category="quota"]').click();
@@ -38,7 +39,7 @@ test('pausing collection retains an invalid quota draft and its visible validati
 
 test('pausing collection retains a failed save and retry on the same form', async () => {
     await app.evaluate(({ ipcMain }) => {
-        const original = ipcMain._invokeHandlers.get('backend:request');
+        const original = ipcMain.getHandler('backend:request');
         globalThis.draftFixture = { fail: true };
         ipcMain.removeHandler('backend:request');
         ipcMain.handle('backend:request', (event, input) => input.method === 'updateTotalQuota' && globalThis.draftFixture.fail
@@ -64,7 +65,7 @@ test('clear and restore keep failed drafts visible and do not change backend dat
     await expect(page.locator('#totalQuotaForm [role="alert"]')).not.toBeEmpty();
     await app.evaluate(({ ipcMain }) => {
         globalThis.draftFixture = { calls: [] };
-        const original = ipcMain._invokeHandlers.get('backend:request');
+        const original = ipcMain.getHandler('backend:request');
         ipcMain.removeHandler('backend:request'); ipcMain.handle('backend:request', (event, input) => {
             globalThis.draftFixture.calls.push(input.method); return original(event, input);
         });

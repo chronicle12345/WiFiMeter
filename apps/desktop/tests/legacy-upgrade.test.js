@@ -64,9 +64,11 @@ async function runGuardFixture(script) {
 }
 
 test('installer replaces the default process terminator at the final selected-directory check', async () => {
-    const nsis = await readFile(path.join(root, 'packaging/windows/installer.nsh'), 'utf8');
+    const nsis = await readFile(path.join(root, 'packaging/tauri/windows/process-guard.nsh'), 'utf8');
+    const hooks = await readFile(path.join(root, 'packaging/tauri/windows/hooks.nsh'), 'utf8');
+    assert.match(hooks, /!include .*process-guard\.nsh/);
     assert.match(nsis, /!macro customCheckAppRunning\b/);
-    const definition = '!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}\\stop-legacy.ps1"';
+    const definition = '!define WIFIMETER_LEGACY_HELPER "${__FILEDIR__}\\..\\..\\windows\\stop-legacy.ps1"';
     assert.ok(nsis.indexOf(definition) >= 0 && nsis.indexOf(definition) < nsis.indexOf('!macro customCheckAppRunning'), 'Resolve the helper at include time, before macro expansion');
     const macro = nsis.slice(nsis.indexOf('!macro customCheckAppRunning'), nsis.indexOf('!macroend'));
     assert.ok(macro.includes('"${WIFIMETER_LEGACY_HELPER}"'));

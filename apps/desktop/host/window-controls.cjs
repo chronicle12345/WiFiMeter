@@ -16,7 +16,7 @@ const PALETTES = ['indigo', 'dark', 'light'];
 const THEMES = ['light', 'dark', 'system'];
 const ACTIONS = ['ask', 'tray', 'exit'];
 
-// Electron 由调用方注入，测试不会加载 Electron 或更改登录启动项。
+// 桌面宿主由调用方注入，测试不会加载原生窗口或更改登录启动项。
 function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData, getWindow,
     hideToTray, requestQuit, isQuitting = () => false, platform = process.platform,
     logger = () => {}, fileSystem = fs, backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1',
@@ -145,7 +145,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             title: 'WiFiMeter', frame: false, resizable: false, maximizable: false,
             minimizable: false, skipTaskbar: true, alwaysOnTop: true, show: false,
             transparent: true, backgroundColor: '#00000000', hasShadow: false, focusable: !backgroundTest && preferences.miniExpanded,
-            webPreferences: { preload: path.join(__dirname, 'mini', 'preload.cjs'),
+            webPreferences: {
                 contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
                 ...(backgroundTest ? { backgroundThrottling: false } : {}) }
         });

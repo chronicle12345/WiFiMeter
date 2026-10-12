@@ -1,7 +1,8 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { createHarness } from './support/backend-harness.mjs';
 let app,page,harness;
-async function launch(){const env={...process.env,...harness.env};delete env.ELECTRON_RUN_AS_NODE;app=await electron.launch({args:['.'],env});page=await app.firstWindow();await expect(page.locator('.nav [data-page="overview"]')).toBeVisible();}
+async function launch(){const env={...process.env,...harness.env};app=await desktop.launch({env});page=await app.firstWindow();await expect(page.locator('.nav [data-page="overview"]')).toBeVisible();}
 const snapshot=()=>page.evaluate(async()=>{const r=await window.desktop.backend.request('snapshot');if(!r.ok)throw Error(r.error.message);return r.result;});
 const preferences=()=>page.evaluate(()=>window.desktop.windowPreferences.read());
 const category=id=>page.locator(`[data-category="${id}"]`).click();

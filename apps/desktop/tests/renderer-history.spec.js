@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { mkdtemp, rm, readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,9 +9,8 @@ let app,page,profile,harness,errors;
 test.beforeEach(async({},testInfo)=>{
     profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-renderer-'));
     harness=await createHarness();errors=[];
-    const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-    const args=['.'];if(testInfo.title==='生成 v1.2 合成数据验收截图')args.push('--force-device-scale-factor=1');
-    app=await electron.launch({args,env});page=await app.firstWindow();
+    const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};
+    app=await desktop.launch({env});page=await app.firstWindow();
     page.on('pageerror',error=>errors.push(error.message));
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
     await page.evaluate(()=>window.desktop.backend.request('setPaused',{paused:true}));
@@ -145,7 +145,7 @@ test('设置页跨月自动更新范围时保留未保存代理输入和焦点',
 
 test('切换预设范围后返回历史和应用页继续显示已选分钟分组',async()=>{
     const day=await page.evaluate(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;});
-    await app.evaluate((_electron,day)=>{
+    await app.evaluate((_host,day)=>{
         const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
         s.minuteRecords=['10:01','10:02'].map((time,index)=>({networkId:id,date:day,time,hour:10,minute:index+1,rxBytes:'1000',txBytes:'100'}));
         s.appMinuteRecords=s.minuteRecords.map(r=>({...r,appId:'C:\\Apps\\Browser.exe',name:'Browser'}));
@@ -366,7 +366,7 @@ test('生成 v1.2 合成数据验收截图',async({},testInfo)=>{
  });
  for(const language of ['zh-CN','en']){
   const english=language==='en';
-  await app.evaluate((_electron,language)=>{
+  await app.evaluate((_host,language)=>{
    const s=globalThis.rendererFixture.snapshot;s.settings.language=language;
    s.networks[0].alias=language==='en'?'Demo Wi-Fi':'演示无线网络';
    s.networks[1].alias=language==='en'?'Demo Ethernet':'演示有线网络';

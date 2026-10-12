@@ -7,7 +7,7 @@
 //
 // 开机启动按平台分两条路：
 //
-//   * Windows：两种宿主共用 windows-autostart.cjs，在登录启动项里登记，
+//   * Windows：宿主使用 windows-autostart.cjs，在登录启动项里登记，
 //     由系统负责拉起，比自建快捷方式可靠；
 //   * Linux：没有 setLoginItemSettings（那是 macOS/Windows 的接口），
 //     按 XDG 约定写 ~/.config/autostart 下的 .desktop 文件。
@@ -26,18 +26,17 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
     let settings = { language: 'zh-CN', autoStart: false, minimizeToTray: false, notifications: true };
     let quitting = false;
 
-    // Windows：登记或取消登录启动项。开发态（未打包）execPath 指向 electron 本体，
-    // 因此把应用目录作为参数带上，登录后仍能加载正确的应用。
+    // 原生宿主负责使用实际的桌面可执行文件登记登录启动项。
     function applyWindowsAutostart(enabled, enableAutostart) {
         if (typeof app.setLoginItemSettings !== 'function') return false;
-        const options = { openAtLogin: enabled, path: process.execPath };
+        const executable = process.env.WIFIMETER_APP_EXE || process.execPath;
+        const options = { openAtLogin: enabled, path: executable };
         if (enableAutostart) options.enabled = true;
-        if (app.isPackaged === false) options.args = [path.resolve(__dirname, '..')];
         const applied = app.setLoginItemSettings(options);
         if (typeof applied?.openAtLogin === 'boolean') return applied.openAtLogin;
         // 读回系统里的实际状态：组策略或安全软件可能拒绝写入。
         if (typeof app.getLoginItemSettings !== 'function') return enabled;
-        return Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin);
+        return Boolean(app.getLoginItemSettings({ path: executable }).openAtLogin);
     }
 
     // Linux：写 XDG 自启动文件。
@@ -47,7 +46,7 @@ function createSystemIntegration({ app, Tray, Menu, Notification, nativeImage, g
             await fs.rm(file, { force: true });
             return false;
         }
-        // 打包后 execPath 就是 /opt/WiFiMeter/wifimeter；开发态是 electron 本体。
+        // 使用原生桌面入口；APPIMAGE 保留 AppImage 的原有启动路径。
         const command = process.env.APPIMAGE ?? process.env.WIFIMETER_APP_EXE ?? process.execPath;
         // Desktop Entry 先处理字符串转义，再解析 Exec 引号及字面百分号。
         const quoted = '"' + command.replace(/%/g, '%%').replace(/["`$\\]/g, '\\$&')
@@ -140,7 +139,7 @@ X-GNOME-Autostart-enabled=true
                 autoStartError = String(error?.message || '无法同步开机启动状态。');
                 autoStartApplied = false;
                 if (platform === 'win32' && typeof app.getLoginItemSettings === 'function') {
-                    try { autoStartApplied = Boolean(app.getLoginItemSettings({ path: process.execPath }).openAtLogin); }
+                    try { autoStartApplied = Boolean(app.getLoginItemSettings({ path: process.env.WIFIMETER_APP_EXE || process.execPath }).openAtLogin); }
                     catch { /* 保留原同步错误，不能把读取失败当成成功。 */ }
                 }
             }

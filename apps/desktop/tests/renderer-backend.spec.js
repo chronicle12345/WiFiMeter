@@ -1,4 +1,5 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { desktop } from './support/browser-desktop.mjs';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,8 +10,8 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
     const profile=await mkdtemp(path.join(os.tmpdir(),'wifimeter-history-backend-'));
     const harness=await createHarness();let app;
     try{
-        const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};delete env.ELECTRON_RUN_AS_NODE;
-        app=await electron.launch({args:['.'],env});const page=await app.firstWindow(),errors=[];
+        const env={...process.env,WIFIMETER_USER_DATA:profile,...harness.env};
+        app=await desktop.launch({env});const page=await app.firstWindow(),errors=[];
         page.on('pageerror',error=>errors.push(error.message));
         await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
         const response=await page.evaluate(async()=>{
@@ -81,8 +82,8 @@ test('真实后端查询旧日期并导出，语言偏好在页面重载后恢�
 test('refresh beside export reloads backend values without changing the selected range', async () => {
     const harness = await createHarness(); let app;
     try {
-        const env = { ...process.env, ...harness.env }; delete env.ELECTRON_RUN_AS_NODE;
-        app = await electron.launch({ args: ['.'], env });
+        const env = { ...process.env, ...harness.env };
+        app = await desktop.launch({ env });
         const page = await app.firstWindow();
         await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi');
         const refresh = page.locator('.toolbar-actions [data-action="refresh"]');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createNativeAdapter } from '../tauri/native-adapter.cjs';
-import { createSystemIntegration } from '../electron/system.cjs';
+import { createSystemIntegration } from '../host/system.cjs';
 
 const appExe = 'C:\\Program Files\\WiFiMeter\\WiFiMeter.exe';
 const command = `"${appExe}"`;

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-const { createAppControl } = createRequire(import.meta.url)('../electron/app-control.cjs');
+const { createAppControl } = createRequire(import.meta.url)('../host/app-control.cjs');
 const program = String.raw`C:\Apps\Browser.exe`;
 const second = String.raw`C:\Apps\other.exe`;
 const active = { Blocked: true, Throttled: true, UploadKbps: 1024, DownloadThrottled: false, DownloadKbps: null };

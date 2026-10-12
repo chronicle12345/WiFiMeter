@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 let createAppControl;
-try { ({ createAppControl } = require('../electron/app-control.cjs')); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
+try { ({ createAppControl } = require('../host/app-control.cjs')); } catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
 const program = String.raw`C:\Program Files\Example\app.exe`;
 function peImage() {
     const bytes = Buffer.alloc(512);

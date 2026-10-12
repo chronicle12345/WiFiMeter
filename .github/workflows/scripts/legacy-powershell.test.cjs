@@ -42,14 +42,14 @@ test('发布命令追加实际下载路径，拒绝重复或未验证的附件',
         version: '1.1.1', runtime: 'PowerShell', name, size: payload.length,
         sha256: crypto.createHash('sha256').update(payload).digest('hex') }));
     const list = path.join(directory, 'release-files.txt');
-    const electronFiles = Array.from({ length: 12 }, (_, i) => `/electron/package-${i}`);
-    fs.writeFileSync(list, electronFiles.join('\n') + '\n');
+    const installerFiles = Array.from({ length: 9 }, (_, i) => `/installers/package-${i}`);
+    fs.writeFileSync(list, installerFiles.join('\n') + '\n');
     const run = () => execFileSync(process.execPath, [path.join(__dirname, 'legacy-powershell.cjs'), directory, list], { stdio: 'pipe' });
     run();
-    assert.deepEqual(fs.readFileSync(list, 'utf8').trim().split('\n'), [...electronFiles, file]);
+    assert.deepEqual(fs.readFileSync(list, 'utf8').trim().split('\n'), [...installerFiles, file]);
     assert.throws(run);
-    fs.writeFileSync(list, electronFiles.join('\n') + '\n');
+    fs.writeFileSync(list, installerFiles.join('\n') + '\n');
     fs.appendFileSync(file, 'tampered');
     assert.throws(run);
-    assert.equal(fs.readFileSync(list, 'utf8'), electronFiles.join('\n') + '\n');
+    assert.equal(fs.readFileSync(list, 'utf8'), installerFiles.join('\n') + '\n');
 });

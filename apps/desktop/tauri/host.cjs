@@ -2,7 +2,6 @@
 
 const path = require('node:path');
 const readline = require('node:readline');
-const Module = require('node:module');
 const fs = require('node:fs');
 const { createNativeAdapter } = require('./native-adapter.cjs');
 const options = new Map();
@@ -22,7 +21,6 @@ if (!configuration.userData || !configuration.appExe) throw Error('桌面宿主�
 // 标准输出只传协议；业务日志转到标准错误，避免破坏 JSON 行。
 console.log = (...args) => console.error(...args);
 process.resourcesPath = resourcePath;
-process.env.WIFIMETER_DESKTOP_RUNTIME = 'tauri';
 process.env.WIFIMETER_APP_EXE = configuration.appExe;
 let outputClosed = false, disconnectStarted = false;
 const send = message => { if (!outputClosed) process.stdout.write(JSON.stringify(message) + '\n'); };
@@ -36,16 +34,10 @@ function disconnect() {
     setTimeout(() => process.exit(process.exitCode || 0), 10000).unref();
 }
 process.stdout.on('error', error => { if (error.code === 'EPIPE') disconnect(); else throw error; });
-const originalLoad = Module._load;
-Module._load = function(request, parent, isMain) {
-    if (request === 'electron') return runtime.api;
-    return originalLoad.call(this, request, parent, isMain);
-};
-try {
-    const packaged = path.join(resourcePath, 'runtime', 'electron', 'main.cjs');
-    const main = fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../electron/main.cjs');
-    require(main);
-} finally { Module._load = originalLoad; }
+const packaged = path.join(resourcePath, 'runtime', 'host', 'main.cjs');
+const main = fs.existsSync(packaged) ? packaged : path.resolve(__dirname, '../host/main.cjs');
+require(path.join(path.dirname(main), 'desktop-runtime.cjs')).configureDesktopRuntime(runtime.api);
+require(main);
 
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', line => {

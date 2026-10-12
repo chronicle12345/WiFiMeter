@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createFileActions, MAX_BACKUP_BYTES, assertBackupSize } from '../electron/files.cjs';
+import { createFileActions, MAX_BACKUP_BYTES, assertBackupSize } from '../host/files.cjs';
 
 test('desktop save and restore round trip UTF-8 content', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-files-'));

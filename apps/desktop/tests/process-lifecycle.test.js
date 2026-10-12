@@ -9,7 +9,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { runInNewContext } from 'node:vm';
 
 const require = createRequire(import.meta.url);
-const directory = fileURLToPath(new URL('../electron/', import.meta.url));
+const directory = fileURLToPath(new URL('../host/', import.meta.url));
 const flush = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 
 // 进程、窗口、系统设置和计时器均为内存替身，不读写用户数据。
@@ -96,10 +96,10 @@ async function mainHarness({ prepare = true, quitChoice = 0, legacyFailure = fal
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
     const imports = {
-        electron: { app, BrowserWindow: Window, dialog: {
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: {
             async showMessageBox() { calls.push('confirm'); return { response: quitChoice }; },
             showMessageBoxSync() { calls.push('late-confirm'); return quitChoice; }, showErrorBox() {}
-        }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } },
+        }, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, Menu: { setApplicationMenu() {} } }) },
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
         './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
         './files.cjs': { createFileActions: () => ({}) },
@@ -273,7 +273,7 @@ test('exiting after the isolated window is destroyed does not ask for drafts', a
 });
 
 test('mini collector status clears rates and application activity without a backend query', async t => {
-    const { createWindowControls } = require('../electron/window-controls.cjs');
+    const { createWindowControls } = require('../host/window-controls.cjs');
     const windows = [], handlers = new Map();
     let queries = 0;
     class Window extends EventEmitter {

@@ -57,7 +57,7 @@ try {
     const bridge = readFileSync(path.join(__dirname, 'update-bridge.cjs'), 'utf8');
     const helper = spawn(process.execPath,
         ['-e', bridge, Buffer.from(script, 'utf16le').toString('base64')],
-        { detached: true, windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
+        { detached: true, windowsHide: true, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] });
     await new Promise((resolve, reject) => {
         let settled = false, output = '', diagnostic = '', authorized = false;
         const finish = error => {

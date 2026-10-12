@@ -19,7 +19,7 @@ function verify(directory) {
     return file;
 }
 
-// 单独追加附件，不改变 Electron 的矩阵、版本或命名校验。
+// 旧版本附件单独校验，不改变当前 Tauri 安装包矩阵。
 if (require.main === module) {
     const [directory, list] = process.argv.slice(2);
     const file = verify(directory);

@@ -1,6 +1,6 @@
 # Windows 安装器收尾检查
 
-本项目固定使用 Tauri CLI 2.12.1 的 NSIS 模板副本 `installer.nsi`，通过 `installerHooks` 替换 `CheckIfAppIsRunning` 宏。`utils.nsh` 中的原宏已删除，安装和卸载时的全部调用都会执行原项目 `packaging/windows/installer.nsh` 的 `customCheckAppRunning`。
+本项目固定使用 Tauri CLI 2.12.1 的 NSIS 模板副本 `installer.nsi`，通过 `installerHooks` 替换 `CheckIfAppIsRunning` 宏。`utils.nsh` 中的原宏已删除，安装和卸载时的全部调用都会执行 `packaging/tauri/windows/process-guard.nsh` 的 `customCheckAppRunning`。共享进程保护已迁入 Tauri 打包目录，旧 Electron 打包入口归档。
 
 该检查先确认旧采集器完成保存并退出。运行中的桌面版本需要用户正常退出；检查失败时中止操作，不强制结束进程。卸载沿用 Tauri 默认行为，默认不删除用户数据。
 

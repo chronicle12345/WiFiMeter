@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage, shell, screen } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, Notification, nativeImage, shell, screen } = require('./desktop-runtime.cjs').getDesktopRuntime();
 const path = require('node:path');
 const { existsSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -119,11 +119,6 @@ async function requestBackend(method, params = {}, options) {
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
 // 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
 const productName = applyProductIdentity(app, process.platform, app.getPath('appData')).productName;
-if (process.platform === 'win32' && process.env.WIFIMETER_DESKTOP_RUNTIME !== 'tauri' && process.env.WIFIMETER_TEST_ISOLATION !== '1') {
-    const { createWindowsAutostart } = require('./windows-autostart.cjs');
-    Object.assign(app, createWindowsAutostart({ executable: process.execPath,
-        args: app.isPackaged === false ? [path.resolve(__dirname, '..')] : [] }));
-}
 // Tests use an isolated profile and never modify the user's demo records.
 if (process.env.WIFIMETER_USER_DATA) app.setPath('userData', process.env.WIFIMETER_USER_DATA);
 // Explicit fixture mode isolates operating-system settings as well as the database.
@@ -153,7 +148,6 @@ if (primaryInstance) app.whenReady().then(async () => {
         title: productName, backgroundColor: '#f4f7fc',
         icon: path.join(__dirname, '../assets/icon.png'),
         webPreferences: {
-            preload: path.join(__dirname, 'preload.cjs'),
             contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
             ...(backgroundTest ? { backgroundThrottling: false } : {})
         }
@@ -279,7 +273,7 @@ if (primaryInstance) app.whenReady().then(async () => {
     const trusted = event => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
         && event.senderFrame.url.split(/[?#]/)[0] === pageURL;
 
-    // 失败以结果信封返回而不是抛出：Electron 跨进程只保留错误消息，会丢掉错误码，
+    // 失败以结果信封返回而不是抛出：跨进程调用只保留错误消息，会丢掉错误码，
     // 而界面需要靠错误码决定提示文案。
     ipcMain.handle('backend:request', async (event, payload) => {
         if (!trusted(event)) throw Error('不支持的页面请求。');

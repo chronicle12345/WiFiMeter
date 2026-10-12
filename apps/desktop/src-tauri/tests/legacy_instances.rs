@@ -44,60 +44,54 @@ impl Drop for Profile {
             .unwrap()
             .to_string_lossy()
             .starts_with("wifimeter-instance-test-"));
-        fs::remove_dir_all(&self.0).unwrap();
+        let archive = std::env::temp_dir().join("wifimeter-instance-archive");
+        fs::create_dir_all(&archive).unwrap();
+        fs::rename(&self.0, archive.join(self.0.file_name().unwrap())).unwrap();
     }
 }
 
-struct Electron {
+struct LockHolder {
     child: Child,
     control: Profile,
     next_probe: u64,
 }
 
-impl Electron {
+impl LockHolder {
     fn launch(profile: &Path) -> (Self, String) {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let electron_directory = std::env::var_os("ELECTRON_OVERRIDE_DIST_PATH")
-            .filter(|directory| !directory.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| manifest.join("../node_modules/electron/dist"));
-        let executable = electron_directory.join("electron.exe");
-        assert!(
-            executable.is_file(),
-            "Electron 测试基础设施错误：找不到运行时 {}",
-            executable.display()
-        );
-        let fixture = manifest.join("tests/fixtures/electron-instance.cjs");
+        let executable =
+            PathBuf::from(std::env::var_os("SystemRoot").expect("Windows system directory"))
+                .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let fixture = manifest.join("tests/fixtures/profile-lock.ps1");
         assert!(
             fixture.is_file(),
-            "Electron 测试基础设施错误：找不到夹具 {}",
+            "缺少独立锁文件测试夹具 {}",
             fixture.display()
         );
         // 每次启动使用独立控制目录，带序号的请求不会复用旧响应。
         let control = Profile::new();
         let stdout = fs::File::create(control.0.join("stdout.log"))
-            .expect("create the isolated Electron stdout log");
+            .expect("create the isolated lock-holder stdout log");
         let stderr = fs::File::create(control.0.join("stderr.log"))
-            .expect("create the isolated Electron stderr log");
+            .expect("create the isolated lock-holder stderr log");
         let child = Command::new(executable)
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
             .arg(fixture)
             .arg(profile)
             .arg(&control.0)
-            .env_remove("ELECTRON_RUN_AS_NODE")
-            // Windows 入口在调试构建中将 CI 断言写入 stderr，并支持禁止重接控制台。
-            // https://github.com/electron/electron/blob/v44.4.5/shell/app/electron_main_win.cc
-            .env("CI", "1")
-            .env("ELECTRON_NO_ATTACH_CONSOLE", "1")
-            // 环境变量启用 stderr 日志，不触发 --enable-logging 创建控制台的路径。
-            // https://github.com/electron/electron/blob/v44.4.5/shell/common/logging.cc
-            .env("ELECTRON_ENABLE_LOGGING", "1")
-            .env_remove("ELECTRON_LOG_FILE")
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .creation_flags(0x08000000)
             .spawn()
-            .expect("launch the isolated Electron fixture");
+            .expect("launch the isolated lock-holder fixture");
         let mut instance = Self {
             child,
             control,
@@ -124,7 +118,7 @@ impl Electron {
     fn infrastructure_error(&mut self, phase: &str, details: String) -> ! {
         let status = self.child.try_wait();
         panic!(
-            "Electron 测试基础设施错误：{phase}，{details}，PID {}，状态 {status:?}\n控制目录：{}\nstdout：\n{}\nstderr：\n{}",
+            "锁文件测试基础设施错误：{phase}，{details}，PID {}，状态 {status:?}\n控制目录：{}\nstdout：\n{}\nstderr：\n{}",
             self.child.id(),
             self.control.0.display(),
             self.log_tail("stdout.log"),
@@ -193,7 +187,7 @@ impl Electron {
     }
 }
 
-impl Drop for Electron {
+impl Drop for LockHolder {
     fn drop(&mut self) {
         let _ = fs::write(self.control.0.join("exit"), b"");
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -208,52 +202,52 @@ impl Drop for Electron {
 }
 
 #[test]
-fn refuses_a_profile_held_by_electron_before_any_database_access() {
+fn refuses_a_profile_held_by_lock_holder_before_any_database_access() {
     let profile = Profile::new();
     let database = profile.0.join("wifimeter.db");
     fs::write(&database, b"existing data must stay untouched").unwrap();
-    let (mut electron, state) = Electron::launch(&profile.0);
+    let (mut lock_holder, state) = LockHolder::launch(&profile.0);
     assert_eq!(state, "READY");
     let acquired = LegacyInstanceGuard::acquire(&profile.0);
-    electron.verify_running("同目录互斥检查后");
+    lock_holder.verify_running("同目录互斥检查后");
     assert!(
         acquired.is_err(),
-        "Tauri must refuse an active Electron profile"
+        "Tauri must refuse an active profile lock"
     );
     assert_eq!(
         fs::read(&database).unwrap(),
         b"existing data must stay untouched"
     );
-    drop(electron);
+    drop(lock_holder);
     assert!(
         LegacyInstanceGuard::acquire(&profile.0).is_ok(),
-        "a clean Electron exit releases the profile"
+        "a clean lock-holder exit releases the profile"
     );
 }
 
 #[test]
-fn unrelated_electron_profile_does_not_prevent_startup() {
+fn unrelated_lock_holder_profile_does_not_prevent_startup() {
     let first = Profile::new();
     let second = Profile::new();
-    let (mut electron, state) = Electron::launch(&first.0);
+    let (mut lock_holder, state) = LockHolder::launch(&first.0);
     assert_eq!(state, "READY");
     let acquired = LegacyInstanceGuard::acquire(&second.0);
-    electron.verify_running("不同目录互斥检查后");
+    lock_holder.verify_running("不同目录互斥检查后");
     assert!(acquired.is_ok());
 }
 
 #[test]
-fn an_electron_launch_cannot_open_a_profile_held_by_tauri() {
+fn a_lock_holder_launch_cannot_open_a_profile_held_by_tauri() {
     let profile = Profile::new();
     let guard = LegacyInstanceGuard::acquire(&profile.0).expect("unused profile is available");
-    let (electron, state) = Electron::launch(&profile.0);
+    let (lock_holder, state) = LockHolder::launch(&profile.0);
     assert_eq!(
         state, "DENIED",
-        "the legacy entry point must respect an active Tauri profile"
+        "an independent process must respect an active Tauri profile"
     );
-    drop(electron);
+    drop(lock_holder);
     drop(guard);
-    let (_electron, state) = Electron::launch(&profile.0);
+    let (_lock_holder, state) = LockHolder::launch(&profile.0);
     assert_eq!(
         state, "READY",
         "Tauri cleanup releases the profile for a later launch"

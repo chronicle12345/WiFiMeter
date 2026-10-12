@@ -85,7 +85,7 @@ try {
  * state 保留 helper 字段及 null 查询状态，UploadKbps 为 Kbit/s；查询成功不代表联网被阻断。
  * runner(executable, args, options) => Promise<{ stdout, stderr? }>，默认使用 execFile。
  * io、runner、userDataDir、recordsIo、isPackaged 和 resourcesPath 仅供可信主进程配置，不能从 IPC 请求透传。
- * 打包资源：resources/native/windows/AppNetworkControl.psm1，必须在 asar 外。
+ * 打包资源：resources/native/windows/AppNetworkControl.psm1，与宿主运行时分开存放。
  * 无定时采样；调用方仅在选择或用户操作时请求，不能接入每秒流量刷新。
  */
 function createAppControl({ platform = process.platform, dialog, getWindow = () => undefined,

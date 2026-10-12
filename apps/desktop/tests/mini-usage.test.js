@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { miniRange, miniApplicationRows } from '../electron/mini-usage.cjs';
+import { miniRange, miniApplicationRows } from '../host/mini-usage.cjs';
 
 const minute = (date, time, patch = {}) => ({ networkId: 'home', appId: 'browser', name: 'Browser', date, time,
     hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)), rxBytes: '10', txBytes: '1', ...patch });

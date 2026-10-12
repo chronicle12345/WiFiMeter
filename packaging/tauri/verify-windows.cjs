@@ -9,9 +9,7 @@ const common = require('./verify-common.cjs');
 const { root, verificationOptions, compareResources, compareExecutable, verifyRuntime } = common;
 
 function sevenZipExecutable() {
-    const appDirectory = path.join(root, 'apps/desktop');
     const candidates = [
-        path.join(appDirectory, 'node_modules/electron-winstaller/vendor/7z.exe'),
         path.win32.join(process.env.ProgramFiles || 'C:\\Program Files', '7-Zip/7z.exe'),
         path.win32.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', '7-Zip/7z.exe')
     ];
@@ -32,7 +30,7 @@ async function main(args = process.argv.slice(2)) {
     const { version } = readMetadata(root);
     const [installer] = await validateAssets(options.directory, version, { buildTree: true, platform: 'win32', arch: options.arch });
     const sevenZip = sevenZipExecutable();
-    assert.ok(fs.existsSync(sevenZip), 'Install the locked desktop development dependencies before validating packages.');
+    assert.ok(fs.existsSync(sevenZip), 'Install the full 7-Zip program before validating NSIS packages.');
     const build = path.join(root, 'build');
     fs.mkdirSync(build, { recursive: true });
     const output = fs.mkdtempSync(path.join(build, `tauri-package-check-${options.arch}-`));

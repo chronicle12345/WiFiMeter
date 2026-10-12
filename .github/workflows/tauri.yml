@@ -39,7 +39,7 @@ jobs:
           node-version: 22.23.3
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
-      - name: Install locked browser resources for packaging tests
+      - name: Install locked dependencies for packaging tests
         run: npm ci --prefix apps/desktop --ignore-scripts
       - name: Validate packaging and release helpers
         run: |
@@ -61,6 +61,102 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/workflows/scripts/tauri-validated-run.cjs
+
+  renderer:
+    name: ${{ matrix.platform }} browser UI shard ${{ matrix.shard }}/2
+    needs: metadata
+    if: needs.metadata.outputs.source_run_id == ''
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [Windows, Linux]
+        shard: [1, 2]
+        include:
+          - platform: Windows
+            runner: windows-2022
+            native_platform: win32
+            build_directory: build/windows
+          - platform: Linux
+            runner: ubuntu-22.04
+            native_platform: linux
+            build_directory: build
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      WIFIMETER_BACKGROUND_TEST: '1'
+      WIFIMETER_TEST_ISOLATION: '1'
+      WIFIMETER_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 22.23.3
+          architecture: x64
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - name: Install locked browser test dependencies
+        run: |
+          npm ci --prefix apps/desktop
+          if ($LASTEXITCODE) { throw 'npm ci failed' }
+      - name: Resolve the locked Playwright browser version
+        id: browser
+        run: |
+          $version = node -p "require('./apps/desktop/node_modules/playwright/package.json').version"
+          if ($LASTEXITCODE) { throw 'Playwright metadata is missing' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "PLAYWRIGHT_BROWSERS_PATH=$(Join-Path $env:RUNNER_TEMP 'playwright-browsers')" >> $env:GITHUB_ENV
+          "PLAYWRIGHT_JSON_OUTPUT_NAME=$(Join-Path $env:RUNNER_TEMP 'tauri-ui.json')" >> $env:GITHUB_ENV
+      - name: Cache the locked Chromium runtime
+        id: browser_cache
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: ${{ runner.temp }}/playwright-browsers
+          key: tauri-browser-v1-${{ runner.os }}-${{ steps.browser.outputs.version }}
+      - name: Install browser system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          node apps/desktop/node_modules/@playwright/test/cli.js install-deps chromium
+          if ($LASTEXITCODE) { throw 'Chromium system dependencies failed' }
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config libsqlite3-dev
+          if ($LASTEXITCODE) { throw 'Browser fixture backend build dependencies failed' }
+      - name: Install the locked Chromium runtime on a cache miss
+        if: steps.browser_cache.outputs.cache-hit != 'true'
+        run: |
+          node apps/desktop/node_modules/@playwright/test/cli.js install chromium
+          if ($LASTEXITCODE) { throw 'Chromium installation failed' }
+      - name: Build the real backend for isolated browser fixtures
+        run: |
+          node .github/workflows/scripts/ci.cjs environment '${{ matrix.native_platform }}' x64
+          if ($LASTEXITCODE) { throw 'Browser backend environment failed' }
+          if ('${{ matrix.native_platform }}' -eq 'win32') {
+            cmake -S backend -B '${{ matrix.build_directory }}' -G 'Visual Studio 17 2022' -A x64 -DWIFIMETER_BUILD_TESTS=OFF
+          } else {
+            cmake -S backend -B '${{ matrix.build_directory }}' -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=OFF -DWIFIMETER_LINUX_APP_CAPTURE=OFF
+          }
+          if ($LASTEXITCODE) { throw 'Browser fixture backend configuration failed' }
+          cmake --build '${{ matrix.build_directory }}' --target wifimeter-backend --config Release --parallel 2
+          if ($LASTEXITCODE) { throw 'Browser fixture backend build failed' }
+      - name: Run the complete browser suite by shard without skipped or flaky tests
+        run: |
+          npm run test:ui -- --shard='${{ matrix.shard }}/2' --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
+          if ($LASTEXITCODE) { throw 'Browser renderer tests failed' }
+          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
+          if ($LASTEXITCODE) { throw 'Every browser test in the shard must pass without retries' }
+      - name: Upload browser test reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: tauri-browser-ui-${{ matrix.platform }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/tauri-ui.json
+            ${{ runner.temp }}/playwright-tauri/
+          if-no-files-found: error
+          retention-days: 14
 
   windows:
     name: Windows ${{ matrix.arch }} Tauri
@@ -139,31 +235,8 @@ jobs:
           restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
       - name: Install locked desktop dependencies
         run: |
-          if ('${{ matrix.arch }}' -eq 'ia32') {
-            npm ci --prefix apps/desktop --ignore-scripts
-          } else {
-            npm ci --prefix apps/desktop
-          }
+          npm ci --prefix apps/desktop
           if ($LASTEXITCODE) { throw 'npm ci failed' }
-      - name: Install the locked native Electron fixture runtime
-        if: matrix.arch != 'ia32'
-        run: |
-          # Electron 44 exposes an explicit installer instead of an npm postinstall script.
-          node apps/desktop/node_modules/electron/install.js
-          if ($LASTEXITCODE) { throw 'Electron fixture runtime installation failed' }
-          node -e "require('./packaging/targets.cjs').assertArchitecture(require('./apps/desktop/node_modules/electron'), 'win32', process.arch)"
-      - name: Download pinned official ia32 Electron fixture runtime
-        if: matrix.arch == 'ia32'
-        id: ia32_runtime
-        run: node .github/workflows/scripts/install-electron-ia32.cjs download
-      - name: Activate Electron 43 for ia32 renderer regression tests
-        if: matrix.arch == 'ia32'
-        env:
-          ELECTRON_ARCHIVE: ${{ steps.ia32_runtime.outputs.archive }}
-          ELECTRON_DIRECTORY: ${{ steps.ia32_runtime.outputs.directory }}
-        run: |
-          Expand-Archive -LiteralPath $env:ELECTRON_ARCHIVE -DestinationPath $env:ELECTRON_DIRECTORY -Force
-          node .github/workflows/scripts/install-electron-ia32.cjs activate $env:ELECTRON_DIRECTORY
       - name: Ensure WebView2 Runtime for packaged integration tests
         timeout-minutes: 5
         run: |
@@ -211,16 +284,10 @@ jobs:
           if ($LASTEXITCODE) { throw 'Native ETW capture failed' }
           & (Join-Path $env:GITHUB_WORKSPACE "$env:BUILD_DIR/tests/Release/windows_estats_smoke_test.exe")
           if ($LASTEXITCODE -ne 0) { throw 'Native TCP EStats capture failed; a skip is not a pass' }
-      - name: Desktop unit and renderer regression tests
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/tauri-ui.json
+      - name: Desktop host and backend integration unit tests
         run: |
           npm run test:unit
           if ($LASTEXITCODE) { throw 'Unit tests failed' }
-          npm run test:ui -- '^(?!.*packaging\.spec\.js$).*\.spec\.js$' --workers=2 --reporter=list,json --output "$env:RUNNER_TEMP/playwright-tauri"
-          if ($LASTEXITCODE) { throw 'Renderer tests failed' }
-          node .github/workflows/scripts/ci.cjs ui-report $env:PLAYWRIGHT_JSON_OUTPUT_NAME
-          if ($LASTEXITCODE) { throw 'Renderer tests must all execute and pass' }
       - name: Validate the official Node runtime and NSIS extraction tool
         run: |
           node packaging/tauri/lean-node-check.cjs
@@ -249,8 +316,6 @@ jobs:
         with:
           name: tauri-diagnostics-windows-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/playwright-tauri/
-            ${{ runner.temp }}/tauri-ui.json
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
@@ -305,11 +370,6 @@ jobs:
         run: bash .github/workflows/scripts/tauri-linux-deps.sh
       - name: Install locked desktop dependencies
         run: npm ci --prefix apps/desktop
-      - name: Install the locked native Electron fixture runtime
-        run: |
-          # Electron 44 exposes an explicit installer instead of an npm postinstall script.
-          node apps/desktop/node_modules/electron/install.js
-          node -e "require('./packaging/targets.cjs').assertArchitecture(require('./apps/desktop/node_modules/electron'), 'linux', process.arch)"
       - name: Build and test with the Ubuntu 22.04 compatibility baseline
         run: |
           cmake -S backend -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON -DWIFIMETER_LINUX_APP_CAPTURE=ON \
@@ -319,15 +379,9 @@ jobs:
           node .github/workflows/scripts/ci.cjs backend linux '${{ matrix.arch }}' "$BUILD_DIR/app"
       - name: Require actual native eBPF capture
         run: sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
-      - name: Desktop unit and renderer regression tests
-        env:
-          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/tauri-ui.json
+      - name: Desktop host and backend integration unit tests
         run: |
           npm run test:unit
-          sudo chown root:root apps/desktop/node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 apps/desktop/node_modules/electron/dist/chrome-sandbox
-          dbus-run-session -- xvfb-run -a npm run test:ui -- '^(?!.*packaging\.spec\.js$).*\.spec\.js$' --workers=2 --reporter=list,json --output "$RUNNER_TEMP/playwright-tauri"
-          node .github/workflows/scripts/ci.cjs ui-report "$PLAYWRIGHT_JSON_OUTPUT_NAME"
       - name: Validate the official Node runtime and locate its license
         run: |
           node packaging/tauri/lean-node-check.cjs
@@ -358,8 +412,6 @@ jobs:
         with:
           name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/playwright-tauri/
-            ${{ runner.temp }}/tauri-ui.json
             build/tauri-smoke/**
             build/tauri-package-check-*/result.json
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
@@ -369,29 +421,32 @@ jobs:
   required:
     name: Required Tauri checks
     if: always()
-    needs: [metadata, windows, linux]
+    needs: [metadata, renderer, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Fail on any failed, cancelled or skipped required job
         env:
           METADATA_RESULT: ${{ needs.metadata.result }}
+          RENDERER_RESULT: ${{ needs.renderer.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           LINUX_RESULT: ${{ needs.linux.result }}
           SOURCE_RUN_ID: ${{ needs.metadata.outputs.source_run_id }}
         run: |
           test "$METADATA_RESULT" = success
           if [ -n "$SOURCE_RUN_ID" ]; then
+            test "$RENDERER_RESULT" = skipped
             test "$WINDOWS_RESULT" = skipped
             test "$LINUX_RESULT" = skipped
           else
+            test "$RENDERER_RESULT" = success
             test "$WINDOWS_RESULT" = success
             test "$LINUX_RESULT" = success
           fi
 
   publish:
     name: Publish verified multi-platform Tauri v1.3 release
-    needs: [metadata, windows, linux, required]
+    needs: [metadata, renderer, windows, linux, required]
     if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') && needs.required.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
