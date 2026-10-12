@@ -17,7 +17,7 @@ const states = {
 };
 function diagnostic(source) {
     const error = source?.error;
-    return (typeof error === 'string' ? error : error?.message) || source?.detail || source?.message || '';
+    return (typeof error === 'string' ? error : error?.message) || source?.collectorMessage || source?.detail || source?.message || '';
 }
 /** Raw snapshot fields only; rendered proxy/update panels remain separate controls. */
 export function statusRows({ live, appCollection, proxy, updates } = {}) {

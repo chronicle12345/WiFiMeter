@@ -10,6 +10,15 @@ test('network and collector remain independent and partial app data is visible',
     assert.deepEqual(rows.map(row=>row.tone), ['good','warn','warn','warn','error']);
     assert.equal(rows[4].detail,'network timeout');
 });
+
+test('collector recovery diagnostics show the reason sent by the lifecycle client', () => {
+    const message = '采集器连续恢复失败，请重新打开 WiFiMeter 后重试。';
+    const status = { live: { state: 'connected', collector: 'offline', collectorMessage: message } };
+    const collector = statusRows(status).find(row => row.id === 'collector');
+    assert.equal(collector.detail, message);
+    assert.ok(statusHelpView(status).includes(message));
+    assert.equal(statusRows({ live: { ...status.live, collector: 'running', collectorMessage: '' } })[1].detail, '');
+});
 test('diagnostics escape markup and remain collapsed alongside help actions', () => {
     const html = statusHelpView({live:{collector:'offline',error:'<img src=x onerror=alert(1)>'}}, {button: name=>`<button data-action="${name}"></button>`});
     assert.ok(html.includes('&lt;img')); assert.ok(!html.includes('<img')); assert.ok(!/<details[^>]*\bopen/.test(html));
