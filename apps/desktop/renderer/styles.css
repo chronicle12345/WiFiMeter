@@ -142,6 +142,10 @@ input:disabled,select:disabled,textarea:disabled {background:var(--surface-2);co
 .network-filter{display:flex;min-width:0;max-width:180px}
 .network-filter .select.compact{height:40px;min-height:40px;font-size:12px;padding:8px 28px 8px 12px;width:100%;text-overflow:ellipsis}
 .toolbar{flex-wrap:wrap}
+.toolbar .segmented{flex-shrink:0;max-width:100%}
+.toolbar .segmented button{white-space:nowrap}
+html[data-page="apps"] .toolbar-start{min-width:min(100%,420px)}
+html[data-page="apps"] .toolbar-actions{max-width:100%}
 @media(max-width:650px){.toolbar-actions{width:100%;justify-content:flex-end}.setting-row select{min-width:0;max-width:100%}}
 /* One continuous settings card; category links follow the current scroll section. */
 .settings-scroll-panel{background:var(--surface);border:1px solid var(--line);border-radius:16px;min-width:0;overflow:clip}
@@ -184,6 +188,86 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .drawer-head>[data-action="close-drawer"]{margin-bottom:12px}
 @media(max-width:650px){.applications-toolbar .search-box{flex-basis:100%}.application-view-switch{gap:8px}.application-control>dl{grid-template-columns:1fr;gap:5px}.application-control>dl dd{margin-bottom:8px}}
 
+/* 应用采集与时间筛选放在一起，状态和操作在同一处查看。 */
+#appCaptureRegion{display:flex;align-items:center;min-width:0}
+.app-capture-control{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.app-capture-control .btn{min-height:40px;font-size:12px;font-weight:600;padding-inline:14px}
+.btn.capture-start{background:#267345;border-color:#267345;color:#fff}
+.btn.capture-start:hover{background:#1f613a;border-color:#1f613a}
+.btn.capture-stop{background:var(--red-fill);border-color:var(--red-fill);color:var(--on-accent)}
+.btn.capture-stop:hover{filter:brightness(.92)}
+.capture-status{display:inline-flex;align-items:center;gap:6px;max-width:230px;font-size:11px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}
+.capture-status .dot{width:6px;height:6px}
+.app-capture-control .app-diagnostic{font-size:11px;color:var(--muted);line-height:1.7;max-width:340px}
+.app-capture-control .app-diagnostic summary{cursor:pointer;color:var(--accent)}
+.app-capture-control .app-diagnostic p{margin-top:6px}
+:root[data-theme="dark"] .btn.capture-start,
+:root[data-palette="dark"] .btn.capture-start,
+:root[data-palette="indigo"] .btn.capture-start{background:#2d8152;border-color:#2d8152}
+:root[data-theme="dark"] .btn.capture-start:hover,
+:root[data-palette="dark"] .btn.capture-start:hover,
+:root[data-palette="indigo"] .btn.capture-start:hover{background:#277248;border-color:#277248}
+
+.applications-page>.panel-head{padding-bottom:16px;border-bottom:1px solid var(--line)}
+.applications-page .applications-toolbar{margin-top:0;gap:10px}
+.applications-toolbar .select.compact,.live-ranking-panel .select.compact{padding-right:34px}
+.applications-page .applications-total{padding:7px 10px;border-radius:8px;background:var(--surface-2);font-size:15px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.applications-page .applications-total span{font-size:11px;font-weight:400;color:var(--muted);margin-left:4px}
+.applications-page .applications-toolbar .small-btn{min-height:40px;font-size:12px}
+.applications-page #appListRegion>.btn{margin-bottom:14px}
+.applications-page .app-row:last-child{border-bottom:0}
+.live-ranking-panel .panel-head{padding-bottom:18px}
+.live-ranking-panel .applications-content:has(.table-scroll){padding:0}
+.live-ranking-panel .applications-content>p{padding:4px 0 2px}
+.live-ranking-panel #liveStatusRegion{padding-inline:22px}
+.live-ranking-panel #liveStatusRegion .app-status{margin-top:0}
+.app-status:empty{display:none}
+.live-ranking-panel td:first-child{color:var(--muted);font-size:11px}
+.live-ranking-panel td:nth-child(n+5),.live-ranking-panel th:nth-child(n+5){text-align:right;white-space:nowrap}
+.live-ranking-panel td:last-child{font-weight:600;color:var(--ink)}
+.app-history-panel,.app-rules-panel,.app-proxy-panel{margin-top:18px}
+.app-proxy-panel>summary{padding:18px 22px;cursor:pointer;font-size:14px;font-weight:600;line-height:1.6;color:var(--ink)}
+.app-proxy-panel>summary::marker{color:var(--muted);font-size:11px}
+.app-proxy-panel[open]>summary{border-bottom:1px solid var(--line)}
+.app-proxy-panel>.settings-group{border:0;border-radius:0;background:transparent;margin:0}
+.app-proxy-panel>.settings-group>.panel-head{padding-top:18px;border:0}
+.app-proxy-panel>.settings-group>.quota-form{padding-top:8px}
+.app-proxy-panel #proxyClientsRegion{padding:18px 22px 20px}
+.app-proxy-panel .detail-section{margin:0}
+.app-proxy-panel .proxy-clients>p{margin-top:12px}
+.app-rules-panel>.panel-head{padding-bottom:18px}
+.app-rules-panel>p{padding:0 22px 16px;margin:0;line-height:1.7}
+.app-rules-list{list-style:none;margin:0;padding:0 22px 6px}
+.app-rule-row{display:flex;align-items:center;gap:14px;padding:16px 0;border-top:1px solid var(--line)}
+.app-rule-row>.app-avatar{width:36px;height:36px;border-radius:10px}
+.app-rule-meta{flex:1;min-width:0;line-height:1.7}
+.app-rule-name{font-size:13px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.app-rule-meta .app-source,.app-rule-meta .small{font-size:11px;color:var(--muted);overflow-wrap:anywhere}
+.app-rule-limits{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.app-rule-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
+.app-rule-actions .btn{min-height:34px;padding:6px 10px;font-size:11px}
+.app-rules-panel .empty-state{padding-block:28px}
+@media(max-width:760px){
+ .app-capture-control{gap:8px}
+ .capture-status{max-width:180px}
+ .app-rule-row{align-items:flex-start;flex-wrap:wrap;gap:10px}
+ .app-rule-actions{width:100%;justify-content:flex-start}
+ .app-rule-row:has(>.app-avatar) .app-rule-actions{padding-left:46px}
+ .app-proxy-panel>summary{padding-inline:18px}
+ .app-proxy-panel #proxyClientsRegion{padding:16px 18px}
+}
+@media(max-width:520px){
+ .applications-content{padding:17px}
+ .app-capture-control .btn{padding-inline:10px;font-size:11px}
+ .capture-status{max-width:130px;font-size:10px}
+ .app-rules-list{padding-inline:17px}
+ .app-rule-row:has(>.app-avatar) .app-rule-actions{padding-left:0}
+ .quota-summary{padding:16px}
+ .quota-body{gap:16px}
+ .app-rules-panel>p{padding-inline:17px}
+ .applications-page .proxy-client-table{min-width:560px!important}
+}
+
 /* Shared state presentation: normal-size labels with optional diagnostics. */
 .status-list { margin:0; padding:0 23px; }
 .status-item { display:grid; grid-template-columns:minmax(100px,1fr) minmax(0,2fr); gap:var(--space-4); padding:18px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.6; }
@@ -221,10 +305,13 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 .quota-card .panel-head{align-items:flex-start}
 .quota-card .panel-head>.icon-btn{background:var(--accent-soft);color:var(--accent);flex-shrink:0}
 .quota-card .panel-sub{line-height:1.7;overflow-wrap:anywhere}
-.quota-summary{display:flex;flex-direction:column;justify-content:center;flex:1;padding:20px 0}
-.quota-usage{margin-top:auto;flex-shrink:0}
+.quota-body{flex:0;gap:18px}
+.quota-summary{display:flex;flex-direction:column;padding:18px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;margin-top:8px}
+.quota-usage{flex-shrink:0}
 .quota-card .progress{height:8px}
 .quota-card .progress-meta{line-height:1.7;flex-wrap:wrap}
+.quota-card .quota-foot{padding-top:14px;margin-top:0;border-top:1px solid var(--line);line-height:1.8;align-items:flex-start}
+.quota-card .quota-foot svg{margin-top:2px}
 @media(min-width:761px){
  html[data-page="overview"] .main{padding:16px 22px 20px;min-height:100dvh;display:flex;flex-direction:column}
  html[data-page="overview"] .overview-summary{display:flex;flex-direction:column;min-height:calc(100dvh - 36px)}
@@ -245,15 +332,15 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] .overview-summary>.chart-row:last-child{margin-bottom:0}
  html[data-page="overview"] #content .chart-row>.panel:first-child{display:flex;flex-direction:column}
  html[data-page="overview"] #content .chart-wrap{display:flex;flex:1;min-height:125px}
- html[data-page="overview"] #content .quota-card{align-self:stretch}
+ html[data-page="overview"] #content .quota-card{align-self:start}
  html[data-page="overview"] #content .chart-row .panel-head{padding:12px 18px 8px}
  html[data-page="overview"] #content .chart{height:100%;min-height:120px;flex:1}
  html[data-page="overview"] #content .chart-caption{padding:0 18px 10px}
- html[data-page="overview"] #content .quota-body{padding:0 18px 18px}
+ html[data-page="overview"] #content .quota-body{padding:0 18px 18px;gap:16px}
  html[data-page="overview"] #content .quota-label{font-size:12px}
  html[data-page="overview"] #content .quota-main{font-size:42px;line-height:1.25;margin:8px 0 0;font-weight:550;letter-spacing:-1.2px}
  html[data-page="overview"] #content .quota-main span{font-size:14px}
- html[data-page="overview"] #content .quota-foot{padding-top:14px;margin-top:14px;border-top:1px solid var(--line);line-height:1.8;align-items:flex-start}
+ html[data-page="overview"] #content .quota-foot{padding-top:12px;margin-top:0}
  html[data-page="overview"] #content .quota-foot svg{margin-top:2px}
  html[data-page="overview"] #content .notice-line{padding:8px 18px}
 }
@@ -273,9 +360,11 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 .proxy-client-table .network-name{max-width:100%;white-space:normal;overflow:visible;overflow-wrap:anywhere}
 @media(min-width:761px) and (max-width:1100px){
  html[data-page="overview"] #content .toolbar{gap:8px}
- html[data-page="overview"] #content .toolbar-start{gap:10px}
- html[data-page="overview"] #content .segmented button{padding-inline:8px}
- html[data-page="overview"] #content .toolbar-actions .btn{padding-inline:10px}
+ html[data-page="overview"] #content .toolbar-start{gap:8px}
+ html[data-page="overview"] #content .segmented button{padding-inline:6px;font-size:10px}
+ html[data-page="overview"] #content .date-text{font-size:10px;gap:5px;white-space:nowrap}
+ html[data-page="overview"] #content .toolbar-actions .btn{padding-inline:9px;font-size:11px;gap:6px}
+ html[data-page="overview"] #content .network-filter .select.compact{font-size:11px;padding-inline:10px 28px}
 }
 
 /* 矮窗口减少五组区块间距共 20px，保留图表和提示的完整内容。 */
@@ -285,10 +374,10 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
  html[data-page="overview"] .overview-summary>.metrics,
  html[data-page="overview"] .overview-summary>.total-quota-card,
  html[data-page="overview"] .overview-summary>.chart-row{margin-bottom:6px}
- html[data-page="overview"] #content .quota-summary{padding:8px 0}
+ html[data-page="overview"] #content .quota-summary{padding:12px 16px}
  html[data-page="overview"] #content .quota-main{font-size:34px;margin-top:6px}
- html[data-page="overview"] #content .quota-body{padding-bottom:12px}
- html[data-page="overview"] #content .quota-foot{padding-top:8px;margin-top:8px}
+ html[data-page="overview"] #content .quota-body{padding-bottom:10px;gap:14px}
+ html[data-page="overview"] #content .quota-foot{padding-top:8px}
 }
 .release-notes{margin:20px 23px;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .release-notes>summary{padding:14px 16px;cursor:pointer;font-weight:600;background:var(--surface-2)}

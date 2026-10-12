@@ -1,4 +1,34 @@
-import { t, tr } from '../i18n.js';
+import { getLocale, t, tr } from '../i18n.js';
+
+export function appRulesView(control, { button, esc }) {
+    if (!control.supported) return '';
+    const value = state => state === true ? t('已配置') : state === false ? t('未配置') : t('未知');
+    const rate = (enabled, kbps) => enabled === true && Number.isFinite(kbps) && kbps > 0 ? esc(kbps / 8) + ' KB/s' : value(enabled);
+    const disabled = control.busy || control.rulesBusy ? 'disabled' : '';
+    const rules = control.rules || [];
+    const rows = rules.map(record => {
+        const state = record.state || {}, saved = new Date(record.savedAt);
+        const blocked = state.FirewallError || state.FirewallErrorCode ? null : state.Blocked;
+        const upload = state.QosError || state.QosErrorCode ? null : state.Throttled;
+        const download = state.DownloadError || state.DownloadErrorCode ? null : state.DownloadThrottled;
+        const savedAt = Number.isFinite(saved.getTime()) ? saved.toLocaleString(getLocale(), { hour12: false }) : t('未知');
+        return tr`<li class="app-rule-row"><span class="app-avatar" aria-hidden="true">${esc((record.name || record.path).slice(0, 1).toUpperCase())}</span>
+            <div class="app-rule-meta"><div class="app-rule-name">${esc(record.name || record.path)}</div><div class="app-source">${esc(record.path)}</div>
+            <div class="app-rule-limits" aria-label="上次记录的状态"><span class="pill ${blocked === true ? 'red' : blocked === false ? 'gray' : 'warn'}">${t('防火墙规则')} · ${value(blocked)}</span>
+            <span class="pill ${upload === true ? '' : upload === false ? 'gray' : 'warn'}">${t('上传限速')} · ${rate(upload, state.UploadKbps)}</span>
+            <span class="pill ${download === true ? '' : download === false ? 'gray' : 'warn'}">${t('下载限速')} · ${rate(download, state.DownloadKbps)}</span></div>
+            <div class="small muted">最近保存 <time datetime="${esc(record.savedAt)}">${esc(savedAt)}</time></div>
+            ${record.operationError ? tr`<div class="small form-error">上次操作未完成：${esc(record.operationError.message)}</div>` : ''}</div>
+            <div class="app-rule-actions">${button('select-controlled-app', t('查看与调整'), '', 'small-btn', `type="button" data-path="${esc(record.path)}" data-name="${esc(record.name || record.path)}" ${disabled}`)}</div></li>`;
+    }).join('');
+    return tr`<section class="panel app-rules-panel" aria-label="应用限制记录"><div class="panel-head"><div><h2>应用限制记录</h2>
+        <div class="panel-sub">列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。</div></div>
+        ${button('app-rules-refresh', t('刷新记录'), 'reset', 'small-btn', `type="button" ${disabled}`)}</div>
+        ${control.rulesBusy ? tr`<p class="small muted" role="status">正在读取记录…</p>` : ''}
+        ${control.rulesError ? `<p class="form-error" role="alert">${esc(control.rulesError)}</p>` : ''}
+        ${rules.length ? `<ul class="app-rules-list">${rows}</ul>` : tr`<div class="empty-state"><div class="small muted">还没有应用限制记录。设置成功后会显示在这里。</div></div>`}
+    </section>`;
+}
 
 export function appControlView(control, { button, esc }) {
     if (!control.supported) return tr`<section class="detail-section application-control"><h3>应用网络控制</h3><p class="small muted">当前平台暂不支持应用防火墙与上传、下载限速。</p></section>`;

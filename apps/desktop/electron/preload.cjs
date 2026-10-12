@@ -37,7 +37,8 @@ contextBridge.exposeInMainWorld('desktop', {
     appIcons: { get: input => ipcRenderer.invoke('app-icons:get', input) },
     appControl: {
         chooseProgram: () => ipcRenderer.invoke('app-control:choose'),
-        request: payload => ipcRenderer.invoke('app-control:request', payload)
+        request: payload => ipcRenderer.invoke('app-control:request', payload),
+        list: () => ipcRenderer.invoke('app-control:list')
     },
     legacy: {
         status: () => ipcRenderer.invoke('legacy:status'),

@@ -3,15 +3,29 @@ import { applicationPath } from './history.js';
 
 const errorText = error => typeof error === 'string' ? error : error?.message || '';
 export function createAppControlModel(desktop) {
+    let rulesRequest = null;
     const model = {
         supported: desktop.platform === 'win32' && Boolean(desktop.appControl),
         path: '', name: '', state: null, warning: '', error: '', busy: false,
+        rules: [], rulesError: '', rulesBusy: false,
         select(app) {
             if (this.busy) return;
             this.path = applicationPath(app); this.name = app.name || this.path;
             this.state = null; this.warning = ''; this.error = '';
         },
         async choose() { return operate(() => desktop.appControl.chooseProgram()); },
+        loadRules() {
+            if (!this.supported || typeof desktop.appControl.list !== 'function') return Promise.resolve();
+            if (rulesRequest) return rulesRequest;
+            this.rulesBusy = true; this.rulesError = '';
+            rulesRequest = Promise.resolve().then(() => desktop.appControl.list()).then(response => {
+                if (response?.ok && Array.isArray(response.records)) this.rules = response.records;
+                else this.rulesError = errorText(response?.error) || t('应用限制记录未能读取。');
+                return response;
+            }).catch(error => { this.rulesError = errorText(error); })
+                .finally(() => { this.rulesBusy = false; rulesRequest = null; });
+            return rulesRequest;
+        },
         async run(action, options) {
             if (!this.path) return;
             const values = typeof options === 'number' ? { uploadKBps: options } : options || {};
@@ -32,12 +46,19 @@ export function createAppControlModel(desktop) {
         try {
             const response = await call();
             if (response.result) {
+                if (response.result.path && (response.result.path.toLowerCase() !== model.path.toLowerCase() || !model.name)) {
+                    model.name = response.result.path.split(/[\\/]/).pop();
+                }
                 model.path = response.result.path || model.path;
                 model.state = response.result.state ?? null;
                 model.warning = response.result.warning || '';
             }
             if (response.canceled) model.error = t('操作已取消。');
             else if (!response.ok) { model.error = errorText(response.error) || t('操作未完成。'); if (!response.result) model.state = null; }
+            // 等待先前读取结束后再获取操作后的记录，避免旧列表覆盖刚配置的限制。
+            if (rulesRequest) await rulesRequest;
+            await model.loadRules();
+            if (response.recordsError) model.rulesError = [errorText(response.recordsError), model.rulesError].filter(Boolean).join('\n');
             return response;
         } catch (error) { model.state = null; model.error = errorText(error); }
         finally { model.busy = false; }

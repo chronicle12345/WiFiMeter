@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
+const { createAppNetworkRecords } = require('./app-network-records.cjs');
 
 const actions = Object.freeze({ read: 'Read', block: 'Block', unblock: 'Unblock', throttle: 'Throttle', unthrottle: 'Unthrottle' });
 const fail = (code, message) => ({ ok: false, canceled: false, error: { code, message } });
@@ -77,18 +78,19 @@ try {
 }
 
 /**
- * 主进程 API：chooseProgram() / request({ action, path, uploadKBps?, downloadKBps?, direction? })。
+ * 主进程 API：chooseProgram() / request({ action, path, uploadKBps?, downloadKBps?, direction? }) / list()。
  * 速率为十进制 KB/s，须能精确换算成整数 Kbit/s（最小 0.125，最大 125000000）。
  * throttle 只修改所给方向；unthrottle 的 direction 为 upload/download/both，缺省 both。
  * 返回 { ok, canceled, result?, error? }；result 为 { status, path, state, warning }。
  * state 保留 helper 字段及 null 查询状态，UploadKbps 为 Kbit/s；查询成功不代表联网被阻断。
  * runner(executable, args, options) => Promise<{ stdout, stderr? }>，默认使用 execFile。
- * io、runner、isPackaged 和 resourcesPath 仅供可信主进程配置，不能从 IPC 请求透传。
+ * io、runner、userDataDir、recordsIo、isPackaged 和 resourcesPath 仅供可信主进程配置，不能从 IPC 请求透传。
  * 打包资源：resources/native/windows/AppNetworkControl.psm1，必须在 asar 外。
  * 无定时采样；调用方仅在选择或用户操作时请求，不能接入每秒流量刷新。
  */
 function createAppControl({ platform = process.platform, dialog, getWindow = () => undefined,
-    runner = promisify(execFile), io = fs, isPackaged = false, resourcesPath = process.resourcesPath } = {}) {
+    runner = promisify(execFile), io = fs, userDataDir, recordsIo = fs, isPackaged = false, resourcesPath = process.resourcesPath } = {}) {
+    const records = createAppNetworkRecords({ userDataDir, io: recordsIo, validatePath: localExePath });
     const modulePath = isPackaged
         ? path.join(resourcesPath, 'native', 'windows', 'AppNetworkControl.psm1')
         : path.join(__dirname, '..', 'native', 'windows', 'AppNetworkControl.psm1');
@@ -137,13 +139,19 @@ function createAppControl({ platform = process.platform, dialog, getWindow = () 
         try {
             const response = JSON.parse(stdout.replace(/^\uFEFF/, '').trim());
             if (!response || !['Succeeded', 'Failed', 'Cancelled'].includes(response.Status)
-                || (response.Status === 'Succeeded' && (!response.State || typeof response.State !== 'object' || Array.isArray(response.State)))
+                || (response.State != null && (typeof response.State !== 'object' || Array.isArray(response.State)))
+                || (response.Status === 'Succeeded' && !response.State)
                 || (response.Status !== 'Succeeded' && typeof response.ErrorCode !== 'string')) throw Error('PowerShell 返回的结果格式无效。');
-            return {
+            const result = {
                 ok: response.Status === 'Succeeded', canceled: response.Status === 'Cancelled',
                 result: { status: response.Status, path: target, state: response.State ?? null, warning: response.Warning ?? response.State?.Warning ?? null },
                 ...(response.Status === 'Succeeded' ? {} : { error: { code: response.ErrorCode, message: response.Error || '应用联网操作未完成。' } })
             };
+            if (response.State && response.Status !== 'Cancelled') {
+                try { await records.remember(target, response.State, { succeeded: result.ok, mutation: input.action !== 'read', operationError: result.error }); }
+                catch (error) { result.recordsError = { code: 'recordsSaveFailed', message: `应用限制记录未能保存：${error.message}` }; }
+            }
+            return result;
         } catch (error) { return fail('invalidResponse', error.message); }
     }
 
@@ -157,7 +165,12 @@ function createAppControl({ platform = process.platform, dialog, getWindow = () 
             return request({ action: 'read', path: selected.filePaths[0] });
         } catch (error) { return fail('dialogFailed', error.message); }
     }
-    return { chooseProgram, request };
+    async function list() {
+        if (platform !== 'win32') return unsupported();
+        try { return { ok: true, records: await records.list() }; }
+        catch (error) { return fail('recordsReadFailed', `应用限制记录未能读取：${error.message}`); }
+    }
+    return { chooseProgram, request, list };
 }
 
 module.exports = { createAppControl };

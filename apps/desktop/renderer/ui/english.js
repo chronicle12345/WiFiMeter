@@ -1,6 +1,19 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
 实时流量排行|Live traffic ranking
+应用用量记录|Application usage history
+代理估算设置|Proxy estimation settings
+开启应用采集|Start application collection
+应用限制记录|Application restriction records
+刷新记录|Refresh records
+查看与调整|View and edit
+最近保存|Last saved
+上次记录的状态|Last recorded state
+列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。|This list saves the last queried state. Query to check current restrictions; download limits stop when WiFiMeter exits.
+还没有应用限制记录。设置成功后会显示在这里。|No restriction records yet. Successfully configured restrictions will appear here.
+应用限制记录未能读取。|Unable to read application restriction records.
+正在读取记录…|Reading records…
+上次操作未完成：|Previous operation incomplete:
 排名|Rank
 总速度|Total speed
 全部已采集应用 · 按当前速度排序|All collected applications · Sorted by current speed

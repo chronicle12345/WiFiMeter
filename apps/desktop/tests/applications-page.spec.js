@@ -40,6 +40,7 @@ test.beforeEach(async({},testInfo)=>{
             return {ok:true,result:{...f.snapshot,range:{from,to},records:f.snapshot.records.filter(r=>r.date>=from&&r.date<=to),appRecords:f.snapshot.appRecords.filter(r=>r.date>=from&&r.date<=to)}};
         });
         ipcMain.removeHandler('app-control:choose');ipcMain.handle('app-control:choose',()=>({ok:true,result:{path:'C:\\Apps\\Browser.exe',state:{Blocked:false,Throttled:false}}}));
+        ipcMain.removeHandler('app-control:list');ipcMain.handle('app-control:list',()=>({ok:true,records:globalThis.rendererFixture.rules||[]}));
         ipcMain.removeHandler('app-control:request');ipcMain.handle('app-control:request',(_event,input)=>{
             globalThis.rendererFixture.calls.push({method:'app-control',params:input});
             return input.action==='throttle'?{ok:false,error:{message:'partial failure'},result:{path:input.path,state:{Blocked:null,QosError:'readback failed'}}}:{ok:true,result:{path:input.path,state:{Blocked:input.action==='block',Throttled:false}}};
@@ -57,7 +58,9 @@ async function openApplications(){
     await expect(page.locator('.date-text')).toHaveText('全部已保留历史');
 }
 
-test('总览展示全部实时应用并按下载、上传速度排序',async()=>{
+test('应用流量页展示全部实时排行并按下载、上传速度排序',async()=>{
+    await expect(page.locator('#liveRankingRegion')).toHaveCount(0);
+    await openApplications();
     await app.evaluate(({BrowserWindow})=>{
         const s=globalThis.rendererFixture.snapshot;
         s.appCollection={available:true,enabled:true,state:'running'};
@@ -68,9 +71,80 @@ test('总览展示全部实时应用并按下载、上传速度排序',async()=>
     await expect(page.locator('#liveRankingRegion tbody tr').first()).toContainText('App11');
     await page.locator('#liveSort').selectOption('rx');
     await expect(page.locator('#liveRankingRegion tbody tr').first()).toContainText('App0');
-    await page.locator('.nav [data-page="apps"]').click();await page.locator('#appGrouping').selectOption('live');
+    await page.locator('#appGrouping').selectOption('live');
     await expect(page.locator('#appListRegion tbody tr')).toHaveCount(12);
     await page.locator('#appSort').selectOption('tx');await expect(page.locator('#appListRegion tbody tr').first()).toContainText('App11');
+});
+
+test('已设置的应用限制可从列表查询并进入调整，无需应用正在运行',async()=>{
+    test.skip(process.platform!=='win32','应用网络控制仅支持 Windows');
+    await app.evaluate(()=>{globalThis.rendererFixture.rules=[{
+        path:'C:\\Apps\\OfflineTool.exe',name:'OfflineTool.exe',savedAt:'2026-10-12T00:00:00.000Z',
+        state:{Blocked:true,Throttled:true,UploadKbps:1024,DownloadThrottled:false}
+    }];});
+    await openApplications();
+    await page.locator('[data-action="app-rules-refresh"]').click();
+    const row=page.locator('.app-rule-row');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('OfflineTool.exe');
+    await expect(row).toContainText('128 KB/s');
+    await row.locator('[data-action="select-controlled-app"]').click();
+    await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\OfflineTool.exe');
+    expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control').at(-1).params)).toMatchObject({action:'read',path:'C:\\Apps\\OfflineTool.exe'});
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect(page.locator('.app-rule-row')).toContainText('OfflineTool.exe');
+});
+
+test('采集控制位于时间工具栏，启停状态明显且代理设置保留草稿',async()=>{
+    await openApplications();
+    const capture=page.locator('.toolbar [data-action="app-collection"]');
+    await expect(capture).toHaveText('开启应用采集');
+    await expect(capture).toHaveClass(/capture-start/);
+    const startColor=await capture.evaluate(el=>getComputedStyle(el).backgroundColor);
+    await capture.click();
+    await expect(capture).toHaveText('停止应用采集');
+    await expect(capture).toHaveClass(/capture-stop/);
+    expect(await capture.evaluate(el=>getComputedStyle(el).backgroundColor)).not.toBe(startColor);
+    await expect(page.locator('#appCaptureRegion')).toContainText('应用采集中');
+    await expect(page.locator('[data-action="app-collection"]')).toHaveCount(1);
+    await page.locator('.app-proxy-panel summary').click();
+    await page.locator('#proxyPorts').fill('7890, 1080');
+    await app.evaluate(({BrowserWindow})=>{
+        const s=globalThis.rendererFixture.snapshot;
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection});
+    });
+    await expect(page.locator('#proxyPorts')).toHaveValue('7890, 1080');
+    await page.locator('#appSort').selectOption('rx');
+    await expect(page.locator('#proxySaveStatus')).toContainText('已自动保存');
+    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890,1080]);
+    await capture.click();
+    await expect(capture).toHaveText('开启应用采集');
+    await expect(page.locator('#appCaptureRegion')).toContainText('应用采集未启用');
+    await page.locator('[data-action="period"][data-value="custom"]').click();
+    await expect(page.locator('#rangeStartTime')).toBeVisible();
+    await expect(page.locator('#rangeEndTime')).toBeVisible();
+    await expect(page.locator('.modal .modal-desc')).toHaveCount(0);
+    await page.locator('.modal [data-action="close-modal"]').first().click();
+    await app.evaluate(({BrowserWindow})=>{
+        const s=globalThis.rendererFixture.snapshot;
+        s.appCollection={available:true,enabled:true,state:'permission',detail:'permission denied'};
+        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection});
+    });
+    await expect(page.locator('#appStatusRegion')).toContainText('permission denied');
+    await page.locator('.toolbar [data-action="app-collection-retry"]').click();
+    await expect(page.locator('#appCaptureRegion')).toContainText('应用采集中');
+    await page.locator('.nav [data-page="networks"]').click();
+    await page.locator('button.network-name').first().click();
+    await page.getByRole('tab',{name:'应用分布'}).click();
+    const drawerCapture=page.locator('.drawer [data-action="app-collection"]');
+    await drawerCapture.click();
+    await expect(drawerCapture).toHaveText('开启应用采集');
+    await expect(drawerCapture).toBeEnabled();
+    await drawerCapture.click();
+    await expect(drawerCapture).toHaveText('停止应用采集');
+    await expect(drawerCapture).toBeEnabled();
+    await page.locator('#closeDrawer').click();
 });
 
 test('下载限速提交和取消使用独立方向',async()=>{
@@ -145,7 +219,7 @@ test('实时进程响应后台事件，保留限速输入并展示采集失败',
     });
     await expect(page.locator('#appListRegion')).toContainText('Live Browser');
     await expect(page.locator('#appListRegion')).toContainText('42');
-    await page.locator('[data-action="select-live-app"]').click();
+    await page.locator('#appListRegion [data-action="select-live-app"]').click();
     await expect(page.locator('.drawer .application-summary')).toContainText('42');
     if(process.platform==='win32'){
         await page.locator('#uploadKBps').fill('96');
@@ -264,7 +338,7 @@ test('measured proxy live rates appear without adding loopback bytes to history'
  await expect(page.locator('#appListRegion')).toContainText('6.0 KB/s');await expect(page.locator('#appListRegion')).toContainText('本地 TCP');
  await expect(page.locator('#proxyClientsRegion')).toContainText('6.0 KB/s');
  await expect(page.locator('#appTotal')).toHaveText(historyTotal);
- await page.locator('[data-action="select-live-app"]').click();await expect(page.locator('.application-summary')).toContainText('6.0 KB/s');
+ await page.locator('#appListRegion [data-action="select-live-app"]').click();await expect(page.locator('.application-summary')).toContainText('6.0 KB/s');
  if(process.platform==='win32')await page.locator('#uploadKBps').fill('96');
  else{
   await expect(page.locator('#uploadKBps')).toHaveCount(0);
@@ -293,7 +367,7 @@ test('live estimates refresh displayed clients while preserving upload and downl
  await openApplications();
  const originalSource=await page.locator('#appDataSource').elementHandle();
  await page.locator('#appDataSource').selectOption('estimated');
- await expect.poll(()=>originalSource.evaluate(element=>element.isConnected)).toBe(false);
+ await expect.poll(()=>originalSource.evaluate(element=>element.isConnected)).toBe(true);
  await expect(page.locator('#appDataSource')).toHaveValue('estimated');
  await expect(page.locator('.app-row')).toContainText('Proxy');
  await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;const rows=[{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'600',txBytes:'1800'},{networkId:s.networks[0].id,date:'2020-01-01',appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',estimated:true,rxBytes:'400',txBytes:'1200'}];for(const win of BrowserWindow.getAllWindows())win.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy,proxyEstimatedUpdates:[{networkId:s.networks[0].id,date:'2020-01-01',proxyAppId:'C:\\Proxy\\Proxy.exe',records:rows}]});});

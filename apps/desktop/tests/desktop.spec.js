@@ -379,9 +379,9 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await navigate('网络');
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
     await page.getByRole('tab', { name: '应用分布' }).click();
-    await expect(page.getByRole('button', { name: '启用应用采集', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '开启应用采集', exact: true })).toBeVisible();
     await expect(page.locator('#appStatusRegion')).not.toContainText('应用采集未启用');
-    await page.getByRole('button', { name: '启用应用采集', exact: true }).click();
+    await page.getByRole('button', { name: '开启应用采集', exact: true }).click();
     await page.evaluate(() => window.desktop.backend.request('collectNow'));
     await expect(page.locator('#appStatusRegion')).toContainText('应用采集中');
     harness.appCounters(80000000, 20000000);
@@ -409,7 +409,7 @@ test('应用采集需要显式启用，实时列表、进程详情与暂停恢�
     await page.locator('tr', { hasText: '家里的 Wi-Fi' }).first().getByRole('button', { name: /详情/ }).click();
     await page.getByRole('tab', { name: '应用分布' }).click();
     await page.getByRole('button', { name: '停止应用采集', exact: true }).click();
-    await expect(page.getByRole('button', { name: '启用应用采集', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '开启应用采集', exact: true })).toBeVisible();
     await expect(page.locator('#appStatusRegion')).not.toContainText('应用采集未启用');
     await expect(page.locator('.app-row')).toContainText('100 MB');
     await page.getByRole('tab', { name: '用量明细' }).click();

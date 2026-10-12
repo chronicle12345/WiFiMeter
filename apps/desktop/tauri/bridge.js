@@ -56,7 +56,8 @@
         appIcons: { get: input => request('app-icons:get', input) },
         appControl: {
             chooseProgram: () => request('app-control:choose'),
-            request: payload => request('app-control:request', payload)
+            request: payload => request('app-control:request', payload),
+            list: () => request('app-control:list')
         },
         legacy: { status: () => request('legacy:status'), importDirectory: () => request('legacy:import') },
         saveFile: payload => request('files:save', payload),

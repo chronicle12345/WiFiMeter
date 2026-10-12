@@ -211,9 +211,10 @@ if (primaryInstance) app.whenReady().then(async () => {
 
     ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
     ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.update(patch); });
-    const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
+    const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, userDataDir: app.getPath('userData'), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
     ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.chooseProgram(); });
     ipcMain.handle('app-control:request', (event, payload) => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.request(payload); });
+    ipcMain.handle('app-control:list', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.list(); });
     ipcMain.handle('legacy:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); await startup; return migrationStatus; });
     ipcMain.handle('legacy:import', async event => {
         if (!trusted(event)) throw Error('Unsupported page.');

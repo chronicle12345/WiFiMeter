@@ -8,6 +8,7 @@ pub fn allowed_channel(window: &str, channel: &str) -> bool {
                 | "app-icons:get"
                 | "app-control:choose"
                 | "app-control:request"
+                | "app-control:list"
                 | "legacy:status"
                 | "legacy:import"
                 | "window-preferences:read"
@@ -37,5 +38,7 @@ mod tests {
         assert!(!allowed_channel("main", "mini:open-main"));
         assert!(!allowed_channel("other", "files:save"));
         assert!(!allowed_channel("main", "shell:open"));
+        assert!(allowed_channel("main", "app-control:list"));
+        assert!(!allowed_channel("mini", "app-control:list"));
     }
 }

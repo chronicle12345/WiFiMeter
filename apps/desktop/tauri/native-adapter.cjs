@@ -180,7 +180,7 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
     const ipcMain = { handle: (channel, handler) => handlers.set(channel, handler), removeHandler: channel => handlers.delete(channel) };
     const miniChannels = new Set(['mini:open-main', 'mini:close', 'mini:preferences-read', 'mini:preferences-update', 'mini:applications']);
     const mainChannels = new Set(['backend:request', 'files:save', 'files:open-backup', 'window-preferences:read', 'window-preferences:update',
-        'app-icons:get', 'app-control:choose', 'app-control:request', 'legacy:status', 'legacy:import', 'updates:open-link',
+        'app-icons:get', 'app-control:choose', 'app-control:request', 'app-control:list', 'legacy:status', 'legacy:import', 'updates:open-link',
         'updates:status', 'updates:setting', 'updates:check', 'updates:install']);
     async function receive(message) {
         if (message.type === 'native-result') {

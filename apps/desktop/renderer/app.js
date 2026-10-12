@@ -13,7 +13,7 @@ import { drawerShell } from './ui/drawer.js';
 import { applicationDetails, applicationSourceFilter } from './ui/applications.js';
 import { applicationSummary, applicationAvatar } from './ui/applications.js';
 import { createAppIconLoader } from './ui/app-icons.js';
-import { appControlView } from './ui/app-control.js';
+import { appControlView, appRulesView } from './ui/app-control.js';
 import { t, tr, setLanguage, getLocale } from './i18n.js';
 import { totalQuotaForm, totalQuotaCard } from './ui/total-quota.js';
 import { updateRegion } from './data/render.js';
@@ -80,8 +80,8 @@ const ui={page:['overview','networks','apps','history','settings'].includes(loca
 const applications={appSearch:'',appSort:'total',appAll:false,appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
-function applicationsPage(){return `${toolbar()}<section class="panel applications-page"><div class="applications-content">${drawerApps({id:ui.networkId})}</div></section>`;}
-let samplerTimer=null,lastTick=performance.now(),settingsDirty=false;
+function applicationsPage(){return tr`${toolbar()}${liveRankingPanel()}<section class="panel applications-page app-history-panel"><div class="panel-head"><div><h2>应用用量记录</h2><div class="panel-sub">${esc(periodName())} · ${esc(rangeText())}</div></div></div><div class="applications-content">${drawerApps({id:ui.networkId})}</div></section><details class="panel app-proxy-panel"><summary>代理估算设置</summary>${proxyForm(data.proxy)}</details><div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
+let samplerTimer=null,lastTick=performance.now(),settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
 function fmtNumber(bytes,hasRecords=true){if(!hasRecords)return '—';const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value}<span>${unit}</span>`;}
@@ -146,7 +146,7 @@ function button(action,label,ico='',cls='',extra=''){return `<button class="btn 
 function toggle(name,checked,label){return `<label class="switch"><input type="checkbox" name="${name}" ${checked?'checked':''} aria-label="${esc(label)}"><span class="switch-track"></span></label>`;}
 function option(v,label,selected){return `<option value="${esc(v)}" ${String(v)===String(selected)?'selected':''}>${esc(label)}</option>`;}
 function networkOptions(selected=ui.networkId,all=true){return (all?option('all',t('全部网络'),selected):'')+data.networks.map(n=>option(n.id,networkName(n),selected)).join('');}
-function toolbar(){return tr`<div class="toolbar"><div class="toolbar-start"><div class="segmented" aria-label="统计时间范围">${[['today',t('今日')],['week',t('近 7 天')],['month',t('本月')],['all',t('全部历史')],['custom',t('自定义')]].map(([k,v])=>`<button data-action="period" data-value="${k}" class="${ui.period===k?'active':''}" aria-pressed="${ui.period===k}">${v}</button>`).join('')}</div><div class="date-text">${icon('calendar')}${esc(rangeText())}</div></div><div class="toolbar-actions"><label class="network-filter"><span class="sr-only">按网络筛选</span><select class="select compact" id="networkFilter">${networkOptions()}</select></label>${button('refresh',t('刷新'),'reset')}${button('export',t('导出数据'),'export')}</div></div>`;}
+function toolbar(){return tr`<div class="toolbar"><div class="toolbar-start"><div class="segmented" aria-label="统计时间范围">${[['today',t('今日')],['week',t('近 7 天')],['month',t('本月')],['all',t('全部历史')],['custom',t('自定义')]].map(([k,v])=>`<button data-action="period" data-value="${k}" class="${ui.period===k?'active':''}" aria-pressed="${ui.period===k}">${v}</button>`).join('')}</div><div class="date-text">${icon('calendar')}${esc(rangeText())}</div></div><div class="toolbar-actions">${ui.page==='apps'?`<div id="appCaptureRegion">${appCaptureControl()}</div>`:''}<label class="network-filter"><span class="sr-only">按网络筛选</span><select class="select compact" id="networkFilter">${networkOptions()}</select></label>${button('refresh',t('刷新'),'reset')}${button('export',t('导出数据'),'export')}</div></div>`;}
 function renderChrome(){
  document.documentElement.dataset.page=ui.page;
  setLanguage(data.settings.language||'zh-CN');document.documentElement.lang=getLocale();
@@ -188,8 +188,8 @@ function networkTable(full=false){
  return tr`<div class="table-scroll"><table><thead><tr><th>网络名称</th><th class="right">下载</th><th class="right">上传</th><th class="right">总用量</th><th>额度进度 <span class="tiny">/ 独立周期</span></th><th><span class="sr-only">操作</span></th></tr></thead><tbody>${list.map(n=>{const q=quota(n),cl=q.percent>=100?'red':q.percent>=n.warnPercent?'warn':'';return tr`<tr><td><div class="network-cell"><div class="network-symbol ${isConnected(n.id)?'current':''}">${icon(n.type)}</div><div><div class="flex gap8"><button class="network-name" data-action="detail" data-id="${n.id}">${esc(networkName(n))}</button>${isConnected(n.id)?t('<i class="dot" title="已连接"></i>'):''}</div><div class="network-ssid">${esc(n.ssid)}</div></div></div></td><td class="right">${n.hasRecords?fmtWithUnit(n.usage.rx):'—'}</td><td class="right">${n.hasRecords?fmtWithUnit(n.usage.tx):'—'}</td><td class="right strong">${n.hasRecords?fmtWithUnit(n.usage.total):'—'}</td><td><div class="table-limit">${n.capGb?`<span class="${cl==='warn'?'muted':''}">${q.percent.toFixed(0)}% <span class="tiny muted">/ ${q.period}</span></span><span class="mini-progress ${cl}"><i style="width:${Math.min(100,q.percent)}%"></i></span>`:t('<span class="tiny muted">未设置额度</span>')}</div></td><td><button class="icon-btn" data-action="detail" data-id="${n.id}" aria-label="查看 ${esc(networkName(n))} 详情">${icon('arrow')}</button></td></tr>`;}).join('')}</tbody></table></div>`;
 }
 function quotaNotice(){const alerts=data.networks.filter(n=>n.capGb&&n.notify&&quota(n).percent>=n.warnPercent);if(!alerts.length)return '';const n=alerts[0],q=quota(n);return tr`<div class="notice-line">${icon('bell')}<span>${esc(networkName(n))} · ${q.period} 用量已达 ${q.percent.toFixed(0)}%${q.percent<100?tr`，剩余 ${fmtWithUnit(q.remaining)}`:t('，已超过所设额度')}。</span><button class="link-btn" style="margin-left:auto" data-action="detail" data-id="${n.id}" data-tab="settings">查看额度 ${icon('arrow')}</button></div>`;}
-function liveRankingPanel(){return tr`<section class="panel live-ranking-panel"><div class="panel-head"><div><h2>实时流量排行</h2><div class="panel-sub">全部已采集应用 · 按当前速度排序</div></div><label><span class="sr-only">实时排行排序</span><select class="select compact" id="liveSort">${[['total',t('按总速度')],['rx',t('按下载速度')],['tx',t('按上传速度')]].map(([key,label])=>option(key,label,ui.liveSort)).join('')}</select></label></div><div class="applications-content"><div id="liveStatusRegion">${appStatus({id:ui.networkId})}</div><div id="liveRankingRegion" aria-live="polite">${appLiveList({id:ui.networkId},ui.liveSort,'')}</div></div></section>`;}
-function overview(){return tr`<div class="overview-summary">${toolbar()}${connectionPanel()}${metrics()}${totalQuotaCard(data.totalQuota,data.settings.unit)}<div class="chart-row">${trendPanel()}${quotaPanel()}</div>${quotaNotice()}</div>${liveRankingPanel()}`;}
+function liveRankingPanel(){return tr`<section class="panel live-ranking-panel"><div class="panel-head"><div><h2>实时流量排行</h2><div class="panel-sub">全部已采集应用 · 按当前速度排序</div></div><label><span class="sr-only">实时排行排序</span><select class="select compact" id="liveSort">${[['total',t('按总速度')],['rx',t('按下载速度')],['tx',t('按上传速度')]].map(([key,label])=>option(key,label,ui.liveSort)).join('')}</select></label></div><div class="applications-content"><div id="liveRankingRegion" aria-live="polite">${appLiveList({id:ui.networkId},ui.liveSort,'')}</div></div></section>`;}
+function overview(){return tr`<div class="overview-summary">${toolbar()}${connectionPanel()}${metrics()}${totalQuotaCard(data.totalQuota,data.settings.unit)}<div class="chart-row">${trendPanel()}${quotaPanel()}</div>${quotaNotice()}</div>`;}
 function networksPage(){return tr`${toolbar()}<section class="panel table-panel"><div class="filter-line"><label class="search-box">${icon('search')}<input id="networkSearch" type="search" placeholder="搜索网络备注或 SSID" value="${esc(ui.search)}" aria-label="搜索网络"></label><div class="flex gap12"><span class="small muted">共 ${data.networks.length} 个网络</span><label><span class="sr-only">网络排序</span><select id="networkSort" class="select compact">${option('total',t('按用量排序'),ui.sort)}${option('name',t('按名称排序'),ui.sort)}${option('connected',t('已连接优先'),ui.sort)}</select></label></div></div><div id="networkTableRegion">${networkTable(true)}</div></section>`;}
 function historyPage(){
  const days=groupedDays(),all=totalOf(selectedRows()),max=days.reduce((m,x)=>x.rx+x.tx>m.rx+m.tx?x:m,{date:'',rx:0n,tx:0n}),average=days.length?all.total/BigInt(days.length):0n;
@@ -230,9 +230,12 @@ function updateSettingsScroll(){
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
 function renderMain(){
+ const proxyDraft=ui.page==='apps'&&proxyDirty?$('#proxyConfigForm'):null,proxyOpen=$('.app-proxy-panel')?.open;
  renderChrome();
  renderUpdateBanner();
  updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
+ if(proxyDraft&&$('#proxyConfigForm')!==proxyDraft)$('#proxyConfigForm')?.replaceWith(proxyDraft);
+ if(proxyOpen&&$('.app-proxy-panel'))$('.app-proxy-panel').open=true;
  syncSaveFlags();
  syncInert();
  appIcons.hydrate(document);
@@ -286,18 +289,26 @@ function displayedAppRecords(){return appMinuteSource()?data.appMinuteRecords||[
 function displayedAppSummary(networkId,start,end){return applicationSummary(displayedAppRecords(),{...getRange(),networkId,start,end});}
 function drawerApps(n){
  const {start,end}=getRange(),apps=displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
- return tr`<div class="applications-toolbar app-filters"><label class="search-box">${icon('search')}<input id="appSearch" type="search" placeholder="搜索应用" aria-label="搜索应用" value="${esc(appContext().appSearch)}"></label><label><span class="sr-only">应用排序</span><select class="select compact" id="appSort">${[['total',t('按总量')],['rx',t('按下载')],['tx',t('按上传')]].map(([v,label])=>option(v,label,appContext().appSort)).join('')}</select></label><label><span class="sr-only">历史分组</span><select class="select compact" id="appGrouping">${[['summary',t('应用汇总')],['minute',t('按分钟')],['hour',t('按小时')],['day',t('按日')],['month',t('按月')],['live',t('实时采集')]].map(([value,label])=>option(value,label,appContext().appGrouping)).join('')}</select></label>${applicationSourceFilter(appMinuteSource()?{available:false}:data.proxy,appMinuteSource()?false:appContext().proxyEstimated)}<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(sum,apps.length)}</span>${button('application-control',t('选择程序'),'folder','small-btn')}</div><div id="appStatusRegion">${appStatus(n)}</div><div id="appListRegion" aria-live="polite">${appList(n)}</div><div id="proxyClientsRegion">${proxyClientsView(data.proxy,data.settings.speedUnit)}</div>`;
+ return tr`<div class="applications-toolbar app-filters"><label class="search-box">${icon('search')}<input id="appSearch" type="search" placeholder="搜索应用" aria-label="搜索应用" value="${esc(appContext().appSearch)}"></label><label><span class="sr-only">应用排序</span><select class="select compact" id="appSort">${[['total',t('按总量')],['rx',t('按下载')],['tx',t('按上传')]].map(([v,label])=>option(v,label,appContext().appSort)).join('')}</select></label><label><span class="sr-only">历史分组</span><select class="select compact" id="appGrouping">${[['summary',t('应用汇总')],['minute',t('按分钟')],['hour',t('按小时')],['day',t('按日')],['month',t('按月')],['live',t('实时采集')]].map(([value,label])=>option(value,label,appContext().appGrouping)).join('')}</select></label>${applicationSourceFilter(appMinuteSource()?{available:false}:data.proxy,appMinuteSource()?false:appContext().proxyEstimated)}<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(sum,apps.length)}</span>${button('application-control',t('选择程序'),'folder','small-btn')}</div><div id="appStatusRegion">${appStatus(n,ui.page!=='apps'||!!ui.drawer)}</div><div id="appListRegion" aria-live="polite">${appList(n,apps)}</div><div id="proxyClientsRegion">${proxyClientsView(data.proxy,data.settings.speedUnit)}</div>`;
 }
-function appStatus(n){
+function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${c.available?button('app-collection',c.enabled?t('停止应用采集'):t('启用应用采集'),'','small-btn'):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
+ return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${controls&&c.available?captureButton(c):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${controls&&c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
 }
+function captureButton(c){return button('app-collection',c.enabled?t('停止应用采集'):t('开启应用采集'),c.enabled?'pause':'play',c.enabled?'capture-stop':'capture-start',appCollectionBusy?'disabled':'');}
+function appCaptureControl(){
+ const c=data.appCollection||{},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
+ return `<div class="app-capture-control"><span class="capture-status" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
+}
+function renderCapture(){const region=$('#appCaptureRegion'),focused=region?.contains(document.activeElement);updateRegion(region,appCaptureControl());if(focused)region.querySelector('button')?.focus();}
+function renderRules(){updateRegion($('#appRulesRegion'),appRulesView(appControl,{button,esc}));}
+async function loadAppRules(){const pending=appControl.loadRules();renderRules();await pending;renderRules();}
 function currentAppRows(){const range=getRange();if(appContext().appGrouping==='summary')return sortApps(displayedAppSummary(appNetworkId(),range.start,range.end),appContext().appSort,appContext().appSearch);return applicationRows(displayedAppRecords(),{...range,networkId:appNetworkId(),grouping:appContext().appGrouping,sort:appContext().historySort,direction:appContext().historyDirection,search:appContext().appSearch});}
 function appControlPanel(){return appControlView(appControl,{button,esc});}
 function renderAppControl(){const region=$('#appControlRegion');if(region)region.innerHTML=appControlPanel();}
 async function controlOperation(action,rate){
  const pending=action==='choose'?appControl.choose():appControl.run(action,rate);
- renderAppControl();const result=await pending;if(action==='choose'&&result?.ok&&ui.drawer?.kind==='app'){ui.drawer.app={name:appControl.path.split(/[\\/]/).pop(),path:appControl.path};appControl.name=ui.drawer.app.name;renderDrawer();$('#closeDrawer')?.focus();}else renderAppControl();
+ renderAppControl();const result=await pending;if(action==='choose'&&result?.ok&&ui.drawer?.kind==='app'){ui.drawer.app={name:appControl.path.split(/[\\/]/).pop(),path:appControl.path};appControl.name=ui.drawer.app.name;renderDrawer();$('#closeDrawer')?.focus();}else renderAppControl();renderRules();
 }
 function legacyPanel(){return `<div id="legacyRegion"><p class="small muted" role="status">${esc(legacyMessage(legacyResult))}</p>${button('legacy-status',t('检查旧版数据'),'','small-btn',`type="button" ${legacyBusy?'disabled':''}`)}${button('legacy-import',t('导入旧版目录'),'folder','small-btn',`type="button" ${legacyBusy?'disabled':''}`)}</div>`;}
 async function legacyAction(importing){
@@ -315,16 +326,24 @@ function appHistoryTable(){
 async function exportApps(){if(appContext().appGrouping==='live'){toast(t('请切换到应用汇总或历史后导出。'));return;}const rows=currentAppRows();if(!rows.length)return;if(await dataDownload(`WiFiMeter_apps_${appContext().appGrouping}_${getRange().end}.csv`,applicationCsv(rows,data.settings.language)))toast(tr`已导出 ${rows.length} 条记录。`);}
 function appRate(bytes){const {value,unit}=formatSpeedParts(bytes,data.settings.speedUnit);return `${esc(value)} ${esc(unit)}`;}
 function liveAppName(process){return process.name||data.appRecords.find(row=>row.appId===process.appId)?.name||process.appId;}
+function namedAppProcesses(){
+ let names;
+ return (data.appProcesses||[]).map(process=>{
+  if(process.name)return process;
+  if(!names){names=new Map();for(const row of data.appRecords)if(!names.has(row.appId))names.set(row.appId,row.name);}
+  return {...process,name:names.get(process.appId)||process.appId};
+ });
+}
 function appLiveList(n,sort=appContext().appSort,search=appContext().appSearch){
  const collection=data.appCollection||{},running=collection.state==='running'||collection.state==='partial';
- const rows=running?applicationLiveRows((data.appProcesses||[]).map(p=>({...p,name:liveAppName(p)})),{networkId:n.id,search,sort}):[];
+ const rows=running?applicationLiveRows(namedAppProcesses(),{networkId:n.id,search,sort}):[];
  if(!rows.length)return `<p class="small muted">${t('当前没有应用进程数据。')}</p>`;
  return tr`<div class="table-scroll"><table><thead><tr><th>排名</th><th>应用</th><th>PID</th><th>网络名称</th><th>下载速度</th><th>上传速度</th><th>总速度</th></tr></thead><tbody>${rows.map((p,index)=>`<tr><td>${index+1}</td><td><button class="network-name" data-action="select-live-app" data-app-id="${esc(p.appId)}" data-network-id="${esc(p.networkId)}" data-live-key="${esc(p.key)}">${applicationAvatar({...p,name:liveAppName(p)},esc,true)}${esc(liveAppName(p))}</button></td><td>${esc(p.processIds.join(', '))}</td><td>${p.scope==='loopback'?t('本地 TCP'):esc(getNetwork(p.networkId)?networkName(getNetwork(p.networkId)):p.networkId)}</td><td>${appRate(p.rxPerSecond)}</td><td>${appRate(p.txPerSecond)}</td><td>${appRate(p.totalPerSecond)}</td></tr>`).join('')}</tbody></table></div>`;
 }
-function appList(n){
+function appList(n,summary){
  if(appContext().appGrouping==='live')return appLiveList(n);
  if(appContext().appGrouping!=='summary')return appHistoryTable();
- const {start,end}=getRange(),apps=displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
+ const {start,end}=getRange(),apps=summary||displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
  const list=sortApps(apps,appContext().appSort,appContext().appSearch),visible=appContext().appAll?list:list.slice(0,10);
  if(!apps.length)return empty(t('所选时段没有应用记录'),data.appCollection?.available&&!data.appCollection.enabled?t('启用应用采集后开始记录。'):t('试试其他日期或网络。'));
  if(!list.length)return empty(t('没有匹配的应用'),t('试试其他应用名称。'));
@@ -332,7 +351,7 @@ function appList(n){
 }
 function refreshApplicationDetails(){
  if(ui.drawer?.kind!=='app'||!ui.drawer.app.key||ui.drawer.app.processId==null)return;
- const current=applicationLiveRows((data.appProcesses||[]).map(p=>({...p,name:liveAppName(p)}))).find(p=>p.key===ui.drawer.app.key);
+ const current=applicationLiveRows(namedAppProcesses()).find(p=>p.key===ui.drawer.app.key);
  ui.drawer.app={...ui.drawer.app,...current,rxPerSecond:current?.rxPerSecond??null,txPerSecond:current?.txPerSecond??null};
  const section=$('.application-summary');
  if(section){const wrapper=document.createElement('div');wrapper.innerHTML=applicationDetails(ui.drawer.app,{esc,fmtWithUnit,appRate,estimateLabel});updateRegion(section,wrapper.firstElementChild.innerHTML);}
@@ -343,14 +362,15 @@ function renderAppList(){
  const active=document.activeElement,focused=active?.matches('#appListRegion button,#appStatusRegion button')?{action:active.dataset.action,appId:active.dataset.appId,key:active.dataset.key}:null;
  const n={id:appNetworkId()},{start,end}=getRange(),apps=displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(data.proxy,data.settings.speedUnit));
- updateRegion($('#appListRegion'),appList(n),{selection:window.getSelection()});updateRegion($('#appStatusRegion'),appStatus(n));updateRegion($('#appTotal'),fmtNumber(sum,apps.length));
+ updateRegion($('#appListRegion'),appList(n,apps),{selection:window.getSelection()});updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));updateRegion($('#appTotal'),fmtNumber(sum,apps.length));
  const source=$('#appDataSource');if(source){source.value=appMinuteSource()?'native':appContext().proxyEstimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=appMinuteSource()||!data.proxy?.available;}
  appIcons.hydrate(document);
  if(focused)$$('#appListRegion button,#appStatusRegion button').find(b=>b.dataset.action===focused.action&&b.dataset.appId===focused.appId&&b.dataset.key===focused.key)?.focus();
 }
 async function setAppCollection(enabled){
+ if(appCollectionBusy)return;appCollectionBusy=true;renderCapture();
  const buttons=$$('[data-action="app-collection"],[data-action="app-collection-retry"]');buttons.forEach(b=>b.disabled=true);
- try{await store.setAppCollection(enabled);renderAppList();}finally{buttons.forEach(b=>b.disabled=false);}
+ try{await store.setAppCollection(enabled);renderAppList();const ranking=$('#liveRankingRegion');if(ranking)updateRegion(ranking,appLiveList({id:ui.networkId},ui.liveSort,''));}finally{appCollectionBusy=false;$$('[data-action="app-collection"],[data-action="app-collection-retry"]').forEach(b=>b.disabled=false);renderCapture();}
 }
 function drawerSettings(n){
  return tr`<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="${MAX_QUOTA_GB}" step="any"><span>GB</span></div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month',t('每自然月'),n.quotaPeriod)}${option('day',t('每天'),n.quotaPeriod)}${option('all',t('累计不重置'),n.quotaPeriod)}</select></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div></div>${toggle('notify',n.notify,t('接近额度时提醒'))}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><input class="input" id="warnPercent" name="warnPercents" type="text" value="${esc(quotaThresholds(n).join(', '))}" placeholder="50, 75, 90, 100" required></div>${isEthernet(n)?tr`<p class="small muted">有线网络不支持无线断开操作。</p>`:tr`<div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div></div>${toggle('autoDisconnect',n.autoDisconnect,t('达到额度后自动断开'))}</div>`}<div class="form-error" id="networkFormError" role="alert"></div>${autosaveStatus('networkSaveStatus')}</form>`;
@@ -547,8 +567,8 @@ function paintLive(){
  refreshAfterTick();renderStatusHelp();refreshApplicationDetails();
  if(!ui.modal){
   renderAppList();
-  updateRegion($('#liveStatusRegion'),appStatus({id:ui.networkId}));
-  updateRegion($('#liveRankingRegion'),appLiveList({id:ui.networkId},ui.liveSort,''),{selection:window.getSelection()});
+  renderCapture();const ranking=$('#liveRankingRegion');
+  if(ranking)updateRegion(ranking,appLiveList({id:ui.networkId},ui.liveSort,''),{selection:window.getSelection()});
   if(!ui.drawer&&ui.page==='networks')updateRegion($('#networkTableRegion'),networkTable(true),{selection:window.getSelection()});
   if(!ui.drawer&&ui.page==='history'&&!$('#content').contains(document.activeElement))updateRegion($('#content'),historyPage(),{selection:window.getSelection()});
  }
@@ -610,7 +630,7 @@ async function ensureMinuteHistory(){
  }
 }
 function customRangeModal(){
- const r=getRange();showModal(t('选择日期范围'),tr`<p class="modal-desc">按本地时间选择起止日期和时分，包含结束分钟。分钟明细从升级后开始记录。</p><form id="rangeForm"><div class="field-row"><div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div><div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div></div><div class="field-row"><div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div><div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div></div><div class="form-error" id="rangeError" role="alert"></div><div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div></form>`);
+ const r=getRange();showModal(t('选择日期范围'),tr`<form id="rangeForm"><div class="field-row"><div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div><div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div></div><div class="field-row"><div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div><div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div></div><div class="form-error" id="rangeError" role="alert"></div><div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div></form>`);
 }
 let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
@@ -648,11 +668,13 @@ const actions={
  'app-history-prev':()=>{appContext().appPage=Math.max(1,(appContext().appPage||1)-1);renderAppList();},
  'app-history-next':()=>{appContext().appPage=(appContext().appPage||1)+1;renderAppList();},
  'app-history-sort':e=>{const d=appContext();d.appPage=1;d.historyDirection=d.historySort===e.dataset.key&&d.historyDirection==='desc'?'asc':'desc';d.historySort=e.dataset.key;renderAppList();},
- 'select-live-app':e=>{const record=applicationLiveRows((data.appProcesses||[]).map(p=>({...p,name:liveAppName(p)}))).find(p=>p.key===e.dataset.liveKey);if(record)return openApplicationDrawer({...record,name:liveAppName(record)});},
+ 'select-live-app':e=>{const record=applicationLiveRows(namedAppProcesses()).find(p=>p.key===e.dataset.liveKey);if(record)return openApplicationDrawer({...record,name:liveAppName(record)});},
  'select-app-row':e=>{const selected=currentAppRows().find(row=>row.key===e.dataset.key);if(selected){appContext().selectedApp=selected;return openApplicationDrawer(selected);}},
  'select-app':e=>{const record=currentAppRows().find(r=>r.key===e.dataset.key);if(record){appContext().selectedApp=record;return openApplicationDrawer(record);}},
  'select-proxy-app':e=>openApplicationDrawer({appId:e.dataset.appId,name:e.dataset.appName,proxyClient:true}),
  'application-control':()=>openApplicationDrawer(),
+ 'select-controlled-app':e=>openApplicationDrawer({path:e.dataset.path,name:e.dataset.name}),
+ 'app-rules-refresh':loadAppRules,
  'choose-program':()=>controlOperation('choose'),
  'app-control':e=>controlOperation(e.dataset.operation,e.dataset.direction?{direction:e.dataset.direction}:undefined),
  'legacy-status':()=>legacyAction(false),
@@ -703,7 +725,7 @@ document.addEventListener('change',async event=>{
  if(e.id==='historyGrouping'){try{if(e.value!=='day')await ensureMinuteHistory();ui.historyGrouping=e.value;ui.historyPage=1;renderMain();}catch(error){e.value=ui.historyGrouping;toast(error.message,true);}}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
  if(e.id==='checkUpdatesOnStartup'){try{updateStatus=await window.desktop.updates.setCheckOnStartup(e.checked);}catch(error){toast(error.message,true);}renderUpdates();return;}
- if(e.id==='appDataSource'){const wanted=e.value==='estimated';try{if(wanted)await store.reload();if(ui.drawer?.tab!=='apps'&&ui.page!=='apps')return;appContext().proxyEstimated=wanted&&!!data.proxy?.available;appContext().selectedApp=null;if(ui.drawer)renderDrawer();else renderMain();}catch(error){e.value=appContext().proxyEstimated?'estimated':'native';toast(error.message,true);}}
+ if(e.id==='appDataSource'){const wanted=e.value==='estimated';try{if(wanted)await store.reload();if(ui.drawer?.tab!=='apps'&&ui.page!=='apps')return;appContext().proxyEstimated=wanted&&!!data.proxy?.available;appContext().selectedApp=null;if(ui.drawer)renderDrawer();else renderAppList();}catch(error){e.value=appContext().proxyEstimated?'estimated':'native';toast(error.message,true);}}
  if(e.id==='appGrouping'){try{if(['minute','hour'].includes(e.value))await ensureMinuteHistory();appContext().appGrouping=e.value;appContext().appPage=1;renderAppList();}catch(error){e.value=appContext().appGrouping;toast(error.message,true);}}
  if(e.id==='appSort'){appContext().appSort=e.value;renderAppList();}
 
@@ -752,6 +774,7 @@ window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEven
 window.addEventListener('focus',()=>reloadWindowPreferences().catch(console.error));
 // 启动：先取一份快照再渲染；后端不可用时给出明确提示而不是显示空数据。
 renderMain();
+loadAppRules().catch(console.error);
 const initialRange=getRange();
 store.start({from:initialRange.start,to:initialRange.end}).then(()=>{
  storageFailed=false;restartSampler();renderMain();

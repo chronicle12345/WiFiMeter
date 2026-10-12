@@ -50,13 +50,12 @@ for (const language of ['zh-CN', 'en']) {
                 const layout = await page.evaluate(() => {
                     const root = document.scrollingElement;
                     const summary = document.querySelector('.overview-summary');
-                    const ranking = document.querySelector('.live-ranking-panel');
                     const selectors = ['.toolbar', '.connection', '.metrics', '.total-quota-card', '.chart-row', '.chart', '.chart-caption', '.quota-body', '.quota-foot', '.notice-line'];
                     return {
                         bottomGap: innerHeight - summary.getBoundingClientRect().bottom,
                         summaryBottom: summary.getBoundingClientRect().bottom,
-                        rankingTop: ranking.getBoundingClientRect().top,
-                        summaryFollowedByRanking: summary.nextElementSibling === ranking,
+                        hasRanking: !!document.querySelector('.live-ranking-panel'),
+                        quotaHeight: document.querySelector('.quota-card').getBoundingClientRect().height,
                         cards: [...document.querySelectorAll('.chart-row>.panel')].map(element => {
                             const rect = element.getBoundingClientRect();
                             return { top: rect.top, bottom: rect.bottom, height: rect.height };
@@ -78,14 +77,13 @@ for (const language of ['zh-CN', 'en']) {
                     };
                 });
                 console.log(`${language} ${width}x${height}: ${JSON.stringify(layout)}`);
-                expect(layout.scrollHeight).toBeGreaterThan(layout.height);
+                expect(layout.scrollHeight).toBeLessThanOrEqual(layout.height);
                 expect(layout.scrollWidth).toBeLessThanOrEqual(layout.width);
                 expect(layout.bottomGap).toBeGreaterThanOrEqual(16);
                 expect(layout.bottomGap).toBeLessThanOrEqual(24);
-                expect(layout.summaryFollowedByRanking).toBe(true);
-                expect(layout.rankingTop).toBeGreaterThanOrEqual(layout.summaryBottom);
+                expect(layout.hasRanking).toBe(false);
+                expect(layout.quotaHeight).toBeLessThanOrEqual(350);
                 expect(Math.abs(layout.cards[0].top - layout.cards[1].top)).toBeLessThan(1);
-                expect(Math.abs(layout.cards[0].bottom - layout.cards[1].bottom)).toBeLessThan(1);
                 for (const control of layout.controls.slice(1)) {
                     expect(Math.abs(control.top - layout.controls[0].top)).toBeLessThan(1);
                     expect(Math.abs(control.bottom - layout.controls[0].bottom)).toBeLessThan(1);
@@ -93,9 +91,6 @@ for (const language of ['zh-CN', 'en']) {
                 expect(layout.controls[1].left - layout.controls[0].right).toBeLessThanOrEqual(12);
                 expect(layout.outside).toEqual([]);
                 expect(layout.clipping).toEqual([]);
-                await page.locator('.live-ranking-panel .applications-content').scrollIntoViewIfNeeded();
-                await expect(page.locator('.live-ranking-panel .applications-content')).toBeInViewport();
-                expect(await page.evaluate(() => scrollY)).toBeGreaterThan(0);
                 expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(window => !window.isFocused() && !window.isFocusable()))).toBe(true);
             });
         }
