@@ -8,9 +8,18 @@ namespace wifimeter::core
 void AppUsageAccumulator::clear()
 {
     counters_.clear();
+    acknowledged_.clear();
     networks_.clear();
     generation_.clear();
     lastAt_ = {};
+}
+
+void AppUsageAccumulator::acknowledge(const platform::AppTrafficReport& saved)
+{
+    if (!saved.retirementSupported || saved.generation != generation_) return;
+    for (const auto& sample : saved.samples)
+        if (!sample.active && sample.source == "WindowsEtw" && sample.instanceId.rfind("retired:",0) != 0)
+            acknowledged_.emplace(sample.interfaceId,sample.appId,sample.instanceId);
 }
 
 AppAccumulateResult AppUsageAccumulator::accumulate(const platform::AppTrafficReport& apps, const platform::SampleReport& wifi, TimePoint now)
@@ -39,12 +48,15 @@ AppAccumulateResult AppUsageAccumulator::accumulate(const platform::AppTrafficRe
         if (!generation_.empty())
             result.gaps.push_back({AppGapKind::sourceRestart, {}, {}, lastAt_, now});
         counters_.clear();
+        acknowledged_.clear();
     }
     const auto span = now > lastAt_ ? std::chrono::duration_cast<std::chrono::seconds>(now - lastAt_) : std::chrono::seconds(0);
     std::set<std::string> gapped;
+    std::set<Key> seen;
     for (const auto& sample : apps.samples)
     {
         const Key key{sample.interfaceId, sample.appId, sample.instanceId};
+        seen.insert(key);
         const auto old = counters_.find(key);
         ByteCount rx = 0, tx = 0;
         bool reset = false;
@@ -87,6 +99,18 @@ AppAccumulateResult AppUsageAccumulator::accumulate(const platform::AppTrafficRe
         if (rx || tx)
             result.deltas.push_back({network->second, sample, rx, tx, now, span});
     }
+    // A queued acknowledgement can fail to reach the helper. Omission from its
+    // next snapshot confirms removal; repeated final rows retain their baseline.
+    if (apps.retirementSupported)
+        for (auto acknowledged = acknowledged_.begin(); acknowledged != acknowledged_.end(); )
+        {
+            if (!seen.count(*acknowledged))
+            {
+                counters_.erase(*acknowledged);
+                acknowledged = acknowledged_.erase(acknowledged);
+            }
+            else ++acknowledged;
+        }
     generation_ = apps.generation;
     networks_ = std::move(current);
     lastAt_ = now;

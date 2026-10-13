@@ -1,6 +1,7 @@
 // 服务层测试：用假的平台实现覆盖每个协议方法，不碰真实系统也不碰真实网络。
 
 #include <map>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -64,9 +65,12 @@ public:
     int reads = 0;
     int starts = 0;
     int stops = 0;
+    std::vector<platform::AppTrafficReport> saved;
+    std::function<void()> onRead;
     void start() override { ++starts; }
     void stop() override { ++stops; }
-    platform::AppTrafficReport read() override { ++reads; return report; }
+    platform::AppTrafficReport read() override { ++reads; if (onRead) onRead(); return report; }
+    void acknowledge(const platform::AppTrafficReport& value) override { saved.push_back(value); }
 };
 
 platform::WifiLink makeLink(const std::string& interfaceId, const std::string& uuid, const std::string& ssid, int signal = 80)
@@ -1280,6 +1284,105 @@ void applicationStorageFailureRollsBackOnlyApplications()
     WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("1000"));
 }
 
+void applicationFinalSnapshotRetriesBeforeItsSourceCanRetire()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    Harness h;
+    FakeApps apps;
+    h.service = std::make_unique<BackendService>(BackendService::Deps{*h.store, h.network, &apps});
+    const auto at = utcTime(2026,10,1,23,59,55);
+    h.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 0, 0));
+    bool created = false;
+    WIFIMETER_CHECK(h.store->networks().observe({kUuid,"Home"},"2026-10-01T23:59:55Z",created).ok);
+    auto enabled = JsonValue::makeObject(); enabled.set("enabled",JsonValue::makeBool(true));
+    WIFIMETER_CHECK(h.call(method::kSetAppCollection,enabled,at).ok());
+    apps.report = {platform::AppCollectorState::running,"final",{},
+        {{"wlan0","browser","Browser","42:100",42,100,20,true}}};
+    apps.report.samples[0].source = "WindowsEtw";
+    apps.report.sampledAtMs = 10000;
+    h.service->collectOnce(at);
+    const auto acknowledged = apps.saved.size();
+    apps.report.samples[0].rxBytes = 150; apps.report.samples[0].txBytes = 30;
+    apps.report.samples[0].active = false; apps.report.samples[0].processId = 0;
+    apps.report.sampledAtMs = 15000;
+    WIFIMETER_CHECK(h.store->database().exec("CREATE TEMP TRIGGER reject_app_minutes BEFORE INSERT ON app_minute_usage BEGIN SELECT RAISE(ABORT,'injected app save failure'); END;").ok);
+    h.service->collectOnce(at+std::chrono::seconds(5));
+    const auto reads = apps.reads;
+    WIFIMETER_CHECK_EQ(apps.saved.size(),acknowledged);
+    Status status;
+    WIFIMETER_CHECK(h.store->usage().appRange({},"2026-10-01","2026-10-02",status).empty());
+    // Reusing a PID and crossing midnight must not replace the failed batch.
+    apps.report = {platform::AppCollectorState::running,"new-helper",{},
+        {{"wlan0","editor","Editor","42:300",42,900,100,true}}};
+    apps.report.sampledAtMs = 1000;
+    h.service->collectOnce(at+std::chrono::seconds(10));
+    WIFIMETER_CHECK_EQ(apps.reads,reads);
+    WIFIMETER_CHECK_EQ(apps.saved.size(),acknowledged);
+    auto paused = JsonValue::makeObject(); paused.set("paused",JsonValue::makeBool(true));
+    WIFIMETER_CHECK(!h.call(method::kSetPaused,paused,at+std::chrono::seconds(10)).ok());
+    WIFIMETER_CHECK(!h.call(method::kShutdown,at+std::chrono::seconds(10)).ok());
+    WIFIMETER_CHECK(h.store->database().exec("DROP TRIGGER reject_app_minutes;").ok);
+    h.service->collectOnce(at+std::chrono::seconds(15));
+    WIFIMETER_CHECK_EQ(apps.reads,reads);
+    WIFIMETER_CHECK_EQ(apps.saved.size(),acknowledged+1);
+    const auto rows = h.store->usage().appRange({},"2026-10-01","2026-10-02",status);
+    WIFIMETER_CHECK_EQ(rows.size(),std::size_t{1});
+    if (!rows.empty())
+    {
+        WIFIMETER_CHECK_EQ(rows[0].appId,std::string("browser"));
+        WIFIMETER_CHECK_EQ(rows[0].day,std::string("2026-10-01"));
+        WIFIMETER_CHECK_EQ(rows[0].rxBytes,ByteCount{50});
+        WIFIMETER_CHECK_EQ(rows[0].txBytes,ByteCount{10});
+    }
+    h.service->collectOnce(at+std::chrono::seconds(20));
+    WIFIMETER_CHECK_EQ(h.store->usage().appRange({},"2026-10-01","2026-10-02",status).size(),std::size_t{1});
+    memoryOnly = before;
+}
+
+void applicationBeginAndCommitFailuresKeepTheSameFinalBatch()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    for (const bool failCommit : {false,true})
+    {
+        Harness h;
+        FakeApps apps;
+        h.service = std::make_unique<BackendService>(BackendService::Deps{*h.store,h.network,&apps});
+        const auto at = utcTime(2026,10,2,10,0,0);
+        h.network.sampleReport.samples.push_back(makeSample("wlan0",kUuid,"Home",0,0));
+        bool created = false;
+        WIFIMETER_CHECK(h.store->networks().observe({kUuid,"Home"},"2026-10-02T10:00:00Z",created).ok);
+        auto enabled = JsonValue::makeObject(); enabled.set("enabled",JsonValue::makeBool(true));
+        WIFIMETER_CHECK(h.call(method::kSetAppCollection,enabled,at).ok());
+        apps.report = {platform::AppCollectorState::running,"guard",{},
+            {{"wlan0","browser","Browser","42:100",42,0,0,true}}};
+        apps.report.samples[0].source = "WindowsEtw";
+        apps.report.sampledAtMs = 10000;
+        h.service->collectOnce(at);
+        const auto saved = apps.saved.size();
+        apps.report.samples[0].rxBytes = 17; apps.report.samples[0].txBytes = 5;
+        apps.report.samples[0].active = false; apps.report.sampledAtMs = 15000;
+        if (failCommit)
+            WIFIMETER_CHECK(h.store->database().exec("CREATE TABLE app_commit_parent(id INTEGER PRIMARY KEY); CREATE TABLE app_commit_guard(parent_id INTEGER REFERENCES app_commit_parent(id) DEFERRABLE INITIALLY DEFERRED); CREATE TEMP TRIGGER reject_app_commit AFTER INSERT ON app_minute_usage BEGIN INSERT INTO app_commit_guard VALUES(1); END;").ok);
+        else apps.onRead = [&] { WIFIMETER_CHECK(h.store->database().begin().ok); };
+        h.service->collectOnce(at+std::chrono::seconds(5));
+        WIFIMETER_CHECK_EQ(apps.saved.size(),saved);
+        if (failCommit) WIFIMETER_CHECK(h.store->database().exec("DROP TRIGGER reject_app_commit;").ok);
+        else { apps.onRead = {}; WIFIMETER_CHECK(h.store->database().rollback().ok); }
+        Status status;
+        WIFIMETER_CHECK(h.store->usage().appRange({},"2026-10-02","2026-10-02",status).empty());
+        const auto reads = apps.reads;
+        h.service->collectOnce(at+std::chrono::seconds(10));
+        WIFIMETER_CHECK_EQ(apps.reads,reads);
+        WIFIMETER_CHECK_EQ(apps.saved.size(),saved+1);
+        const auto rows = h.store->usage().appRange({},"2026-10-02","2026-10-02",status);
+        WIFIMETER_CHECK_EQ(rows.size(),std::size_t{1});
+        if (!rows.empty()) { WIFIMETER_CHECK_EQ(rows[0].rxBytes,ByteCount{17}); WIFIMETER_CHECK_EQ(rows[0].txBytes,ByteCount{5}); }
+    }
+    memoryOnly = before;
+}
+
 
 
 void wiredLiveAndDisconnectProtection()
@@ -1803,6 +1906,13 @@ void pendingUsageHonorsPauseClearRestoreImportAndRetention()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--app-retirement-memory")
+    {
+        wifimeter::test::useTimeZone("UTC");
+        applicationFinalSnapshotRetriesBeforeItsSourceCanRetire();
+        applicationBeginAndCommitFailuresKeepTheSameFinalBatch();
+        return WIFIMETER_REPORT();
+    }
     if (argc == 2 && std::string(argv[1]) == "--restore-pause-memory")
     {
         restoreRecordsItsPausedIntervalInMemory();
@@ -1841,5 +1951,7 @@ int main(int argc, char** argv)
     applicationCollectionIsIndependentAndOptIn();
     applicationFailureDetailsSurviveEventsAndStorage();
     applicationStorageFailureRollsBackOnlyApplications();
+    applicationFinalSnapshotRetriesBeforeItsSourceCanRetire();
+    applicationBeginAndCommitFailuresKeepTheSameFinalBatch();
     return WIFIMETER_REPORT();
 }

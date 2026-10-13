@@ -48,6 +48,8 @@ struct AppTrafficReport
     // 采集端单调时钟毫秒数；0 表示旧格式，EStats 独立于 ETW 刷新。
     std::int64_t sampledAtMs = 0;
     std::int64_t loopbackSampledAtMs = 0;
+    // Old helpers retain final samples indefinitely and do not accept save acknowledgements.
+    bool retirementSupported = false;
 };
 
 class AppTrafficSource
@@ -57,6 +59,8 @@ public:
     virtual void start() = 0;
     virtual void stop() = 0;
     virtual AppTrafficReport read() = 0;
+    // Notify the source only after the exact cumulative snapshot was committed.
+    virtual void acknowledge(const AppTrafficReport&) {}
 };
 
 // 原生采集辅助进程和测试夹具共用的快照格式，字节必须是十进制字符串。

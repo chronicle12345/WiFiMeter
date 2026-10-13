@@ -1,5 +1,6 @@
 #include "etw_app_capture.h"
 #include "tcp_estats_capture.h"
+#include "../app_capture_cache.h"
 
 #include <winsock2.h>
 #include <ws2ipdef.h>
@@ -58,6 +59,7 @@ struct Process
 {
     HANDLE handle = nullptr;
     std::uint64_t started = 0;
+    std::uint64_t exited = 0;
     std::string appId = "unknown";
     std::string name = "未识别应用";
     ~Process() { if (handle) ::CloseHandle(handle); }
@@ -85,6 +87,7 @@ public:
             return failed(ERROR_GEN_FAILURE, "生成应用采集会话名称失败");
         name_ = std::wstring(L"WiFiMeter.Apps.") + guidText;
         generation_ = utf8(name_);
+        counters_.reset(generation_);
         refreshAddresses();
         auto properties = configuration();
         properties.value.Wnode.ClientContext = 1;
@@ -144,7 +147,7 @@ public:
             worker_.join();
         std::lock_guard lock(mutex_);
         processes_.clear();
-        counters_.clear();
+        counters_.reset({});
         addresses_.clear();
         missing_ = lastMissing_ = 0;
         lastLost_ = 0;
@@ -169,20 +172,22 @@ public:
             return failed(queried, "读取应用流量 ETW 状态失败");
         const std::uint64_t lost = std::uint64_t(properties.value.EventsLost) + properties.value.LogBuffersLost + properties.value.RealTimeBuffersLost;
         std::lock_guard lock(mutex_);
-        AppTrafficReport report{AppCollectorState::running, generation_, {}, {}};
-        report.sampledAtMs = static_cast<std::int64_t>(::GetTickCount64());
-        report.samples.reserve(counters_.size());
-        for (const auto& [key, value] : counters_)
+        // Copy creation/exit identity before closing every terminated process handle.
+        for (auto process = processes_.begin(); process != processes_.end(); )
         {
-            auto sample = value;
-            const auto process = processes_.find(sample.processId);
-            sample.active = process != processes_.end() && process->second->handle &&
-                ::WaitForSingleObject(process->second->handle, 0) == WAIT_TIMEOUT &&
-                sample.instanceId == std::to_string(sample.processId) + ":" + std::to_string(process->second->started);
-            if (!sample.active || sample.appId == "unknown")
-                sample.processId = 0;
-            report.samples.push_back(std::move(sample));
+            if (!process->second->handle) process = processes_.erase(process);
+            else if (::WaitForSingleObject(process->second->handle,0) == WAIT_OBJECT_0)
+            {
+                FILETIME created{}, exited{}, kernel{}, user{};
+                if (::GetProcessTimes(process->second->handle,&created,&exited,&kernel,&user) && fileTime(exited))
+                    counters_.exited(process->first,process->second->started,fileTime(exited));
+                else { counters_.exited(process->first,process->second->started,1); ++missing_; }
+                process = processes_.erase(process);
+            }
+            else ++process;
         }
+        auto report = counters_.snapshot();
+        report.sampledAtMs = static_cast<std::int64_t>(::GetTickCount64());
         if (missing_ != lastMissing_ || lost != lastLost_)
         {
             report.state = AppCollectorState::partial;
@@ -200,6 +205,12 @@ public:
         lastMissing_ = missing_;
         lastLost_ = lost;
         return report;
+    }
+
+    void acknowledge(const AppTrafficReport& saved)
+    {
+        std::lock_guard lock(mutex_);
+        counters_.acknowledge(saved);
     }
 
 private:
@@ -294,6 +305,13 @@ private:
         {
             if (found->second->handle && ::WaitForSingleObject(found->second->handle, 0) == WAIT_TIMEOUT)
                 return *found->second;
+            if (found->second->handle)
+            {
+                FILETIME created{}, exited{}, kernel{}, user{};
+                if (::GetProcessTimes(found->second->handle,&created,&exited,&kernel,&user) && fileTime(exited))
+                    counters_.exited(pid,found->second->started,fileTime(exited));
+                else { counters_.exited(pid,found->second->started,1); ++missing_; }
+            }
             processes_.erase(found);
         }
         auto identity = std::make_unique<Process>();
@@ -311,6 +329,7 @@ private:
                 if (!appId.empty() && appId.size() <= 1024)
                 {
                     identity->started = fileTime(created);
+                    identity->exited = fileTime(exited);
                     identity->appId = appId;
                     identity->name = utf8(std::filesystem::path(path).filename().wstring());
                     if (identity->name.empty() || identity->name.size() > 256)
@@ -339,30 +358,15 @@ private:
             return;
         }
         const auto& owner = process(packet.processId);
-        const bool identified = owner.started && timestamp >= owner.started;
-        const auto instance = std::to_string(packet.processId) + ":" + (identified ? std::to_string(owner.started) : "unknown");
-        const auto key = std::make_pair(networkInterface->second, instance);
-        auto found = counters_.find(key);
-        if (found == counters_.end())
-        {
-            if (counters_.size() >= 65536)
-            {
-                ++missing_;
-                return;
-            }
-            found = counters_.emplace(key, AppTrafficSample{networkInterface->second, identified ? owner.appId : "unknown",
-                identified ? owner.name : "未识别应用", instance, identified ? packet.processId : 0, 0, 0, identified}).first;
-        }
-        found->second.source = "WindowsEtw";
-        auto& bytes = packet.receive ? found->second.rxBytes : found->second.txBytes;
-        if ((std::numeric_limits<std::uint64_t>::max)() - bytes < packet.bytes)
-        {
-            ++missing_;
-            return;
-        }
-        bytes += packet.bytes;
-        if (!identified)
-            ++missing_;
+        std::optional<AppCaptureIdentity> identity;
+        if (owner.started && timestamp >= owner.started && owner.handle && (!owner.exited || timestamp <= owner.exited))
+            identity = AppCaptureIdentity{packet.processId,owner.started,owner.exited,owner.appId,owner.name};
+        else identity = counters_.identityFor(packet.processId,timestamp);
+        const auto rx = packet.receive ? packet.bytes : 0;
+        const auto tx = packet.receive ? 0 : packet.bytes;
+        const bool recorded = identity ? counters_.add(networkInterface->second,*identity,rx,tx) :
+            counters_.addUnknown(networkInterface->second,rx,tx);
+        if (!recorded || !identity) ++missing_;
     }
 
     std::string etwFailure_;
@@ -379,7 +383,7 @@ private:
     std::mutex mutex_;
     std::map<Address, std::string> addresses_;
     std::map<std::uint32_t, std::unique_ptr<Process>> processes_;
-    std::map<std::pair<std::string, std::string>, AppTrafficSample> counters_;
+    AppCaptureCache counters_;
     std::uint64_t missing_ = 0, lastMissing_ = 0, lastLost_ = 0;
 };
 
@@ -387,6 +391,7 @@ EtwAppCapture::EtwAppCapture() : impl_(std::make_unique<Impl>()) {}
 EtwAppCapture::~EtwAppCapture() = default;
 AppTrafficReport EtwAppCapture::start() { return impl_->start(); }
 AppTrafficReport EtwAppCapture::read() { return impl_->read(); }
+void EtwAppCapture::acknowledge(const AppTrafficReport& saved) { impl_->acknowledge(saved); }
 void EtwAppCapture::stop() { impl_->stop(); }
 
 }  // namespace wifimeter::platform::windows

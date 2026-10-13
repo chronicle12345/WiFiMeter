@@ -7,10 +7,13 @@
 #include <shellapi.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <map>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -180,6 +183,24 @@ public:
         return report_;
     }
 
+    void acknowledge(const AppTrafficReport& saved)
+    {
+        if (!saved.retirementSupported || saved.generation.empty()) return;
+        std::lock_guard lock(mutex_);
+        if (saved.generation != acknowledgementGeneration_)
+        {
+            acknowledgements_.clear();
+            acknowledgementGeneration_ = saved.generation;
+        }
+        for (const auto& sample : saved.samples)
+        {
+            if (sample.active || sample.source != "WindowsEtw" || sample.instanceId.rfind("retired:",0) == 0) continue;
+            auto& entry = acknowledgements_[{sample.interfaceId,sample.appId,sample.instanceId}];
+            if (entry.instanceId.empty()) entry = sample;
+            else { entry.rxBytes = std::max(entry.rxBytes,sample.rxBytes); entry.txBytes = std::max(entry.txBytes,sample.txBytes); }
+        }
+    }
+
 private:
     bool cancelled() const { return ::WaitForSingleObject(stopped_, 0) == WAIT_OBJECT_0; }
 
@@ -281,7 +302,27 @@ private:
         while (!cancelled())
         {
             bool request = false;
-            { std::lock_guard lock(mutex_); if (received) request = std::exchange(requested_, false); }
+            AppTrafficReport acknowledged;
+            {
+                std::lock_guard lock(mutex_);
+                if (received)
+                {
+                    request = std::exchange(requested_, false);
+                    if (!acknowledgements_.empty())
+                    {
+                        acknowledged.state = AppCollectorState::running;
+                        acknowledged.generation = acknowledgementGeneration_;
+                        acknowledged.retirementSupported = true;
+                        for (auto& [key,sample] : acknowledgements_) { (void)key; acknowledged.samples.push_back(std::move(sample)); }
+                        acknowledgements_.clear();
+                    }
+                }
+            }
+            if (!acknowledged.samples.empty())
+            {
+                const auto command = "acknowledge " + serializeAppTrafficReport(acknowledged) + "\n";
+                if (command.size() > 128 * 1024 * 1024 || !send(command.data(),static_cast<DWORD>(command.size()))) break;
+            }
             if (request && !pending)
             {
                 if (!send("read\n", 5)) break;
@@ -345,6 +386,8 @@ private:
     std::mutex mutex_;
     std::condition_variable changed_;
     AppTrafficReport report_;
+    std::string acknowledgementGeneration_;
+    std::map<std::tuple<std::string,std::string,std::string>,AppTrafficSample> acknowledgements_;
     std::uint64_t revision_ = 0;
     bool requested_ = false, launched_ = false;
     DWORD launchCode_ = ERROR_SUCCESS;
@@ -365,5 +408,6 @@ void WindowsAppTrafficSource::stop()
     session_.reset();
 }
 AppTrafficReport WindowsAppTrafficSource::read() { return session_ ? session_->read() : AppTrafficReport{}; }
+void WindowsAppTrafficSource::acknowledge(const AppTrafficReport& saved) { if (session_) session_->acknowledge(saved); }
 
 }  // namespace wifimeter::platform::windows

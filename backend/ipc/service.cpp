@@ -354,6 +354,8 @@ BackendService::Response BackendService::setAppCollection(const JsonValue& param
         response.error = Error{errorCode::kUnavailable, "当前构建没有可用的应用采集器。"};
         return response;
     }
+    if (const auto flushed = flushPendingApplications(); !flushed)
+    { response.error = Error{errorCode::kStorageFailure,flushed.message}; return response; }
     appEnabled_ = enabled->asBool();
     if (deps_.applications)
     {
@@ -377,11 +379,19 @@ BackendService::Response BackendService::setAppCollection(const JsonValue& param
     return response;
 }
 
-void BackendService::collectApplications(const platform::SampleReport& wifi, TimePoint now, Events& events)
+void BackendService::collectApplications(const platform::SampleReport& currentWifi, TimePoint now, Events& events)
 {
     if (!appEnabled_ || deps_.applications == nullptr)
         return;
-    const auto report = deps_.applications->read();
+    const auto wifi = pendingAppUsage_ ? pendingAppUsage_->wifi : currentWifi;
+    const auto report = pendingAppUsage_ ? pendingAppUsage_->report : deps_.applications->read();
+    if (pendingAppUsage_) now = pendingAppUsage_->at;
+    const auto defer = [&](const std::string& detail) {
+        if (!pendingAppUsage_) pendingAppUsage_ = PendingAppUsage{report,wifi,now};
+        appState_ = platform::AppCollectorState::unavailable;
+        appDetail_ = detail;
+        loopbackLive_.clear();
+    };
     proxyIdentityFresh_ = !report.generation.empty() && report.loopbackSampledAtMs > 0 &&
         (report.generation != proxyIdentityReport_.generation || report.loopbackSampledAtMs > proxyIdentityReport_.loopbackSampledAtMs);
     if (proxyIdentityFresh_) proxyIdentityReport_ = report;
@@ -411,21 +421,14 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
     const double appElapsed = sameGeneration && report.sampledAtMs > 0 && appSampledAtMs_ > 0 ?
         static_cast<double>(report.sampledAtMs - appSampledAtMs_) / 1000.0 :
         std::chrono::duration<double>(now - appLastAt_).count();
-    const auto accumulated = appAccumulator_.accumulate(report, wifi, now);
+    auto nextAccumulator = appAccumulator_;
+    const auto accumulated = nextAccumulator.accumulate(report, wifi, now);
     appProcesses_ = std::move(loopback);
-    appSampledAtMs_ = report.sampledAtMs;
-    appSampleGeneration_ = report.generation;
-    appSampleReceivedAt_ = now;
     Status status;
     storage::Transaction transaction(deps_.store.database());
     if (!transaction.active())
     {
-        appState_ = platform::AppCollectorState::unavailable;
-        appDetail_ = deps_.store.database().lastError();
-        appAccumulator_.clear();
-        appSampledAtMs_ = 0; appSampleGeneration_.clear();
-        loopbackLive_.clear();
-        appLastAt_ = now;
+        defer(deps_.store.database().lastError());
         return;
     }
     std::vector<storage::AppUsageRow> rows;
@@ -442,10 +445,7 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
             if (!written)
             {
                 // 应用写入失败仅撤销应用事务，网卡数据已经独立提交。
-                appState_ = platform::AppCollectorState::unavailable;
-                appDetail_ = written.message;
-                appAccumulator_.clear(); appSampledAtMs_ = 0; appSampleGeneration_.clear();
-                loopbackLive_.clear(); appLastAt_ = now;
+                defer(written.message);
                 return;
             }
             rows.push_back(std::move(row));
@@ -500,14 +500,16 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
     {
         if (!transaction.active())
             deps_.store.database().rollback();
-        appState_ = platform::AppCollectorState::unavailable;
-        appDetail_ = status.message;
-        appAccumulator_.clear();
-        appSampledAtMs_ = 0; appSampleGeneration_.clear();
-        loopbackLive_.clear();
-        appLastAt_ = now;
+        defer(status.message);
         return;
     }
+    appAccumulator_ = std::move(nextAccumulator);
+    appSampledAtMs_ = report.sampledAtMs;
+    appSampleGeneration_ = report.generation;
+    appSampleReceivedAt_ = now;
+    pendingAppUsage_.reset();
+    deps_.applications->acknowledge(report);
+    appAccumulator_.acknowledge(report);
     if (collecting && (!accumulated.gaps.empty() || !wifi.complete()))
         appState_ = platform::AppCollectorState::partial;
     for (const auto& process : report.samples)
@@ -544,6 +546,18 @@ void BackendService::collectApplications(const platform::SampleReport& wifi, Tim
         events.names.push_back(event::kAppUsage);
         events.items.push_back(std::move(usage));
     }
+}
+
+Status BackendService::flushPendingApplications()
+{
+    if (!pendingAppUsage_) return Status::success();
+    Events events;
+    const auto wifi = pendingAppUsage_->wifi;
+    const auto at = pendingAppUsage_->at;
+    collectApplications(wifi,at,events);
+    for (std::size_t index = 0; index < events.items.size(); ++index)
+        pending_.emplace_back(events.names[index],std::move(events.items[index]));
+    return pendingAppUsage_ ? Status::failure(appDetail_) : Status::success();
 }
 
 BackendService::Response BackendService::buildHello() const
@@ -1202,6 +1216,7 @@ BackendService::Response BackendService::restore(const JsonValue& params, TimePo
     proxyReportCurrent_ = false;
     // 恢复后暂停采集，避免刚恢复的历史立刻被当前计数差覆盖。
     pendingUsage_.reset();
+    pendingAppUsage_.reset();
     accumulator_.clear();
     paused_ = true;
     collectorState_ = "paused";
@@ -1341,6 +1356,7 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
             return response;
         }
         pendingUsage_.reset();
+        pendingAppUsage_.reset();
         accumulator_.clear();
         if (const auto cleared = clearProxyObservations(); !cleared)
         { response.error = Error{errorCode::kStorageFailure, cleared.message}; return response; }
@@ -1364,8 +1380,10 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
     if (request.method == method::kSetPaused)
     {
         const bool paused = request.params.boolOr("paused", true);
-        setPaused(paused, now);
         Response response;
+        if (const auto flushed = flushPendingApplications(); !flushed)
+        { response.error = Error{errorCode::kStorageFailure,flushed.message}; return response; }
+        setPaused(paused, now);
         JsonValue result = JsonValue::makeObject();
         result.set("paused", JsonValue::makeBool(paused_));
         response.result = std::move(result);
@@ -1568,7 +1586,8 @@ Status BackendService::flushPendingUsage()
     const auto written = retryPendingUsage(events);
     for (std::size_t index = 0; index < events.items.size(); ++index)
         pending_.emplace_back(events.names[index], std::move(events.items[index]));
-    return written;
+    const auto applications = flushPendingApplications();
+    return written ? applications : written;
 }
 
 void BackendService::appendUsageEvent(const core::AccumulateResult& accumulated, TimePoint at, Events& events)

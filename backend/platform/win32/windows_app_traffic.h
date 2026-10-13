@@ -22,6 +22,7 @@ public:
     void start() override;
     void stop() override;
     AppTrafficReport read() override;
+    void acknowledge(const AppTrafficReport& saved) override;
 
 private:
     class Session;

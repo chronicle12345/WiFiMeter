@@ -50,6 +50,8 @@ int stdio()
             break;
         if (command == "read")
             std::cout << platform::serializeAppTrafficReport(capture.read()) << std::endl;
+        else if (command.starts_with("acknowledge "))
+            capture.acknowledge(platform::parseAppTrafficReport(std::string_view(command).substr(12)));
     }
     return 0;
 }
@@ -97,11 +99,12 @@ int pipe(const std::wstring& name, DWORD expectedParent)
                 DWORD size = 0;
                 if (!::ReadFile(connection, bytes, sizeof(bytes), &size, nullptr) || !size)
                     break;
+                const auto scanned = buffer.size();
                 buffer.append(bytes, size);
-                if (buffer.size() > 1024)
+                if (buffer.size() > 128 * 1024 * 1024)
                     break;
-                std::size_t newline;
-                while ((newline = buffer.find('\n')) != std::string::npos)
+                auto newline = buffer.find('\n',scanned);
+                while (newline != std::string::npos)
                 {
                     const auto command = buffer.substr(0, newline);
                     buffer.erase(0, newline + 1);
@@ -115,6 +118,9 @@ int pipe(const std::wstring& name, DWORD expectedParent)
                         stopped = true;
                         break;
                     }
+                    if (command.starts_with("acknowledge "))
+                        capture.acknowledge(platform::parseAppTrafficReport(std::string_view(command).substr(12)));
+                    newline = buffer.find('\n');
                 }
             }
         }

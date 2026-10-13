@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <tuple>
 
 #include "../platform/app_traffic.h"
@@ -47,10 +48,12 @@ class AppUsageAccumulator
 public:
     AppAccumulateResult accumulate(const platform::AppTrafficReport& apps, const platform::SampleReport& wifi, TimePoint now);
     void clear();
+    void acknowledge(const platform::AppTrafficReport& saved);
 
 private:
     using Key = std::tuple<std::string, std::string, std::string>;
     std::map<Key, std::pair<ByteCount, ByteCount>> counters_;
+    std::set<Key> acknowledged_;
     std::map<std::string, NetworkRef> networks_;
     std::string generation_;
     TimePoint lastAt_{};

@@ -118,6 +118,7 @@ private:
     storage::Status flushPendingUsage();
     support::JsonValue appCollectionToJson() const;
     void collectApplications(const platform::SampleReport& wifi, core::TimePoint now, Events& events);
+    storage::Status flushPendingApplications();
     Response setAppCollection(const support::JsonValue& params, core::TimePoint now);
 
     Deps deps_;
@@ -130,6 +131,13 @@ private:
     // 只保留一轮失败批次；重试成功前不读取新的网卡计数。
     std::optional<PendingUsage> pendingUsage_;
     core::AppUsageAccumulator appAccumulator_;
+    struct PendingAppUsage
+    {
+        platform::AppTrafficReport report;
+        platform::SampleReport wifi;
+        core::TimePoint at;
+    };
+    std::optional<PendingAppUsage> pendingAppUsage_;
     LoopbackLive loopbackLive_;
     bool appEnabled_ = false;
     mutable bool proxyStorageReady_ = false;

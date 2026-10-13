@@ -59,6 +59,7 @@ AppTrafficReport parseAppTrafficReport(std::string_view text)
     report.detail = document->stringOr("detail");
     report.sampledAtMs = document->intOr("sampledAtMs");
     report.loopbackSampledAtMs = document->intOr("loopbackSampledAtMs");
+    report.retirementSupported = document->boolOr("retirementSupported");
     if (report.state != AppCollectorState::running && report.state != AppCollectorState::partial)
         return report;
     const auto* samples = document->find("samples");
@@ -100,6 +101,7 @@ std::string serializeAppTrafficReport(const AppTrafficReport& report)
     document.set("detail", support::JsonValue::makeString(report.detail));
     document.set("sampledAtMs", support::JsonValue::makeInt(report.sampledAtMs));
     document.set("loopbackSampledAtMs", support::JsonValue::makeInt(report.loopbackSampledAtMs));
+    if (report.retirementSupported) document.set("retirementSupported", support::JsonValue::makeBool(true));
     auto samples = support::JsonValue::makeArray();
     for (const auto& sample : report.samples)
     {

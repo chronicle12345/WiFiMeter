@@ -8,6 +8,7 @@ add_library(wifimeter-platform STATIC
     counter_source.cpp
     fake_source.cpp
     app_traffic.cpp
+    app_capture_cache.cpp
     fake_app_traffic.cpp
 )
 

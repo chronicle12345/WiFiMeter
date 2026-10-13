@@ -140,3 +140,4 @@ wifimeter_add_test(server_sampling_test wifimeter-ipc)
 wifimeter_add_test(speed_unit_test wifimeter-ipc)
 
 wifimeter_add_test(loopback_live_test wifimeter-ipc)
+wifimeter_add_test(app_capture_retirement_test wifimeter-core)

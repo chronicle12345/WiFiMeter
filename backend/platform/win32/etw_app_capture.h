@@ -18,6 +18,7 @@ public:
 
     AppTrafficReport start();
     AppTrafficReport read();
+    void acknowledge(const AppTrafficReport& saved);
     void stop();
 
 private:

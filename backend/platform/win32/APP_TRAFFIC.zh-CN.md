@@ -12,6 +12,8 @@ EStats 返回 DataBytesIn/DataBytesOut 的差分累计，不估算连接的字�
 
 ## 客户端 JSON
 
+原生 helper 报告可选设置 `retirementSupported=true`。后端仅在应用事务提交成功后，通过 `acknowledge <report JSON>` 确认已保存的非活动 `WindowsEtw` 样本。helper 回收已确认的进程累计，将报告之后到达的增量保留在独立的应用/接口累计流中，并为最近进程身份缓存设置数量上限。较旧的确认不能回收 helper 已发送的新报告中的下载或上传计数，避免迟到报告重复统计剩余字节。归并流在同一 generation 内使用稳定的 `retired:` 实例标识。确认按 generation 隔离，重复确认不再累计。后端保留已确认的实例基线，直到后续支持回收的报告不再包含它。旧 helper 不声明该能力，继续保留非活动累计；TCP EStats 的生命周期规则不变。
+
 snapshot.appProcesses 和 live.appProcesses 的回环行：
 
 ```json
@@ -69,7 +71,7 @@ EStats 启用需要管理员令牌。采样模块不触发 UAC；已有 helper �
 
 helper 报告新增两个可选 JSON 整数字段：sampledAtMs 是采集端 GetTickCount64 单调时钟毫秒数，标记 ETW 快照时间；loopbackSampledAtMs 是 EStats 缓存实际更新时间。仅 EStats 工作时二者相同。缺省或 0 表示旧格式，沿用服务读取时间。字段不表示 Unix 时间，不能直接与 snapshot 的日期字段相减。应同时更新 backend 与 app-capture 二进制以获得完整修复。
 
-同 generation 中时间戳相同或倒退的报告不推进基线；EStats 独立使用 loopbackSampledAtMs。新快照按字节增量除以实际毫秒间隔计算 B/s，新快照字节不变时仍返回 0。generation 变化、暂停、权限失败和存储失败继续清除基线。没有新增数据库字段。
+同 generation 中时间戳相同或倒退的报告不推进基线；EStats 独立使用 loopbackSampledAtMs。新快照按字节增量除以实际毫秒间隔计算 B/s，新快照字节不变时仍返回 0。generation 变化、暂停、权限失败和存储失败清除实时速率基线。应用存储失败保留原报告、Wi-Fi 归属和时间供重试，事务提交成功后才推进统计基线。没有新增数据库字段。
 
 实时 appProcesses / proxy.clients 的速度字段名称和单位保持不变。重复快照暂时保留最后一次有效速率，超过 max(5 秒, 2 × intervalSeconds) 没有新样本时，measurementAvailable 为 false，rxPerSecond / txPerSecond 为 null。Wi-Fi 行也可能出现这组不可测量值。过期时间计算使用服务端从首次接收到该快照以来的时间差，不与采集端单调时钟混算。2、5、10 秒采样间隔分别使用 5、10、20 秒阈值，新到达的有效快照不会因采样间隔长而被当作过期。
 

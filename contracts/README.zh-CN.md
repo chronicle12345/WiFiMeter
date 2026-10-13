@@ -43,8 +43,10 @@ Linux 原生采集接入 eBPF，Windows 接入 ETW；不会把网卡总量按比
 
 采集源输出 `{state, generation, detail, samples}`，每个 sample 包含 `{interfaceId, appId, name, instanceId, processId, rxBytes, txBytes, active}`。
 字节计数从同一个 generation 开始累计；首份快照只建基线，新进程实例随后从零计入。
-`instanceId` 区分 PID 重用，`appId` 用于跨进程归并；已退出进程应保留 generation 内的累计计数并设 `active: false`。
+`instanceId` 区分 PID 重用，`appId` 用于跨进程归并；已退出进程设 `active: false`，累计计数保留到确认保存成功。
 接口的 Wi-Fi 身份变化或不明时丢弃边界区间，计数重置、源重启和权限失败留下独立的缺失记录。
+
+Windows helper 报告可选声明 `retirementSupported: true`。应用事务提交成功后，后端通过 `acknowledge <report JSON>` 确认已保存的非活动 ETW 样本。helper 只回收确认的字节，晚到增量继续进入按应用和接口归并的独立累计流，实例标识以 `retired:` 开头。后端保留原实例基线，直到后续支持回收的报告确认它已消失。旧 helper 不声明能力，不接收确认命令，继续保留原有累计行为。应用事务失败后保留原报告、网络归属和时间，重试提交成功前不发送确认。
 测试使用 `--fake-apps <JSON 文件>` 或 `WIFIMETER_FAKE_APPS`，与真实进程、IPC 和数据库配合运行。
 Linux 原生源仅在构建辅助进程时可用，仍默认不采集；统计口径与授权验证见 [Linux 应用采集](../docs/LINUX_APP_CAPTURE.zh-CN.md)。
 Windows 原生源也默认不采集，通过专用管道连接授权辅助进程；详见 [Windows 应用采集](../docs/WINDOWS_APP_CAPTURE.zh-CN.md)。

@@ -12,6 +12,8 @@ EStats accumulates differences in `DataBytesIn` and `DataBytesOut`; it does not 
 
 ## Client JSON
 
+Native helper reports optionally set `retirementSupported=true`. The backend acknowledges saved inactive `WindowsEtw` samples with `acknowledge <report JSON>` only after the application transaction commits. The helper releases confirmed per-process counters, preserves increments arriving after that report in a separate application/interface stream and retains bounded recent process identities. An older acknowledgement cannot retire download or upload counters from a newer report already emitted by the helper; this prevents delayed reports from duplicating residual bytes. These merged streams use stable `retired:` instance identifiers within the generation. Acknowledgements are idempotent and generation-specific. The backend keeps an acknowledged instance baseline until a subsequent supported report no longer contains it. Older helpers omit the capability and retain their previous inactive cumulative samples; TCP EStats lifecycle rules do not change.
+
 Loopback rows in `snapshot.appProcesses` and `live.appProcesses`:
 
 ```json
@@ -68,7 +70,7 @@ The UI fixed the settings proxy list remaining on its first snapshot. The backen
 
 Helper reports add two optional JSON integer fields. `sampledAtMs` records the ETW snapshot time in milliseconds from the collector's `GetTickCount64` monotonic clock; `loopbackSampledAtMs` records when the EStats cache was actually updated. They are equal when only EStats is running. A missing field or a value of 0 indicates the old format, which continues to use the service read time. These fields are not Unix timestamps and must not be directly subtracted from date fields in `snapshot`. Update both the backend and app-capture binaries to obtain the complete fix.
 
-Reports with the same or an earlier timestamp within a `generation` do not advance the baseline; EStats uses `loopbackSampledAtMs` independently. A new snapshot calculates B/s from the byte increment divided by the actual millisecond interval. A new snapshot with unchanged bytes still returns 0. Generation changes, pausing, permission failures, and storage failures continue to clear baselines. No database fields were added.
+Reports with the same or an earlier timestamp within a `generation` do not advance the baseline; EStats uses `loopbackSampledAtMs` independently. A new snapshot calculates B/s from the byte increment divided by the actual millisecond interval. A new snapshot with unchanged bytes still returns 0. Generation changes, pausing, permission failures and storage failures clear live rate baselines. Application storage failures retain the original report, Wi-Fi attribution and time for retry, and advance accounting baselines only after commit. No database fields were added.
 
 The rate field names and units in live `appProcesses` and `proxy.clients` remain unchanged. Repeated snapshots temporarily retain the last valid rate. If no new sample arrives for more than `max(5 seconds, 2 × intervalSeconds)`, `measurementAvailable` becomes `false`, and `rxPerSecond` and `txPerSecond` become `null`. Wi-Fi rows may also contain these unavailable-measurement values. Expiration uses elapsed service time since that snapshot was first received; it is not mixed with the collector's monotonic clock. Sampling intervals of 2, 5, and 10 seconds use expiration thresholds of 5, 10, and 20 seconds, respectively, so a newly arrived valid snapshot is not treated as expired because of a longer sampling interval.
 
