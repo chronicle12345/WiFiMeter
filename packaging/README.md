@@ -57,6 +57,8 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
+Linux CI separates system installation (`tauri-linux-deps.sh system`) from verified libbpf cache reuse (`tauri-linux-deps.sh libbpf`); running the script without a mode still performs both. The libbpf cache contains only its static installation, while the pinned Tauri WebDriver uses an independent installation root. Restored entries undergo linker/ABI or Cargo receipt, executable digest, architecture, and CLI startup checks before use. Invalid entries are moved into a rejected-cache directory under `RUNNER_TEMP` and rebuilt. See the [CI matrix](../docs/PACKAGING-MATRIX.md) for cache keys and the required native validation scope. Local builds do not require these CI caches.
+
 Windows package validation extracts the package, checks every runtime resource, and launches actual WebView2 with the bundled backend. Linux extracts and validates all three formats separately and runs actual WebKitGTK. See the [release notes](../docs/releases/v1.3.3.md) for current installation instructions and limitations; validation results are established by the corresponding commit's CI records.
 
 RPM validation first checks package digests, then performs strict extraction using `bsdtar` from `libarchive-tools`, accommodating packages whose archive length fields are omitted by Tauri's packaging library. Any failed digest, extraction, resource, or native UI check prevents release.

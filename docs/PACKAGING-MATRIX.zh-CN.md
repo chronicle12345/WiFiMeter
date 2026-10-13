@@ -24,6 +24,8 @@ main push、pull request、手动运行及 `v1.3.*` 标签共用一套 Desktop C
 
 CI 复用已校验的 Node 运行时，并按系统、架构、Rust 编译器及 Cargo 依赖配置缓存 Rust 编译结果。Rust 缓存保留依赖源码、编译结果、编译指纹及构建脚本输出；测试构建关闭调试符号和增量缓存，减少传输体积。恢复缓存后，构建、测试和包内验证仍实际执行。
 
+Linux 还在 `RUNNER_TEMP` 下缓存独立的 `tauri-driver` 2.0.5 安装目录，缓存键包含 runner、架构、Rust 编译器、固定 driver 版本及缓存验证代码。使用前核对 Cargo 安装记录中的固定版本、可执行文件 SHA-256、ELF 架构，并执行 `--help` 检查程序能否启动；该版本不支持 `--version`。安装目录缺失或验证失败时，先归档再按锁定依赖重新安装。libbpf 1.3.3 静态安装目录使用独立缓存，键包含 Ubuntu 22.04 基线、架构、GCC 与 binutils 版本、前置库 ABI 版本、固定源码 SHA-256 及依赖脚本。恢复的头文件和静态库须通过实际编译、链接和运行 ABI 探针；验证失败时先归档缓存，再按现有流程下载、校验和构建。这些缓存不替代原生采集、浏览器回归或包内 WebView 检查；耗时结论须来自实际冷缓存与热缓存 CI。
+
 Windows 在缺少 WebView2 时，从微软官方下载 Bootstrapper，校验微软签名后安装并复查版本。集成检查使用隔离配置和随机本机端口。微软的[高权限宿主说明](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)指出高权限进程会忽略 `WEBVIEW2_*` 环境覆盖；专用调试参数仅在后台测试与配置隔离同时启用时生效。
 
 Tauri 使用系统 WebView，随包提供 Node 业务进程、C++ 后端、采集器与许可证，发行资源不包含 Electron 或 Chromium。Windows 安装器可下载缺少的 WebView2；Linux 依赖 WebKitGTK 4.1。Windows ARM64 暂不支持 WinDivert 下载限速。悬浮窗当前仅支持 Windows；Linux 集成检查验证应用分钟查询、偏好保存与重载，并确认请求小窗后不创建原生窗口。

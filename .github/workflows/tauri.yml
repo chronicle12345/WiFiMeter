@@ -44,7 +44,7 @@ jobs:
       - name: Validate packaging and release helpers
         run: |
           npm run test:packaging:tauri
-          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs
+          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs .github/workflows/scripts/tauri-linux-cache.test.cjs
       - name: Check workflow syntax with pinned actionlint
         run: |
           set -euo pipefail
@@ -366,8 +366,23 @@ jobs:
             apps/desktop/src-tauri/target/.rustc_info.json
           key: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml') }}
           restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
-      - name: Install native backend, Tauri and integration dependencies
-        run: bash .github/workflows/scripts/tauri-linux-deps.sh
+      - name: Install native backend, Tauri and integration system dependencies
+        run: bash .github/workflows/scripts/tauri-linux-deps.sh system
+      - name: Resolve pinned Linux dependency cache metadata
+        id: linux_dependencies
+        run: node .github/workflows/scripts/tauri-linux-cache.cjs metadata
+      - name: Cache verified libbpf static installation
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ${{ steps.linux_dependencies.outputs.libbpf_directory }}
+          key: tauri-libbpf-v1-ubuntu-${{ steps.linux_dependencies.outputs.libbpf_baseline }}-${{ matrix.arch }}-${{ steps.linux_dependencies.outputs.libbpf_toolchain }}-${{ steps.linux_dependencies.outputs.libbpf_sha256 }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-deps.sh', '.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
+      - name: Verify or rebuild pinned libbpf static installation
+        run: bash .github/workflows/scripts/tauri-linux-deps.sh libbpf
+      - name: Cache pinned Tauri WebDriver installation
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ${{ steps.linux_dependencies.outputs.driver_directory }}
+          key: tauri-driver-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ steps.linux_dependencies.outputs.driver_version }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
       - name: Install locked desktop dependencies
         run: npm ci --prefix apps/desktop
       - name: Build and test with the Ubuntu 22.04 compatibility baseline
@@ -392,8 +407,10 @@ jobs:
         run: node packaging/tauri/build.cjs --platform linux --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats deb,rpm,appimage --skip-backend
       - name: Rust host tests on the target architecture
         run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --target '${{ matrix.target }}' --locked
-      - name: Install pinned Tauri WebDriver
-        run: cargo install tauri-driver --version 2.0.5 --locked
+      - name: Verify or install pinned Tauri WebDriver
+        env:
+          TAURI_DRIVER_CACHE: ${{ steps.linux_dependencies.outputs.driver_directory }}
+        run: node .github/workflows/scripts/tauri-linux-cache.cjs driver "$TAURI_DRIVER_CACHE"
       - name: Validate every extracted package in native WebKitGTK
         run: node packaging/tauri/verify-linux.cjs --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
       - name: Stage verified packages and internal checksum

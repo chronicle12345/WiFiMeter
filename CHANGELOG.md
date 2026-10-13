@@ -9,10 +9,16 @@ Changes are listed by release.
 - Switch between live traffic and usage history in one application workspace. Share filters, a five-column table and the application drawer with network details; preserve each view's search and sort selections. The application page starts with live traffic, while network details start with usage history.
 - Keep speed units, historical byte units and source labels distinct. Show measured local TCP proxy connections separately from validated daily connection-weight estimates, preserve native records when estimate totals do not match, and omit daily estimates from partial-day and minute/hour details.
 - Add the explicit proxy application identifier to observed `proxy.clients` entries. Leave it empty when the proxy path is unavailable and match details by known identifiers instead of display-name guesses.
+- Share application rows, totals and export availability within each render pass. Reuse unchanged proxy history by the data client's application revision while refreshing live measurements, and skip queued icon requests whose display targets disappeared.
+- Release exited Windows process handles and retire saved ETW instances through an explicit helper acknowledgement. Preserve late bytes in separate application/interface counters, retain compatibility with older helpers, and retry failed application transactions with their original time and network attribution.
+- Cache pinned Linux Tauri WebDriver and libbpf dependencies. Validate restored versions, architectures and executable or linker compatibility, and rebuild rejected caches without reducing installation or native capture checks.
 
 - 应用流量通过同一工作区切换实时排行与用量记录，与网络详情共用筛选控件、五列表格和应用抽屉；两个视图各自保留搜索与排序选择。应用页默认显示实时流量，网络详情默认显示用量记录。
 - 分别显示速度单位、历史字节单位及数据来源；实时本地 TCP 代理测量与通过校验的每日连接权重估算分开。估算合计不匹配时保留原生记录，部分日期及分钟/小时详情不显示每日估算。
 - 观测到的 `proxy.clients` 增加明确代理应用标识，代理路径不可用时保留空值；详情按已知标识匹配，不根据显示名称猜测身份。
+- 一次刷新共用应用列表、总量和导出可用状态；代理历史按数据客户端的应用版本复用，实时测量继续更新；图标队列跳过已失去显示目标的请求。
+- Windows 进程退出后释放句柄，通过明确的 helper 确认回收已保存的 ETW 实例。晚到字节使用独立的应用/接口累计记录，兼容旧 helper；应用事务失败后按原时间和网络归属重试。
+- 缓存固定版本的 Linux Tauri WebDriver 与 libbpf，恢复后检查版本、架构以及可执行或链接兼容性；无效缓存重新构建，保留安装及原生采集验证。
 
 ## [1.3.3] - 2026-10-13
 
