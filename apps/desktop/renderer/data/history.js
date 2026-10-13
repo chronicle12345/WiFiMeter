@@ -46,6 +46,19 @@ export function applicationRows(records, { networkId = 'all', start, end, startT
         .sort((a, b) => (a[key] < b[key] ? -sign : a[key] > b[key] ? sign : 0) || a.key.localeCompare(b.key));
 }
 
+// Preserve source identity when combining applications across dates and networks.
+export function applicationSummary(records, range) {
+    const groups = new Map();
+    for (const row of applicationRows(records, range)) {
+        const key = JSON.stringify([row.id, row.estimated, row.unattributed]);
+        const app = groups.get(key) || { ...row, key, iconDate: row.date, date: '', rx: 0n, tx: 0n, total: 0n };
+        app.rx += row.rx; app.tx += row.tx; app.total += row.total;
+        if (!app.path) app.path = row.path;
+        groups.set(key, app);
+    }
+    return [...groups.values()];
+}
+
 export function csvCell(value) {
     let text = String(value ?? '');
     if (/^[\s]*[=+\-@]/.test(text)) text = "'" + text;

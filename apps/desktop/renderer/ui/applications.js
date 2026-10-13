@@ -1,18 +1,6 @@
 import { tr } from '../i18n.js';
-import { applicationRows, applicationPath } from '../data/history.js';
-
-// 复用历史记录的范围筛选和字节处理，跨网络按应用归并。
-export function applicationSummary(records, range) {
-    const groups = new Map();
-    for (const row of applicationRows(records, range)) {
-        const key = JSON.stringify([row.id, row.estimated, row.unattributed]);
-        const app = groups.get(key) || { ...row, key, iconDate: row.date, date: '', rx: 0n, tx: 0n, total: 0n };
-        app.rx += row.rx; app.tx += row.tx; app.total += row.total;
-        if (!app.path) app.path = row.path;
-        groups.set(key, app);
-    }
-    return [...groups.values()];
-}
+import { applicationPath } from '../data/history.js';
+export { applicationSummary } from '../data/history.js';
 
 export function applicationSourceFilter(proxy, estimated) {
     return tr`<label class="application-source-filter"><span class="sr-only">应用数据来源</span><select class="select compact" id="appDataSource" title="代理估算与原生采集独立；仅替换匹配网络和日期的代理记录，保留客户端直接流量。"><option value="native" ${!estimated?'selected':''}>原生记录</option><option value="estimated" ${estimated?'selected':''} ${proxy?.available?'':'disabled'}>包含代理估算</option></select></label>`;

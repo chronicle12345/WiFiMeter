@@ -1,5 +1,6 @@
 import { applicationLiveRows } from './data/application-live.js';
-import { applicationProxyDetails, applicationProxyClientKey } from './data/application-proxy.js';
+import { applicationViewData } from './data/application-view.js';
+import { createApplicationProxyResolver, applicationProxyClientKey } from './data/application-proxy.js';
 import { applicationTable } from './ui/application-table.js';
 import { applicationFilters, applicationSortOptions, applicationViewTabs, applicationWorkspace } from './ui/application-workspace.js';
 import { refreshStatusHelp } from './ui/status-help.js';
@@ -14,14 +15,14 @@ import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
 import { settingsView } from './ui/settings.js';
 import { drawerShell } from './ui/drawer.js';
-import { applicationDetails, applicationSummary, applicationAvatar } from './ui/applications.js';
+import { applicationDetails, applicationAvatar } from './ui/applications.js';
 import { createAppIconLoader } from './ui/app-icons.js';
 import { appControlView, appRulesView } from './ui/app-control.js';
 import { t, tr, setLanguage, getLocale } from './i18n.js';
 import { totalQuotaForm, totalQuotaCard } from './ui/total-quota.js';
 import { updateRegion } from './data/render.js';
 import { createAppControlModel, legacyMessage } from './data/desktop-actions.js';
-import { historyRange, applicationRows, applicationCsv, recordInRange } from './data/history.js';
+import { historyRange, applicationRows, applicationSummary, applicationCsv, recordInRange } from './data/history.js';
 import { minuteUsageRows } from './data/minute-usage.js';
 import { validTime } from './data/model.js';
 import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, sortApps } from './data/model.js';
@@ -68,6 +69,7 @@ const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 2
 const productName = window.desktop.appName;
 const appControl=createAppControlModel(window.desktop);
 const appIcons=createAppIconLoader({request:window.desktop.appIcons?.get});
+const resolveApplicationProxy=createApplicationProxyResolver();
 let legacyResult=null,legacyBusy=false;
 let settingsCategory='general',windowPreferences=null;
 if(window.desktop.windowPreferences?.read){try{windowPreferences=await window.desktop.windowPreferences.read();}catch(error){console.warn('Window preferences unavailable',error);}}
@@ -305,6 +307,7 @@ function openDrawer(id,tab='usage'){
  if(!getNetwork(id))return;ui.lastFocus=document.activeElement;ui.drawer={id,tab,appView:'history',liveSearch:'',liveSort:'total',appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};renderDrawer();syncInert();setTimeout(()=>$('#closeDrawer')?.focus(),0);
 }
 function closeDrawer(){
+ resolveApplicationProxy.clear();
  if(ui.drawer?.kind==='app'&&ui.drawer.parent){const {parent,returnFocus,parentScroll}=ui.drawer;ui.drawer=parent;renderDrawer();$('.drawer-content').scrollTop=parentScroll||0;if(returnFocus)restoreApplicationFocus(returnFocus,$('.drawer'));else $('#closeDrawer')?.focus();return;}
  ui.drawer=null;$('#drawerRoot').innerHTML='';syncInert();renderAppList();if(ui.lastFocus?.isConnected)ui.lastFocus.focus({preventScroll:true});else if(ui.lastFocusKey)restoreApplicationFocus(ui.lastFocusKey);
 }
@@ -319,14 +322,19 @@ function drawerApps(n){
  const view=applicationView();
  return `${applicationViewTabs(view,'drawerAppViewPanel')}<div id="drawerAppViewPanel" role="tabpanel" aria-labelledby="drawerAppViewPanel-${view}">${applicationContent(n,true)}</div>`;
 }
-function applicationSummaryMarkup(n){
- if(applicationView()==='live'){const rows=currentLiveRows(n);return tr`<span><strong>${rows.length}</strong> 条结果</span><span class="small muted">实时速度与历史用量分别显示</span>`;}
- const {start,end}=getRange(),apps=displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
- return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(sum,apps.length)}</span><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span>`;
+function applicationListData(n){
+ const view=applicationView(),options={view,context:appContext(),networkId:n.id,range:getRange()};
+ if(view==='live'){options.collecting=['running','partial'].includes(data.appCollection?.state);if(options.collecting)options.processes=namedAppProcesses();}
+ else options.records=displayedAppRecords();
+ return applicationViewData(options);
+}
+function applicationSummaryMarkup(n,viewData=applicationListData(n)){
+ if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span><span class="small muted">实时速度与历史用量分别显示</span>`;
+ return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span>`;
 }
 function applicationContent(n,controls){
- const view=applicationView();
- return `${applicationFilters(appContext(),{view,minuteSource:appMinuteSource(),proxy:data.proxy,exportAvailable:view==='history'&&currentAppRows().length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n)}</div><div id="appListRegion">${appList(n)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
+ const view=applicationView(),viewData=applicationListData(n);
+ return `${applicationFilters(appContext(),{view,minuteSource:appMinuteSource(),proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
 }
 function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
@@ -358,8 +366,8 @@ async function legacyAction(importing){
  finally{legacyBusy=false;render();}
 }
 
-function appHistoryTable(){
- const rows=currentAppRows(),pages=Math.max(1,Math.ceil(rows.length/50));appContext().appPage=Math.min(appContext().appPage||1,pages);
+function appHistoryTable(rows){
+ const pages=Math.max(1,Math.ceil(rows.length/50));appContext().appPage=Math.min(appContext().appPage||1,pages);
  const start=(appContext().appPage-1)*50,visible=rows.slice(start,start+50);
  const table=applicationTable(visible,{mode:'usage',grouping:appContext().appGrouping,sort:appContext().historySort,direction:appContext().historyDirection,selectedKey:appContext().selectedApp?.key,startIndex:start},appTableHelpers());
  const pager=pages>1?'<div class="pagination"><span>'+t('记录数')+' '+rows.length+'</span><div class="flex gap8">'+button('app-history-prev',t('上一页'),'','small-btn',appContext().appPage<=1?'disabled':'')+'<span>'+appContext().appPage+' / '+pages+'</span>'+button('app-history-next',t('下一页'),'','small-btn',appContext().appPage>=pages?'disabled':'')+'</div></div>':'';
@@ -376,10 +384,6 @@ function namedAppProcesses(){
   return {...process,name:names.get(process.appId)||process.appId};
  });
 }
-function currentLiveRows(n){
- const running=['running','partial'].includes(data.appCollection?.state);
- return running?applicationLiveRows(namedAppProcesses(),{networkId:n.id,search:appContext().liveSearch,sort:appContext().liveSort}):[];
-}
 function measuredProxy(){
  const active=['running','partial'].includes(data.appCollection?.state)&&!['paused','offline','starting'].includes(data.live.collector);
  return {...data.proxy,clients:(data.proxy?.clients||[]).map(client=>active?client:{...client,measurementAvailable:false})};
@@ -389,23 +393,21 @@ function restoreApplicationFocus(saved,root=document){
  $$('[data-action]',root).find(element=>keys.every(key=>element.dataset[key]===saved[key]))?.focus({preventScroll:true});
 }
 function appTableHelpers(){return {esc,formatValue:(value,mode)=>mode==='live'?appRate(value):fmtWithUnit(value),networkLabel:id=>getNetwork(id)?networkName(getNetwork(id)):''};}
-function appLiveList(n){
- const rows=currentLiveRows(n);
+function appLiveList(rows){
  if(!rows.length)return empty(t('当前没有应用进程数据。'),appContext().liveSearch?t('试试其他应用名称。'):t('启用应用采集后开始记录。'));
  return applicationTable(rows,{mode:'live'},appTableHelpers());
 }
-function appList(n,summary){
- if(applicationView()==='live')return '<div id="liveRankingRegion">'+appLiveList(n)+'</div>';
- if(appContext().appGrouping!=='summary')return appHistoryTable();
- const {start,end}=getRange(),apps=summary||displayedAppSummary(n.id,start,end),sum=apps.reduce((s,a)=>s+a.total,0n);
- const rows=sortApps(apps,appContext().appSort,appContext().appSearch);
- if(!apps.length)return empty(t('所选时段没有应用记录'),data.appCollection?.available&&!data.appCollection.enabled?t('启用应用采集后开始记录。'):t('试试其他日期或网络。'));
+function appList(n,viewData=applicationListData(n)){
+ const {rows,total,hasRecords}=viewData;
+ if(applicationView()==='live')return '<div id="liveRankingRegion">'+appLiveList(rows)+'</div>';
+ if(appContext().appGrouping!=='summary')return appHistoryTable(rows);
+ if(!hasRecords)return empty(t('所选时段没有应用记录'),data.appCollection?.available&&!data.appCollection.enabled?t('启用应用采集后开始记录。'):t('试试其他日期或网络。'));
  if(!rows.length)return empty(t('没有匹配的应用'),t('试试其他应用名称。'));
- return applicationTable(rows,{mode:'usage',grouping:'summary',selectedKey:appContext().selectedApp?.key,sum},appTableHelpers());
+ return applicationTable(rows,{mode:'usage',grouping:'summary',selectedKey:appContext().selectedApp?.key,sum:total},appTableHelpers());
 }
 function appDetails(app){
  const proxy=measuredProxy();
- const proxyDetails=applicationProxyDetails(app,{proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!minuteRange()&&!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
+ const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!minuteRange()&&!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
  return applicationDetails(app,{esc,fmtWithUnit,appRate,estimateLabel,proxyDetails,rangeLabel:rangeText()});
 }
 function refreshApplicationDetails(){
@@ -427,15 +429,15 @@ function renderAppList(){
  if(ui.drawer?.tab!=='apps'&&(ui.drawer||ui.page!=='apps'))return;
  const region=$('#appListRegion');if(!region)return;
  const active=document.activeElement,focused=active?.matches('#appListRegion [data-action],#proxyClientsRegion [data-action],#appStatusRegion [data-action]')?{...active.dataset}:null;
- const scroll=region.querySelector('.table-scroll')?.scrollLeft||0,n={id:appNetworkId()};
- updateRegion(region,appList(n),{selection:window.getSelection()});
+ const scroll=region.querySelector('.table-scroll')?.scrollLeft||0,n={id:appNetworkId()},viewData=applicationListData(n);
+ updateRegion(region,appList(n,viewData),{selection:window.getSelection()});
  const tableScroll=region.querySelector('.table-scroll');if(tableScroll)tableScroll.scrollLeft=scroll;
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
- updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n));
+ updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
  const source=$('#appDataSource');if(source){if(!pendingApplicationFilters.has('appDataSource'))source.value=appMinuteSource()?'native':appContext().proxyEstimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=appMinuteSource()||!data.proxy?.available;}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
- const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!currentAppRows().length;
+ const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);
  if(focused)restoreApplicationFocus(focused);
 }
@@ -607,7 +609,7 @@ function showAlert(alert){
 function restartSampler(){clearInterval(samplerTimer);if(!renderingHidden()&&params.get('still')!=='1')samplerTimer=setInterval(refreshLive,data.settings.interval*1000);}
 const visibilityChanged=()=>{liveRender.visibilityChanged();restartSampler();if(!renderingHidden()){scheduleAutomaticRange(true);refreshLive();}};
 document.addEventListener('visibilitychange',visibilityChanged);
-window.addEventListener('unload',()=>{appIcons.stop();liveRender.stop();clearInterval(samplerTimer);});
+window.addEventListener('unload',()=>{appIcons.stop();resolveApplicationProxy.clear();liveRender.stop();clearInterval(samplerTimer);});
 async function pauseCollector(){
  const paused=data.live.collector==='paused';
  await store.pause(!paused);

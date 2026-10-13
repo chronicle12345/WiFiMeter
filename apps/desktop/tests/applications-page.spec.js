@@ -73,6 +73,39 @@ async function openLiveApplications(){
     await expect(page.getByRole('tab',{name:'实时流量排行',exact:true})).toHaveAttribute('aria-selected','true');
 }
 
+test('代理详情复用历史时仍更新速度，应用增量和估算不一致时及时失效 @application-views',async()=>{
+    await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
+        const base={networkId:id,date:'2020-01-01',txBytes:'0'};
+        s.appCollection={available:true,enabled:true,state:'running'};
+        s.live.collector='running';
+        s.appRecords=[{...base,appId:'C:\\Proxy\\Proxy.exe',name:'Proxy',rxBytes:'100'}];
+        s.proxyEstimatedRecords=[{...base,appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',rxBytes:'60',estimated:true},
+            {...base,appId:'other',name:'Other',proxyAppId:'C:\\Proxy\\Proxy.exe',rxBytes:'40',estimated:true}];
+        s.proxy.clients=[{appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',proxyName:'Proxy',measurementAvailable:true,rxPerSecond:'1000',txPerSecond:'0'}];
+        s.appProcesses=[{networkId:id,appId:'C:\\Apps\\Browser.exe',name:'Browser',processId:42,scope:'wifi',rxPerSecond:'10',txPerSecond:'0'}];
+        s.live.proxy=s.proxy;
+    });
+    await page.reload();await openApplications();
+    await page.getByRole('tab',{name:'实时流量排行',exact:true}).click();
+    await page.locator('[data-action="select-live-app"]').click();
+    const history=page.locator('.proxy-history-estimates'),live=page.locator('.proxy-live-connections');
+    await expect(history).toContainText('60 B');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;s.proxy.clients[0].rxPerSecond='2000';
+        BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection,proxy:s.proxy});
+    });
+    await expect(live).toContainText('2.0 KB/s');await expect(history).toContainText('60 B');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot,proxy=s.appRecords[0];
+        const estimates=s.proxyEstimatedRecords.map(row=>({...row,rxBytes:String(Number(row.rxBytes)*2)}));
+        BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'appUsage',records:[{...proxy,rxBytes:'100'}],
+            proxyEstimatedUpdates:[{networkId:proxy.networkId,date:proxy.date,proxyAppId:proxy.appId,records:estimates}]});
+    });
+    await expect(history).toContainText('120 B');await expect(live).toContainText('2.0 KB/s');
+    await app.evaluate(({BrowserWindow})=>{const proxy=globalThis.rendererFixture.snapshot.appRecords[0];
+        BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'appUsage',records:[{...proxy,rxBytes:'1'}]});
+    });
+    await expect(history).toHaveCount(0);await expect(live).toContainText('2.0 KB/s');
+});
+
 test('应用视图切换只显示当前列表，分别保存搜索排序和历史分组 @application-views',async()=>{
     await openLiveApplications();
     await expect(page.locator('#content [role="tabpanel"]')).toHaveCount(1);

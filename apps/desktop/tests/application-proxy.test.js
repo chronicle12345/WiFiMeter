@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applicationProxyDetails } from '../renderer/data/application-proxy.js';
+import * as proxyDetailsModule from '../renderer/data/application-proxy.js';
 import { applicationDetails } from '../renderer/ui/applications.js';
 
 const clientId = 'C:\\Apps\\Browser.exe', proxyId = 'C:\\Proxy\\Proxy.exe';
@@ -75,4 +76,98 @@ test('application details show live measured connections separately from histori
     assert.match(html, /&lt;Proxy&gt;/);
     assert.doesNotMatch(html, /900 B\/s|800 B\/s|<Proxy>|<form/);
     assert.match(html, /历史用量按连接权重估算；本地 TCP 实时速度不计入 Wi-Fi 用量。/);
+});
+
+test('details without candidate estimates never traverse unrelated native history', () => {
+    const nativeRecords = { [Symbol.iterator]() { throw Error('Unrelated native history was traversed'); } };
+    for (const estimatedRecords of [[], [estimate('office', '2026-10-02')], [estimate('home', '2026-09-30')],
+        [estimate('home', '2026-10-02', { appId: 'other-client', proxyAppId: 'other-proxy' })]]) {
+        assert.deepEqual(applicationProxyDetails({ id: clientId }, { nativeRecords, estimatedRecords, range, networkId: 'home' }).estimates, []);
+    }
+});
+
+test('details validate the full candidate proxy group while ignoring unrelated byte values', () => {
+    const unrelated = { networkId: 'home', date: '2026-10-02', appId: 'unrelated',
+        get rxBytes() { throw Error('Unrelated download bytes were read'); },
+        get txBytes() { throw Error('Unrelated upload bytes were read'); } };
+    const selected = estimate('home', '2026-10-02', { rxBytes: '60', txBytes: '20' });
+    const sibling = estimate('home', '2026-10-02', { appId: 'other-client', rxBytes: '40', txBytes: '20' });
+    const unrelatedEstimate = { networkId: 'home', date: '2026-10-02', appId: 'other-client', proxyAppId: 'other-proxy', estimated: true };
+    Object.defineProperties(unrelatedEstimate, { rxBytes: { get: () => { throw Error('Unrelated estimate bytes were read'); } },
+        txBytes: { get: () => { throw Error('Unrelated estimate bytes were read'); } } });
+    const options = { nativeRecords: [unrelated, native('home', '2026-10-02')], estimatedRecords: [selected, sibling, unrelatedEstimate], range };
+    assert.deepEqual(applicationProxyDetails({ id: clientId }, options).estimates, [selected]);
+    sibling.rxBytes = '39';
+    assert.deepEqual(applicationProxyDetails({ id: clientId }, options).estimates, []);
+    sibling.rxBytes = '40';
+    options.nativeRecords[1].txBytes = '41';
+    assert.deepEqual(applicationProxyDetails({ id: clientId }, options).estimates, []);
+});
+
+function resolverFixture() {
+    let reads = 0;
+    const nativeRecords = ['2026-10-02', '2026-10-03'].map(date => {
+        const row = native('home', date);
+        Object.defineProperty(row, 'rxBytes', { enumerable: true, get() { reads++; return '100'; } });
+        return row;
+    });
+    const estimatedRecords = nativeRecords.map(row => estimate('home', row.date));
+    return { options: { revision: 1, nativeRecords, estimatedRecords, range, networkId: 'home' }, reads: () => reads };
+}
+
+test('revision resolver reuses history while reading current live client measurements on every call', () => {
+    const resolve = proxyDetailsModule.createApplicationProxyResolver(), fixture = resolverFixture();
+    const options = { ...fixture.options, proxy: { clients: [{ appId: clientId, proxyAppId: proxyId, measurementAvailable: true, rxPerSecond: '10' }] } };
+    const first = resolve({ id: clientId }, options);
+    assert.equal(fixture.reads(), 2);
+    options.proxy.clients = [{ appId: clientId, proxyAppId: proxyId, measurementAvailable: false, rxPerSecond: null }];
+    const second = resolve({ id: clientId }, options);
+    assert.deepEqual(second.clients, options.proxy.clients);
+    assert.equal(second.clients[0].measurementAvailable, false);
+    assert.equal(second.estimates, first.estimates);
+    assert.equal(fixture.reads(), 2);
+    options.proxy.clients = [];
+    assert.deepEqual(resolve({ id: clientId }, options).clients, []);
+    assert.equal(fixture.reads(), 2);
+});
+
+test('revision resolver invalidates changed range, selected date, source references and estimate availability', () => {
+    const cases = [
+        { patch: { revision: 2 }, mutate: fixture => { fixture.options.nativeRecords[0].txBytes = '41'; }, dates: ['2026-10-03'] },
+        { patch: { range: { start: '2026-10-03', end: '2026-10-31' } }, dates: ['2026-10-03'] },
+        { patch: { range: { start: '2026-10-01', end: '2026-10-02' } }, dates: ['2026-10-02'] },
+        { patch: { range: { ...range, startTime: '10:00' } }, dates: [] },
+        { patch: { range: { ...range, endTime: '18:00' } }, dates: [] },
+        { patch: { networkId: 'office' }, dates: [] },
+        { patch: { allowEstimates: false }, dates: [] },
+        { app: { id: clientId, date: '2026-10-02' }, dates: ['2026-10-02'] },
+        { app: { id: clientId, date: '2026-09' }, dates: [] },
+        { patchFor: fixture => ({ nativeRecords: fixture.options.nativeRecords.map(row => ({ ...row, txBytes: '99' })) }), dates: [] },
+        { patchFor: fixture => ({ estimatedRecords: fixture.options.estimatedRecords.map(row => ({ ...row, rxBytes: '99' })) }), dates: [] }
+    ];
+    for (const scenario of cases) {
+        const resolve = proxyDetailsModule.createApplicationProxyResolver(), fixture = resolverFixture();
+        assert.equal(resolve({ id: clientId }, fixture.options).estimates.length, 2);
+        scenario.mutate?.(fixture);
+        const result = resolve(scenario.app || { id: clientId }, { ...fixture.options, ...scenario.patch, ...scenario.patchFor?.(fixture) });
+        assert.deepEqual(result.estimates.map(row => row.date), scenario.dates);
+    }
+    for (const field of ['appId', 'id', 'path', 'appPath', 'executablePath']) {
+        const resolve = proxyDetailsModule.createApplicationProxyResolver(), fixture = resolverFixture();
+        assert.equal(resolve({ [field]: clientId }, fixture.options).estimates.length, 2);
+        assert.deepEqual(resolve({ [field]: 'C:\\Apps\\Other.exe' }, fixture.options).estimates, []);
+    }
+});
+
+test('resolver without a revision observes in-place changes on every call', () => {
+    for (const revision of [undefined, null]) {
+        const resolve = proxyDetailsModule.createApplicationProxyResolver(), fixture = resolverFixture();
+        const options = { ...fixture.options, revision };
+        assert.equal(resolve({ id: clientId }, options).estimates.length, 2);
+        fixture.options.nativeRecords[0].txBytes = '41';
+        assert.deepEqual(resolve({ id: clientId }, options).estimates.map(row => row.date), ['2026-10-03']);
+        fixture.options.nativeRecords[0].txBytes = '40';
+        assert.equal(resolve({ id: clientId }, options).estimates.length, 2);
+        assert.equal(fixture.reads(), 6);
+    }
 });

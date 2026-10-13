@@ -133,3 +133,76 @@ test('renderer queues a large avatar batch instead of overloading IPC', async ()
     for (let i = 0; i < 30 && count < 20; i++) await new Promise(resolve => setImmediate(resolve));
     assert.equal(count, 20); assert.ok(peak <= 4); loader.stop();
 });
+
+function avatarNode(appId, date = '') {
+    return { dataset: { appIcon: appId, appIconDate: date }, isConnected: true, image: null,
+        querySelector() { return this.image; }, replaceChildren(image) { this.image = image; } };
+}
+const iconFrame = () => new Promise(setImmediate);
+const decodedImage = () => ({ set src(value) { this.url = value; queueMicrotask(() => this.onload?.()); } });
+
+test('renderer skips detached queued avatars and cancelled keys can be requested again immediately', async t => {
+    const calls = [], releases = new Map();
+    const loader = createAppIconLoader({ createImage: decodedImage,
+        request: input => { calls.push(input.appId); return new Promise(resolve => releases.set(input.appId, resolve)); } });
+    t.after(() => loader.stop());
+    const old = Array.from({ length: 12 }, (_, index) => avatarNode(`old-${index}`));
+    loader.hydrate({ querySelectorAll: () => old });
+    await iconFrame();
+    assert.equal(calls.length, 4);
+    old.forEach(node => { node.isConnected = false; });
+    const current = avatarNode('current');
+    loader.hydrate({ querySelectorAll: () => [current] });
+    for (const resolve of releases.values()) resolve(png);
+    await iconFrame();
+    assert.deepEqual(calls, ['old-0', 'old-1', 'old-2', 'old-3', 'current']);
+    releases.get('current')(png);
+    await iconFrame();
+    assert.equal(current.image.url, png);
+    const returned = avatarNode('old-8');
+    loader.hydrate({ querySelectorAll: () => [returned] });
+    await iconFrame();
+    assert.equal(calls.at(-1), 'old-8');
+    releases.get('old-8')(png);
+    await iconFrame();
+    assert.equal(returned.image.url, png);
+});
+
+test('queued requests retain reattached and shared avatars even when pending keys exceed the cache limit', async t => {
+    const calls = [], releases = new Map();
+    const loader = createAppIconLoader({ maxEntries: 1, createImage: decodedImage,
+        request: input => { calls.push(input.appId); return new Promise(resolve => releases.set(input.appId, resolve)); } });
+    t.after(() => loader.stop());
+    const nodes = Array.from({ length: 6 }, (_, index) => avatarNode(`shared-${index}`));
+    loader.hydrate({ querySelectorAll: () => nodes });
+    await iconFrame();
+    nodes[4].isConnected = false;
+    const replacement = avatarNode('shared-4');
+    loader.hydrate({ querySelectorAll: () => [replacement] });
+    nodes[5].isConnected = false;
+    nodes[5].isConnected = true;
+    loader.hydrate({ querySelectorAll: () => [nodes[5]] });
+    for (const resolve of releases.values()) resolve(png);
+    await iconFrame();
+    for (const resolve of releases.values()) resolve(png);
+    await iconFrame();
+    assert.equal(calls.filter(appId => appId === 'shared-4').length, 1);
+    assert.equal(calls.filter(appId => appId === 'shared-5').length, 1);
+    assert.equal(replacement.image.url, png);
+    assert.equal(nodes[5].image.url, png);
+});
+
+test('renderer preserves the ten second negative cache and retries expired failures', async t => {
+    let now = 1000, calls = 0;
+    t.mock.method(Date, 'now', () => now);
+    const loader = createAppIconLoader({ request: async () => { calls++; return null; } });
+    t.after(() => loader.stop());
+    const node = avatarNode('missing'), root = { querySelectorAll: () => [node] };
+    loader.hydrate(root); await iconFrame();
+    now += 9999;
+    loader.hydrate(root); await iconFrame();
+    assert.equal(calls, 1);
+    now++;
+    loader.hydrate(root); await iconFrame();
+    assert.equal(calls, 2);
+});

@@ -2,6 +2,42 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDataClient } from '../renderer/data/backend-client.js';
 
+test('application history revisions ignore speed events but invalidate committed usage, estimates and replacements', async t => {
+    const original = globalThis.window;
+    t.after(() => { globalThis.window = original; });
+    let receive, fail = false;
+    globalThis.window = { desktop: { backend: {
+        request: async method => fail && method === 'snapshot' ? { ok: false, error: { message: 'fixture read failure' } } : { ok: true, result: method === 'snapshot' ? {
+            appRecords: [{ networkId: 'home', date: '2026-10-01', appId: 'proxy', name: 'Proxy', rxBytes: '100', txBytes: '0' }]
+        } : method === 'updateProxyConfig' ? { proxy: { available: true, clients: [] } } : {} },
+        onEvent: callback => { receive = callback; return () => {}; }
+    } } };
+    const client = createDataClient();
+    t.after(() => client.stop());
+    await client.start({ from: '2026-10-01', to: '2026-10-31' });
+    assert.equal(typeof client.applicationRevision, 'number');
+    const initial = client.applicationRevision;
+    for (let index = 0; index < 10; index++) receive({ event: 'live', collector: 'running', appProcesses: [], proxy: { clients: [] } });
+    assert.equal(client.applicationRevision, initial);
+    receive({ event: 'appUsage', records: [{ networkId: 'home', date: '2026-10-01', appId: 'proxy', name: 'Proxy', rxBytes: '5', txBytes: '0' }] });
+    assert.ok(client.applicationRevision > initial);
+    assert.equal(client.snapshot.appRecords[0].rxBytes, '105');
+    let previous = client.applicationRevision;
+    receive({ event: 'live', proxyEstimatedUpdates: [{ networkId: 'home', date: '2026-10-01', proxyAppId: 'proxy', records: [] }] });
+    assert.ok(client.applicationRevision > previous);
+    previous = client.applicationRevision;
+    fail = true;
+    await assert.rejects(client.reload(), /fixture read failure/);
+    assert.equal(client.applicationRevision, previous);
+    fail = false;
+    await client.reload(); assert.ok(client.applicationRevision > previous);
+    previous = client.applicationRevision;
+    await client.updateProxyConfig({ ports: [7890] }); assert.ok(client.applicationRevision > previous);
+    previous = client.applicationRevision;
+    await client.clearRecords(); assert.ok(client.applicationRevision > previous);
+    assert.equal(client.snapshot.appRecords.length, 0);
+});
+
 test('清空真实后端记录后，同步移除页面的应用历史', async t => {
     const original = globalThis.window;
     t.after(() => { if (original === undefined) delete globalThis.window; else globalThis.window = original; });

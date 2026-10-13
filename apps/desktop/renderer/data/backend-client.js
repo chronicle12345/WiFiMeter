@@ -40,6 +40,7 @@ export function createDataClient(handlers = {}) {
 
     let rangeVersion = 0;
     let eventRevision = 0;
+    let applicationRevision = 0;
     let pendingSnapshot = null;
     // 查询结束后仍保留结果，让启动恢复能识别握手期间已经失败的新范围。
     let latestRangeQuery = null;
@@ -159,6 +160,7 @@ export function createDataClient(handlers = {}) {
     function applySnapshot(next) {
         for (const key of Object.keys(snapshot)) delete snapshot[key];
         Object.assign(snapshot, emptySnapshot(), next);
+        applicationRevision++;
         resetLiveRows();
     }
 
@@ -200,6 +202,7 @@ export function createDataClient(handlers = {}) {
     }
 
     function applyAppUsageEvent(message) {
+        applicationRevision++;
         applyMinuteUpdates(message.minuteRecords, true);
         // 局部时间范围的日汇总必须由真实分钟增量构成，不能纳入整日字节数。
         const items = hasTimeBoundary() ? (message.minuteRecords ?? []).filter(inActiveRange) : (message.records ?? []).filter(inActiveRange);
@@ -220,6 +223,8 @@ export function createDataClient(handlers = {}) {
     function applyProxyEstimatedUpdates(updates) {
         if (!updates?.length) return;
         const groups = new Map(updates.filter(inActiveRange).map(update => [proxyUsageKey(update), update.records]));
+        if (!groups.size) return;
+        applicationRevision++;
         snapshot.proxyEstimatedRecords = snapshot.proxyEstimatedRecords
             .filter(row => !groups.has(proxyUsageKey(row)));
         for (const records of groups.values()) {
@@ -265,6 +270,9 @@ export function createDataClient(handlers = {}) {
     return {
         get snapshot() {
             return snapshot;
+        },
+        get applicationRevision() {
+            return applicationRevision;
         },
         get storageFailed() {
             return state.storageFailed;
@@ -342,6 +350,7 @@ export function createDataClient(handlers = {}) {
             const result = await request('updateProxyConfig', patch);
             if (!result.proxy) throw Error(t('代理配置更新未返回状态。'));
             snapshot.proxy = result.proxy;
+            applicationRevision++;
             return result.proxy;
         },
 
@@ -361,6 +370,7 @@ export function createDataClient(handlers = {}) {
 
         async clearRecords() {
             await request('clearUsage');
+            applicationRevision++;
             resetLiveRows();
             snapshot.records = [];
             snapshot.hourly = [];
