@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { miniRange, miniApplicationRows } from '../host/mini-usage.cjs';
+import { miniRange, miniApplicationRows, miniFilteredLive } from '../host/mini-usage.cjs';
+import { liveRates } from '../host/mini/rates.js';
 
 const minute = (date, time, patch = {}) => ({ networkId: 'home', appId: 'browser', name: 'Browser', date, time,
     hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)), rxBytes: '10', txBytes: '1', ...patch });
@@ -63,4 +64,92 @@ test('停止或暂停采集后保留真实分钟用量，速度不沿用旧采�
         assert.deepEqual(miniApplicationRows(snapshot, status, range).rows, [{ appId: 'browser', name: 'Browser',
             rxBytes: '10', txBytes: '1', rxPerSecond: null, txPerSecond: null, measurementAvailable: false }]);
     }
+});
+
+test('代理筛选复用配置进程名与已识别路径，分钟用量保持精确且默认包含代理', () => {
+    const range = miniRange({ miniRange: '1m' }, new Date(2026, 9, 1, 8, 15).getTime());
+    const snapshot = { appMinuteRecords: [
+        minute(range.from, '08:15', { appId: 'C:\\Proxy\\Clash.exe', name: 'Clash', rxBytes: '90' }),
+        minute(range.from, '08:15', { appId: 'c:/Proxy/Agent.exe', name: 'Agent', rxBytes: '80' }),
+        minute(range.from, '08:15', { appId: 'old-proxy', name: 'Old Proxy', rxBytes: '70' }),
+        minute(range.from, '08:15', { rxBytes: '9007199254740993' }),
+        minute(range.from, '08:15', { rxBytes: '7', txBytes: '2' }),
+        minute(range.from, '08:15', { appId: 'clash-monitor.exe', name: 'Clash Monitor' })
+    ], proxyEstimatedRecords: [{ proxyAppId: 'old-proxy', estimated: true }],
+    proxy: { processNames: ['  CLASH.EXE  '] } };
+    const sample = { ...live([
+        { appId: 'browser', name: 'Browser', rxPerSecond: '10', txPerSecond: '2' },
+        { appId: 'browser', scope: 'loopback', rxPerSecond: '9999', txPerSecond: '9999' },
+        { appId: 'C:\\Proxy\\Clash.exe', name: 'Clash', rxPerSecond: '90', txPerSecond: '10' },
+        { appId: 'c:/Proxy/Agent.exe', name: 'Agent', rxPerSecond: '80', txPerSecond: '10' }
+    ]), proxy: { clients: [{ appId: 'browser', proxyAppId: 'C:\\PROXY\\AGENT.EXE' },
+        { appId: 'browser', proxyAppId: '' }] } };
+    const saved = structuredClone({ snapshot, sample });
+    assert.equal(miniApplicationRows(snapshot, sample, range).rows.length, 5);
+    assert.equal(miniApplicationRows(snapshot, sample, range).miniExcludeProxy, false);
+    const filtered = miniApplicationRows(snapshot, sample, range, { miniExcludeProxy: true });
+    assert.equal(filtered.miniExcludeProxy, true);
+    assert.deepEqual(filtered.rows.map(row => row.appId), ['browser', 'clash-monitor.exe']);
+    assert.deepEqual(filtered.rows[0], { appId: 'browser', name: 'Browser', rxBytes: '9007199254741000',
+        txBytes: '3', rxPerSecond: '10', txPerSecond: '2', measurementAvailable: true });
+    assert.deepEqual({ snapshot, sample }, saved);
+});
+
+test('排除代理总速率只扣除物理网络实测量，保留直接流量与 BigInt 精度', () => {
+    const sample = { ...live([
+        { networkId: 'home', appId: 'C:\\Proxy\\Clash.exe', name: 'Clash', rxPerSecond: '9007199254740993', txPerSecond: '1000' },
+        { networkId: 'office', appId: 'C:\\Proxy\\Clash.exe', name: 'Clash', rxPerSecond: '10', txPerSecond: '1000' },
+        { networkId: 'home', appId: 'browser', rxPerSecond: '100', txPerSecond: '200' },
+        { networkId: '', appId: 'C:\\Proxy\\Clash.exe', scope: 'loopback', rxPerSecond: '999999', txPerSecond: '999999' },
+        { networkId: 'unselected', appId: 'C:\\Proxy\\Clash.exe', rxPerSecond: '999999', txPerSecond: '999999' }
+    ]), connections: [{ networkId: 'home', rxPerSecond: '9007199254741993', txPerSecond: '1500' },
+        { networkId: 'office', rxPerSecond: '1010', txPerSecond: '1500' }], proxy: { processNames: ['clash.exe'], clients: [] } };
+    const saved = structuredClone(sample), enriched = miniFilteredLive(sample);
+    assert.deepEqual(enriched.ratesWithoutProxy, { rxPerSecond: '2000', txPerSecond: '1000' });
+    assert.deepEqual(liveRates(enriched, { miniExcludeProxy: true }), { download: '2.0 KB/s', upload: '1.0 KB/s' });
+    assert.deepEqual(liveRates(enriched), liveRates(sample));
+    assert.deepEqual(sample, saved);
+});
+
+test('代理扣减分别校验所属网络，其他网络的速度不补足采样差异', () => {
+    const sample = { ...live([
+        { appId: 'proxy.exe', networkId: 'home', rxPerSecond: '501', txPerSecond: '100' },
+        { appId: 'proxy.exe', networkId: 'home', rxPerSecond: '500', txPerSecond: '100' }
+    ]), connections: [{ networkId: 'home', rxPerSecond: '300', txPerSecond: '50' },
+        { networkId: 'home', rxPerSecond: '700', txPerSecond: '450' },
+        { networkId: 'office', rxPerSecond: '1000', txPerSecond: '500' }],
+    proxy: { processNames: ['proxy.exe'] } };
+    assert.deepEqual(miniFilteredLive(sample).ratesWithoutProxy, { rxPerSecond: null, txPerSecond: '800' });
+    const legacy = { ...sample, connections: sample.connections.map(({ networkId, ...connection }) => connection),
+        appProcesses: sample.appProcesses.map(({ networkId, ...process }) => process) };
+    assert.deepEqual(miniFilteredLive(legacy).ratesWithoutProxy, { rxPerSecond: '999', txPerSecond: '800' });
+});
+
+test('代理采集不可用时保留缺失值，单方向异常与采样差异不伪装成零', () => {
+    const sample = { ...live([{ appId: 'proxy.exe', rxPerSecond: '500', txPerSecond: '200' }]),
+        connections: [{ rxPerSecond: '1000', txPerSecond: '500' }], proxy: { processNames: ['proxy.exe'] } };
+    for (const patch of [{ collector: 'paused' }, { state: 'offline' },
+        { appCollection: { enabled: false, state: 'disabled' } },
+        { appCollection: { enabled: true, state: 'unavailable' } }, { appProcesses: null },
+        { proxy: { clients: [{ appId: 'browser', proxyAppId: '', pathAvailable: false }] } }]) {
+        assert.deepEqual(miniFilteredLive({ ...sample, ...patch }).ratesWithoutProxy,
+            { rxPerSecond: null, txPerSecond: null });
+    }
+    const unreadable = miniFilteredLive({ ...sample, appProcesses: [{ appId: 'proxy.exe', rxPerSecond: null, txPerSecond: '200' }] });
+    assert.deepEqual(unreadable.ratesWithoutProxy, { rxPerSecond: null, txPerSecond: '300' });
+    assert.deepEqual(liveRates(unreadable, { miniExcludeProxy: true }), { download: '—', upload: '300 B/s' });
+    const skewed = miniFilteredLive({ ...sample, appProcesses: [{ appId: 'proxy.exe', rxPerSecond: '1001', txPerSecond: '200' }] });
+    assert.deepEqual(skewed.ratesWithoutProxy, { rxPerSecond: null, txPerSecond: '300' });
+    assert.deepEqual(liveRates(sample, { miniExcludeProxy: true }), { download: '—', upload: '—' });
+    const zero = miniFilteredLive({ ...sample, appProcesses: [], connections: [{ rxPerSecond: '0', txPerSecond: '0' }] });
+    assert.deepEqual(liveRates(zero, { miniExcludeProxy: true }), { download: '0 B/s', upload: '0 B/s' });
+});
+
+test('已知历史代理身份用于相同的列表与总速度筛选', () => {
+    const snapshot = { proxyEstimatedRecords: [{ proxyAppId: 'C:/custom/Agent.exe', estimated: true }] };
+    const sample = { ...live([{ appId: 'c:\\CUSTOM\\agent.exe', networkId: 'home', rxPerSecond: '600', txPerSecond: '20' }]),
+        connections: [{ networkId: 'home', rxPerSecond: '1000', txPerSecond: '100' }], proxy: { processNames: [], clients: [] } };
+    const range = miniRange({ miniRange: '1m' });
+    assert.deepEqual(miniApplicationRows(snapshot, sample, range, { miniExcludeProxy: true }).rows, []);
+    assert.deepEqual(miniFilteredLive(sample, snapshot).ratesWithoutProxy, { rxPerSecond: '400', txPerSecond: '80' });
 });

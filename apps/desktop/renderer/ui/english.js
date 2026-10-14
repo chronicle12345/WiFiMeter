@@ -1,5 +1,8 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+固定小窗位置|Fix floating-window position
+小窗排除代理程序流量|Exclude proxy application traffic in floating window
+左右贴边自动隐藏|Auto-hide at left and right edges
 按日期|By date
 按应用名称|By application name
 实时流量排行|Live traffic ranking

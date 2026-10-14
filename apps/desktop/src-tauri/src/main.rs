@@ -98,6 +98,12 @@ async fn desktop_request(
         return Ok(Value::Bool(true));
     }
     if channel == "mini:drag" {
+        let preferences = state
+            .request(label, "mini:preferences-read".into(), Vec::new())
+            .await?;
+        if preferences["miniPinned"].as_bool() == Some(true) {
+            return Ok(Value::Null);
+        }
         state.send(
             serde_json::json!({ "type": "window-event", "window": "mini", "event": "will-move" }),
         )?;

@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 export function tauriBridge({ mini = false, platform = 'win32', invoke = async () => undefined } = {}) {
     let receive;
     const calls = [];
+    const documentHandlers = new Map();
     const window = { __TAURI__: { core: { invoke: async (_command, request) => {
         calls.push([request.channel, ...request.args]);
         return invoke(request.channel, ...request.args);
@@ -12,10 +13,11 @@ export function tauriBridge({ mini = false, platform = 'win32', invoke = async (
     runInNewContext(fs.readFileSync(new URL('../../tauri/bridge.js', import.meta.url), 'utf8'), {
         window, location: { pathname: mini ? '/mini/index.html' : '/main/index.html' },
         navigator: { userAgent: platform === 'win32' ? 'Windows' : 'Linux' },
-        document: { addEventListener() {} }, console
+        document: { addEventListener: (name, handler) => documentHandlers.set(name, handler) }, console
     });
     return {
         api: mini ? window.miniDesktop : window.desktop, calls, window,
+        pointerDown() { documentHandlers.get('pointerdown')?.({ button: 0, target: { closest: () => null } }); },
         send(channel, payload) { receive({ payload: { channel, payload } }); }
     };
 }

@@ -4,8 +4,12 @@ export function formatSpeed(value, mode = 'auto') {
     return parts.value === '—' ? '—' : `${parts.value} ${parts.unit}`;
 }
 
-export function liveRates(event) {
+export function liveRates(event, preferences = {}) {
     if (event?.collector !== 'running' || event.state !== 'connected' || !event.connections?.length) return { upload: '—', download: '—' };
+    if (preferences.miniExcludeProxy === true) return {
+        upload: formatSpeed(event.ratesWithoutProxy?.txPerSecond, event.speedUnit),
+        download: formatSpeed(event.ratesWithoutProxy?.rxPerSecond, event.speedUnit)
+    };
     const sum = key => event.connections.reduce((total, connection) => {
         const raw = connection[key];
         const value = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : raw;

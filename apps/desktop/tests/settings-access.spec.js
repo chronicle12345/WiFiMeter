@@ -65,7 +65,10 @@ test('settings stay in one scrolling panel and category links track the current 
 test('mini appearance saves automatically and is applied to the real window',async()=>{
  await page.locator('[name="miniShape"]').selectOption('circle');await page.locator('[name="miniPalette"]').selectOption('indigo');
  await page.locator('[name="miniSnap"]').check();await page.locator('[name="miniAutoHide"]').check();await page.locator('[name="miniWindow"]').check();
+ await page.getByRole('checkbox',{name:'Fix floating-window position',exact:true}).check();
+ await page.getByRole('checkbox',{name:'Exclude proxy application traffic in floating window',exact:true}).check();
  await expect.poll(preferences).toMatchObject({miniWindow:true,miniShape:'circle',miniPalette:'indigo',miniSnap:true,miniAutoHide:true});
+ await expect.poll(preferences).toMatchObject({miniPinned:true,miniExcludeProxy:true});
  if(process.platform==='win32'){
   await expect.poll(()=>app.windows().length).toBe(2);const mini=app.windows().find(w=>w!==page);await expect(mini.locator('#download')).toBeVisible();
   const size=await mini.evaluate(()=>({width:innerWidth,height:innerHeight}));expect(size.width).toBe(size.height);
@@ -73,6 +76,7 @@ test('mini appearance saves automatically and is applied to the real window',asy
   await mini.locator('#close').click();await expect.poll(preferences).toMatchObject({miniWindow:false});await expect(page.locator('[name="miniWindow"]')).not.toBeChecked();
  }
  await page.reload();await expect(page.locator('[name="miniShape"]')).toHaveValue('circle');
+ await expect(page.locator('[name="miniPinned"]')).toBeChecked();await expect(page.locator('[name="miniExcludeProxy"]')).toBeChecked();
 });
 
 test('remembered close preference updates automatically without reverting saved edits',async()=>{

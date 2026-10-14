@@ -3,18 +3,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { createWindowControls } from '../host/window-controls.cjs';
 
 const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
-    miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
+    miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 
 async function fixture(t, extra = {}) {
-    const userData = await fs.mkdtemp(path.join(os.tmpdir(), 'wifimeter-window-'));
-    t.after(() => fs.rm(userData, { recursive: true, force: true }));
+    const fixtureRoot = fileURLToPath(new URL('../../../del/window-controls/', import.meta.url));
+    await fs.mkdir(fixtureRoot, { recursive: true });
+    const userData = await fs.mkdtemp(path.join(fixtureRoot, 'wifimeter-window-'));
     const windows = [], handlers = new Map();
     class Window extends EventEmitter {
         constructor(options) { super(); this.options = options; this.bounds = { x: options.x, y: options.y, width: options.width, height: options.height }; this.destroyed = false; this.sent = []; this.webContents = new EventEmitter(); this.webContents.mainFrame = { url: '' }; this.webContents.send = (...args) => this.sent.push(args); windows.push(this); }
@@ -91,7 +91,9 @@ test('Windows 小窗位于工作区右下角，复用 live，关闭仅更新小�
     assert.equal(o.frame, false);
     const live = { event: 'live', state: 'connected', collector: 'running', connections: [{ rxPerSecond: 300, txPerSecond: 100 }] };
     f.controls.publishLive(live); mini.webContents.emit('did-finish-load');
-    assert.deepEqual(mini.sent.at(-1), ['mini:live', live]);
+    assert.equal(mini.sent.at(-1)[0], 'mini:live');
+    const { ratesWithoutProxy, ...published } = mini.sent.at(-1)[1];
+    assert.deepEqual(published, live);
     f.controls.publishLive({ event: 'alert' }); assert.equal(mini.sent.length, 2);
     mini.emit('close', closeEvent()); await f.controls.read();
     assert.deepEqual(f.sent.at(-1), ['window-preferences:changed', { ...miniDefaults, miniWindow: false, closeAction: 'tray', theme: 'system' }]);
@@ -596,4 +598,209 @@ test('应用列表偏好保存成功后才改变焦点和大小，合法时长�
     await restored.update({ miniExpanded: false, miniCustomMinutes: 1 });
     assert.equal(reopened.focusable, false); assert.equal(reopened.bounds.width, 168);
     assert.equal((await restored.read()).miniCustomMinutes, 1);
+});
+
+test('固定小窗恢复完整窗口，阻止拖动和自动收起，解除固定后恢复原吸附设置', async t => {
+    let now = 0;
+    const tasks = new Map(); let id = 0;
+    const screen = new EventEmitter();
+    screen.getPrimaryDisplay = screen.getDisplayMatching = () => ({ workArea: { x: 0, y: 20, width: 1280, height: 700 } });
+    screen.getCursorScreenPoint = () => ({ x: 2000, y: 2000 });
+    const f = await fixture(t, { screen, timers: {
+        setInterval: fn => { tasks.set(++id, fn); return id; }, clearInterval: key => tasks.delete(key), now: () => now
+    } });
+    await f.controls.update({ miniWindow: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    mini.webContents.emit('did-finish-load');
+    const original = mini.getBounds();
+    now = 2000; for (const tick of tasks.values()) tick();
+    assert.equal(mini.bounds.width, 6);
+    await f.handlers.get('mini:preferences-update')(event, { miniPinned: true });
+    assert.deepEqual(mini.getBounds(), original);
+    assert.equal(tasks.size, 0);
+    assert.deepEqual(mini.sent.filter(([channel]) => channel === 'mini:state').at(-1), ['mini:state', { collapsed: false, edge: null }]);
+    const move = closeEvent(); mini.emit('will-move', move);
+    assert.equal(move.prevented, true);
+    mini.bounds.x = 8; mini.bounds.y = 80; mini.emit('moved');
+    assert.deepEqual(mini.getBounds(), original);
+    await f.controls.update({ miniShape: 'square' });
+    assert.equal(mini.bounds.width, 152);
+    assert.equal(mini.bounds.x, original.x);
+    assert.equal(tasks.size, 0);
+    const saved = await f.controls.read();
+    assert.equal(saved.miniSnap, true); assert.equal(saved.miniAutoHide, true);
+    await f.controls.update({ miniShape: 'bar', miniPinned: false });
+    assert.equal(tasks.size, 1);
+    assert.equal(mini.bounds.x + mini.bounds.width, 1280);
+    now = 4000; for (const tick of tasks.values()) tick();
+    assert.equal(mini.bounds.width, 6);
+});
+
+test('已保存的固定状态在加载时保留边缘距离，屏幕移除后仅恢复可见位置', async t => {
+    let area = { x: -1600, y: 0, width: 1600, height: 900 }, starts = 0;
+    const screen = new EventEmitter();
+    screen.getPrimaryDisplay = screen.getDisplayMatching = () => ({ workArea: area });
+    screen.getCursorScreenPoint = () => ({ x: 9999, y: 9999 });
+    const f = await fixture(t, { screen, fileSystem: { ...fs, readFile: async () => JSON.stringify({ miniWindow: true, miniPinned: true }) },
+        timers: { setInterval: () => starts++, clearInterval() {}, now: () => 0 } });
+    assert.equal((await f.controls.read()).miniPinned, true);
+    const mini = f.windows[0]; mini.webContents.emit('did-finish-load');
+    assert.equal(mini.bounds.x + mini.bounds.width, -12);
+    assert.equal(mini.bounds.y + mini.bounds.height, 888);
+    assert.equal(starts, 0);
+    area = { x: 0, y: 30, width: 1280, height: 690 };
+    screen.emit('display-removed');
+    assert.equal(mini.bounds.width, 224);
+    assert.ok(mini.bounds.x >= 0 && mini.bounds.x + mini.bounds.width <= 1280);
+    assert.ok(mini.bounds.y >= 30 && mini.bounds.y + mini.bounds.height <= 720);
+    assert.equal(mini.sent.filter(([channel]) => channel === 'mini:state').at(-1)[1].edge, null);
+    assert.equal(starts, 0);
+});
+
+test('固定和代理筛选只接受布尔值，可信小窗可以修改，保存失败保持当前窗口行为', async t => {
+    let fail = false;
+    const f = await fixture(t, { timers: miniTimers(() => 0), fileSystem: { ...fs,
+        rename: async (...args) => { if (fail) throw Error('save failed'); return fs.rename(...args); } } });
+    await f.controls.update({ miniWindow: true });
+    const mini = f.windows[0], event = miniEvent(mini); mini.webContents.emit('did-finish-load');
+    const original = mini.getBounds(), before = await f.controls.read(), sent = mini.sent.length;
+    fail = true;
+    await assert.rejects(f.handlers.get('mini:preferences-update')(event, { miniPinned: true, miniExcludeProxy: true }), /save failed/);
+    assert.deepEqual(await f.controls.read(), before);
+    assert.deepEqual(mini.getBounds(), original); assert.equal(mini.sent.length, sent);
+    const move = closeEvent(); mini.emit('will-move', move); assert.equal(move.prevented, false);
+    mini.emit('moved');
+    fail = false;
+    await f.handlers.get('mini:preferences-update')(event, { miniPinned: true, miniExcludeProxy: true });
+    const saved = await f.controls.read();
+    assert.equal(saved.miniPinned, true); assert.equal(saved.miniExcludeProxy, true);
+    for (const key of ['miniPinned', 'miniExcludeProxy']) for (const value of ['true', null, 1, {}, undefined]) {
+        await assert.rejects(f.controls.update({ [key]: value }), TypeError);
+    }
+    assert.throws(() => f.handlers.get('mini:preferences-update')({ ...event, senderFrame: { url: event.senderFrame.url } }, { miniPinned: false }));
+    assert.throws(() => f.handlers.get('mini:preferences-update')(event, { miniSnap: false }));
+    assert.deepEqual(await f.controls.read(), saved);
+    f.controls.dispose();
+    const restored = createWindowControls(f.deps); t.after(() => restored.dispose());
+    assert.deepEqual(await restored.read(), saved);
+});
+
+test('旧偏好和无效的固定、代理筛选值恢复默认设置', async t => {
+    for (const saved of [{ miniWindow: false }, { miniPinned: 'true', miniExcludeProxy: 1 }]) {
+        const f = await fixture(t, { fileSystem: { ...fs, readFile: async () => JSON.stringify(saved) } });
+        const preferences = await f.controls.read();
+        assert.equal(preferences.miniPinned, false); assert.equal(preferences.miniExcludeProxy, false);
+    }
+});
+
+test('小窗代理筛选更新应用模型并提供筛选速度，保留原始采集事件', async t => {
+    const snapshot = miniSnapshot('300');
+    snapshot.appMinuteRecords.push({ ...snapshot.appMinuteRecords[0], appId: 'proxy', name: 'proxy.exe', rxBytes: '600', txBytes: '40' });
+    const live = { event: 'live', ...snapshot.live,
+        connections: [{ rxPerSecond: '1000', txPerSecond: '100' }],
+        proxy: { processNames: ['proxy.exe'], clients: [{ appId: 'browser', proxyAppId: 'proxy' }] },
+        appProcesses: [{ appId: 'proxy', name: 'proxy.exe', rxPerSecond: '600', txPerSecond: '40' },
+            { appId: 'browser', name: 'Browser', rxPerSecond: '400', txPerSecond: '60' }] };
+    const original = structuredClone(live);
+    const f = await fixture(t, { timers: miniTimers(() => new Date(2026, 9, 1, 12, 0).getTime()),
+        requestMiniSnapshot: async () => snapshot });
+    await f.controls.update({ miniWindow: true, miniExpanded: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    f.controls.publishLive(live); mini.webContents.emit('did-finish-load');
+    const latestLive = () => mini.sent.filter(([channel]) => channel === 'mini:live').at(-1)[1];
+    assert.deepEqual(latestLive().ratesWithoutProxy, { rxPerSecond: '400', txPerSecond: '60' });
+    assert.deepEqual(live, original);
+    const applications = () => f.handlers.get('mini:applications')(event);
+    const all = await applications();
+    assert.equal(all.rows.length, 2); assert.equal(all.miniExcludeProxy, false);
+    await f.handlers.get('mini:preferences-update')(event, { miniExcludeProxy: true });
+    const filtered = await applications();
+    assert.equal(filtered.miniExcludeProxy, true);
+    assert.deepEqual(filtered.rows.map(row => row.appId), ['browser']);
+    assert.equal(filtered.rows[0].rxBytes, '300');
+    f.controls.publishLive(live);
+    assert.deepEqual(latestLive().ratesWithoutProxy, { rxPerSecond: '400', txPerSecond: '60' });
+    f.controls.publishLive({ event: 'collectorStatus', collector: 'paused', appCollection: { state: 'paused' } });
+    const paused = mini.sent.filter(([channel]) => channel === 'mini:applications').at(-1)[1];
+    assert.equal(paused.miniExcludeProxy, true); assert.deepEqual(paused.rows.map(row => row.appId), ['browser']);
+    assert.equal(paused.rows[0].rxPerSecond, null);
+    assert.deepEqual(live, original);
+    await f.handlers.get('mini:preferences-update')(event, { miniExcludeProxy: false });
+    const restored = await applications();
+    assert.equal(restored.miniExcludeProxy, false); assert.equal(restored.rows.length, 2);
+});
+
+test('闲置自动收起仅适用于屏幕左右两侧，顶部和底部保持完整显示', async t => {
+    for (const [x, y, side] of [[8, 200, 'left'], [1050, 200, 'right'], [500, 28, 'top'], [500, 622, 'bottom']]) {
+        let now = 0;
+        const tasks = new Map(); let id = 0;
+        const screen = new EventEmitter();
+        screen.getPrimaryDisplay = screen.getDisplayMatching = () => ({ workArea: { x: 0, y: 20, width: 1280, height: 700 } });
+        screen.getCursorScreenPoint = () => ({ x: 2000, y: 2000 });
+        const f = await fixture(t, { screen, timers: {
+            setInterval: fn => { tasks.set(++id, fn); return id; }, clearInterval: key => tasks.delete(key), now: () => now
+        } });
+        await f.controls.update({ miniWindow: true });
+        const mini = f.windows[0]; mini.webContents.emit('did-finish-load');
+        mini.bounds.x = x; mini.bounds.y = y; mini.emit('will-move'); mini.emit('moved');
+        assert.equal(mini.sent.filter(([channel]) => channel === 'mini:state').at(-1)[1].edge, side);
+        now = 2000; for (const tick of tasks.values()) tick();
+        assert.equal(mini.bounds.width, ['left', 'right'].includes(side) ? 6 : 224);
+        assert.equal(mini.bounds.height, 92);
+    }
+});
+
+test('可信小窗切换保持显示恢复完整窗口，关闭后继续左右边缘自动收起', async t => {
+    let now = 0;
+    const tasks = new Map(); let id = 0;
+    const screen = new EventEmitter();
+    screen.getPrimaryDisplay = screen.getDisplayMatching = () => ({ workArea: { x: 0, y: 20, width: 1280, height: 700 } });
+    screen.getCursorScreenPoint = () => ({ x: 2000, y: 2000 });
+    const f = await fixture(t, { screen, timers: {
+        setInterval: fn => { tasks.set(++id, fn); return id; }, clearInterval: key => tasks.delete(key), now: () => now
+    } });
+    await f.controls.update({ miniWindow: true });
+    const mini = f.windows[0], event = miniEvent(mini); mini.webContents.emit('did-finish-load');
+    now = 2000; for (const tick of tasks.values()) tick();
+    assert.equal(mini.bounds.width, 6);
+    await f.handlers.get('mini:preferences-update')(event, { miniAutoHide: false });
+    assert.equal(mini.bounds.width, 224); assert.equal(tasks.size, 0);
+    assert.equal((await f.controls.read()).miniAutoHide, false);
+    await f.handlers.get('mini:preferences-update')(event, { miniAutoHide: true });
+    assert.equal(tasks.size, 1);
+    now = 4000; for (const tick of tasks.values()) tick();
+    assert.equal(mini.bounds.width, 6);
+});
+
+test('筛选代理的应用查询失败时发送当前筛选状态和错误信息', async t => {
+    const f = await fixture(t, { timers: miniTimers(() => 0), requestMiniSnapshot: async () => { throw Error('application usage unavailable'); } });
+    await f.controls.update({ miniWindow: true, miniExpanded: true, miniExcludeProxy: true });
+    const mini = f.windows[0]; mini.webContents.emit('did-finish-load');
+    f.controls.publishLive({ event: 'live', state: 'connected', collector: 'running', connections: [],
+        appCollection: { enabled: true, state: 'running' }, proxy: { processNames: ['proxy.exe'] }, appProcesses: [] });
+    await miniTick();
+    const model = mini.sent.filter(([channel]) => channel === 'mini:applications').at(-1)[1];
+    assert.equal(model.status, 'error'); assert.equal(model.detail, 'application usage unavailable');
+    assert.equal(model.miniExcludeProxy, true);
+    assert.deepEqual(model.rows, []);
+});
+
+test('分钟快照补充代理身份后同步更新顶部速度和应用列表', async t => {
+    let finish;
+    const f = await fixture(t, { timers: miniTimers(() => new Date(2026, 9, 1, 12, 0).getTime()),
+        requestMiniSnapshot: () => new Promise(resolve => { finish = resolve; }) });
+    await f.controls.update({ miniWindow: true, miniExpanded: true, miniExcludeProxy: true });
+    const mini = f.windows[0], event = miniEvent(mini);
+    const live = { event: 'live', ...miniSnapshot('0').live,
+        connections: [{ networkId: 'home', rxPerSecond: '1000', txPerSecond: '100' }],
+        proxy: { processNames: [], clients: [] },
+        appProcesses: [{ appId: 'C:/custom/Agent.exe', networkId: 'home', rxPerSecond: '600', txPerSecond: '20' }] };
+    f.controls.publishLive(live); mini.webContents.emit('did-finish-load');
+    const latestLive = () => mini.sent.filter(([channel]) => channel === 'mini:live').at(-1)[1];
+    assert.equal(latestLive().ratesWithoutProxy.rxPerSecond, '1000');
+    await miniTick();
+    finish({ appMinuteRecords: [], proxyEstimatedRecords: [{ proxyAppId: 'C:/custom/Agent.exe', estimated: true }] });
+    const applications = await f.handlers.get('mini:applications')(event);
+    assert.deepEqual(applications.rows, []);
+    assert.deepEqual(latestLive().ratesWithoutProxy, { rxPerSecond: '400', txPerSecond: '80' });
 });

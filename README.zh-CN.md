@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.3.md#中文"><img src="https://img.shields.io/badge/version-1.3.3-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.3" /></a>
+  <a href="docs/releases/v1.3.4.md#中文"><img src="https://img.shields.io/badge/version-1.3.4-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.4" /></a>
   <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md#c-后端"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -26,7 +26,7 @@
 
 WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。发布目标包括 Windows x64、x86、ARM64 及 Linux x64、ARM64，当前可用安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
-1.3.3 改进启动恢复、更新协调和历史采集缺失区间查询，Windows 开机启动统一保留一条，并移除开发依赖和构建工具中的 Electron。发布说明记录了具体改动和验证范围。
+1.3.4 为悬浮窗增加自动保存的固定、保持显示和代理筛选选项，自动隐藏仅在左右边缘生效，并移除原生悬停提示。同时统一应用实时流量与用量记录，明确代理测量来源，改进采集清理和 CI 依赖复用。发布说明记录了具体改动和验证范围。
 
 以下总览和应用历史截图均使用虚构数据。
 
@@ -37,16 +37,18 @@ WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码�
 ## 功能
 
 - 统计 Wi-Fi 和物理有线网卡流量，显示实时下载、上传速度，支持网络备注与历史搜索。有线统计排除虚拟网卡。
-- 使用 Windows ETW 采集非回环应用流量，使用 TCP EStats 实测回环及代理客户端的实时字节，或通过 Linux eBPF 采集，并显示权限和覆盖状态。总览首屏保留核心指标，完整应用实时排行位于下方滚动区，应用页也显示全部已采集应用；应用历史支持按分钟、小时、日、月汇总，并导出当前筛选结果。
+- 使用 Windows ETW 采集非回环应用流量，使用 TCP EStats 实测回环及代理客户端的实时字节，或通过 Linux eBPF 采集，并显示权限和覆盖状态。总览首屏保留核心指标，完整应用实时排行位于下方滚动区。应用页与网络详情共用应用流量工作区，可切换实时流量与用量记录，各视图保留搜索和排序选择，并通过抽屉查看应用详情；历史支持按分钟、小时、日、月汇总，并导出当前筛选结果。
 - 支持单网络额度和独立的 Wi-Fi 总额度，周期可选每日、每月或累计。有线流量不计入 Wi-Fi 总额度，可设置提醒及达到额度后断开 Wi-Fi。
 - Windows 支持按应用禁止联网，以及独立设置和取消上传、下载限速。Windows x64 包随附 WinDivert 驱动，下载限速在 WiFiMeter 运行期间生效；经独立代理进程接收的流量需限制代理程序。Linux 暂不提供这些控制。
-- Windows 支持可选的代理流量估算，与原生记录分开显示。估算依据已观测的 TCP 连接，证据不足的部分保留为未归属流量。
+- Windows 支持可选的代理流量估算，与原生记录和本地 TCP 代理实测速率分开显示。每日估算依据已观测的 TCP 连接权重；合计不匹配时保留原生记录，部分日期及分钟/小时查询不显示每日估算，证据不足的部分保留为未归属流量。
 - 自定义范围可选择具体小时和分钟，包含结束分钟；网络与应用都可查看分钟明细。分钟数据从升级后开始积累，旧数据保留已有精度。支持全部历史查询、CSV/JSON 导出、完整备份、保存天数、中英切换、托盘和开机启动。
-- Windows 悬浮窗显示全部实时上传、下载速度，可展开应用列表，查看各应用实时速度和累计用量。1 分钟表示当前日历分钟，5 分钟和 1 小时分别包含当前分钟及之前 4 个、59 个分钟；自定义支持 1 到 10080 分钟，范围自动保存，详见[悬浮窗说明](docs/FLOATING_WINDOW.zh-CN.md)。
+- Windows 悬浮窗显示全部实时上传、下载速度，可展开应用列表，查看各应用实时速度和累计用量。可固定位置、保持显示或选择排除代理程序流量；自动隐藏仅在屏幕左右边缘生效，固定后不吸附、不隐藏。1 分钟表示当前日历分钟，5 分钟和 1 小时分别包含当前分钟及之前 4 个、59 个分钟；自定义支持 1 到 10080 分钟，范围自动保存，详见[悬浮窗说明](docs/FLOATING_WINDOW.zh-CN.md)。
 
 ## 原有数据与升级
 
 使用 Electron 1.2.x 的用户需从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取与系统及 CPU 架构匹配的 Tauri 安装版，程序会继续读取已有数据目录。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
+
+Windows 1.3.3 用户可通过应用内更新升级至 1.3.4，程序下载并校验对应安装包，保存数据后静默安装并重启。Linux 更新检查打开官方版本页，由用户手动安装。Windows 手动升级前请正常退出 WiFiMeter；受更新问题影响的旧版本也可能需要手动安装。
 
 Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，其他目录可在设置中选择。导入前需要停止旧采集器；Windows 安装程序会先请求旧采集器保存并退出，再替换程序。
 

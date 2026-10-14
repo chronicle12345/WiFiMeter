@@ -5,6 +5,24 @@ import vm from 'node:vm';
 import { createFormAutosave } from '../renderer/ui/form-autosave.js';
 
 const source = fs.readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
+
+test('floating-window pin and proxy filters save through window preferences', async () => {
+    const calls = [], received = [];
+    const controller = createFormAutosave({
+        getData: () => ({ settings: {} }),
+        desktop: { windowPreferences: { async update(patch) { calls.push(['preferences', patch]); return patch; } } },
+        receiveWindowPreferences: value => received.push(value),
+        store: { async updateSettings(patch) { calls.push(['backend', patch]); } }
+    });
+    const save = controller.saveFor({ id: 'settingsForm', isConnected: true, querySelector() { return null; } });
+    save.set('miniPinned', { miniPinned: true });
+    save.set('miniExcludeProxy', { miniExcludeProxy: true });
+    await save.flush();
+    assert.equal(save.state, 'saved');
+    assert.deepEqual(calls, [['preferences', { miniPinned: true, miniExcludeProxy: true }]]);
+    assert.deepEqual(received, [{ miniPinned: true, miniExcludeProxy: true }]);
+});
+
 function settingsHarness({ pruneFailure = false, reloadFailure = false, failRetentions = [] } = {}) {
     const calls = [];
     const context = { data: { settings: { retention: 90 } } };

@@ -227,7 +227,7 @@ let updateStatus = {}, updateBusy = false, updateExitPrepared = false;
 function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
- for(const key of ['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']){
+ for(const key of ['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']){
   const input=$('#settingsForm [name="'+key+'"]');if(!input||formAutosaves.has(input.form,key))continue;
   const value=input.type==='checkbox'?input.checked:input.value;
   if(!previous||value===(previous[key]??(key==='theme'?'system':undefined))){if(input.type==='checkbox')input.checked=next[key];else input.value=next[key]??'system';}

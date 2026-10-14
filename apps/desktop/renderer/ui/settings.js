@@ -20,7 +20,9 @@ function startup(settings, { toggle, option, windowPreferences }) {
 function miniControls(p,{toggle,option}) {
     return row(t('小窗形状'),'',`<select class="select" name="miniShape" aria-label="${t('小窗形状')}">${[['bar','条形'],['square','方形'],['circle','圆形']].map(([v,label])=>option(v,t(label),p.miniShape||'bar')).join('')}</select>`) +
         row(t('小窗配色'),'',`<select class="select" name="miniPalette" aria-label="${t('小窗配色')}">${[['indigo','靛蓝'],['dark','深色'],['light','浅色']].map(([v,label])=>option(v,t(label),p.miniPalette||'indigo')).join('')}</select>`) +
-        row(t('贴边吸附'),'',toggle('miniSnap',p.miniSnap,t('贴边吸附'))) + row(t('贴边自动隐藏'),'',toggle('miniAutoHide',p.miniAutoHide,t('贴边自动隐藏')));
+        row(t('固定小窗位置'),'',toggle('miniPinned',p.miniPinned,t('固定小窗位置'))) +
+        row(t('小窗排除代理程序流量'),'',toggle('miniExcludeProxy',p.miniExcludeProxy,t('小窗排除代理程序流量'))) +
+        row(t('贴边吸附'),'',toggle('miniSnap',p.miniSnap,t('贴边吸附'))) + row(t('左右贴边自动隐藏'),'',toggle('miniAutoHide',p.miniAutoHide,t('左右贴边自动隐藏')));
 }
 function display(settings, { toggle, option, windowPreferences }) {
     return group(t('显示与提醒'),

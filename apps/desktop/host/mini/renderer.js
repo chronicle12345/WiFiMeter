@@ -3,6 +3,9 @@ const api = window.miniDesktop;
 const upload = document.getElementById('upload');
 const download = document.getElementById('download');
 const toggle = document.getElementById('apps');
+const pin = document.getElementById('pin');
+const autoHide = document.getElementById('autoHide');
+const proxyFilter = document.getElementById('proxyFilter');
 const panel = document.getElementById('appsPanel');
 const range = document.getElementById('range');
 const custom = document.getElementById('customMinutes');
@@ -10,7 +13,9 @@ const status = document.getElementById('appsStatus');
 const errorMessage = document.getElementById('miniError');
 const rowsElement = document.getElementById('appRows');
 const rows = new Map();
-let preferences = { miniExpanded: false, miniRange: '1m', miniCustomMinutes: 5 };
+let preferences = { miniExpanded: false, miniPinned: false, miniAutoHide: true, miniExcludeProxy: false,
+    miniRange: '5m', miniCustomMinutes: 15 };
+let lastLive = null;
 let applicationResult = null;
 let applicationRequest = 0;
 
@@ -24,7 +29,12 @@ function showError(error) {
     const message = error?.message || String(error);
     errorMessage.textContent = message;
     errorMessage.hidden = false;
-    if (!preferences.miniExpanded) toggle.title = `无法展开应用流量：${message}`;
+}
+
+function renderLive() {
+    const rates = liveRates(lastLive, preferences);
+    renderRate(upload, rates.upload);
+    renderRate(download, rates.download);
 }
 
 function selectedMinutes() {
@@ -33,19 +43,35 @@ function selectedMinutes() {
 
 function applyPreferences(value) {
     if (!value) return;
+    const previous = preferences;
     preferences = { ...preferences, ...value };
     document.body.dataset.shape = preferences.miniShape || 'bar';
     document.body.dataset.palette = preferences.miniPalette || 'dark';
     document.documentElement.dataset.palette = preferences.miniPalette || 'dark';
     document.body.dataset.expanded = String(preferences.miniExpanded);
+    document.body.dataset.pinned = String(preferences.miniPinned);
     panel.hidden = !preferences.miniExpanded;
     toggle.setAttribute('aria-expanded', String(preferences.miniExpanded));
-    toggle.title = preferences.miniExpanded ? '收起应用列表' : '展开应用流量';
-    toggle.setAttribute('aria-label', toggle.title);
+    toggle.setAttribute('aria-label', preferences.miniExpanded ? '收起应用列表' : '展开应用流量');
+    pin.setAttribute('aria-pressed', String(preferences.miniPinned));
+    pin.setAttribute('aria-label', preferences.miniPinned ? '取消固定' : '固定位置');
+    autoHide.setAttribute('aria-pressed', String(!preferences.miniAutoHide));
+    autoHide.setAttribute('aria-label', preferences.miniAutoHide ? '保持显示' : '允许自动隐藏');
+    proxyFilter.setAttribute('aria-pressed', String(preferences.miniExcludeProxy));
+    proxyFilter.setAttribute('aria-label', preferences.miniExcludeProxy ? '显示全部流量' : '排除代理程序流量');
+    document.querySelector('.all-traffic-label').textContent = preferences.miniExcludeProxy ? ' · 排除代理' : ' · 全部流量';
     if (document.activeElement !== range) range.value = preferences.miniRange;
     if (document.activeElement !== custom) custom.value = preferences.miniCustomMinutes;
     document.getElementById('customRange').hidden = range.value !== 'custom';
+    if (previous.miniRange !== preferences.miniRange || previous.miniCustomMinutes !== preferences.miniCustomMinutes
+        || previous.miniExcludeProxy !== preferences.miniExcludeProxy) {
+        applicationResult = null;
+        rowsElement.replaceChildren(); rows.clear();
+        document.getElementById('tableWrap').hidden = true;
+        status.textContent = '正在读取应用流量'; status.hidden = false;
+    }
     if (applicationResult) renderApplications(applicationResult);
+    renderLive();
 }
 
 function rangeDescription(value) {
@@ -56,7 +82,8 @@ function rangeDescription(value) {
 }
 
 function renderApplications(result) {
-    if (!result || result.range?.minutes !== selectedMinutes()) return;
+    if (!result || result.range?.minutes !== selectedMinutes()
+        || Boolean(result.miniExcludeProxy) !== preferences.miniExcludeProxy) return;
     applicationResult = result;
     const items = Array.isArray(result.rows) ? result.rows : [];
     document.getElementById('rangeSummary').textContent = rangeDescription(result.range);
@@ -82,7 +109,6 @@ function renderApplications(result) {
         }
         const cells = row.children;
         cells[0].textContent = item.name || item.appId;
-        cells[0].title = item.name || item.appId;
         cells[1].textContent = applicationSpeed(item.rxPerSecond, item.measurementAvailable !== false);
         cells[2].textContent = applicationSpeed(item.txPerSecond, item.measurementAvailable !== false);
         cells[3].textContent = applicationBytes(item.rxBytes);
@@ -123,6 +149,13 @@ toggle.addEventListener('click', async () => {
     try { await updatePreferences({ miniExpanded: !preferences.miniExpanded }); }
     finally { toggle.disabled = false; }
 });
+for (const [button, key] of [[pin, 'miniPinned'], [autoHide, 'miniAutoHide'], [proxyFilter, 'miniExcludeProxy']]) {
+    button.addEventListener('click', async () => {
+        button.disabled = true;
+        try { await updatePreferences({ [key]: !preferences[key] }); }
+        finally { button.disabled = false; }
+    });
+}
 range.addEventListener('change', () => {
     document.getElementById('customRange').hidden = range.value !== 'custom';
     const patch = { miniRange: range.value };
@@ -141,9 +174,8 @@ custom.addEventListener('change', () => {
 
 const subscriptions = [
     api.onLive(event => {
-        const rates = liveRates(event);
-        renderRate(upload, rates.upload);
-        renderRate(download, rates.download);
+        lastLive = event;
+        renderLive();
     }),
     api.onPreferences(applyPreferences),
     api.onState(state => {

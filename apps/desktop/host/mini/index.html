@@ -9,13 +9,21 @@
 </head>
 <body data-shape="bar" data-palette="dark" data-collapsed="false" data-expanded="false">
     <div class="edge-strip" aria-hidden="true"></div>
-    <main title="按住空白区域拖动窗口">
+    <main>
         <header class="mini-heading"><span class="activity-dot"></span><span>WiFiMeter<span class="all-traffic-label"> · 全部流量</span></span></header>
         <div class="rates">
             <div class="rate-download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14m-5-5 5 5 5-5"/></svg><output id="download" aria-label="下载速度"><span class="rate-number">—</span><span class="rate-unit"></span></output></div>
             <div class="rate-upload"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V6m-5 5 5-5 5 5"/></svg><output id="upload" aria-label="上传速度"><span class="rate-number">—</span><span class="rate-unit"></span></output></div>
         </div>
-        <nav aria-label="小窗操作"><button id="apps" aria-label="展开应用流量" title="展开应用流量" aria-controls="appsPanel" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/></svg></button><button id="open" aria-label="打开主窗口" title="打开主窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6m0-6-9 9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button><button id="close" aria-label="关闭小窗" title="关闭小窗"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button></nav>
+        <nav aria-label="小窗操作">
+            <button id="pin" aria-label="固定位置" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8M9 3v6l-3 4v2h12v-2l-3-4V3M12 15v6"/></svg></button>
+            <button id="autoHide" aria-label="保持显示" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12"/><circle cx="12" cy="12" r="3"/></svg></button>
+            <button id="proxyFilter" aria-label="排除代理程序流量" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18l-7 8v7l-4 2v-9Z"/></svg></button>
+            <button id="apps" aria-label="展开应用流量" aria-controls="appsPanel" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/></svg></button>
+            <button id="open" aria-label="打开主窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6m0-6-9 9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></button>
+            <button id="close" aria-label="关闭小窗"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </nav>
+        <p id="miniError" class="mini-error" role="alert" hidden></p>
         <section id="appsPanel" class="apps-panel" aria-label="应用流量列表" hidden>
             <div class="range-controls">
                 <label for="range">累计时段</label>
@@ -31,7 +39,6 @@
                     <tbody id="appRows"></tbody>
                 </table>
             </div>
-            <p id="miniError" class="mini-error" role="alert" hidden></p>
         </section>
     </main>
     <script type="module" src="renderer.js"></script>

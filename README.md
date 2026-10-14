@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.3.md"><img src="https://img.shields.io/badge/version-1.3.3-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.3" /></a>
+  <a href="docs/releases/v1.3.4.md"><img src="https://img.shields.io/badge/version-1.3.4-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.4" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.md#c-backend"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -26,7 +26,7 @@
 
 A desktop network usage meter with shared source code for Windows and Linux. Tauri renders the interface using the system WebView; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. Release targets cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64; available builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
 
-Version 1.3.3 improves startup recovery, update coordination and historical collection-gap queries, keeps one Windows login entry, and removes Electron from development dependencies and build tools. The release notes describe the changes and validation limits.
+Version 1.3.4 adds saved floating-window pin, visibility and proxy-filter controls, limits automatic hiding to the left and right edges, and removes native tooltip popups. It also unifies live application traffic and usage history, clarifies proxy measurements, and improves capture cleanup and CI dependency reuse. The release notes describe the changes and validation limits.
 
 The following overview and application history use synthetic data.
 
@@ -37,16 +37,18 @@ The following overview and application history use synthetic data.
 ## Features
 
 - Wi-Fi and physical Ethernet traffic, live download/upload rates, network aliases, and searchable history. Virtual adapters are excluded from physical Ethernet accounting.
-- Native per-application capture through Windows ETW for non-loopback traffic, Windows TCP EStats for live loopback/proxy-client bytes, or Linux eBPF, with explicit permission and coverage states. The overview keeps core metrics in its first screen, with the complete live application ranking in the scrolling area below. The applications page also shows all captured applications. Application history supports minute, hour, day and month grouping and export with current filters.
+- Native per-application capture through Windows ETW for non-loopback traffic, Windows TCP EStats for live loopback/proxy-client bytes, or Linux eBPF, with explicit permission and coverage states. The overview keeps core metrics in its first screen, with the complete live application ranking in the scrolling area below. A shared application workspace switches between live traffic and usage history in the application page and network details, preserves each view's search and sort choices, and opens application details in a drawer. History supports minute, hour, day and month grouping and export with current filters.
 - Per-network quotas and a separate combined Wi-Fi quota, with daily, monthly or cumulative periods. Ethernet does not consume the combined Wi-Fi quota. Warnings and optional Wi-Fi disconnection are configurable.
 - Windows application blocking, with upload and download limits that can be set or removed independently after selecting an application or executable. The Windows x64 package includes WinDivert for download limits, which apply while WiFiMeter runs. Traffic received by a separate proxy requires limiting that proxy executable. These controls are unavailable on Linux.
-- Optional Windows proxy attribution estimates, clearly separated from native records. Estimates use observed TCP connections and retain unattributed traffic when evidence is missing.
+- Optional Windows proxy attribution estimates, clearly separated from native records and measured local TCP proxy rates. Daily estimates use observed TCP connection weights; unmatched totals preserve native records, and partial-day or minute/hour queries omit daily estimates. Unattributed traffic is retained when evidence is missing.
 - Custom local dates and times with minute precision, including the ending minute, and network/application minute details. Minute records accumulate after upgrading; earlier records retain their original precision. All-history queries, CSV/JSON export, complete backups, configurable retention, English/Chinese UI, tray mode and login startup.
-- A Windows floating window shows combined live upload/download rates and an expandable application list with live rates and accumulated usage. Its 1-minute range is the current calendar minute; 5 minutes and 1 hour include the current minute and the previous 4 or 59 minutes. Custom ranges span 1–10080 minutes and are saved automatically. See the [floating-window guide](docs/FLOATING_WINDOW.md).
+- A Windows floating window shows combined live upload/download rates and an expandable application list with live rates and accumulated usage. Pin it in place, keep it visible, or optionally exclude proxy application traffic. Automatic hiding applies only at the left and right screen edges and is disabled while pinned. Its 1-minute range is the current calendar minute; 5 minutes and 1 hour include the current minute and the previous 4 or 59 minutes. Custom ranges span 1–10080 minutes and are saved automatically. See the [floating-window guide](docs/FLOATING_WINDOW.md).
 
 ## Existing data and upgrades
 
 For Electron 1.2.x, download the Tauri installer for your operating system and CPU from [Releases](https://github.com/chronicle12345/WiFiMeter/releases). It reuses the existing data directory. Once Tauri is installed, subsequent update checks select the matching Tauri installer.
+
+Windows 1.3.3 users can update to 1.3.4 from the application; the updater downloads and verifies the matching installer, saves data, installs silently and restarts. Linux update checks open the official release page for manual installation. For a manual Windows upgrade, exit WiFiMeter normally before running the installer. Older versions affected by update problems may also require manual installation.
 
 On Windows, the app discovers the file-based version's default directory at `%LOCALAPPDATA%\WiFiMeter\data`. Other directories can be selected in Settings. Stop the old collector before importing; the Windows installer requests a graceful save and stop before replacing the application.
 

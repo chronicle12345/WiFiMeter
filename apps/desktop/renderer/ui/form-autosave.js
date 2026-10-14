@@ -5,7 +5,7 @@ import { validQuotaGb } from '../data/model.js';
 import { proxyConfigPatch } from '../data/proxy.js';
 
 export const autosaveFormIds = new Set(['settingsForm','networkForm','totalQuotaForm','proxyConfigForm']);
-const windowFields = new Set(['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide']);
+const windowFields = new Set(['miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']);
 
 // 表单保存负责校验与写入；页面负责导航、确认弹窗和重新渲染。
 export function createFormAutosave({ store, desktop, getData, getWindowPreferences, receiveWindowPreferences,

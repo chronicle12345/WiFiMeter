@@ -4,7 +4,15 @@ English | [简体中文](FLOATING_WINDOW.zh-CN.md)
 
 Enable the desktop floating window on the General page of WiFiMeter settings on Windows. By default it shows combined download and upload rates across all current connections. It supports bar, square, and circular shapes, colors, edge snapping, and automatic hiding.
 
-Click the floating window's application-list button to expand each application's live upload/download rates and usage for a recent time range. The list scrolls while the combined network rates remain at the top. Click the button again to collapse the list. Keyboard input is enabled while the list is expanded; collapsing it restores the original shape.
+Drag an empty area of the floating window to move it. Click the pin button to lock its current position. While pinned, dragging, edge snapping, and automatic hiding are disabled. Unpinning restores the configured snapping and hiding behavior. You can also change pinning in General settings; the choice is saved and reused after restarting the application.
+
+The keep-visible button toggles automatic hiding, which can also be changed in General settings. With edge snapping and automatic hiding enabled, an unpinned window hides partly beyond the left or right screen edge after the pointer leaves and reappears when the pointer returns. At the top or bottom edge it remains fully visible. Keeping it visible does not lock its position; the setting is saved across restarts.
+
+Use the proxy-filter button or General settings to choose whether to exclude proxy application traffic. This option is off by default and is saved across restarts. When enabled, the displayed combined live rates subtract measured network rates of identified proxy applications, and the live and usage lists hide matching proxy application rows. Proxy applications are identified from configured process names and known live or historical application identifiers. The option applies only to identified proxy applications; if needed, set the proxy process names on the existing Proxy settings page.
+
+Proxy exclusion requires working application capture and matching measurements. If capture is unavailable, a detected proxy cannot be identified, or a required download/upload measurement is missing or exceeds the corresponding network total, the affected filtered rate shows `—`. This display option does not change collected network totals, quotas, or stored history. Accumulated usage continues to use native minute records with proxy rows excluded; proxy attribution estimates do not replace those records.
+
+Click the floating window's application-list button to expand each application's live upload/download rates and usage for a recent time range. The list scrolls while the selected combined rates remain at the top. Click the button again to collapse the list. Keyboard input is enabled while the list is expanded; collapsing it restores the original shape.
 
 Choose 1 minute, 5 minutes, 1 hour, or a custom range of 1–10080 minutes. The selected range and custom value are saved automatically and reused after restarting the application. The list displays the actual start and end dates and times, to the minute.
 

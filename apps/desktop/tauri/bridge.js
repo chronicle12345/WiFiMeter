@@ -3,6 +3,8 @@
     const isMini = location.pathname.endsWith('/mini/index.html');
     const listeners = new Map();
     let visibilityState;
+    let miniPinned = true;
+    let miniPreferences, miniPreferenceRevision = 0;
     const invoke = (channel, ...args) => window.__TAURI__.core.invoke('desktop_request', { channel, args });
     const subscribe = (channel, handler) => {
         if (typeof handler !== 'function') throw new TypeError('事件处理函数无效。');
@@ -13,6 +15,11 @@
     };
     // 启动脚本先于页面模块执行；事件注册完成后再释放第一个业务请求。
     const ready = window.__TAURI__.event.listen('desktop:event', ({ payload: message }) => {
+        if (isMini && message.channel === 'window-preferences:changed') {
+            miniPreferences = message.payload;
+            miniPinned = miniPreferences.miniPinned === true;
+            miniPreferenceRevision++;
+        }
         if (!isMini && message.channel === 'window:close-request') {
             const confirm = async () => {
                 let dirty;
@@ -34,7 +41,19 @@
             try { handler(message.payload); } catch (error) { console.error(error); }
         }
     });
-    const request = (channel, ...args) => ready.then(() => invoke(channel, ...args));
+    const request = (channel, ...args) => ready.then(() => {
+        const revision = miniPreferenceRevision;
+        return invoke(channel, ...args).then(result => {
+            if (isMini && ['mini:preferences-read', 'mini:preferences-update'].includes(channel)) {
+                if (revision === miniPreferenceRevision) {
+                    miniPreferences = result;
+                    miniPinned = result?.miniPinned === true;
+                }
+                return miniPreferences || result;
+            }
+            return result;
+        });
+    });
     const freeze = value => {
         for (const child of Object.values(value)) if (child && typeof child === 'object') freeze(child);
         return Object.freeze(value);
@@ -90,7 +109,7 @@
         value: freeze(isMini ? mini : main), configurable: false, writable: false
     });
     if (isMini) document.addEventListener('pointerdown', event => {
-        if (event.button === 0 && !event.target.closest('button, a, input, select, textarea')) {
+        if (!miniPinned && event.button === 0 && !event.target.closest('button, a, input, select, textarea, [role="alert"]')) {
             invoke('mini:drag').catch(error => console.error(error));
         }
     });
