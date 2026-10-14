@@ -83,7 +83,18 @@ export const english = Object.fromEntries(`
 正在校验安装包…|Verifying installer…
 正在保存数据并准备安装…|Saving data and preparing installation…
 正在退出并启动静默安装…|Exiting and starting silent installation…
-即将自动下载并安装更新。|The update will download and install automatically.
+安装包已下载并通过校验，确认后安装并重启。|The installer is downloaded and verified. Confirm to install and restart.
+下载更新？|Download update?
+安装更新并重启？|Install update and restart?
+下载更新|Download update
+重新下载|Download again
+重试安装|Retry installation
+安装并重启|Install and restart
+将下载版本|Download version
+的安装包并进行校验。下载完成后，你可以选择是否安装。| and verify the installer. You can choose whether to install after downloading.
+将安装版本|Install version
+。确认后会保存设置和数据库，随后关闭应用、自动安装并重启。|. After confirmation, settings and the database will be saved. The app will close, install automatically, and restart.
+更新状态已变化，请重新选择更新操作。|The update state changed. Choose the update action again.
 重试更新|Retry update
 请先保存设置并重试更新。|Save your settings and retry the update.
 正在启动安装程序…|Starting installer…

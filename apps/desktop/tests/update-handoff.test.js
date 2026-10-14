@@ -74,7 +74,9 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         './app-icons.cjs': { registerAppIcons() {} },
         './app-control.cjs': { createAppControl: () => ({}) },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { calls.push('handoff'); if (failure === 'handoff') throw Error('helper failed'); await handoffReady; } },
-        './updates.cjs': { createUpdateService(options) { hooks = options; if (updateFactory) return updateFactory(options); return { settings: async () => ({ checkOnStartup: true }), check: async () => ({ state: 'available' }), async install() {
+        './updates.cjs': { createUpdateService(options) { hooks = options; if (updateFactory) return updateFactory(options); return { settings: async () => ({ checkOnStartup: true }),
+            check: async () => ({ state: 'available', canDownload: true, canInstall: true, downloaded: false }),
+            download: async () => { calls.push('download'); return { state: 'downloaded', canDownload: true, canInstall: true, downloaded: true }; }, async install() {
             calls.push('install');
             try { await options.beforeInstall(); await options.launchInstaller('verified.exe', [], { digest }); return { state: 'installing' }; }
             catch { return { state: 'error', error: 'generic installation error' }; }
@@ -107,6 +109,8 @@ test('shutdown still pending keeps protection and gives an explicit recovery fai
     assert.match(updatesView(result), /data-action="install-update"[^>]*>恢复采集<\/button>/);
     assert.equal((await h.invoke('updates:status')).recoveryRequired, true);
     assert.equal((await h.invoke('updates:check')).recoveryRequired, true);
+    assert.equal((await h.invoke('updates:download')).recoveryRequired, true);
+    assert.equal(h.calls.includes('download'), false);
     assert.equal(h.calls.includes('start'), false);
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, false);
     assert.equal(h.quitCount, 0);
@@ -360,13 +364,21 @@ test('helper spawn error rejects without GO', async () => {
 
 function fixtureUpdateService(options, { downloadFails = false } = {}) {
     const module = { exports: {} };
+    const installer = Buffer.from('verified fixture');
+    let downloaded = false;
     runInNewContext(fs.readFileSync(path.join(directory, 'updates.cjs'), 'utf8'), {
         module, AbortSignal, globalThis,
         require: name => name === 'node:fs/promises' ? {
             readFile: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
-            lstat: async () => { throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
-            mkdir: async () => {}, rename: async () => {}, unlink: async () => {}
-        } : name === 'node:fs' ? { createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }) } : require(name)
+            lstat: async () => {
+                if (!downloaded) throw Object.assign(Error('missing'), { code: 'ENOENT' });
+                return { size: installer.length, isSymbolicLink: () => false, isFile: () => true };
+            },
+            mkdir: async () => {}, rename: async () => { downloaded = true; }, unlink: async () => {}
+        } : name === 'node:fs' ? {
+            createWriteStream: () => new Writable({ write(chunk, encoding, done) { done(); } }),
+            createReadStream: () => Readable.from([installer.subarray(0, 5), installer.subarray(5)])
+        } : require(name)
     });
     const assetName = 'WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe';
     return module.exports.createUpdateService({
@@ -374,32 +386,91 @@ function fixtureUpdateService(options, { downloadFails = false } = {}) {
         currentVersion: '1.2.0', platform: 'win32', arch: 'x64', userData: 'fixture',
         fetch: async url => {
             if (url.includes('api.github.com')) return Response.json({ tag_name: 'v1.3.0', assets: [{
-                name: assetName, size: Buffer.byteLength('verified fixture'), digest: `sha256:${digest}`,
+                name: assetName, size: installer.length, digest: `sha256:${digest}`,
                 browser_download_url: `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.0/${assetName}`
             }] });
             if (downloadFails) throw Error('injected download failure');
-            return new Response('verified fixture');
+            return new Response(installer);
         }
     });
 }
 
-test('Tauri download passes its verified release digest to the handoff hook', async () => {
+test('Tauri explicit install passes the downloaded release digest to the handoff hook', async () => {
     let metadata;
     const service = fixtureUpdateService({
-        confirm: async () => true, beforeInstall: async () => {},
+        beforeInstall: async () => {},
         launchInstaller: async (file, argv, verified) => {
             assert.ok(file.endsWith('WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe'));
             assert.deepEqual(Array.from(argv), ['/S', '/R']); metadata = verified;
         }
     });
+    assert.equal((await service.check()).state, 'available');
+    assert.equal(metadata, undefined);
+    assert.equal((await service.download()).state, 'downloaded');
+    assert.equal(metadata, undefined);
     assert.equal((await service.install()).state, 'installing');
     assert.equal(metadata.digest, digest);
 });
 
-test('Tauri automatic check refuses an unsaved draft before pausing, handoff, or quitting', async () => {
+async function confirmedDownload(h) {
+    const available = await h.invoke('updates:check');
+    assert.equal(available.state, 'available');
+    assert.equal(available.canDownload, true);
+    assert.equal(available.downloaded, false);
+    assert.equal((await h.invoke('updates:status')).state, 'available');
+    assert.equal(h.calls.includes('prepareUpdate'), false);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+    assert.equal(h.quitCount, 0);
+    const downloaded = await h.invoke('updates:download');
+    assert.equal(downloaded.state, 'downloaded');
+    assert.equal(downloaded.downloaded, true);
+    assert.equal(downloaded.busy, false);
+    assert.equal((await h.invoke('updates:status')).state, 'downloaded');
+    assert.equal(h.calls.includes('prepareUpdate'), false);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.includes('waitForShutdown'), false);
+    assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+    assert.equal(h.quitCount, 0);
+}
+
+for (const paused of [false, true]) test(`checking and confirmed download preserve collection paused=${paused} until explicit install`, async () => {
+    const h = await harness({ paused, appsEnabled: true, nativeExitDecisions: [],
+        updateFactory: options => fixtureUpdateService(options) });
+    await confirmedDownload(h);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, paused);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.deepEqual(h.nativeMessages, []);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+});
+
+test('installation without a confirmed download leaves the collector and settings untouched', async () => {
+    const h = await harness({ appsEnabled: true, nativeExitDecisions: [],
+        updateFactory: options => fixtureUpdateService(options) });
+    const unchecked = await h.invoke('updates:install');
+    assert.equal(unchecked.errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(unchecked.downloaded, false);
+    assert.equal((await h.invoke('updates:check')).state, 'available');
+    const available = await h.invoke('updates:install');
+    assert.equal(available.state, 'available');
+    assert.equal(available.errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(available.downloaded, false);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, false);
+    assert.equal(h.backend.appsEnabled, true);
+    assert.equal(h.calls.includes('handoff'), false);
+    assert.equal(h.calls.includes('waitForShutdown'), false);
+    assert.equal(h.calls.some(call => Array.isArray(call) && call[0] === 'setPaused'), false);
+    assert.deepEqual(h.nativeMessages, []);
+    assert.equal(h.quitCount, 0);
+});
+
+test('Tauri confirmed install refuses an unsaved draft before pausing, handoff, or quitting', async () => {
     const h = await harness({ paused: true, appsEnabled: true, prepareUpdateResult: false,
         nativeExitDecisions: [], updateFactory: options => fixtureUpdateService(options) });
-    const result = await h.invoke('updates:check');
+    await confirmedDownload(h);
+    const result = await h.invoke('updates:install');
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'preparing');
     assert.match(result.error, /尚未保存.*保存后重试更新/);
@@ -416,10 +487,11 @@ test('Tauri automatic check refuses an unsaved draft before pausing, handoff, or
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
 
-for (const paused of [false, true]) test(`automatic check handoff failure restores original paused=${paused} and application collection`, async () => {
+for (const paused of [false, true]) test(`confirmed install handoff failure restores original paused=${paused} and application collection`, async () => {
     const h = await harness({ failure: 'handoff', paused, appsEnabled: true,
         updateFactory: options => fixtureUpdateService(options) });
-    const result = await h.invoke('updates:check');
+    await confirmedDownload(h);
+    const result = await h.invoke('updates:install');
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'installing');
     assert.equal(result.busy, false);
@@ -432,10 +504,11 @@ for (const paused of [false, true]) test(`automatic check handoff failure restor
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
 });
 
-test('automatic check download failure leaves the running collector unchanged', async () => {
+test('confirmed download failure leaves the running collector unchanged', async () => {
     const h = await harness({ appsEnabled: true,
         updateFactory: options => fixtureUpdateService(options, { downloadFails: true }) });
-    const result = await h.invoke('updates:check');
+    assert.equal((await h.invoke('updates:check')).state, 'available');
+    const result = await h.invoke('updates:download');
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'downloading');
     assert.equal(result.busy, false);
@@ -448,10 +521,11 @@ test('automatic check download failure leaves the running collector unchanged', 
     assert.equal(h.quitCount, 0);
 });
 
-test('automatic check refuses installation when the page save hook is unavailable', async () => {
+test('confirmed install refuses installation when the page save hook is unavailable', async () => {
     const h = await harness({ missingPrepareHook: true,
         updateFactory: options => fixtureUpdateService(options) });
-    const result = await h.invoke('updates:check');
+    await confirmedDownload(h);
+    const result = await h.invoke('updates:install');
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'preparing');
     assert.equal(h.backend.running, true);
@@ -461,16 +535,18 @@ test('automatic check refuses installation when the page save hook is unavailabl
     assert.equal(h.quitCount, 0);
 });
 
-test('automatic check keeps data protected until a timed-out collector shutdown really finishes', async () => {
+test('confirmed install keeps data protected until a timed-out collector shutdown really finishes', async () => {
     const h = await harness({ failure: 'shutdown', appsEnabled: true,
         updateFactory: options => fixtureUpdateService(options) });
-    const failed = await h.invoke('updates:check');
+    await confirmedDownload(h);
+    const failed = await h.invoke('updates:install');
     assert.equal(failed.state, 'error');
     assert.equal(failed.recoveryRequired, true);
     assert.equal(h.backend.paused, true);
     assert.equal(h.calls.includes('handoff'), false);
     assert.equal(h.calls.includes('start'), false);
     assert.equal((await h.invoke('updates:check')).recoveryRequired, true);
+    assert.equal((await h.invoke('updates:download')).recoveryRequired, true);
     assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, false);
     h.backend.shutdownPending = false; h.backend.running = false;
     const recovered = await h.invoke('updates:install');
@@ -538,10 +614,10 @@ function Start-Process {
 
 
 test('recovery action takes priority over installation, is disabled while busy, and is translated', () => {
-    const status = { state: 'available', canInstall: true, recoveryRequired: true };
+    const status = { state: 'downloaded', canInstall: true, canDownload: true, downloaded: true, recoveryRequired: true };
     const html = updatesView(status, true);
     assert.match(html, /data-action="install-update" disabled>恢复采集<\/button>/);
-    assert.doesNotMatch(html, /data-action="install-update"[^>]*>下载并安装<\/button>/);
+    assert.doesNotMatch(html, /data-action="download-update"|data-action="install-update"[^>]*>安装并重启<\/button>/);
     setLanguage('en');
     try {
         assert.match(updatesView({ state: 'error', recoveryRequired: true }), />Resume collection<\/button>/);
@@ -561,22 +637,23 @@ test('failed update restores application collection after restarting the stopped
 
 test('progress wiring is initialized before service construction and survives status reads', async () => {
     let finish;
-    let checks = 0, installs = 0;
+    let checks = 0, downloads = 0, installs = 0;
     const h = await harness({ updateFactory(options) {
         options.onProgress({ state: 'unchecked', status: 'unchecked', progress: null });
         return {
             settings: async () => ({ checkOnStartup: true }),
-            check: async () => { checks++; return { state: 'available' }; },
-            install: async () => {
-                installs++;
+            check: async () => { checks++; return { state: 'available', canDownload: true, canInstall: true, downloaded: false }; },
+            download: async () => {
+                downloads++;
                 options.onProgress({ state: 'downloading', status: 'downloading', currentVersion: '1.2.0',
                     latestVersion: '1.3.0', progress: { receivedBytes: 4, totalBytes: 10, percent: 40, phase: 'downloading' } });
                 await new Promise(resolve => { finish = resolve; });
-                return { state: 'error', status: 'error', error: 'download failed' };
-            }
+                return { state: 'error', status: 'error', error: 'download failed', downloaded: false };
+            },
+            install: async () => { installs++; assert.fail('must not install during a download'); }
         };
     } });
-    const pending = h.invoke('updates:install');
+    const pending = h.invoke('updates:download');
     await new Promise(setImmediate);
     const status = await h.invoke('updates:status');
     assert.equal(status.state, 'downloading');
@@ -584,8 +661,12 @@ test('progress wiring is initialized before service construction and survives st
     assert.equal(status.busy, true);
     assert.equal(h.updates.at(-1).progress.percent, 40);
     assert.equal((await h.invoke('updates:check')).state, 'busy');
+    assert.equal((await h.invoke('updates:download')).state, 'busy');
     assert.equal((await h.invoke('updates:install')).state, 'busy');
-    assert.equal(checks, 0); assert.equal(installs, 1);
+    assert.equal(checks, 0); assert.equal(downloads, 1); assert.equal(installs, 0);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.backend.paused, false);
+    assert.equal(h.calls.includes('prepareUpdate'), false);
     finish();
     const failed = await pending;
     assert.equal(failed.progress, null);
@@ -605,14 +686,17 @@ test('in-flight checking rejects repeat actions without replacing the saved phas
             checks++;
             options.onProgress({ state: 'checking', status: 'checking', progress: { receivedBytes: 0, totalBytes: null, percent: null, phase: 'checking' } });
             await new Promise(resolve => { finish = resolve; });
-            return { state: 'available', status: 'available', progress: null };
+            return { state: 'available', status: 'available', progress: null,
+                canDownload: true, canInstall: true, downloaded: false };
         },
+        download: async () => assert.fail('must not download during a check'),
         install: async () => assert.fail('must not install during a check')
     }; } });
     const pending = h.invoke('updates:check');
     await new Promise(setImmediate);
     assert.equal((await h.invoke('updates:status')).state, 'checking');
     assert.equal((await h.invoke('updates:install')).state, 'busy');
+    assert.equal((await h.invoke('updates:download')).state, 'busy');
     assert.equal((await h.invoke('updates:check')).state, 'busy');
     assert.equal((await h.invoke('updates:status')).state, 'checking');
     assert.equal(checks, 1);

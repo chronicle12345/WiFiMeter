@@ -76,6 +76,7 @@
             status: () => request('updates:status'),
             setCheckOnStartup: value => request('updates:setting', value),
             check: () => request('updates:check'),
+            download: () => request('updates:download'),
             install: () => request('updates:install'),
             onStatus: handler => subscribe('updates:status', handler)
         },

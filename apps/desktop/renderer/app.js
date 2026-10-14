@@ -691,10 +691,29 @@ async function updateAction(action){
  try{updateStatus=await window.desktop.updates[action]();}
  catch(error){updateStatus={...updateStatus,state:'error',error:error.message};}
  finally{updateBusy=false;renderUpdates();}
+ if(action==='check'&&updateStatus.canInstall){
+  if(updateStatus.state==='available')confirmUpdate('download');
+  else if(updateStatus.state==='downloaded')confirmUpdate('install');
+ }else if(action==='download'&&updateStatus.state==='downloaded')confirmUpdate('install');
+}
+function confirmUpdate(action){
+ if(updateBusy||updateStatus.busy||ui.modal)return;
+ const version=updateStatus.latestVersion;
+ if(action==='download'&&!(updateStatus.canDownload??updateStatus.canInstall))return;
+ if(action==='install'&&(!updateStatus.canInstall||updateStatus.downloaded!==true))return;
+ const title=action==='download'?t('下载更新？'):t('安装更新并重启？');
+ const description=action==='download'?tr`将下载版本 ${version} 的安装包并进行校验。下载完成后，你可以选择是否安装。`:tr`将安装版本 ${version}。确认后会保存设置和数据库，随后关闭应用、自动安装并重启。`;
+ confirmModal(title,description,t(action==='download'?'下载更新':'安装并重启'),async()=>{
+  if(version!==updateStatus.latestVersion||updateStatus.busy||(action==='install'&&updateStatus.downloaded!==true)){
+   toast(t('更新状态已变化，请重新选择更新操作。'),true);return;
+  }
+  await updateAction(action);
+ });
 }
 const actions={
  'check-updates':()=>updateAction('check'),
- 'install-update':()=>updateAction('install'),
+ 'download-update':()=>confirmUpdate('download'),
+ 'install-update':()=>updateStatus.recoveryRequired||!updateStatus.canInstall?updateAction('install'):confirmUpdate('install'),
  refresh:async e=>{
   if(settingsDirty||networkDirty||totalQuotaDirty||proxyDirty){toast(t('请等待自动保存完成，或重试保存失败的更改。'),true);return;}
   e.disabled=true;

@@ -17,6 +17,7 @@ pub fn allowed_channel(window: &str, channel: &str) -> bool {
                 | "updates:status"
                 | "updates:setting"
                 | "updates:check"
+                | "updates:download"
                 | "updates:install"
                 | "window:confirm-close"
         ),
@@ -39,6 +40,8 @@ mod tests {
         assert!(!allowed_channel("other", "files:save"));
         assert!(!allowed_channel("main", "shell:open"));
         assert!(allowed_channel("main", "app-control:list"));
+        assert!(allowed_channel("main", "updates:download"));
+        assert!(!allowed_channel("mini", "updates:download"));
         assert!(!allowed_channel("mini", "app-control:list"));
     }
 }

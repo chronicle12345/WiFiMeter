@@ -416,6 +416,16 @@ app.whenReady().then(async () => {
         if (!trusted(event)) throw Error('Unsupported page.');
         return checkForUpdates();
     });
+    ipcMain.handle('updates:download', async event => {
+        if (!trusted(event)) throw Error('Unsupported page.');
+        if (updateRequestBusy) return { ...updateState, state: 'busy', status: 'busy', busy: true };
+        if (updateRecovery || installingUpdate) return updateState;
+        updateRequestBusy = true;
+        let result;
+        try { result = await updateService.download(); }
+        finally { updateRequestBusy = false; }
+        return updateResult(result);
+    });
     ipcMain.handle('updates:install', async event => {
         if (!trusted(event)) throw Error('Unsupported page.');
         if (updateRequestBusy || (installingUpdate && !updateRecovery)) return { ...updateState, state: 'busy', status: 'busy', busy: true };

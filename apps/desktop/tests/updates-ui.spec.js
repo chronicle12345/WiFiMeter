@@ -23,7 +23,7 @@ test.afterEach(async () => {
         }
     } finally { harness?.cleanup(); }
 });
-test('update setting persists and available native updates show their automatic download', async () => {
+test('update setting persists and download and installation each require confirmation', async () => {
     await page.locator('.nav [data-page="settings"]').click();
     await page.locator('[data-category="about"]').click();
     await expect(page.locator('#pageHead')).toHaveCount(0);
@@ -36,8 +36,11 @@ test('update setting persists and available native updates show their automatic 
     await expect(page.locator('#checkUpdatesOnStartup')).not.toBeChecked();
     await app.evaluate(({ipcMain}) => {
         globalThis.installRequests = 0;
+        globalThis.downloadRequests = 0;
         ipcMain.removeHandler('updates:check');
-        ipcMain.handle('updates:check', () => ({state:'available',currentVersion:'1.2.0',latestVersion:'1.3.0',notes:'<script>not executable</script>',canInstall:true,checkOnStartup:false}));
+        ipcMain.handle('updates:check', () => ({state:'available',currentVersion:'1.2.0',latestVersion:'1.3.0',notes:'<script>not executable</script>',canInstall:true,canDownload:true,downloaded:false,checkOnStartup:false}));
+        ipcMain.removeHandler('updates:download');
+        ipcMain.handle('updates:download', () => { globalThis.downloadRequests++;return {state:'downloaded',downloaded:true,canInstall:true,canDownload:true,currentVersion:'1.2.0',latestVersion:'1.3.0',checkOnStartup:false}; });
         ipcMain.removeHandler('updates:install');
         ipcMain.handle('updates:install', () => { globalThis.installRequests++;return {state:'cancelled',checkOnStartup:false,currentVersion:'1.2.0'}; });
     });
@@ -45,9 +48,74 @@ test('update setting persists and available native updates show their automatic 
     await expect(page.locator('#updatesPanel')).toContainText('1.3.0');
     await expect(page.locator('#updatesPanel script')).toHaveCount(0);
     expect(await app.evaluate(() => globalThis.installRequests)).toBe(0);
-    await expect(page.locator('#updatesPanel')).toContainText('即将自动下载并安装更新');
-    await expect(page.locator('[data-action="install-update"]')).toHaveCount(0);
+    expect(await app.evaluate(() => globalThis.downloadRequests)).toBe(0);
+    await expect(page.locator('.modal h2')).toHaveText('下载更新？');
+    await page.locator('.modal').getByRole('button', { name: '取消', exact: true }).click();
+    await page.locator('#updatesPanel [data-action="download-update"]').click();
+    await expect(page.locator('.modal h2')).toHaveText('下载更新？');
+    expect(await app.evaluate(() => globalThis.downloadRequests)).toBe(0);
+    await page.locator('.modal [data-action="confirm"]').click();
+    await expect.poll(() => app.evaluate(() => globalThis.downloadRequests)).toBe(1);
+    await expect(page.locator('.modal h2')).toHaveText('安装更新并重启？');
+    expect(await app.evaluate(() => globalThis.installRequests)).toBe(0);
+    await page.locator('.modal').getByRole('button', { name: '取消', exact: true }).click();
+    await expect(page.locator('#updatesPanel')).toContainText('安装包已下载并通过校验');
+    await page.locator('#updatesPanel [data-action="install-update"]').click();
+    await expect(page.locator('.modal h2')).toHaveText('安装更新并重启？');
+    expect(await app.evaluate(() => globalThis.installRequests)).toBe(0);
+    await page.locator('.modal [data-action="confirm"]').click();
+    await expect.poll(() => app.evaluate(() => globalThis.installRequests)).toBe(1);
+    expect(await app.evaluate(() => globalThis.downloadRequests)).toBe(1);
     await expect(page.locator('#checkUpdatesOnStartup')).not.toBeChecked();
+});
+
+test('a newer release arriving during download confirmation needs a fresh decision', async () => {
+    await app.evaluate(({ ipcMain }) => {
+        globalThis.downloadRequests = 0;
+        ipcMain.removeHandler('updates:check');
+        ipcMain.handle('updates:check', () => ({ state: 'available', latestVersion: '1.3.5', canDownload: true, canInstall: true }));
+        ipcMain.removeHandler('updates:download');
+        ipcMain.handle('updates:download', () => { globalThis.downloadRequests++;return { state: 'downloaded', downloaded: true }; });
+    });
+    await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();
+    await page.locator('#updatesPanel [data-action="check-updates"]').click();
+    await expect(page.locator('.modal')).toContainText('1.3.5');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('updates:status', {
+        state: 'available', latestVersion: '1.3.6', canDownload: true, canInstall: true, busy: false
+    }));
+    await page.locator('.modal [data-action="confirm"]').click();
+    expect(await app.evaluate(() => globalThis.downloadRequests)).toBe(0);
+    await expect(page.locator('.toast')).toContainText('更新状态已变化');
+    await page.locator('#updatesPanel [data-action="download-update"]').click();
+    await expect(page.locator('.modal')).toContainText('1.3.6');
+    await page.locator('.modal').getByRole('button', { name: '取消', exact: true }).click();
+});
+
+test('English update prompts distinguish downloading from installation and keep collection running', async ({}, testInfo) => {
+    await page.evaluate(() => window.desktop.backend.request('updateSettings', { settings: { language: 'en' } }));
+    await page.reload();
+    await app.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('updates:check');
+        ipcMain.handle('updates:check', () => ({ state: 'available', latestVersion: '1.3.5', canDownload: true, canInstall: true }));
+        ipcMain.removeHandler('updates:download');
+        ipcMain.handle('updates:download', () => ({ state: 'downloaded', latestVersion: '1.3.5', canDownload: true, canInstall: true, downloaded: true }));
+    });
+    await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();
+    const before = await page.evaluate(async () => (await window.desktop.backend.request('hello')).result.paused);
+    await page.locator('#updatesPanel [data-action="check-updates"]').click();
+    await expect(page.locator('.modal h2')).toHaveText('Download update?');
+    await expect(page.locator('.modal-desc')).toContainText('choose whether to install');
+    await page.screenshot({ path: testInfo.outputPath('confirm-download.png') });
+    await page.locator('.modal [data-action="confirm"]').click();
+    await expect(page.locator('.modal h2')).toHaveText('Install update and restart?');
+    await expect(page.locator('.modal-desc')).toContainText('settings and the database');
+    await page.screenshot({ path: testInfo.outputPath('confirm-install.png') });
+    await page.locator('.modal').getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(await page.evaluate(async () => (await window.desktop.backend.request('hello')).result.paused)).toBe(before);
+    await expect(page.locator('#main')).toHaveJSProperty('inert', false);
+    await expect(page.locator('#updatesPanel [data-action="install-update"]')).toHaveText('Install and restart');
+    await expect(page.locator('#updateBanner')).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('ready-to-install.png') });
 });
 test('hidden windows do not redraw for backend events and catch up when shown', async () => {
     await page.evaluate(() => {
@@ -100,6 +168,7 @@ test('failed update recovers collection despite an unsaved draft and removes the
 test('release notes render Markdown safely and progress preserves the open notes',async()=>{
  await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('updates:check');ipcMain.handle('updates:check',()=>({state:'available',currentVersion:'1.2.1',latestVersion:'1.2.2',canInstall:true,notes:'# Release\n\n## Changes\n- **Improved** speed\n- `code`\n\n[Details](https://github.com/chronicle12345/WiFiMeter/releases)\n\n<script>window.notesAttack=true</script><img src=x onerror="window.notesAttack=true"><a href="javascript:alert(1)">bad</a>'}));});
  await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();await page.locator('[data-action="check-updates"]').click();
+ await page.locator('.modal').getByRole('button', { name: '取消', exact: true }).click();
  await page.locator('.release-notes summary').click();
  await expect(page.locator('.release-notes-body h1')).toHaveText('Release');await expect(page.locator('.release-notes-body li')).toHaveCount(2);await expect(page.locator('.release-notes-body strong')).toHaveText('Improved');
  await expect(page.locator('.release-notes-body script,.release-notes-body img,.release-notes-body [href^="javascript:"]')).toHaveCount(0);
@@ -130,20 +199,22 @@ test('download progress is readable while the automatic check is pending and sur
  await expect(page.locator('progress')).toHaveCount(0);await expect(page.locator('#updateStatusRegion')).toContainText('fixture download failed');await expect(page.locator('[data-action="check-updates"]')).toBeEnabled();
 });
 
-test('automatic update progress stays visible across pages and retries inline without a popup',async()=>{
+test('update progress stays visible across pages and download retry waits for confirmation',async()=>{
  const send=async value=>app.evaluate(({BrowserWindow},status)=>BrowserWindow.getAllWindows()[0].webContents.send('updates:status',status),value);
- await app.evaluate(({ipcMain})=>{globalThis.retryRequests=0;ipcMain.removeHandler('updates:install');ipcMain.handle('updates:install',()=>{globalThis.retryRequests++;return {state:'cancelled',busy:false};});});
+ await app.evaluate(({ipcMain})=>{globalThis.retryRequests=0;ipcMain.removeHandler('updates:download');ipcMain.handle('updates:download',()=>{globalThis.retryRequests++;return {state:'cancelled',busy:false};});});
  await send({state:'available',currentVersion:'1.3.1',latestVersion:'1.3.2',canInstall:true});
  const banner=page.locator('#updateBanner');
- await expect(banner).toBeVisible();await expect(banner).toContainText('即将自动下载并安装更新');
+ await expect(banner).toBeVisible();await expect(banner).toContainText('发现新版本');
  await expect(banner.locator('[data-action="install-update"]')).toHaveCount(0);
+ await expect(banner.locator('[data-action="download-update"]')).toBeEnabled();await expect(page.locator('.modal')).toHaveCount(0);
  await send({state:'downloading',busy:true,progress:{receivedBytes:250000,totalBytes:1000000,percent:25}});
  await expect(banner.locator('progress')).toHaveAttribute('value','25');await expect(banner).toContainText('250.0 KB / 1.0 MB · 25%');
  await page.locator('.nav [data-page="history"]').click();await expect(banner).toBeVisible();await expect(banner.locator('progress')).toHaveAttribute('value','25');
  for(const state of ['verifying','preparing','installing']){await send({state,progress:null});await expect(banner.locator('.update-progress')).toHaveAttribute('data-phase',state);await expect(banner.locator('progress')).not.toHaveAttribute('value');}
  await expect(banner).toContainText('静默安装');
  await send({state:'error',busy:false,error:'fixture retry required',errorPhase:'downloading',canInstall:true});
- await expect(banner).toContainText('下载更新失败');const retry=banner.locator('[data-action="install-update"]');await expect(retry).toHaveText('重试更新');await retry.click();
+ await expect(banner).toContainText('下载更新失败');const retry=banner.locator('[data-action="download-update"]');await expect(retry).toHaveText('重新下载');await retry.click();
+ expect(await app.evaluate(()=>globalThis.retryRequests)).toBe(0);await expect(page.locator('.modal h2')).toHaveText('下载更新？');await page.locator('.modal [data-action="confirm"]').click();
  await expect.poll(()=>app.evaluate(()=>globalThis.retryRequests)).toBe(1);await expect(banner).toBeHidden();await expect(page.locator('.modal')).toHaveCount(0);
 });
 

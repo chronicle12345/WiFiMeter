@@ -55,7 +55,115 @@ async function fixture(t, options = {}) {
     return { service: createUpdateService(config), config, calls, events, userData };
 }
 
-for (const arch of ['x64', 'ia32', 'arm64']) test(`checking latest automatically installs only the matching Windows ${arch} package from all nine assets`, async t => {
+// Security and recovery fixtures exercise the two explicitly requested actions.
+async function downloadUpdate(service) {
+    const checked = await service.check();
+    return checked.canDownload ? service.download() : checked;
+}
+
+async function installUpdate(service) {
+    const downloaded = await downloadUpdate(service);
+    return downloaded.state === 'downloaded' || downloaded.manual ? service.install() : downloaded;
+}
+
+for (const automatic of [false, true]) test(`checking only queries metadata without downloading or installing, automatic=${automatic}`, async t => {
+    const f = await fixture(t);
+    const result = await f.service.check({ automatic });
+    assert.equal(result.state, 'available');
+    assert.equal(result.downloaded, false);
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(await fs.readdir(f.userData), []);
+});
+
+test('installation before an explicit download cannot fetch assets or stop collection', async t => {
+    const f = await fixture(t);
+    const unchecked = await f.service.install();
+    assert.equal(unchecked.errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(f.calls.length, 0);
+    await f.service.check();
+    const result = await f.service.install();
+    assert.equal(result.state, 'available');
+    assert.equal(result.downloaded, false);
+    assert.equal(result.errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.events, []);
+});
+
+test('a verified download waits for installation and survives another metadata check', async t => {
+    const f = await fixture(t);
+    await f.service.check();
+    const downloaded = await f.service.download();
+    assert.equal(downloaded.state, 'downloaded');
+    assert.equal(downloaded.downloaded, true);
+    assert.equal(downloaded.progress, null);
+    assert.deepEqual(f.events, []);
+    assert.equal((await f.service.check()).state, 'downloaded');
+    assert.equal((await f.service.install()).state, 'installing');
+    assert.equal(f.calls.length, 3);
+    assert.deepEqual(f.events, ['stop', 'launch']);
+});
+
+test('a missing cached installer requires downloading again without implicit network access', async t => {
+    const f = await fixture(t);
+    await downloadUpdate(f.service);
+    const directory = path.join(f.userData, 'updates');
+    const [name] = await fs.readdir(directory);
+    await fs.rename(path.join(directory, name), path.join(f.userData, `moved-${name}`));
+    const result = await f.service.install();
+    assert.equal(result.state, 'error');
+    assert.equal(result.errorPhase, 'verifying');
+    assert.equal(result.downloaded, false);
+    assert.equal(f.calls.length, 2);
+    assert.deepEqual(f.events, []);
+    assert.equal((await f.service.install()).errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(f.calls.length, 2);
+});
+
+test('a newly selected release cannot install an earlier verified candidate', async t => {
+    let latest = release();
+    const urls = [];
+    const f = await fixture(t, { fetch: async url => {
+        urls.push(url);
+        return url.includes('api.github.com') ? Response.json(latest) : new Response(bytes);
+    } });
+    await downloadUpdate(f.service);
+    latest = tauriRelease();
+    const checked = await f.service.check();
+    assert.equal(checked.state, 'available');
+    assert.equal(checked.latestVersion, '1.3.1');
+    assert.equal(checked.downloaded, false);
+    assert.equal((await f.service.install()).errorCode, 'UPDATE_NOT_DOWNLOADED');
+    assert.equal(urls.filter(url => !url.includes('api.github.com')).length, 1);
+    assert.deepEqual(f.events, []);
+});
+
+test('checking and installing remain serialized while the installer downloads', async t => {
+    let finishDownload, enteredDownload;
+    const entered = new Promise(resolve => { enteredDownload = resolve; });
+    const urls = [];
+    const f = await fixture(t, { fetch: async url => {
+        urls.push(url);
+        if (url.includes('api.github.com')) return Response.json(release());
+        enteredDownload();
+        await new Promise(resolve => { finishDownload = resolve; });
+        return new Response(bytes);
+    } });
+    await f.service.check();
+    const pending = f.service.download();
+    await entered;
+    try {
+        assert.equal((await f.service.check()).state, 'busy');
+        assert.equal((await f.service.download()).state, 'busy');
+        assert.equal((await f.service.install()).state, 'busy');
+        assert.equal(urls.length, 2);
+        assert.deepEqual(f.events, []);
+    } finally { finishDownload(); }
+    assert.equal((await pending).state, 'downloaded');
+    assert.deepEqual(f.events, []);
+});
+
+for (const arch of ['x64', 'ia32', 'arm64']) test(`explicit download selects only the matching Windows ${arch} package from all nine assets`, async t => {
     const urls = [], states = [];
     const f = await fixture(t, { currentVersion: '1.3.0', arch,
         confirm: () => { assert.fail('automatic updates must not ask for custom confirmation'); },
@@ -68,13 +176,14 @@ for (const arch of ['x64', 'ia32', 'arm64']) test(`checking latest automatically
             return url.includes('api.github.com') ? Response.json(tauriRelease()) : new Response(bytes);
         }
     });
-    const result = await f.service.check();
-    assert.equal(result.state, 'installing', JSON.stringify(result));
+    await f.service.check();
+    const result = await f.service.download();
+    assert.equal(result.state, 'downloaded', JSON.stringify(result));
     assert.equal(result.latestVersion, '1.3.1');
     assert.deepEqual(urls, ['https://api.github.com/repos/chronicle12345/WiFiMeter/releases/latest',
         `https://github.com/chronicle12345/WiFiMeter/releases/download/v1.3.1/WiFiMeter-1.3.1-windows-${arch}-Tauri-Setup.exe`]);
-    assert.deepEqual(f.events, ['stop', 'launch']);
-    assert.deepEqual([...new Set(states)], ['checking', 'available', 'downloading', 'verifying', 'preparing', 'installing']);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual([...new Set(states)], ['checking', 'available', 'downloading', 'verifying', 'downloaded']);
 });
 
 test('automatic check errors can immediately retry across restarts', async t => {
@@ -94,7 +203,7 @@ for (const size of [bytes.length - 1, bytes.length + 1]) test(`an API size misma
     const data = release();
     data.assets.forEach(asset => { asset.size = size; });
     const f = await fixture(t, { fetch: async url => url.includes('api.github.com') ? Response.json(data) : new Response(bytes) });
-    const result = await f.service.check();
+    const result = await downloadUpdate(f.service);
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, 'downloading');
     assert.deepEqual(f.events, []);
@@ -112,12 +221,12 @@ test('automatic checks resume after one hour instead of waiting a day', async t 
     assert.equal(f.calls.length, 1);
 });
 
-test('a failed automatic preparation can retry and clears the old error', async t => {
+test('a failed preparation can retry without another metadata query or download and clears the old error', async t => {
     let preparations = 0;
     const f = await fixture(t, { beforeInstall: async () => {
         if (++preparations === 1) throw Error('save timeout');
     } });
-    assert.equal((await f.service.check({ automatic: true })).errorPhase, 'preparing');
+    assert.equal((await installUpdate(f.service)).errorPhase, 'preparing');
     const cached = await fs.readdir(path.join(f.userData, 'updates'));
     assert.equal(cached.length, 1);
     assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', cached[0])), bytes);
@@ -125,7 +234,7 @@ test('a failed automatic preparation can retry and clears the old error', async 
     assert.equal(retried.state, 'installing');
     assert.equal(retried.error, undefined);
     assert.equal(retried.errorPhase, undefined);
-    assert.equal(f.calls.length, 3);
+    assert.equal(f.calls.length, 2);
     assert.deepEqual(f.events, ['launch']);
 });
 
@@ -136,14 +245,14 @@ for (const failedHook of ['beforeInstall', 'launchInstaller']) {
         const f = await fixture(t, { onProgress: value => states.push(value.state),
             [failedHook]: async () => { if (++attempts < 4) throw Error('injected local failure'); }
         });
-        assert.equal((await f.service.check({ automatic: true })).state, 'error');
+        assert.equal((await installUpdate(f.service)).state, 'error');
         assert.equal((await f.service.install()).state, 'error');
         const restarted = createUpdateService(f.config);
-        assert.equal((await restarted.check({ automatic: true })).state, 'error');
+        assert.equal((await installUpdate(restarted)).state, 'error');
         assert.equal((await restarted.install()).state, 'installing');
         assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 1);
-        assert.equal(f.calls.filter(call => call.url.includes('api.github.com')).length, 4);
-        assert.equal(states.filter(state => state === 'verifying').length, 4);
+        assert.equal(f.calls.filter(call => call.url.includes('api.github.com')).length, 2);
+        assert.equal(states.filter(state => state === 'verifying').length, 6);
         const files = await fs.readdir(path.join(f.userData, 'updates'));
         assert.deepEqual(files, ['WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe']);
         assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', files[0])), bytes);
@@ -151,18 +260,25 @@ for (const failedHook of ['beforeInstall', 'launchInstaller']) {
 }
 
 for (const contents of [bytes.subarray(0, 4), Buffer.alloc(bytes.length)]) {
-    test(`changed cache is verified and replaced before installation, length=${contents.length}`, async t => {
+    test(`changed cache requires another explicit download before installation, length=${contents.length}`, async t => {
         let attempts = 0;
         const f = await fixture(t, { beforeInstall: async () => {
             if (++attempts === 1) throw Error('save timeout');
         } });
-        assert.equal((await f.service.install()).state, 'error');
+        assert.equal((await installUpdate(f.service)).state, 'error');
         const directory = path.join(f.userData, 'updates');
         const files = await fs.readdir(directory);
         assert.equal(files.length, 1);
         const cached = path.join(directory, files[0]);
         await fs.writeFile(cached, contents);
-        assert.equal((await createUpdateService(f.config).check({ automatic: true })).state, 'installing');
+        const failed = await f.service.install();
+        assert.equal(failed.state, 'error');
+        assert.equal(failed.downloaded, false);
+        assert.equal(failed.errorPhase, 'verifying');
+        assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 1);
+        assert.deepEqual(f.events, []);
+        assert.equal((await f.service.download()).state, 'downloaded');
+        assert.equal((await f.service.install()).state, 'installing');
         assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 2);
         assert.deepEqual(await fs.readFile(cached), bytes);
         assert.deepEqual(await fs.readdir(directory), ['WiFiMeter-1.3.0-windows-x64-Tauri-Setup.exe']);
@@ -184,7 +300,7 @@ function cacheReadService(config, { lstat = fs.lstat, mkdir = fs.mkdir,
 for (const kind of ['symbolic link', 'directory', 'denied metadata', 'denied read', 'interrupted read']) {
     test(`unsafe or unreadable cache (${kind}) fails without another download`, async t => {
         const f = await fixture(t, { beforeInstall: async () => { throw Error('save timeout'); } });
-        assert.equal((await f.service.install()).state, 'error');
+        assert.equal((await installUpdate(f.service)).state, 'error');
         const inaccessible = () => Object.assign(Error('cache denied'), { code: 'EACCES' });
         const readers = {};
         if (kind === 'denied metadata') readers.lstat = async () => { throw inaccessible(); };
@@ -196,7 +312,7 @@ for (const kind of ['symbolic link', 'directory', 'denied metadata', 'denied rea
             this.push(bytes.subarray(0, 4));
             this.destroy(Object.assign(Error('cache read interrupted'), { code: 'EIO' }));
         } });
-        const result = await cacheReadService(f.config, readers).check({ automatic: true });
+        const result = await downloadUpdate(cacheReadService(f.config, readers));
         assert.equal(result.state, 'error');
         assert.equal(result.errorPhase, 'verifying');
         assert.equal(f.calls.filter(call => !call.url.includes('api.github.com')).length, 1);
@@ -210,7 +326,7 @@ for (const kind of ['directory', 'temporary file']) {
         const denied = () => Object.assign(Error('storage denied'), { code: 'EACCES' });
         const readers = kind === 'directory' ? { mkdir: async () => { throw denied(); } }
             : { createWriteStream: () => new Writable({ write(chunk, encoding, next) { next(denied()); } }) };
-        const result = await cacheReadService(f.config, readers).install();
+        const result = await downloadUpdate(cacheReadService(f.config, readers));
         assert.equal(result.state, 'error');
         assert.equal(result.errorPhase, 'downloading');
         assert.equal(result.errorCode, 'EACCES');
@@ -222,7 +338,7 @@ for (const kind of ['directory', 'temporary file']) {
 for (const invalidDigest of [undefined, 'sha256:invalid']) {
     test(`an existing verified cache cannot bypass invalid release digest ${invalidDigest}`, async t => {
         const f = await fixture(t, { beforeInstall: async () => { throw Error('save timeout'); } });
-        assert.equal((await f.service.install()).state, 'error');
+        assert.equal((await installUpdate(f.service)).state, 'error');
         const data = release();
         data.assets.forEach(asset => { asset.digest = invalidDigest; });
         const result = await createUpdateService({ ...f.config, fetch: async url => {
@@ -235,18 +351,21 @@ for (const invalidDigest of [undefined, 'sha256:invalid']) {
     });
 }
 
-test('a failed automatic download can retry on the next launch without being cached', async t => {
+test('a failed download can retry explicitly on the next launch without caching the failure', async t => {
     let downloads = 0;
     const f = await fixture(t, { fetch: async url => {
         if (url.includes('api.github.com')) return Response.json(release());
         if (++downloads === 1) throw Error('offline');
         return new Response(bytes);
     } });
-    assert.equal((await f.service.check({ automatic: true })).errorPhase, 'downloading');
-    const retried = await createUpdateService(f.config).check({ automatic: true });
-    assert.equal(retried.state, 'installing');
+    assert.equal((await downloadUpdate(f.service)).errorPhase, 'downloading');
+    const restarted = createUpdateService(f.config);
+    assert.equal((await restarted.check({ automatic: true })).state, 'available');
+    assert.equal(downloads, 1);
+    const retried = await restarted.download();
+    assert.equal(retried.state, 'downloaded');
     assert.equal(downloads, 2);
-    assert.deepEqual(f.events, ['stop', 'launch']);
+    assert.deepEqual(f.events, []);
 });
 
 for (const mutation of ['duplicate', 'missing size', 'invalid size', 'missing digest', 'untrusted URL']) {
@@ -278,7 +397,7 @@ for (const mutation of ['duplicate', 'missing size', 'invalid size', 'missing di
 test('an inconsistent HTTP length is rejected before consuming the installer body', async t => {
     const f = await fixture(t, { fetch: async url => url.includes('api.github.com') ? Response.json(release())
         : new Response(bytes, { headers: { 'content-length': String(bytes.length + 1) } }) });
-    assert.equal((await f.service.check()).errorPhase, 'downloading');
+    assert.equal((await downloadUpdate(f.service)).errorPhase, 'downloading');
     assert.deepEqual(f.events, []);
     assert.deepEqual(await fs.readdir(path.join(f.userData, 'updates')), []);
 });
@@ -335,17 +454,18 @@ for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} selects only 
     assert.equal(result.currentVersion, '1.2.0');
     assert.equal(result.latestVersion, '1.3.0');
     assert.equal(result.url, page);
+    assert.equal((await f.service.download()).state, 'downloaded');
     assert.equal((await f.service.install()).state, 'installing');
     assert.match(f.calls[1].url, new RegExp(`-windows-${arch}-Tauri-Setup.exe$`));
     assert.deepEqual(f.events, ['stop', 'launch']);
     assert.equal(f.calls[1].init.redirect, 'manual');
 });
 
-test('a legacy confirmation callback cannot interrupt an automatic update', async t => {
-    const f = await fixture(t, { confirm: async () => false });
-    assert.equal((await f.service.check()).state, 'installing');
-    assert.equal(f.calls.length, 2);
-    assert.deepEqual(f.events, ['stop', 'launch']);
+test('the host leaves confirmations to the renderer and checking cannot bypass them', async t => {
+    const f = await fixture(t, { confirm: async () => { assert.fail('host must not prompt'); } });
+    assert.equal((await f.service.check({ autoInstall: true })).state, 'available');
+    assert.equal(f.calls.length, 1);
+    assert.deepEqual(f.events, []);
 });
 
 for (const badDigest of [undefined, 'sha256:' + '0'.repeat(64)]) test(`digest required and verified: ${badDigest}`, async t => {
@@ -353,7 +473,7 @@ for (const badDigest of [undefined, 'sha256:' + '0'.repeat(64)]) test(`digest re
     data.assets.forEach(asset => { asset.digest = badDigest; });
     const f = await fixture(t, { fetch: async url => url.includes('api.github.com') ? Response.json(data) : new Response(bytes) });
     await f.service.check({ autoInstall: false });
-    const result = await f.service.install();
+    const result = badDigest ? await f.service.download() : await f.service.install();
     assert.equal(result.state, badDigest ? 'error' : 'manual');
     assert.ok(!f.events.includes('stop'));
     assert.ok(!f.events.includes('launch'));
@@ -397,14 +517,16 @@ test('download redirects to arbitrary hosts are rejected', async t => {
     const f = await fixture(t, { fetch: async url => url.includes('api.github.com')
         ? Response.json(release()) : new Response(null, { status: 302, headers: { location: 'https://evil.example/a.exe' } }) });
     await f.service.check({ autoInstall: false });
-    assert.equal((await f.service.install()).state, 'error');
+    assert.equal((await f.service.download()).state, 'error');
     assert.deepEqual(f.events, []);
 });
 
-test('UI status mirrors lookup and automatic installation states', async t => {
+test('UI status mirrors separate lookup, download and installation states', async t => {
     const f = await fixture(t);
     const checked = await f.service.check({ autoInstall: false });
     assert.equal(checked.status, 'available');
+    const downloaded = await f.service.download();
+    assert.equal(downloaded.status, 'downloaded');
     const installed = await f.service.install();
     assert.equal(installed.status, 'installing');
     assert.equal(installed.currentVersion, '1.2.0');
@@ -449,6 +571,7 @@ test('GitHub asset redirects are streamed and verified', async t => {
         return new Response(null, { status: 302, headers: { location: cdn } });
     } });
     await f.service.check({ autoInstall: false });
+    assert.equal((await f.service.download()).status, 'downloaded');
     assert.equal((await f.service.install()).status, 'installing');
     assert.deepEqual(f.events, ['stop', 'launch']);
 });
@@ -456,6 +579,7 @@ test('GitHub asset redirects are streamed and verified', async t => {
 test('backend stop failure prevents installer launch', async t => {
     const f = await fixture(t, { beforeInstall: async () => { throw Error('stop timeout'); } });
     await f.service.check({ autoInstall: false });
+    assert.equal((await f.service.download()).status, 'downloaded');
     assert.equal((await f.service.install()).status, 'error');
     assert.deepEqual(f.events, []);
     const files = await fs.readdir(path.join(f.userData, 'updates'));
@@ -463,14 +587,15 @@ test('backend stop failure prevents installer launch', async t => {
     assert.deepEqual(await fs.readFile(path.join(f.userData, 'updates', files[0])), bytes);
 });
 
-test('installation does not require a confirmation callback', async t => {
+test('explicit installation does not require a host confirmation callback', async t => {
     const f = await fixture(t, { confirm: undefined });
-    assert.equal((await f.service.install()).status, 'installing');
+    assert.equal((await installUpdate(f.service)).status, 'installing');
     assert.equal(f.calls.length, 2);
 });
 
 test('latest version and unknown architecture never launch an installer', async t => {
     const f = await fixture(t, { currentVersion: '9.0.0' });
+    await f.service.check();
     assert.equal((await f.service.install()).status, 'latest');
     assert.deepEqual(f.events, []);
     const unknown = await fixture(t, { arch: 'mips' });
@@ -490,7 +615,7 @@ for (const arch of ['x64', 'ia32', 'arm64']) test(`Windows ${arch} ignores legac
         if (url.includes('api.github.com')) return Response.json(data);
         downloads.push(url); return new Response(bytes);
     } });
-    assert.equal((await f.service.check()).state, 'installing');
+    assert.equal((await downloadUpdate(f.service)).state, 'downloaded');
     assert.deepEqual(downloads, [`${page.replace('/tag/', '/download/')}/WiFiMeter-1.3.0-windows-${arch}-Tauri-Setup.exe`]);
 });
 
@@ -514,7 +639,7 @@ for (const knownLength of [true, false]) test(`stream progress reports real byte
             controller.close();
         } }), { headers: knownLength ? { 'content-length': String(bytes.length) } : {} });
     } });
-    const result = await f.service.install();
+    const result = await installUpdate(f.service);
     assert.equal(result.state, 'installing');
     assert.equal(statuses[0].state, 'checking');
     const downloading = statuses.filter(value => value.state === 'downloading');
@@ -539,7 +664,7 @@ test('digest failure clears progress and never emits preparing or installing; re
     const statuses = [];
     const f = await fixture(t, { onProgress: value => statuses.push(value), fetch: async url =>
         url.includes('api.github.com') ? Response.json(release()) : new Response(Buffer.alloc(bytes.length)) });
-    assert.equal((await f.service.install()).state, 'error');
+    assert.equal((await downloadUpdate(f.service)).state, 'error');
     assert.equal(statuses.at(-1).progress, null);
     assert.equal(statuses.some(value => ['preparing', 'installing'].includes(value.state)), false);
     assert.deepEqual(f.events, []);
@@ -555,13 +680,13 @@ for (const asynchronous of [false, true]) test(`observer failure cannot interrup
         if (asynchronous) return Promise.reject(Error('observer'));
         throw Error('observer');
     } });
-    assert.equal((await f.service.install()).state, 'installing');
+    assert.equal((await installUpdate(f.service)).state, 'installing');
     await new Promise(setImmediate);
     assert.ok(observations > 0);
     assert.deepEqual(f.events, ['stop', 'launch']);
 });
 
-test('checks and installations cannot replace an automatic update while it saves the backend', async t => {
+test('checks, downloads and installations cannot replace an installation while it saves the backend', async t => {
     const statuses = [];
     let finishPreparation, enteredPreparation;
     const entered = new Promise(resolve => { enteredPreparation = resolve; });
@@ -569,9 +694,11 @@ test('checks and installations cannot replace an automatic update while it saves
         enteredPreparation();
         return new Promise(resolve => { finishPreparation = resolve; });
     } });
-    const pending = f.service.check();
+    await downloadUpdate(f.service);
+    const pending = f.service.install();
     await entered;
     assert.equal((await f.service.check()).state, 'busy');
+    assert.equal((await f.service.download()).state, 'busy');
     assert.equal((await f.service.install()).state, 'busy');
     assert.equal(f.calls.length, 2);
     finishPreparation();
@@ -591,7 +718,7 @@ test('a failed stream clears progress, removes the partial file, and does not pr
             controller.error(Error('stream interrupted'));
         } }));
     } });
-    assert.equal((await f.service.install()).progress, null);
+    assert.equal((await downloadUpdate(f.service)).progress, null);
     assert.equal(statuses.at(-1).state, 'error');
     assert.equal(statuses.some(value => ['verifying', 'preparing', 'installing'].includes(value.state)), false);
     assert.deepEqual(f.events, []);
@@ -604,7 +731,7 @@ test('preparation and handoff hooks see their phase without an installation perc
         beforeInstall: async () => { assert.equal(status.state, 'preparing'); assert.equal(status.progress.percent, null); },
         launchInstaller: async () => { assert.equal(status.state, 'installing'); assert.equal(status.progress.percent, null); }
     });
-    assert.equal((await f.service.install()).state, 'installing');
+    assert.equal((await installUpdate(f.service)).state, 'installing');
 });
 
 for (const phase of ['downloading', 'verifying', 'preparing', 'installing']) test(`installation failure identifies ${phase} without leaking download URLs`, async t => {
@@ -619,7 +746,7 @@ for (const phase of ['downloading', 'verifying', 'preparing', 'installing']) tes
         throw Object.assign(Error('Update helper closed before READY.'), { code: 'HANDOFF_CLOSED_BEFORE_READY' });
     };
     const f = await fixture(t, options);
-    const result = await f.service.install();
+    const result = await installUpdate(f.service);
     assert.equal(result.state, 'error');
     assert.equal(result.errorPhase, phase);
     assert.equal(result.progress, null);
@@ -636,7 +763,7 @@ for (const phase of ['downloading', 'verifying', 'preparing', 'installing']) tes
 test('update errors translate fixed explanations while preserving local paths and recovery errors', async t => {
     const localPath = 'C:\\每月报告\\每日记录.exe';
     const f = await fixture(t, { beforeInstall: async () => { throw Error(`Cannot save ${localPath}`); } });
-    const result = await f.service.install();
+    const result = await installUpdate(f.service);
     assert.match(updatesView(result), /准备安装更新失败/);
     setLanguage('en');
     try {
@@ -646,7 +773,7 @@ test('update errors translate fixed explanations while preserving local paths an
         const helper = await fixture(t, { launchInstaller: async () => {
             throw Object.assign(Error('Update helper closed before READY.'), { code: 'HANDOFF_CLOSED_BEFORE_READY' });
         } });
-        const helperHtml = updatesView(await helper.service.install());
+        const helperHtml = updatesView(await installUpdate(helper.service));
         assert.match(helperHtml, /Could not start the update helper/);
         assert.match(helperHtml, /closed communication before it was ready/);
         assert.doesNotMatch(helperHtml, /辅助进程/);

@@ -4,8 +4,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;',
 const renderedNotes = new WeakMap();
 const activePhases = new Set(['checking','downloading','verifying','preparing','installing']);
 const bytes = value => { let n=Math.max(0,Number(value)||0),i=0;const units=['B','KB','MB','GB'];while(n>=1000&&i<3){n/=1000;i++;}return `${n.toFixed(i?1:0)} ${units[i]}`; };
-const automaticPending = status => status.state === 'available' && status.canInstall === true;
-const lockedUpdate = (status, busy) => busy || status.busy === true || activePhases.has(status.state) || automaticPending(status);
+const lockedUpdate = (status, busy) => busy || status.busy === true || activePhases.has(status.state);
 function updateError(status) {
     if (!status.error || !status.errorPhase || status.recoveryRequired) return status.error || '';
     const labels={downloading:'下载更新失败',verifying:'更新文件 SHA-256 校验失败',preparing:'准备安装更新失败',installing:'启动更新辅助程序失败'};
@@ -21,15 +20,21 @@ export function updateProgress(status) {
     return `<div class="update-progress" data-phase="${status.state}"><div class="update-progress-label"><span>${label}</span><span>${esc(detail)}</span></div><progress aria-label="${label}" max="100" ${known?`value="${percent}"`:''}></progress></div>`;
 }
 function updateMessage(status) {
-    const messages={recovered:t('已恢复原采集状态。'),unchecked:t('尚未检查更新。'),cancelled:t('已取消更新。'),manual:t('已打开官方发布页。'),latest:t('当前已是最新版本。'),available:automaticPending(status)?t('即将自动下载并安装更新。'):t('发现新版本。'),error:t('更新失败。')};
+    const messages={recovered:t('已恢复原采集状态。'),unchecked:t('尚未检查更新。'),cancelled:t('已取消更新。'),manual:t('已打开官方发布页。'),latest:t('当前已是最新版本。'),available:t('发现新版本。'),downloaded:t('安装包已下载并通过校验，确认后安装并重启。'),error:t('更新失败。')};
     return `${messages[status.state] || ''}${status.error ? ' ' + esc(updateError(status)) : ''}`;
 }
 function updateButton(status, busy) {
-    const label=status.recoveryRequired?t('恢复采集'):status.state==='error'&&status.canInstall?t('重试更新'):status.state==='available'&&!status.canInstall?t('打开版本下载页'):'';
-    return label?`<button class="btn primary" data-action="install-update" ${lockedUpdate(status,busy)?'disabled':''}>${label}</button>`:'';
+    let label='', action='install-update';
+    if(status.recoveryRequired)label=t('恢复采集');
+    else if(['available','downloaded','error','recovered'].includes(status.state)){
+        if(status.canInstall&&status.downloaded===true)label=t(status.state==='error'?'重试安装':'安装并重启');
+        else if(status.canDownload??status.canInstall){label=t(status.state==='error'?'重新下载':'下载更新');action='download-update';}
+        else if(status.state==='available')label=t('打开版本下载页');
+    }
+    return label?`<button class="btn primary" data-action="${action}" ${lockedUpdate(status,busy)?'disabled':''}>${label}</button>`:'';
 }
 export function updateBannerView(status = {}, busy = false) {
-    if (!activePhases.has(status.state) && !['available','error'].includes(status.state) && !status.recoveryRequired) return '';
+    if (!activePhases.has(status.state) && !['available','downloaded','error'].includes(status.state) && !status.recoveryRequired) return '';
     const action=updateButton(status,busy)||(status.state==='error'?`<button class="btn" data-action="check-updates" ${lockedUpdate(status,busy)?'disabled':''}>${t('重试更新')}</button>`:'');
     return `<section class="update-banner" aria-label="${t('软件更新')}" data-state="${esc(status.state)}"><div class="update-banner-head"><strong>${t('软件更新')}${status.latestVersion?' · '+esc(status.latestVersion):''}</strong>${action}</div><p role="status">${updateMessage(status)}</p>${updateProgress(status)}</section>`;
 }

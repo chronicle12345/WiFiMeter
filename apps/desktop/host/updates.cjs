@@ -89,17 +89,21 @@ function installationFailure(error, phase) {
 /**
  * All methods return Promises. settings()/setCheckOnStartup() return {checkOnStartup}.
  * check() returns {status, state, currentVersion, latestVersion, notes, url, canInstall,
- * checkOnStartup, manual}; state is latest/available/error/installing, with error on failure
- * and skipped=disabled/cached for skipped automatic checks.
- * check() automatically downloads and installs a supported update; autoInstall=false
- * only looks up metadata. install() retries a failed update or opens the official
- * release page on unsupported platforms. Both methods can return state=busy.
+ * canDownload, downloaded, checkOnStartup, manual}; state is latest/available/downloaded/error,
+ * with error on failure and skipped=disabled/cached for skipped automatic checks.
+ * check() only looks up metadata. download() fetches and verifies a supported update,
+ * or verifies its cached installer, and leaves it in state=downloaded. install() only
+ * installs a previously verified download after verifying it again; it never fetches
+ * metadata or an installer. Unsupported platforms can open the official release page.
+ * All three methods can return state=busy.
  * onProgress(fullSnapshot) observes checking/downloading/verifying/preparing/installing
  * and terminal results. progress is {receivedBytes,totalBytes,percent,phase}, or null
  * outside active phases. Only downloading has a percentage, when length is known.
  * Download 100% does not imply verification or installation has completed.
  * Observer exceptions/rejections are ignored. status always mirrors state.
- * beforeInstall() is awaited after verification, before launchInstaller(file, ['/S', '/R'], { digest }).
+ * canInstall/canDownload indicate a supported official asset; downloaded indicates
+ * that explicit download() completed. Collection continues until install() invokes
+ * beforeInstall(), after verification and before launchInstaller(file, ['/S', '/R'], { digest }).
  * launchInstaller(file, argv) resolves once a helper reliably accepts the task.
  * The main process then quits; the helper waits for the app to exit before
  * launching the installer via hidden spawn, using argv and no shell.
@@ -113,11 +117,18 @@ function createUpdateService({ currentVersion, platform, arch, userData,
     let preferences;
     let preferenceFailure = false;
     let selectedAsset = null;
+    const downloadedCandidates = new Map();
     let installing = false;
+    let downloading = false;
     let checking = false;
     let queue = Promise.resolve();
     let snapshot = { state: 'unchecked', currentVersion, latestVersion: null, notes: '',
-        url: `${REPOSITORY}/releases/latest`, canInstall: false, checkOnStartup: true, manual: false, progress: null };
+        url: `${REPOSITORY}/releases/latest`, canInstall: false, canDownload: false, downloaded: false,
+        checkOnStartup: true, manual: false, progress: null };
+
+    function assetKey(asset) {
+        return JSON.stringify([asset.name, asset.url, asset.digest, asset.size]);
+    }
 
     function serial(operation) {
         const result = queue.then(operation);
@@ -229,14 +240,17 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             }
             // 仅已确认没有新版本时限频；检查或安装失败允许下次启动立即重试。
             if (automatic && !newer) await savePreferences({ ...preferences, lastAutomaticAt: now });
-            snapshot = { state: newer ? 'available' : 'latest', currentVersion,
+            const downloaded = Boolean(selectedAsset && downloadedCandidates.has(assetKey(selectedAsset)));
+            snapshot = { state: newer ? (downloaded ? 'downloaded' : 'available') : 'latest', currentVersion,
                 latestVersion: latest.version, notes: typeof release.body === 'string' ? release.body : '',
-                url, canInstall: Boolean(selectedAsset), manual: newer && !selectedAsset,
+                url, canInstall: Boolean(selectedAsset), canDownload: Boolean(selectedAsset), downloaded,
+                manual: newer && !selectedAsset,
                 checkOnStartup: preferences.checkOnStartup, progress: null };
             return publish();
         } catch {
             selectedAsset = null;
-            snapshot = { ...snapshot, state: 'error', canInstall: false, manual: false, progress: null,
+            snapshot = { ...snapshot, state: 'error', canInstall: false, canDownload: false, downloaded: false,
+                manual: false, progress: null,
                 error: preferenceFailure ? '无法读写更新偏好设置，请修复 update-preferences.json 后重试。'
                     : '检查更新失败，请检查网络连接后重试。' };
             return publish();
@@ -265,7 +279,7 @@ function createUpdateService({ currentVersion, platform, arch, userData,
         return receivedBytes === asset.size && hash.digest('hex') === asset.digest;
     }
 
-    async function download(asset) {
+    async function downloadAsset(asset) {
         const directory = path.join(userData, 'updates');
         const destination = path.join(directory, asset.name);
         if (await verifiedCache(destination, asset)) return destination;
@@ -324,18 +338,40 @@ function createUpdateService({ currentVersion, platform, arch, userData,
         }
     }
 
-    // The caller already owns the check/install guard and serial queue.
-    async function installSelected({ status, asset }, { manual = false } = {}) {
+    // Each caller owns the operation guard and serial queue.
+    async function downloadSelected({ status, asset }) {
+        if (!asset) return status;
+        const key = assetKey(asset);
         try {
-            if (status.state !== 'available') return status;
+            publish({ downloaded: false });
+            const file = await downloadAsset(asset);
+            downloadedCandidates.set(key, file);
+            return publish({ state: 'downloaded', downloaded: true, progress: null,
+                error: undefined, errorPhase: undefined, errorCode: undefined, errorReason: undefined, errorDetail: undefined });
+        } catch (error) {
+            downloadedCandidates.delete(key);
+            const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
+            return publish({ state: 'error', downloaded: false, progress: null, ...failure });
+        }
+    }
+
+    async function installSelected({ status, asset }) {
+        try {
             if (!asset) {
-                if (!manual) return status;
+                if (status.state === 'latest' || status.state === 'error') return status;
+                if (!status.manual) return notDownloaded();
                 if (!openExternal) throw Error('missing openExternal');
                 await openExternal(status.url);
                 return publish({ state: 'manual', manual: true, progress: null, error: undefined });
             }
+            const key = assetKey(asset);
+            const file = downloadedCandidates.get(key);
+            if (!file) return notDownloaded();
             if (!launchInstaller || !beforeInstall) throw Error('missing install hooks');
-            const file = await download(asset);
+            if (!await verifiedCache(file, asset)) {
+                if (snapshot.state !== 'verifying') phase('verifying', { receivedBytes: 0, totalBytes: asset.size });
+                throw Error('Installer changed after download verification.');
+            }
             phase('preparing');
             await beforeInstall();
             phase('installing');
@@ -344,8 +380,18 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             return result();
         } catch (error) {
             const failure = installationFailure(error, snapshot.progress?.phase || snapshot.state);
-            return publish({ state: 'error', progress: null, ...failure });
+            if (failure.errorPhase === 'verifying' && asset) {
+                downloadedCandidates.delete(assetKey(asset));
+            }
+            return publish({ state: 'error', progress: null,
+                downloaded: failure.errorPhase === 'verifying' ? false : snapshot.downloaded, ...failure });
         }
+    }
+
+    function notDownloaded() {
+        return publish({ state: selectedAsset ? 'available' : snapshot.state, downloaded: false, progress: null,
+            error: '请先下载并校验安装包，再确认安装。', errorCode: 'UPDATE_NOT_DOWNLOADED',
+            errorPhase: undefined, errorReason: undefined, errorDetail: undefined });
     }
 
     function selectedTarget() {
@@ -364,25 +410,27 @@ function createUpdateService({ currentVersion, platform, arch, userData,
             return { checkOnStartup: value };
         }),
         async check(options = {}) {
-            if (installing || checking) return result({ state: 'busy' });
+            if (installing || downloading || checking) return result({ state: 'busy' });
             checking = true;
             try {
-                return await serial(async () => {
-                    const status = await checkNow(options);
-                    if (status.skipped || options.autoInstall === false) return status;
-                    return installSelected(selectedTarget());
-                });
+                return await serial(() => checkNow(options));
             }
             finally { checking = false; }
         },
+        async download() {
+            if (installing || downloading || checking) return result({ state: 'busy' });
+            downloading = true;
+            try {
+                return await serial(() => downloadSelected(selectedTarget()));
+            } finally {
+                downloading = false;
+            }
+        },
         async install() {
-            if (installing || checking) return result({ state: 'busy' });
+            if (installing || downloading || checking) return result({ state: 'busy' });
             installing = true;
             try {
-                return await serial(async () => {
-                    if (snapshot.state !== 'available') await checkNow();
-                    return installSelected(selectedTarget(), { manual: true });
-                });
+                return await serial(() => installSelected(selectedTarget()));
             } finally {
                 installing = false;
             }

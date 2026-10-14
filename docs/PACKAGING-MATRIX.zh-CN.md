@@ -65,3 +65,5 @@ node packaging/tauri/verify-windows.cjs
 NSIS 完整安装/卸载、下载限速吞吐和真实驱动加载需要目标机器验收，解包后的程序运行不等于执行安装/卸载。
 
 Electron 1.2.x 用户从 [Releases](https://github.com/chronicle12345/WiFiMeter/releases) 获取系统和 CPU 对应的 Tauri 安装版。Windows 继续读取 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，后续更新选择对应的 Tauri 安装包。
+
+当前源码的 Windows 更新流程为：检查 → 确认下载 → 校验长度和 SHA-256 → 确认自动安装 → 保存设置和数据库 → 静默安装并重启。此流程尚未发布，正式版 1.3.4 仍自动下载和安装。手动与启动检查均仅读取版本信息；不下载时不得传输安装包。暂不安装时保留已校验文件，安装前再次核对长度和 SHA-256，通过后才能停止程序。更新验证须覆盖两次确认、已校验缓存复用、未保存修改、保存失败和安装交接恢复。Linux 继续通过官方版本页手动安装。
