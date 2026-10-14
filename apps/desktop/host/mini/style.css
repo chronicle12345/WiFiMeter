@@ -22,6 +22,9 @@ button:hover { background:var(--hover); color:var(--ink); }
 button:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 button[aria-expanded="true"], button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent); }
 [hidden] { display:none !important; }
+.mini-tooltip { position:fixed; z-index:10; width:max-content; max-width:calc(100% - 16px); padding:5px 7px; border:1px solid var(--hover-line); border-radius:6px; background:var(--tooltip); color:var(--tooltip-text); box-shadow:var(--small-shadow); font-size:11px; line-height:15px; overflow-wrap:anywhere; pointer-events:none; -webkit-app-region:no-drag; }
+body[data-shape="circle"][data-expanded="false"] .mini-tooltip { max-width:calc(100% - 36px); }
+body[data-expanded="true"] .mini-tooltip { max-width:280px; }
 .all-traffic-label { display:none; }
 .apps-panel { display:none; }
 body[data-shape="bar"] nav { right:8px; top:7px; }

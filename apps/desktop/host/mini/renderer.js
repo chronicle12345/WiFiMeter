@@ -11,6 +11,7 @@ const range = document.getElementById('range');
 const custom = document.getElementById('customMinutes');
 const status = document.getElementById('appsStatus');
 const errorMessage = document.getElementById('miniError');
+const tooltip = document.getElementById('miniTooltip');
 const rowsElement = document.getElementById('appRows');
 const rows = new Map();
 let preferences = { miniExpanded: false, miniPinned: false, miniAutoHide: true, miniExcludeProxy: false,
@@ -18,6 +19,59 @@ let preferences = { miniExpanded: false, miniPinned: false, miniAutoHide: true, 
 let lastLive = null;
 let applicationResult = null;
 let applicationRequest = 0;
+let tooltipButton = null;
+
+function tooltipText(button) {
+    return {
+        pin: preferences.miniPinned ? '取消固定：恢复拖动和吸附，按设置自动隐藏。' : '固定位置：禁止拖动、吸附和自动隐藏。',
+        autoHide: preferences.miniAutoHide ? '保持显示：靠近左右边缘时不自动隐藏。' : '允许自动隐藏：靠近左右边缘时收起，固定时暂停隐藏。',
+        proxyFilter: preferences.miniExcludeProxy ? '显示全部流量：包含代理程序的速度和应用记录。' : '排除代理程序流量：扣除代理程序的速度，隐藏它的应用记录。',
+        apps: preferences.miniExpanded ? '收起应用列表：只显示下载和上传速度。' : '展开应用流量：查看各应用的速度和累计流量。',
+        open: '打开主窗口：查看流量统计和设置。',
+        close: '关闭小窗：WiFiMeter 继续运行。'
+    }[button.id];
+}
+
+function hideTooltip() {
+    tooltipButton?.removeAttribute('aria-describedby');
+    tooltipButton = null;
+    tooltip.hidden = true;
+}
+
+function positionTooltip() {
+    if (!tooltipButton || tooltip.hidden) return;
+    const button = tooltipButton.getBoundingClientRect();
+    const rect = tooltip.getBoundingClientRect();
+    const circle = document.body.dataset.shape === 'circle' && !preferences.miniExpanded;
+    const center = circle ? innerWidth / 2 : button.left + button.width / 2;
+    const left = Math.max(8, Math.min(center - rect.width / 2, innerWidth - rect.width - 8));
+    const top = button.top > innerHeight / 2 ? button.top - rect.height - 6 : button.bottom + 6;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${Math.max(8, Math.min(top, innerHeight - rect.height - 8))}px`;
+}
+
+function showTooltip(button) {
+    hideTooltip();
+    if (document.body.dataset.collapsed === 'true' || document.visibilityState === 'hidden' || button.disabled) return;
+    tooltipButton = button;
+    tooltip.textContent = tooltipText(button);
+    tooltip.hidden = false;
+    button.setAttribute('aria-describedby', tooltip.id);
+    positionTooltip();
+}
+
+for (const button of document.querySelectorAll('nav button')) {
+    button.addEventListener('pointerenter', () => showTooltip(button));
+    button.addEventListener('pointerleave', hideTooltip);
+    button.addEventListener('focus', () => showTooltip(button));
+    button.addEventListener('blur', hideTooltip);
+    button.addEventListener('pointerdown', hideTooltip);
+    button.addEventListener('click', hideTooltip);
+}
+document.addEventListener('keydown', event => { if (event.key === 'Escape') hideTooltip(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') hideTooltip(); });
+window.addEventListener('blur', hideTooltip);
+window.addEventListener('resize', positionTooltip);
 
 function renderRate(element, text) {
     const [value, ...unit] = text.split(' ');
@@ -45,6 +99,7 @@ function applyPreferences(value) {
     if (!value) return;
     const previous = preferences;
     preferences = { ...preferences, ...value };
+    if (previous.miniShape !== preferences.miniShape || previous.miniExpanded !== preferences.miniExpanded) hideTooltip();
     document.body.dataset.shape = preferences.miniShape || 'bar';
     document.body.dataset.palette = preferences.miniPalette || 'dark';
     document.documentElement.dataset.palette = preferences.miniPalette || 'dark';
@@ -63,6 +118,7 @@ function applyPreferences(value) {
     if (document.activeElement !== range) range.value = preferences.miniRange;
     if (document.activeElement !== custom) custom.value = preferences.miniCustomMinutes;
     document.getElementById('customRange').hidden = range.value !== 'custom';
+    if (tooltipButton) showTooltip(tooltipButton);
     if (previous.miniRange !== preferences.miniRange || previous.miniCustomMinutes !== preferences.miniCustomMinutes
         || previous.miniExcludeProxy !== preferences.miniExcludeProxy) {
         applicationResult = null;
@@ -179,6 +235,7 @@ const subscriptions = [
     }),
     api.onPreferences(applyPreferences),
     api.onState(state => {
+        if (state.collapsed) hideTooltip();
         document.body.dataset.collapsed = String(state.collapsed);
         document.body.dataset.edge = state.edge || '';
         document.querySelector('main').inert = state.collapsed;

@@ -125,3 +125,105 @@ test('keep-visible button saves independently of pinning and has no native toolt
     expect(fixture.preferences.miniAutoHide).toBe(true);
     await expect(page.locator('[title]')).toHaveCount(0);
 });
+
+test('toolbar descriptions fit each shape and palette and disappear when the pointer leaves', async ({ page }, testInfo) => {
+    const fixture = await miniFixture(page);
+    const descriptions = [
+        ['pin', '禁止拖动'], ['autoHide', '左右边缘'], ['proxyFilter', '代理程序'],
+        ['apps', '应用'], ['open', '主窗口'], ['close', '继续运行']
+    ];
+    const tooltip = page.getByRole('tooltip');
+    for (const [shape, width, height] of [['bar', 224, 92], ['square', 152, 152], ['circle', 168, 168]]) {
+        for (const expanded of [false, true]) {
+            await page.setViewportSize({ width: expanded ? 360 : width, height: expanded ? 420 : height });
+            await fixture.publish({ miniShape: shape, miniExpanded: expanded });
+            for (const palette of ['dark', 'light', 'indigo']) {
+                await fixture.publish({ miniPalette: palette });
+                for (const [id, description] of descriptions) {
+                    const button = page.locator(`#${id}`);
+                    await button.hover();
+                    await expect(tooltip).toBeVisible();
+                    await expect(tooltip).toContainText(description);
+                    await expect(button).toHaveAttribute('aria-describedby', 'miniTooltip');
+                    const layout = await tooltip.evaluate(element => {
+                        const rect = element.getBoundingClientRect();
+                        const circle = document.body.dataset.shape === 'circle' && document.body.dataset.expanded !== 'true';
+                        const radius = innerWidth / 2;
+                        const corners = [[rect.left, rect.top], [rect.right, rect.top], [rect.left, rect.bottom], [rect.right, rect.bottom]];
+                        return { outside: rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight,
+                            outsideCircle: circle && corners.some(([x, y]) => Math.hypot(x - radius, y - radius) > radius),
+                            pointerEvents: getComputedStyle(element).pointerEvents,
+                            background: getComputedStyle(element).backgroundColor };
+                    });
+                    expect(layout.outside).toBe(false);
+                    expect(layout.outsideCircle).toBe(false);
+                    expect(layout.pointerEvents).toBe('none');
+                    expect(layout.background).not.toBe('rgb(255, 255, 255)');
+                    await page.mouse.move(0, 0);
+                    expect(await page.locator('#miniTooltip').evaluate(element => element.hidden)).toBe(true);
+                    await expect(button).not.toHaveAttribute('aria-describedby');
+                }
+            }
+            await fixture.publish({ miniPalette: 'dark' });
+            await page.locator('#pin').hover();
+            await page.screenshot({ path: testInfo.outputPath(`${shape}-${expanded ? 'expanded' : 'compact'}-tooltip.png`) });
+            await page.mouse.move(0, 0);
+        }
+    }
+    await expect(page.locator('[title]')).toHaveCount(0);
+});
+
+test('toolbar descriptions follow saved toggle state and hide on click', async ({ page }) => {
+    const fixture = await miniFixture(page);
+    await page.setViewportSize({ width: 224, height: 92 });
+    const tooltip = page.getByRole('tooltip');
+    for (const [id, text] of [['pin', '恢复拖动'], ['autoHide', '允许自动隐藏'], ['proxyFilter', '显示全部流量'], ['apps', '收起应用列表']]) {
+        const button = page.locator(`#${id}`);
+        await button.hover();
+        await expect(tooltip).toBeVisible();
+        await button.click();
+        await expect(tooltip).toBeHidden();
+        if (id === 'apps') await page.setViewportSize({ width: 360, height: 420 });
+        await page.mouse.move(0, 0);
+        await button.hover();
+        await expect(tooltip).toContainText(text);
+        await page.mouse.move(0, 0);
+    }
+    await page.locator('#pin').hover();
+    await fixture.publish({ miniPinned: false });
+    await expect(tooltip).toContainText('禁止拖动');
+    await fixture.publish({ miniExpanded: false });
+    await expect(tooltip).toBeHidden();
+});
+
+test('keyboard descriptions clear on Escape, focus loss, window blur and edge collapse', async ({ page }) => {
+    await miniFixture(page);
+    const button = page.locator('#pin');
+    const tooltip = page.getByRole('tooltip');
+    await button.focus();
+    await expect(tooltip).toBeVisible();
+    await expect(button).toHaveAttribute('aria-describedby', 'miniTooltip');
+    await page.keyboard.press('Escape');
+    await expect(tooltip).toBeHidden();
+    await expect(button).not.toHaveAttribute('aria-describedby');
+    await page.locator('#autoHide').focus();
+    await expect(tooltip).toContainText('左右边缘');
+    await page.locator('#autoHide').evaluate(element => element.blur());
+    await expect(tooltip).toBeHidden();
+    await button.focus();
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await expect(tooltip).toBeHidden();
+    await page.locator('#open').focus();
+    await expect(tooltip).toContainText('主窗口');
+    await page.evaluate(() => window.__miniEvent('mini:state', { collapsed: true, edge: 'left' }));
+    await expect(tooltip).toBeHidden();
+    await expect(page.locator('main')).toBeHidden();
+    await page.evaluate(() => window.__miniEvent('mini:state', { collapsed: false, edge: '' }));
+    await button.focus();
+    await expect(tooltip).toBeVisible();
+    await page.evaluate(() => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+        document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await expect(tooltip).toBeHidden();
+});
