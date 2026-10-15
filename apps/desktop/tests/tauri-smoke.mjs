@@ -25,7 +25,7 @@ const fixture = await createHarness();
 cpSync(fixture.directory, profile, { recursive: true });
 fixture.cleanup();
 writeFileSync(path.join(profile, 'update-preferences.json'), JSON.stringify({ checkOnStartup: false }));
-writeFileSync(path.join(profile, 'window-preferences.json'), JSON.stringify({ closeAction: 'exit', theme: 'light' }));
+writeFileSync(path.join(profile, 'window-preferences.json'), JSON.stringify({ closeAction: 'exit', theme: 'light', promptAppCollection: false }));
 
 const server = createServer();
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
@@ -49,9 +49,16 @@ const startedAt = new Date().toISOString();
 const child = spawn(executable, [], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let diagnostic = '', launchError, browser, exited = false;
 let lastCdpRequest = null, cdpRequests = 0;
+const readiness = { endpointReadyAt: null, targetsBeforeAttach: null, targetQueryError: null,
+    connectedAt: null, pagesAtFailure: [], nativeEvents: [] };
 child.on('error', error => { launchError = error; });
 child.on('exit', () => { exited = true; });
-for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { diagnostic += chunk; });
+for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => {
+    diagnostic += chunk;
+    for (const line of String(chunk).split(/\r?\n/)) {
+        if (line.includes('[startup]')) readiness.nativeEvents.push({ receivedAt: new Date().toISOString(), message: line });
+    }
+});
 const errors = [], checks = [];
 const check = message => { checks.push(message); console.log(`PASS ${message}`); };
 const watch = page => {
@@ -111,6 +118,7 @@ ConvertTo-Json -InputObject @($testProcesses | Where-Object { $_.Name -in @('nod
 }
 
 async function writeStartupDiagnostics(error) {
+    readiness.pagesAtFailure = browser?.contexts().flatMap(context => context.pages()).map(page => ({ url: page.url(), closed: page.isClosed() })) ?? [];
     const environmentValue = name => {
         const key = Object.keys(env).find(key => key.toUpperCase() === name);
         return key === undefined ? null : env[key] ?? null;
@@ -119,7 +127,7 @@ async function writeStartupDiagnostics(error) {
         startedAt, capturedAt: new Date().toISOString(), executable,
         failure: errorDetails(error),
         host: { pid: child.pid ?? null, exited, exitCode: child.exitCode, signalCode: child.signalCode },
-        cdp: { endpoint, requests: cdpRequests, lastRequest: lastCdpRequest },
+        cdp: { endpoint, requests: cdpRequests, lastRequest: lastCdpRequest, readiness },
         webview2Environment: Object.fromEntries([
             'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', 'WEBVIEW2_BROWSER_EXECUTABLE_FOLDER',
             'WEBVIEW2_RELEASE_CHANNEL_PREFERENCE', 'WEBVIEW2_USER_DATA_FOLDER'
@@ -217,13 +225,22 @@ try {
         try {
             const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(3000) });
             lastCdpRequest = { attemptedAt, status: response.status, statusText: response.statusText };
+            if (response.ok) readiness.endpointReadyAt = new Date().toISOString();
             return response.ok;
         } catch (error) {
             lastCdpRequest = { attemptedAt, error: errorDetails(error) };
             return false;
         }
     }, { timeout: 45000, message: 'WebView2 debugging endpoint must start' }).toBe(true);
+    // Preserve the initial targets before Playwright attaches, so a failed native
+    // window creation can be distinguished from a page that never navigated.
+    try {
+        const response = await fetch(`${endpoint}/json/list`, { signal: AbortSignal.timeout(3000) });
+        assert.ok(response.ok, `WebView2 target discovery returned ${response.status}`);
+        readiness.targetsBeforeAttach = (await response.json()).map(({ id, type, url }) => ({ id, type, url }));
+    } catch (error) { readiness.targetQueryError = errorDetails(error); }
     browser = await chromium.connectOverCDP(endpoint);
+    readiness.connectedAt = new Date().toISOString();
     const context = browser.contexts()[0];
     context.pages().forEach(watch);
     context.on('page', watch);
@@ -232,7 +249,10 @@ try {
     await expect(page.locator('.connection-title')).toContainText('家里的 Wi-Fi', { timeout: 30000 });
     assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
     assert.equal(await page.evaluate(() => window.desktop.platform), 'win32');
-    assert.ok((await request(page, 'snapshot')).networks.length);
+    const startupSnapshot = await request(page, 'snapshot');
+    assert.ok(startupSnapshot.networks.length);
+    assert.equal(startupSnapshot.appCollection.enabled, false);
+    assert.equal((await page.evaluate(() => window.desktop.windowPreferences.read())).promptAppCollection, false);
     check('Packaged Tauri page and bundled backend connect without a backend path override');
 
     const rejection = await page.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'shell:open', args: [] }).then(() => false, () => true));

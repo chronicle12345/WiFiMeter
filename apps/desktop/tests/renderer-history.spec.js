@@ -204,14 +204,22 @@ test('应用月表排序与导出一致，未变化事件保留表格节点与�
     await app.evaluate(({BrowserWindow})=>{BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...globalThis.rendererFixture.snapshot.live});});
     await expect.poll(()=>page.evaluate(()=>window.savedAppRow===document.querySelector('#appListRegion tbody tr'))).toBe(true);
     await expect(page.locator('[data-action="select-app-row"]').first()).toHaveAttribute('aria-pressed','true');
-    const file=path.join(profile,'apps.csv');await app.evaluate(({dialog},file)=>{dialog.showSaveDialog=async()=>({filePath:file,canceled:false});},file);
+    const file=path.join(profile,'apps.csv');await app.evaluate(({dialog,ipcMain},file)=>{
+        dialog.showSaveDialog=async()=>({filePath:file,canceled:false});
+        const save=ipcMain.getHandler('files:save');globalThis.rendererFixture.exports=[];
+        ipcMain.removeHandler('files:save');ipcMain.handle('files:save',async(...args)=>{
+            const result=await save(...args);globalThis.rendererFixture.exports.push(result);return result;
+        });
+    },file);
     await page.locator('[data-action="export-apps"]').click();await expect(page.locator('.toast').last()).toContainText('已导出 2 条记录');
     const csv=await readFile(file,'utf8');expect(csv).toContain('"520010","2","520012"');expect(csv.indexOf('2020-01')).toBeLessThan(csv.indexOf('2020-02'));
     await page.locator('[data-action="app-history-sort"][data-key="total"]').click();
     await expect(totalHeading).toHaveAttribute('aria-sort','ascending');
     await expect(months).toHaveText(['2020-02','2020-01']);
     await page.locator('[data-action="export-apps"]').click();
-    await expect.poll(async()=>{const exported=await readFile(file,'utf8'),february=exported.indexOf('2020-02'),january=exported.indexOf('2020-01');return february>=0&&january>=0&&february<january;}).toBe(true);
+    // Windows cannot replace the destination while a polling read still has it open.
+    await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.exports)).toEqual([{canceled:false},{canceled:false}]);
+    const exported=await readFile(file,'utf8');expect(exported.indexOf('2020-02')).toBeGreaterThanOrEqual(0);expect(exported.indexOf('2020-02')).toBeLessThan(exported.indexOf('2020-01'));
     await page.locator('#appGrouping').selectOption('day');await expect(page.locator('#appListRegion tbody tr')).toHaveCount(3);
 });
 

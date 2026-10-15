@@ -429,7 +429,7 @@ jobs:
         with:
           name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
           path: |
-            build/tauri-smoke/**
+            build/tauri-smoke-linux/**
             build/tauri-package-check-*/result.json
             ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

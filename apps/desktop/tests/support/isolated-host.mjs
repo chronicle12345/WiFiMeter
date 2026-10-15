@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 // 每个测试独立加载共享宿主模块，避免全局夹具、环境变量和定时器跨测试泄漏。
 export function createIsolatedHost({ root, env }) {
-    const modules = new Map(), timers = new Set(), children = new Set();
+    const modules = new Map(), timers = new Set(), children = new Set(), childClosures = new Map();
     const runtimeProcess = Object.assign(new EventEmitter(), {
         env: { ...env }, platform: process.platform, arch: process.arch, pid: process.pid,
         execPath: process.execPath, resourcesPath: root, argv: [process.execPath],
@@ -28,7 +28,11 @@ export function createIsolatedHost({ root, env }) {
     };
     const spawn = (file, args, options = {}) => {
         const child = childProcess.spawn(file, args, { ...options, env: { ...env, ...options.env }, windowsHide: true });
-        children.add(child); child.once('close', () => children.delete(child)); return child;
+        children.add(child);
+        childClosures.set(child, new Promise(resolve => child.once('close', () => {
+            children.delete(child); childClosures.delete(child); resolve();
+        })));
+        return child;
     };
     const context = vm.createContext({ console, process: runtimeProcess, Buffer, URL, URLSearchParams,
         AbortController, AbortSignal, fetch, Response, Request, Headers, TextEncoder, TextDecoder,
@@ -61,12 +65,10 @@ export function createIsolatedHost({ root, env }) {
         async dispose() {
             for (const timer of timers) { clearTimeout(timer); clearInterval(timer); }
             timers.clear();
-            await Promise.all([...children].map(child => {
-                if (child.exitCode !== null || child.signalCode !== null) return;
-                return new Promise(resolve => {
-                    child.once('close', resolve);
-                    if (!child.kill()) { child.off('close', resolve); resolve(); }
-                });
+            await Promise.all([...children].map(async child => {
+                const closed = childClosures.get(child);
+                if (child.exitCode === null && child.signalCode === null && !child.killed) child.kill();
+                await closed;
             }));
         }
     };

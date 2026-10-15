@@ -26,7 +26,9 @@ const fixture = await createHarness();
 cpSync(fixture.directory, profile, { recursive: true });
 fixture.cleanup();
 writeFileSync(path.join(profile, 'update-preferences.json'), JSON.stringify({ checkOnStartup: false }));
-writeFileSync(path.join(profile, 'window-preferences.json'), JSON.stringify({ closeAction: 'exit', theme: 'light' }));
+// WebDriver needs a visible window, so background-test dialog substitutes are disabled.
+// Suppress startup questions in this isolated profile before exercising native collection manually.
+writeFileSync(path.join(profile, 'window-preferences.json'), JSON.stringify({ closeAction: 'exit', theme: 'light', promptAppCollection: false }));
 
 async function availablePort() {
     const server = createServer();
@@ -171,7 +173,10 @@ try {
     });
     assert.equal(await evaluate(() => typeof window.require), 'undefined');
     assert.equal(await evaluate(() => window.desktop.platform), 'linux');
-    assert.ok((await request('snapshot')).networks.length);
+    const startupSnapshot = await request('snapshot');
+    assert.ok(startupSnapshot.networks.length);
+    assert.equal(startupSnapshot.appCollection.enabled, false);
+    assert.equal((await evaluate(() => window.desktop.windowPreferences.read())).promptAppCollection, false);
     await poll(() => {
         const records = descendants(processes(), driver.pid);
         hostPid = records.find(record => record.executable === realpathSync(executable))?.pid;
