@@ -381,15 +381,18 @@ BackendService::Response BackendService::setAppCollection(const JsonValue& param
 
 void BackendService::collectApplications(const platform::SampleReport& currentWifi, TimePoint now, Events& events)
 {
-    if (!appEnabled_ || deps_.applications == nullptr)
+    if ((!appEnabled_ && !pendingAppUsage_) || deps_.applications == nullptr)
         return;
     const auto wifi = pendingAppUsage_ ? pendingAppUsage_->wifi : currentWifi;
     const auto report = pendingAppUsage_ ? pendingAppUsage_->report : deps_.applications->read();
     if (pendingAppUsage_) now = pendingAppUsage_->at;
     const auto defer = [&](const std::string& detail) {
         if (!pendingAppUsage_) pendingAppUsage_ = PendingAppUsage{report,wifi,now};
-        appState_ = platform::AppCollectorState::unavailable;
-        appDetail_ = detail;
+        if (report.state != platform::AppCollectorState::permission)
+        {
+            appState_ = platform::AppCollectorState::unavailable;
+            appDetail_ = detail;
+        }
         loopbackLive_.clear();
     };
     proxyIdentityFresh_ = !report.generation.empty() && report.loopbackSampledAtMs > 0 &&
@@ -397,6 +400,12 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
     if (proxyIdentityFresh_) proxyIdentityReport_ = report;
     appState_ = report.state;
     appDetail_ = report.detail;
+    if (appEnabled_ && report.state == platform::AppCollectorState::permission)
+    {
+        // 拒绝权限后结束本次采集；待提交的最后一段空档仍可重试写入。
+        appEnabled_ = false;
+        deps_.applications->stop();
+    }
     const auto staleAfter = std::chrono::seconds(std::max(5, intervalSeconds() * 2));
     auto loopback = loopbackLive_.update(report, now, staleAfter);
     const bool sameGeneration = appSampleGeneration_ == report.generation;

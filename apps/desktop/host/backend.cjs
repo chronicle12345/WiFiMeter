@@ -131,6 +131,7 @@ class BackendClient extends EventEmitter {
         }
 
         if (message.event) {
+            if (typeof message.appCollection?.enabled === 'boolean') this.collectionState.appsEnabled = message.appCollection.enabled;
             this.emit('event', message);
             return;
         }

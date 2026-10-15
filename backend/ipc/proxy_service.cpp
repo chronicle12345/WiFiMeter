@@ -219,8 +219,8 @@ JsonValue BackendService::proxyJson(Status& status) const
         if (!detail.empty()) detail += " ";
         detail += "代理端口已保存；客户端列表仅显示最近一次发现的连接，不代表实测流量。请启用应用采集以测量字节并持续观测连接。";
     }
-    if (supported && !options.ports.empty() && appEnabled_ && !paused_ &&
-        (appState_ == platform::AppCollectorState::permission || appState_ == platform::AppCollectorState::unavailable))
+    if (supported && !options.ports.empty() && !paused_ &&
+        (appState_ == platform::AppCollectorState::permission || (appEnabled_ && appState_ == platform::AppCollectorState::unavailable)))
     {
         if (!detail.empty()) detail += " ";
         detail += appState_ == platform::AppCollectorState::permission

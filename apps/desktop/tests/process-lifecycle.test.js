@@ -13,7 +13,7 @@ const directory = fileURLToPath(new URL('../host/', import.meta.url));
 const flush = async () => { await new Promise(setImmediate); await new Promise(setImmediate); };
 
 // 进程、窗口、系统设置和计时器均为内存替身，不读写用户数据。
-function backendHarness({ answer = true, crashRestarts = false, restoreThenHelloFails = false } = {}) {
+function backendHarness({ answer = true, crashRestarts = false, restoreThenHelloFails = false, appCaptureAvailable = false, failAppEnable = false } = {}) {
     const children = [], module = { exports: {} };
     runInNewContext(fs.readFileSync(path.join(directory, 'backend.cjs'), 'utf8'), {
         module, setTimeout, clearTimeout, process,
@@ -30,6 +30,10 @@ function backendHarness({ answer = true, crashRestarts = false, restoreThenHello
                     done(); return;
                 }
                 if (!answer) { done(); return; }
+                if (request.method === 'setAppCollection' && request.params.enabled && failAppEnable) {
+                    child.stdout.write(JSON.stringify({ id: request.id, ok: false, error: { code: 'unavailable', message: 'application helper failed' } }) + '\n');
+                    done(); return;
+                }
                 if (request.method === 'setPaused') child.paused = request.params.paused;
                 if (['clearUsage', 'restore'].includes(request.method)) child.paused = true;
                 if (request.method === 'setAppCollection') child.appsEnabled = request.params.enabled;
@@ -43,7 +47,7 @@ function backendHarness({ answer = true, crashRestarts = false, restoreThenHello
                     done(); return;
                 }
                 child.stdout.write(JSON.stringify({ id: request.id, ok: true, result: {
-                    paused: child.paused, appCollection: { enabled: child.appsEnabled }, settings: child.settings
+                    paused: child.paused, appCollection: { available: appCaptureAvailable, enabled: child.appsEnabled }, settings: child.settings
                 } }) + '\n');
                 done();
                 if (request.method === 'shutdown') queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); });
@@ -73,9 +77,11 @@ function clock() {
     };
 }
 
-async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false, dialogs = {} } = {}) {
-    const transport = backendHarness({ crashRestarts, restoreThenHelloFails }), timers = clock();
+async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false,
+    appCaptureAvailable = false, failAppEnable = false, preferences = {}, startupChoice = 1, dialogs = {} } = {}) {
+    const transport = backendHarness({ crashRestarts, restoreThenHelloFails, appCaptureAvailable, failAppEnable }), timers = clock();
     const handlers = new Map(), statuses = [], calls = [], systemSettings = [], miniEvents = [];
+    const startupPrompts = [];
     let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
     const app = new EventEmitter();
     Object.assign(app, { isPackaged: false, getVersion: () => '1.3.2', getPath: () => 'fixture', setPath() {},
@@ -97,7 +103,10 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         async loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     }
     const imports = {
-        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {}, ...dialogs },
+        './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {}, async showMessageBox(_window, options) {
+            startupPrompts.push({ options, loaded: Boolean(window.webContents.mainFrame.url), paused: transport.children[0].paused });
+            return { response: startupChoice };
+        }, ...dialogs },
             ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
         './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
@@ -108,7 +117,7 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
-        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({}), publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
+        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => preferences, publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
         './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({}) },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { await handoff; throw Error('fixture handoff failed'); } },
         './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), async install() {
@@ -124,13 +133,79 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
     });
     await ready; await flush(); calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { app, backend, timers, statuses, calls, hooks, systemSettings, miniEvents, children: transport.children, releaseHandoff,
+    return { app, backend, timers, statuses, calls, hooks, systemSettings, miniEvents, startupPrompts, children: transport.children, releaseHandoff,
         get disposed() { return disposed; }, get quitCount() { return quitCount; }, window,
         invoke: (name, payload) => handlers.get(name)(event, payload), miniRequest: () => miniRequest({ includeMinutes: true }),
         crash() { const child = backend.child; child.exitCode = 1; child.emit('exit', 1, null); },
         dispose() { timers.pending.clear(); transport.dispose(); timers.pending.clear(); }
     };
 }
+
+test('startup asks after migration and page load, then enables application collection only on acceptance', async t => {
+    const h = await mainHarness({ appCaptureAvailable: true, preferences: { promptAppCollection: true }, startupChoice: 0 }); t.after(h.dispose);
+    assert.equal(h.startupPrompts.length, 1);
+    assert.equal(h.startupPrompts[0].loaded, true);
+    assert.equal(h.startupPrompts[0].paused, false);
+    assert.equal(h.children[0].appsEnabled, true);
+    assert.equal(h.children[0].requests.filter(request => request.method === 'setAppCollection').length, 1);
+    await h.invoke('backend:request', { method: 'hello' });
+    assert.equal(h.startupPrompts.length, 1, 'ordinary requests must not repeat the startup question');
+});
+
+for (const startupChoice of [1, undefined]) test(`declining or closing the startup question leaves application collection disabled (${startupChoice})`, async t => {
+    // The native dialog maps closing to cancelId; an absent response also cannot authorize collection.
+    const h = await mainHarness({ appCaptureAvailable: true, startupChoice, dialogs: startupChoice === undefined ? { showMessageBox: async () => ({}) } : {} }); t.after(h.dispose);
+    if (startupChoice !== undefined) assert.equal(h.startupPrompts.length, 1);
+    assert.equal(h.children[0].appsEnabled, false);
+    assert.equal(h.children[0].paused, false);
+    assert.equal(h.children[0].requests.some(request => request.method === 'setAppCollection'), false);
+});
+
+test('the saved startup preference suppresses the question without enabling application collection', async t => {
+    const h = await mainHarness({ appCaptureAvailable: true, preferences: { promptAppCollection: false }, startupChoice: 0 }); t.after(h.dispose);
+    assert.equal(h.startupPrompts.length, 0);
+    assert.equal(h.children[0].appsEnabled, false);
+});
+
+test('each desktop launch asks by default while a build without a collector skips the question', async t => {
+    for (let launch = 0; launch < 2; launch++) {
+        const h = await mainHarness({ appCaptureAvailable: true }); t.after(h.dispose);
+        assert.equal(h.startupPrompts.length, 1);
+        assert.equal(h.startupPrompts[0].options.cancelId, 1);
+    }
+    const unsupported = await mainHarness({ startupChoice: 0 }); t.after(unsupported.dispose);
+    assert.equal(unsupported.startupPrompts.length, 0);
+    assert.equal(unsupported.children[0].appsEnabled, false);
+});
+
+test('migration failure skips the startup question and keeps collection paused', async t => {
+    const h = await mainHarness({ appCaptureAvailable: true, legacyFailure: true, startupChoice: 0 }); t.after(h.dispose);
+    assert.equal(h.startupPrompts.length, 0);
+    assert.equal(h.children[0].appsEnabled, false);
+    assert.equal(h.children[0].paused, true);
+});
+
+test('a failed application collection request does not block startup or retry automatically', async t => {
+    const h = await mainHarness({ appCaptureAvailable: true, failAppEnable: true, startupChoice: 0 }); t.after(h.dispose);
+    assert.equal(h.startupPrompts.length, 1);
+    assert.equal(h.children[0].appsEnabled, false);
+    assert.equal((await h.invoke('backend:request', { method: 'hello' })).ok, true);
+    assert.equal(h.children[0].requests.filter(request => request.method === 'setAppCollection').length, 1);
+});
+
+test('collector recovery does not retry application collection after permission was refused', async t => {
+    const h = await mainHarness({ appCaptureAvailable: true }); t.after(h.dispose);
+    await h.invoke('backend:request', { method: 'setAppCollection', params: { enabled: true } });
+    const child = h.children[0];
+    child.appsEnabled = false;
+    child.stdout.write(JSON.stringify({ event: 'live', collector: 'running', appCollection: { available: true, enabled: false, state: 'permission', detail: 'permission refused' } }) + '\n');
+    h.crash();
+    assert.equal(await h.timers.next(), true);
+    assert.equal(h.children.length, 2);
+    assert.equal(h.children[1].paused, false);
+    assert.equal(h.children[1].appsEnabled, false);
+    assert.equal(h.startupPrompts.length, 1);
+});
 
 test('backend pipe errors reject pending requests without an uncaught EventEmitter error', async t => {
     const h = backendHarness({ answer: false }); t.after(h.dispose);

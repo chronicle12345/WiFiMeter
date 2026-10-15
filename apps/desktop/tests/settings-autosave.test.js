@@ -6,6 +6,24 @@ import { createFormAutosave } from '../renderer/ui/form-autosave.js';
 
 const source = fs.readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
 
+test('startup collection prompt saves as a desktop preference without changing collection settings', async () => {
+    const calls = [], received = [];
+    const controller = createFormAutosave({
+        getData: () => ({ settings: {} }),
+        getWindowPreferences: () => ({ promptAppCollection: true }),
+        desktop: { windowPreferences: { async update(patch) { calls.push(['preferences', patch]); return patch; } } },
+        receiveWindowPreferences: value => received.push(value),
+        store: { async updateSettings(patch) { calls.push(['backend', patch]); } }
+    });
+    const form = { id: 'settingsForm', isConnected: true, querySelector() { return null; } };
+    controller.edit({ name: 'promptAppCollection', type: 'checkbox', checked: false, form }, true);
+    const save = controller.saveFor(form);
+    await save.flush();
+    assert.equal(save.state, 'saved');
+    assert.deepEqual(calls, [['preferences', { promptAppCollection: false }]]);
+    assert.deepEqual(received, [{ promptAppCollection: false }]);
+});
+
 test('floating-window pin and proxy filters save through window preferences', async () => {
     const calls = [], received = [];
     const controller = createFormAutosave({

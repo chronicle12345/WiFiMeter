@@ -115,6 +115,26 @@ async function requestBackend(method, params = {}, options) {
     return backend.request(method, params, options);
 }
 
+async function promptForAppCollection() {
+    if (migrationStatus.error || migrationBusy || installingUpdate || quitting || system?.quitting) return;
+    const preferences = await windowControls.read();
+    if (preferences.promptAppCollection === false) return;
+    const status = await requestBackend('hello');
+    if (!status.appCollection?.available || status.appCollection.enabled) return;
+    const chinese = status.settings?.language === 'zh-CN';
+    const choice = await dialog.showMessageBox(window, {
+        type: 'question', title: 'WiFiMeter',
+        message: chinese ? '本次启动是否开启应用采集？' : 'Enable application collection for this session?',
+        detail: chinese ? '开启后需要完成系统授权。选择不开启或拒绝授权，本次将不采集应用流量。可在设置的常规页面关闭启动询问。'
+            : 'Enabling collection requires system permission. If you decline either request, application traffic will not be collected this session. You can turn off this startup question in Settings > General.',
+        buttons: chinese ? ['开启应用采集', '本次不开启'] : ['Enable collection', 'Not this time'],
+        defaultId: 1, cancelId: 1
+    });
+    if (choice.response === 0 && !migrationBusy && !migrationStatus.error && !installingUpdate && !quitting && !system?.quitting) {
+        await requestBackend('setAppCollection', { enabled: true });
+    }
+}
+
 // 产品身份（应用名、App User Model ID、用户数据目录）在 product.cjs 里，
 // 并与打包文档保持一致；改名或改路径都会让老用户的数据看起来消失，因此那里有测试。
 const productName = applyProductIdentity(app, process.platform, app.getPath('appData')).productName;
@@ -442,6 +462,7 @@ app.whenReady().then(async () => {
     });
     await window.loadFile(pagePath);
     await startup;
+    await promptForAppCollection().catch(error => console.error(`[app-collection] 启动询问失败：${error.message}`));
     if (app.isPackaged && !process.env.WIFIMETER_USER_DATA && !process.env.WIFIMETER_TEST_ISOLATION) {
         checkForUpdates({ automatic: true }).catch(error => updateResult({ state: 'error', error: error.message }));
     }

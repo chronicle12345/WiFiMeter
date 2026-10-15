@@ -2,7 +2,9 @@
 
 English | [简体中文](LINUX_APP_CAPTURE.zh-CN.md)
 
-Application capture is explicitly enabled in Application distribution under network details and applies only to the current backend session. System authorization is used only for `wifimeter-app-capture`; the Tauri desktop application and ordinary capture backend do not run as root. Stopping, pausing, or exiting closes the helper's pipe and unloads its own BPF links. Capture does not modify Wi-Fi settings, routes, or packet contents.
+The backend application-capture switch is disabled by default and applies only to the current backend session. The application page provides manual start, stop and retry controls. System authorization is used only for `wifimeter-app-capture`; the Tauri desktop application and ordinary capture backend do not run as root. Stopping, pausing, or exiting closes the helper's pipe and unloads its own BPF links. Capture does not modify Wi-Fi settings, routes, or packet contents.
+
+The unreleased desktop source asks whether to enable application capture after startup and migration succeed and the main window appears. Accepting then requests the helper's system authorization; declining either request leaves application capture off for that session, with no automatic retry. Network-interface statistics continue. Settings > General > Ask about application capture at startup is enabled by default and can suppress future startup questions. Manual capture controls do not change this preference. When the backend reports application capture as unavailable, the host skips the question. Failed migrations also skip it.
 
 ## Measurement semantics
 

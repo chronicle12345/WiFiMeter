@@ -372,18 +372,21 @@ void explainsCollectionAndPermissionState()
     WIFIMETER_CHECK(proxy->stringOr("detail").find("应用采集") != std::string::npos);
     enable(harness);
     harness.proxyReport = observed();
-    harness.apps.report = {platform::AppCollectorState::permission, {}, "test permission denied", {}};
     harness.service->collectOnce(utcTime(2026,10,1,0,0,0));
+    const auto calls = harness.proxyCalls;
+    harness.apps.report = {platform::AppCollectorState::permission, {}, "test permission denied", {}};
+    harness.service->collectOnce(utcTime(2026,10,1,0,0,5));
     snapshot = harness.call("snapshot");
     proxy = snapshot.result.find("proxy");
     WIFIMETER_CHECK(proxy->boolOr("available"));
-    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("ready"));
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("disabled"));
     WIFIMETER_CHECK(proxy->stringOr("detail").find("权限") != std::string::npos);
     WIFIMETER_CHECK_EQ(harness.count("proxy_observations"), std::int64_t(3));
-    harness.service->setPaused(true, utcTime(2026,10,1,0,0,1));
+    WIFIMETER_CHECK_EQ(harness.proxyCalls, calls);
+    harness.service->setPaused(true, utcTime(2026,10,1,0,0,6));
     snapshot = harness.call("snapshot");
     proxy = snapshot.result.find("proxy");
-    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("paused"));
+    WIFIMETER_CHECK_EQ(proxy->stringOr("status"), std::string("disabled"));
     WIFIMETER_CHECK(!proxy->stringOr("detail").empty());
 }
 

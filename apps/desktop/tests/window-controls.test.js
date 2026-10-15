@@ -9,7 +9,8 @@ import { runInNewContext } from 'node:vm';
 import { createWindowControls } from '../host/window-controls.cjs';
 
 const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
-    miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
+    miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15,
+    promptAppCollection: true };
 
 async function fixture(t, extra = {}) {
     const fixtureRoot = fileURLToPath(new URL('../../../del/window-controls/', import.meta.url));
@@ -39,6 +40,33 @@ async function fixture(t, extra = {}) {
     return { controls, deps, state, windows, handlers, userData, main, sent };
 }
 const closeEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+
+test('启动应用采集询问默认启用，保存后重新启动保留选择', async t => {
+    const f = await fixture(t);
+    assert.equal((await f.controls.read()).promptAppCollection, true);
+    await Promise.all([f.controls.update({ promptAppCollection: false }), f.controls.update({ theme: 'dark' })]);
+    assert.equal(JSON.parse(await fs.readFile(path.join(f.userData, 'window-preferences.json'), 'utf8')).promptAppCollection, false);
+    f.controls.dispose();
+    const restored = createWindowControls(f.deps); t.after(() => restored.dispose());
+    assert.equal((await restored.read()).promptAppCollection, false);
+    assert.equal((await restored.read()).theme, 'dark');
+    await restored.update({ promptAppCollection: true });
+    assert.equal(f.sent.at(-1)[1].promptAppCollection, true);
+    assert.equal(JSON.parse(await fs.readFile(path.join(f.userData, 'window-preferences.json'), 'utf8')).promptAppCollection, true);
+});
+
+test('旧偏好和无效启动询问值保持默认，非法更新不保存或通知', async t => {
+    for (const saved of [{ closeAction: 'exit' }, { closeAction: 'exit', promptAppCollection: 'false' }]) {
+        const f = await fixture(t, { fileSystem: { ...fs, readFile: async () => JSON.stringify(saved) } });
+        assert.equal((await f.controls.read()).promptAppCollection, true);
+        for (const promptAppCollection of ['false', '', null, 0, 1, {}, undefined]) {
+            await assert.rejects(f.controls.update({ promptAppCollection }), TypeError);
+        }
+        assert.equal((await f.controls.read()).promptAppCollection, true);
+        assert.equal(f.sent.length, 0);
+        assert.deepEqual(await fs.readdir(f.userData), []);
+    }
+});
 
 test('默认关闭到托盘且关闭小窗；并发偏好更新保留彼此字段并可重新读取', async t => {
     const f = await fixture(t);

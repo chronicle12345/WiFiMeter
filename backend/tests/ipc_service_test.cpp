@@ -1206,10 +1206,10 @@ void applicationFailureDetailsSurviveEventsAndStorage()
         for (int step = 0; step < 3; ++step)
         {
             const bool first = step == 0;
-            apps.report.state = scenario == 1 && !first ? platform::AppCollectorState::unavailable :
-                scenario >= 2 ? platform::AppCollectorState::partial : platform::AppCollectorState::permission;
+            apps.report.state = scenario == 1 && first ? platform::AppCollectorState::starting :
+                scenario >= 2 ? platform::AppCollectorState::partial : platform::AppCollectorState::unavailable;
             apps.report.detail = scenario == 1 ? "" : scenario == 3 ? "partial capture" : first ? "failure A" : "failure B";
-            std::string detail = scenario == 1 && !first ? "unavailable" : scenario >= 2 ? "partial" : "permission";
+            std::string detail = scenario == 1 && first ? "starting" : scenario >= 2 ? "partial" : "unavailable";
             if (!apps.report.detail.empty()) detail += ": " + apps.report.detail;
             if (scenario == 3)
             {
@@ -1245,6 +1245,89 @@ void applicationFailureDetailsSurviveEventsAndStorage()
         }
     }
 }
+
+void applicationPermissionDenialStopsUntilExplicitRetry()
+{
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    for (const bool failGapWrite : {false, true})
+    {
+        Harness h;
+        FakeApps apps;
+        h.service = std::make_unique<BackendService>(BackendService::Deps{*h.store, h.network, &apps});
+        const auto at = utcTime(2026, 9, 30, 10, 0, 0);
+        h.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 1000, 2000));
+        auto enabled = JsonValue::makeObject();
+        enabled.set("enabled", JsonValue::makeBool(true));
+        WIFIMETER_CHECK(h.call(method::kSetAppCollection, enabled, at).ok());
+        apps.report = {platform::AppCollectorState::running, "first", {},
+            {{"wlan0", "browser", "Browser", "42:1", 42, 0, 0}}};
+        h.service->collectOnce(at);
+        apps.report.samples[0].rxBytes = 100;
+        h.network.sampleReport.samples[0].rxBytes = 2000;
+        h.service->collectOnce(at + std::chrono::seconds(5));
+        if (failGapWrite)
+            WIFIMETER_CHECK(h.store->database().exec("CREATE TEMP TRIGGER reject_permission_gap BEFORE INSERT ON coverage_gaps WHEN NEW.scope='apps' BEGIN SELECT RAISE(ABORT,'injected gap save failure'); END;").ok);
+        const auto stops = apps.stops;
+        apps.report = {platform::AppCollectorState::permission, {}, "Access denied", {}};
+        h.network.sampleReport.samples[0].rxBytes = 3000;
+        const auto denied = h.service->collectOnce(at + std::chrono::seconds(10));
+        WIFIMETER_CHECK(denied.error.code.empty());
+        WIFIMETER_CHECK_EQ(apps.stops, stops + 1);
+        bool liveFound = false;
+        for (std::size_t index = 0; index < denied.names.size(); ++index)
+        {
+            if (denied.names[index] != event::kLive) continue;
+            liveFound = true;
+            const auto* collection = denied.items[index].find("appCollection");
+            WIFIMETER_CHECK(collection && !collection->boolOr("enabled", true));
+            if (collection)
+            {
+                WIFIMETER_CHECK_EQ(collection->stringOr("state"), std::string("permission"));
+                WIFIMETER_CHECK_EQ(collection->stringOr("detail"), std::string("Access denied"));
+            }
+        }
+        WIFIMETER_CHECK(liveFound);
+        const auto reads = apps.reads;
+        apps.report = {platform::AppCollectorState::running, "replacement", {},
+            {{"wlan0", "browser", "Browser", "42:2", 42, 9000, 0}}};
+        if (failGapWrite)
+            WIFIMETER_CHECK(h.store->database().exec("DROP TRIGGER reject_permission_gap;").ok);
+        h.service->collectOnce(at + std::chrono::seconds(15));
+        h.service->setPaused(true, at + std::chrono::seconds(16));
+        h.service->setPaused(false, at + std::chrono::seconds(20));
+        h.service->collectOnce(at + std::chrono::seconds(20));
+        WIFIMETER_CHECK_EQ(apps.reads, reads);
+        WIFIMETER_CHECK_EQ(apps.starts, 1);
+        auto snapshot = h.call(method::kSnapshot, at + std::chrono::seconds(20));
+        const auto* collection = snapshot.result.find("appCollection");
+        WIFIMETER_CHECK(!collection->boolOr("enabled", true));
+        WIFIMETER_CHECK_EQ(collection->stringOr("state"), std::string("permission"));
+        WIFIMETER_CHECK_EQ(collection->stringOr("detail"), std::string("Access denied"));
+        WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->size(), std::size_t{0});
+        WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("100"));
+        WIFIMETER_CHECK_EQ(snapshot.result.find("records")->at(0).stringOr("rxBytes"), std::string("2000"));
+        const auto* gaps = snapshot.result.find("appGaps");
+        WIFIMETER_CHECK_EQ(gaps->size(), std::size_t{1});
+        if (gaps->size() == 1)
+        {
+            WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("detail"), std::string("permission: Access denied"));
+            WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("startedAt"), std::string("2026-09-30T10:00:05Z"));
+            WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("endedAt"), std::string("2026-09-30T10:00:10Z"));
+        }
+        WIFIMETER_CHECK(h.call(method::kSetAppCollection, enabled, at + std::chrono::seconds(21)).ok());
+        WIFIMETER_CHECK_EQ(apps.starts, 2);
+        h.service->collectOnce(at + std::chrono::seconds(21));
+        apps.report.samples[0].rxBytes = 9025;
+        h.service->collectOnce(at + std::chrono::seconds(26));
+        snapshot = h.call(method::kSnapshot, at + std::chrono::seconds(26));
+        WIFIMETER_CHECK(snapshot.result.find("appCollection")->boolOr("enabled"));
+        WIFIMETER_CHECK_EQ(snapshot.result.find("appCollection")->stringOr("state"), std::string("running"));
+        WIFIMETER_CHECK_EQ(snapshot.result.find("appRecords")->at(0).stringOr("rxBytes"), std::string("125"));
+    }
+    memoryOnly = before;
+}
+
 void applicationStorageFailureRollsBackOnlyApplications()
 {
     Harness harness;
@@ -1906,6 +1989,12 @@ void pendingUsageHonorsPauseClearRestoreImportAndRetention()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string(argv[1]) == "--permission-denial-memory")
+    {
+        wifimeter::test::useTimeZone("UTC");
+        applicationPermissionDenialStopsUntilExplicitRetry();
+        return WIFIMETER_REPORT();
+    }
     if (argc == 2 && std::string(argv[1]) == "--app-retirement-memory")
     {
         wifimeter::test::useTimeZone("UTC");
@@ -1949,6 +2038,7 @@ int main(int argc, char** argv)
     applicationHistorySurvivesSnapshotsAndBackups();
     applicationSnapshotsKeepTheirSamplingClock();
     applicationCollectionIsIndependentAndOptIn();
+    applicationPermissionDenialStopsUntilExplicitRetry();
     applicationFailureDetailsSurviveEventsAndStorage();
     applicationStorageFailureRollsBackOnlyApplications();
     applicationFinalSnapshotRetriesBeforeItsSourceCanRetire();

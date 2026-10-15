@@ -8,7 +8,7 @@ const { randomUUID } = require('node:crypto');
 const { miniSize, snapBounds, collapsedBounds, isNear } = require('./mini-geometry.cjs');
 const { miniRange, miniApplicationRows, miniFilteredLive } = require('./mini-usage.cjs');
 
-const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system',
+const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system', promptAppCollection: true,
     miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
     miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 const SHAPES = ['bar', 'square', 'circle'];
@@ -196,7 +196,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (THEMES.includes(saved?.theme)) preferences.theme = saved.theme;
             if (SHAPES.includes(saved?.miniShape)) preferences.miniShape = saved.miniShape;
             if (PALETTES.includes(saved?.miniPalette)) preferences.miniPalette = saved.miniPalette;
-            for (const key of ['miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
+            for (const key of ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
             if (['1m', '5m', '1h', 'custom'].includes(saved?.miniRange)) preferences.miniRange = saved.miniRange;
             if (Number.isInteger(saved?.miniCustomMinutes) && saved.miniCustomMinutes >= 1 && saved.miniCustomMinutes <= 10080) preferences.miniCustomMinutes = saved.miniCustomMinutes;
         } catch (error) {
@@ -225,7 +225,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
             || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
             || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
-            || ['miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
+            || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
             || (Object.hasOwn(patch, 'miniRange') && !['1m', '5m', '1h', 'custom'].includes(patch.miniRange))
             || (Object.hasOwn(patch, 'miniCustomMinutes') && (!Number.isInteger(patch.miniCustomMinutes) || patch.miniCustomMinutes < 1 || patch.miniCustomMinutes > 10080))) {
             return Promise.reject(new TypeError('窗口偏好无效。'));
