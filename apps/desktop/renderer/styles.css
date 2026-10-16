@@ -166,7 +166,6 @@ select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 :root[data-theme="dark"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23aaa6b5' stroke-width='1.8'%3E%3Cpath d='m7 10 5 5 5-5'/%3E%3C/svg%3E")}
 @media(max-width:650px){.settings-layout{grid-template-columns:100px minmax(0,1fr);gap:12px}.settings-categories button{padding:10px 8px;font-size:12px}.settings-scroll-panel .panel-head{padding:18px 15px}.settings-scroll-panel .setting-row{padding:15px}.settings-scroll-panel .quota-form{padding:15px}.settings-scroll-panel .field-row{grid-template-columns:minmax(0,1fr)}}
 
-.settings-scroll-panel>[data-settings-panel]:last-child{min-height:calc(100dvh - 48px)}
 .application-toolbar,.applications-toolbar{margin:0 0 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
 .application-toolbar .search-box,.applications-toolbar .search-box{flex:1 1 230px;min-width:min(100%,180px);min-height:40px}
 .application-toolbar .search-box input,.applications-toolbar .search-box input{min-width:0}

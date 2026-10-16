@@ -241,10 +241,14 @@ function markSettingsCategory(category){
 function selectSettingsCategory(category){
  markSettingsCategory(category);
  $('#settings-'+category)?.scrollIntoView({block:'start',behavior:'instant'});
+ settingsCategoryScrollY=window.scrollY;
 }
-let settingsScrollFrame=null;
+let settingsScrollFrame=null,settingsCategoryScrollY=null;
 function updateSettingsScroll(){
  if(ui.page!=='settings')return;
+ // 末尾分区可能无法顶到页面上沿；页面继续滚动前保留点击的分类。
+ if(settingsCategoryScrollY!==null&&settingsCategoryScrollY===window.scrollY)return;
+ settingsCategoryScrollY=null;
  const panels=$$('[data-settings-panel]');if(!panels.length)return;
  let active=panels[0];
  for(const panel of panels)if(panel.getBoundingClientRect().top<=48)active=panel;
@@ -252,6 +256,7 @@ function updateSettingsScroll(){
  markSettingsCategory(active.dataset.settingsPanel);
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
+window.addEventListener('resize',()=>{settingsCategoryScrollY=null;updateSettingsScroll();});
 function renderMain(){
  const drafts=formAutosaves.drafts(['settingsForm','totalQuotaForm','proxyConfigForm']);
  const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd,proxyOpen=$('.app-proxy-panel')?.open;
@@ -294,7 +299,9 @@ async function doNavigate(page){
  const version=++navigationVersion;
  if(page==='history'&&ui.historyGrouping!=='day'||page==='apps'&&applications.appView==='history'&&['minute','hour'].includes(applications.appGrouping))await ensureMinuteHistory();
  if(version!==navigationVersion)return;
+ settingsCategoryScrollY=null;
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
+ updateSettingsScroll();
 }
 function syncInert(){
  const hasDrawer=!!ui.drawer,hasModal=!!ui.modal,updating=preparingUpdate||updateExitPrepared||['preparing','installing'].includes(updateStatus.state);

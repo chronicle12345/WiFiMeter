@@ -2,8 +2,8 @@ import { statusHelpView } from './status-help.js';
 import { autosaveStatus } from './autosave.js';
 import { t, tr } from '../i18n.js';
 
-function row(title, description, control, showDescription = false) {
-    return `<div class="setting-row"><div><div class="setting-title">${title}</div>${showDescription && description ? `<div class="setting-desc">${description}</div>` : ''}</div>${control}</div>`;
+function row(title, description, control) {
+    return `<div class="setting-row"><div><div class="setting-title">${title}</div></div>${control}</div>`;
 }
 function group(title, body, subtitle = '') {
     return `<section class="panel settings-group"><div class="panel-head"><div><h2>${title}</h2></div></div>${body}</section>`;
@@ -12,7 +12,7 @@ function startup(settings, { toggle, option, windowPreferences }) {
     return group(t('常规'),
         row('Language / 语言','',`<select class="select" id="quickLanguage" name="language" aria-label="Language / 语言">${option('zh-CN','简体中文',settings.language||'zh-CN')}${option('en','English',settings.language||'zh-CN')}</select>`) +
         row(t('开机自启'),t('写入系统的自启动目录，登录后自动开始采集。'),toggle('autoStart',settings.autoStart,t('开机自启'))) +
-        (windowPreferences ? row(t('启动时询问应用采集'),t('开启后，每次启动都会询问是否采集应用流量。'),toggle('promptAppCollection',windowPreferences.promptAppCollection!==false,t('启动时询问应用采集')),true) : '') +
+        (windowPreferences ? row(t('启动时询问应用采集'),'',toggle('promptAppCollection',windowPreferences.promptAppCollection!==false,t('启动时询问应用采集'))) : '') +
         (windowPreferences ? row(t('桌面小窗'),'',toggle('miniWindow',windowPreferences.miniWindow,t('桌面小窗'))) + row(t('关闭窗口时'),'',`<select class="select" name="closeAction" aria-label="${t('关闭窗口时')}">${option('ask',t('每次询问'),windowPreferences.closeAction)}${option('tray',t('最小化到托盘'),windowPreferences.closeAction)}${option('exit',t('退出应用'),windowPreferences.closeAction)}</select>`) + `<input type="checkbox" name="minimizeToTray" hidden ${settings.minimizeToTray?'checked':''}>` : row(t('关闭窗口时最小化到托盘'),'',toggle('minimizeToTray',settings.minimizeToTray,t('关闭窗口时最小化到托盘')))) +
         (windowPreferences ? miniControls(windowPreferences,{toggle,option}) : '') +
         row(t('采样间隔'),t('后端按此间隔读取网卡计数器。'),tr`<select class="select compact" name="interval" aria-label="采样间隔">${[2,5,10].map(value=>option(value,tr`${value} 秒`,settings.interval)).join('')}</select>`),

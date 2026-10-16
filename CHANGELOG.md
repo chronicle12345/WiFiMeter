@@ -4,6 +4,12 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
+## Unreleased / 未发布
+
+- Remove the startup application-capture description from Settings and size the last settings section to its content, avoiding excess blank space at the bottom.
+
+- 移除设置中启动应用采集开关下的说明，最后一个设置分区按内容显示，减少页面底部的空白。
+
 ## [1.3.5] - 2026-10-17
 
 - Add themed hover and keyboard-focus help to all six floating-window toolbar buttons. Help disappears when the pointer leaves, focus moves away, a button is clicked or Escape is pressed, without native tooltip popups.

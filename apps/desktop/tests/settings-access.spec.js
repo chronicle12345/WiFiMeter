@@ -9,17 +9,17 @@ const category=id=>page.locator(`[data-category="${id}"]`).click();
 test.beforeEach(async()=>{app=null;page=null;harness=await createHarness();await launch();await page.evaluate(()=>window.desktop.backend.request('updateSettings',{settings:{language:'en'}}));await page.reload();await page.locator('.nav [data-page="settings"]').click();});
 test.afterEach(async()=>{if(app)await app.close();harness?.cleanup();});
 
-test('startup collection prompt saves, synchronizes and explains its behavior in both languages',async()=>{
+test('startup collection prompt saves and synchronizes in both languages without helper text',async()=>{
  const before=(await snapshot()).appCollection.enabled;
  const prompt=page.getByRole('checkbox',{name:'Ask about application capture at startup',exact:true});
  await expect(prompt).toBeChecked();
- await expect(page.getByText('When enabled, ask whether to collect application traffic each time WiFiMeter starts.',{exact:true})).toBeVisible();
+ await expect(page.getByText('When enabled, ask whether to collect application traffic each time WiFiMeter starts.',{exact:true})).toHaveCount(0);
  await prompt.uncheck();await expect.poll(preferences).toMatchObject({promptAppCollection:false});
  expect((await snapshot()).appCollection.enabled).toBe(before);
  await page.reload();await expect(prompt).not.toBeChecked();
  await page.evaluate(()=>window.desktop.windowPreferences.update({promptAppCollection:true}));await expect(prompt).toBeChecked();
  await page.locator('#quickLanguage').selectOption('zh-CN');await expect(page.getByRole('checkbox',{name:'启动时询问应用采集',exact:true})).toBeChecked();
- await expect(page.getByText('开启后，每次启动都会询问是否采集应用流量。',{exact:true})).toBeVisible();
+ await expect(page.getByText('开启后，每次启动都会询问是否采集应用流量。',{exact:true})).toHaveCount(0);
 });
 
 test('settings save on change, survive categories and have no manual save buttons',async()=>{
