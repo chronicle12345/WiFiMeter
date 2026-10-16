@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.4.md"><img src="https://img.shields.io/badge/version-1.3.4-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.4" /></a>
+  <a href="docs/releases/v1.3.5.md"><img src="https://img.shields.io/badge/version-1.3.5-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.5" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.md#c-backend"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -26,7 +26,7 @@
 
 A desktop network usage meter with shared source code for Windows and Linux. Tauri renders the interface using the system WebView; a native C++ backend samples traffic and stores history in SQLite. Data stays on the computer. Release targets cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64; available builds are listed on [Releases](https://github.com/chronicle12345/WiFiMeter/releases).
 
-Version 1.3.4 adds saved floating-window pin, visibility and proxy-filter controls, limits automatic hiding to the left and right edges, and removes native tooltip popups. It also unifies live application traffic and usage history, clarifies proxy measurements, and improves capture cleanup and CI dependency reuse. The release notes describe the changes and validation limits.
+Version 1.3.5 adds themed explanations to floating-window buttons, separates update checks, downloads and installation, and asks whether to enable application capture at startup. A saved General setting controls the startup question; declining it or system authorization leaves application capture off for that session. It also isolates native test prompts and fixes Windows test races. The release notes describe the changes and validation limits.
 
 The following overview and application history use synthetic data.
 
@@ -48,11 +48,11 @@ The following overview and application history use synthetic data.
 
 For Electron 1.2.x, download the Tauri installer for your operating system and CPU from [Releases](https://github.com/chronicle12345/WiFiMeter/releases). It reuses the existing data directory. Once Tauri is installed, subsequent update checks select the matching Tauri installer.
 
-Windows 1.3.3 users can update to 1.3.4 from the application; the updater downloads and verifies the matching installer, saves data, installs silently and restarts. Linux update checks open the official release page for manual installation. For a manual Windows upgrade, exit WiFiMeter normally before running the installer. Older versions affected by update problems may also require manual installation.
+Windows 1.3.3 and 1.3.4 users can update to 1.3.5 from the application or run the matching installer manually. The installed version controls the upgrade prompts. Linux update checks open the official release page for manual installation. For a manual Windows upgrade, exit WiFiMeter normally before running the installer. Older versions affected by update problems may also require manual installation.
 
-The current source adds two update decisions; this change is unreleased and is not included in 1.3.4. Checking reads only release information. On Windows, confirm downloading the matching installer, then confirm automatic installation after its length and SHA-256 pass verification. Installation saves settings and the database, installs silently and restarts. Declining the download transfers no installer data; postponing installation keeps the verified installer ready for later and checks it again before use. Startup checks only notify about available updates. The source also adds themed hover and keyboard-focus explanations to the floating-window buttons.
+In 1.3.5, checking for updates reads only release information. On Windows, confirm downloading the matching installer, then confirm automatic installation after its length and SHA-256 pass verification. Installation saves settings and the database, installs silently and restarts. Declining the download transfers no installer data; postponing installation keeps the verified installer ready for later and checks it again before use. Startup checks only notify about available updates.
 
-The unreleased source also asks whether to enable application capture after startup and migration complete and the main window appears. Accepting then requests the system permission needed by the capture helper. Declining either request leaves application capture off for that session while network-interface statistics continue. Settings > General includes Ask about application capture at startup, enabled by default; turning it off suppresses future startup questions. The application page still provides manual start, stop and retry controls.
+Version 1.3.5 also asks whether to enable application capture after startup and migration complete and the main window appears. Accepting then requests the system permission needed by the capture helper. Declining either request leaves application capture off for that session while network-interface statistics continue. Settings > General includes Ask about application capture at startup, enabled by default; turning it off suppresses future startup questions. The application page still provides manual start, stop and retry controls.
 
 On Windows, the app discovers the file-based version's default directory at `%LOCALAPPDATA%\WiFiMeter\data`. Other directories can be selected in Settings. Stop the old collector before importing; the Windows installer requests a graceful save and stop before replacing the application.
 

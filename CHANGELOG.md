@@ -4,15 +4,17 @@ Changes are listed by release.
 
 更新内容按版本记录。
 
-## Unreleased / 未发布
+## [1.3.5] - 2026-10-17
 
 - Add themed hover and keyboard-focus help to all six floating-window toolbar buttons. Help disappears when the pointer leaves, focus moves away, a button is clicked or Escape is pressed, without native tooltip popups.
 - Separate Windows update checks, downloads and installation. Checks only read release metadata; users confirm downloading, then confirm automatic installation after length and SHA-256 verification. Declining installation keeps the verified installer ready for later, with cache revalidation, unsaved-settings protection and collection recovery preserved. Startup checks only notify about available updates.
 - Ask whether to enable application capture after successful startup and migration, then request system authorization only after acceptance. Declining either request leaves application capture off for the session while adapter statistics continue. Add a saved General setting to disable future startup questions; manual capture controls remain available.
+- Disable startup capture questions only in isolated native-test profiles. Wait for Windows test subprocesses to close and CSV export IPC to finish before reading results, improve WebView2 startup diagnostics, and retain Linux native-test diagnostics at their actual output path.
 
 - 悬浮窗的六个工具栏按钮增加与主题一致的鼠标悬停和键盘焦点说明；鼠标移开、焦点离开、点击按钮或按 Escape 后立即消失，不使用原生提示框。
 - Windows 更新分为检查、下载和安装三步。检查仅读取版本信息，用户先确认下载，长度及 SHA-256 校验通过后再确认自动安装；暂不安装时保留已校验安装包，继续保留缓存复核、未保存设置保护和采集恢复。启动检查仅提醒有可用更新。
 - 启动和迁移成功后询问本次是否开启应用采集，同意后才请求系统授权；选择不开启或拒绝授权后，本次不采集应用流量，网卡统计继续运行。常规设置可保存是否在后续启动时询问，应用页仍可手动控制采集。
+- 仅在隔离的原生测试配置中关闭启动采集询问。Windows 测试等待辅助进程关闭及 CSV 导出 IPC 完成后再读取结果，补充 WebView2 启动诊断；Linux 原生测试按实际输出路径保存诊断附件。
 
 ## [1.3.4] - 2026-10-14
 
@@ -170,3 +172,4 @@ See the [complete bilingual release notes](docs/releases/v1.1.1.md).
 [1.3.2]: docs/releases/v1.3.2.md
 [1.3.3]: docs/releases/v1.3.3.md
 [1.3.4]: docs/releases/v1.3.4.md
+[1.3.5]: docs/releases/v1.3.5.md

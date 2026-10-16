@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.4.md#中文"><img src="https://img.shields.io/badge/version-1.3.4-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.4" /></a>
+  <a href="docs/releases/v1.3.5.md#中文"><img src="https://img.shields.io/badge/version-1.3.5-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.5" /></a>
   <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md#c-后端"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
@@ -26,7 +26,7 @@
 
 WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。发布目标包括 Windows x64、x86、ARM64 及 Linux x64、ARM64，当前可用安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
 
-1.3.4 为悬浮窗增加自动保存的固定、保持显示和代理筛选选项，自动隐藏仅在左右边缘生效，并移除原生悬停提示。同时统一应用实时流量与用量记录，明确代理测量来源，改进采集清理和 CI 依赖复用。发布说明记录了具体改动和验证范围。
+1.3.5 为悬浮窗按钮增加主题说明，将更新分为检查、下载和安装，并在启动时询问是否开启应用采集。常规设置可保存是否显示启动询问；选择不开启或拒绝系统授权后，本次不采集应用流量。同时隔离原生测试中的询问，修复 Windows 测试竞态。发布说明记录了具体改动和验证范围。
 
 以下总览和应用历史截图均使用虚构数据。
 
@@ -48,11 +48,11 @@ WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码�
 
 使用 Electron 1.2.x 的用户需从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取与系统及 CPU 架构匹配的 Tauri 安装版，程序会继续读取已有数据目录。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
 
-Windows 1.3.3 用户可通过应用内更新升级至 1.3.4，程序下载并校验对应安装包，保存数据后静默安装并重启。Linux 更新检查打开官方版本页，由用户手动安装。Windows 手动升级前请正常退出 WiFiMeter；受更新问题影响的旧版本也可能需要手动安装。
+Windows 1.3.3 和 1.3.4 用户可通过应用内更新升级至 1.3.5，也可手动运行对应安装包，升级时的提示由当前安装的版本决定。Linux 更新检查打开官方版本页，由用户手动安装。Windows 手动升级前请正常退出 WiFiMeter；受更新问题影响的旧版本也可能需要手动安装。
 
-当前源码增加下载和安装两次确认，此改动尚未发布，1.3.4 安装包尚未包含。检查更新仅读取版本信息；Windows 用户确认后下载对应安装包，长度和 SHA-256 校验通过后，再确认自动安装。安装时保存设置和数据库，静默安装并重启。不下载时不会传输安装包；暂不安装时保留已校验安装包，稍后使用前再次复核。启动检查仅提醒有可用更新。源码还为悬浮窗按钮增加与主题一致的悬停和键盘焦点说明。
+1.3.5 检查更新时仅读取版本信息；Windows 用户确认后下载对应安装包，长度和 SHA-256 校验通过后，再确认自动安装。安装时保存设置和数据库，静默安装并重启。不下载时不会传输安装包；暂不安装时保留已校验安装包，稍后使用前再次复核。启动检查仅提醒有可用更新。
 
-尚未发布的源码还会在启动和迁移完成、主窗口显示后，询问本次是否开启应用采集；同意后再为采集辅助进程请求系统权限。选择不开启或拒绝系统授权后，本次不采集应用流量，网卡统计继续运行。设置 > 常规中的启动时询问应用采集默认开启，关闭后不再显示后续启动询问。应用页仍可手动开启、停止或重试采集。
+1.3.5 还会在启动和迁移完成、主窗口显示后，询问本次是否开启应用采集；同意后再为采集辅助进程请求系统权限。选择不开启或拒绝系统授权后，本次不采集应用流量，网卡统计继续运行。设置 > 常规中的启动时询问应用采集默认开启，关闭后不再显示后续启动询问。应用页仍可手动开启、停止或重试采集。
 
 Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，其他目录可在设置中选择。导入前需要停止旧采集器；Windows 安装程序会先请求旧采集器保存并退出，再替换程序。
 

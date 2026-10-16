@@ -4,7 +4,7 @@ English | [简体中文](FLOATING_WINDOW.zh-CN.md)
 
 Enable the desktop floating window on the General page of WiFiMeter settings on Windows. By default it shows combined download and upload rates across all current connections. It supports bar, square, and circular shapes, colors, edge snapping, and automatic hiding.
 
-The current source adds themed help for the six toolbar buttons: pin, keep visible, proxy filter, application list, open the main window and close the floating window. Hover over a button or focus it with the keyboard to see its action and current state. The explanation disappears when the pointer leaves, focus moves away, the button is clicked or Escape is pressed. These explanations use the application's theme without native tooltip popups; they are not yet included in the published 1.3.4 installer.
+Version 1.3.5 adds themed help for the six toolbar buttons: pin, keep visible, proxy filter, application list, open the main window and close the floating window. Hover over a button or focus it with the keyboard to see its action and current state. The explanation disappears when the pointer leaves, focus moves away, the button is clicked or Escape is pressed. These explanations use the application's theme without native tooltip popups.
 
 Drag an empty area of the floating window to move it. Click the pin button to lock its current position. While pinned, dragging, edge snapping, and automatic hiding are disabled. Unpinning restores the configured snapping and hiding behavior. You can also change pinning in General settings; the choice is saved and reused after restarting the application.
 

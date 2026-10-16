@@ -4,7 +4,7 @@
 
 ## Tauri 完整发布矩阵
 
-1.3.x 提供 Windows 和 Linux 的完整构建与发布目标。当前正式版本的功能、安装方法和限制见[1.3.4 发布说明](releases/v1.3.4.md#中文)和 [Releases](https://github.com/chronicle12345/WiFiMeter/releases)。历史版本的性能与产物记录只适用于对应版本。
+1.3.x 提供 Windows 和 Linux 的完整构建与发布目标。当前正式版本的功能、安装方法和限制见[1.3.5 发布说明](releases/v1.3.5.md#中文)和 [Releases](https://github.com/chronicle12345/WiFiMeter/releases)。历史版本的性能与产物记录只适用于对应版本。
 
 | 系统与架构 | 产物 |
 | --- | --- |
@@ -19,6 +19,8 @@
 main push、pull request、手动运行及 `v1.3.*` 标签共用一套 Desktop CI。完整矩阵构建实际后端、Rust 宿主和安装包，逐个核对可执行文件架构与运行资源。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。Windows 使用真实 WebView2；Linux 启动真实 WebKitGTK。任何必需检查失败都阻止发布。
 
 开发态 Playwright 检查自动发现 `apps/desktop/tests/` 中的所有 `*.spec.js`，在 Windows x64 与 Linux x64 的无头浏览器中各执行完整回归，通过两个分片并行处理。测试加载真实 Tauri 页面桥接与隔离的 Node 业务宿主，C++ 数据夹具仍实际运行，系统能力使用替身。浏览器回归与五平台编译打包独立推进，最终必需检查同时汇总各分片与平台结果。主线不安装或启动 Electron。
+
+原生 WebView 集成测试在启动前，将各自隔离的桌面偏好保存为 `promptAppCollection: false` 并复核，避免界面自动化触发启动询问和系统授权。测试使用真实 Tauri 宿主、WebView 和 SQLite 后端，采集数据来自合成夹具；独立的平台辅助进程测试验证真实 ETW、EStats 和 eBPF 采集。Windows 测试清理等待子进程关闭，CSV 导出检查等待 IPC 完成后才读取文件。Linux 原生界面诊断从 `build/tauri-smoke-linux/` 收集。
 
 标签优先复用同一个提交已经通过 main CI 的完整产物。复用前核对仓库、工作流、提交、完整浏览器回归、五平台检查和未过期的附件；条件不满足时执行完整矩阵。发布仍重新核对九个安装包的内部 SHA-256，避免标签重复编译相同代码。
 
@@ -66,4 +68,4 @@ NSIS 完整安装/卸载、下载限速吞吐和真实驱动加载需要目标�
 
 Electron 1.2.x 用户从 [Releases](https://github.com/chronicle12345/WiFiMeter/releases) 获取系统和 CPU 对应的 Tauri 安装版。Windows 继续读取 `%APPDATA%\WiFiMeter Demo\wifimeter.db`，后续更新选择对应的 Tauri 安装包。
 
-当前源码的 Windows 更新流程为：检查 → 确认下载 → 校验长度和 SHA-256 → 确认自动安装 → 保存设置和数据库 → 静默安装并重启。此流程尚未发布，正式版 1.3.4 仍自动下载和安装。手动与启动检查均仅读取版本信息；不下载时不得传输安装包。暂不安装时保留已校验文件，安装前再次核对长度和 SHA-256，通过后才能停止程序。更新验证须覆盖两次确认、已校验缓存复用、未保存修改、保存失败和安装交接恢复。Linux 继续通过官方版本页手动安装。
+1.3.5 的 Windows 更新流程为：检查 → 确认下载 → 校验长度和 SHA-256 → 确认自动安装 → 保存设置和数据库 → 静默安装并重启。手动与启动检查均仅读取版本信息；不下载时不得传输安装包。暂不安装时保留已校验文件，安装前再次核对长度和 SHA-256，通过后才能停止程序。更新验证须覆盖两次确认、已校验缓存复用、未保存修改、保存失败和安装交接恢复。Linux 继续通过官方版本页手动安装。
