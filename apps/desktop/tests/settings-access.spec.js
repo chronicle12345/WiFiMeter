@@ -68,8 +68,17 @@ test('settings stay in one scrolling panel and category links track the current 
  await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(7);
  await expect(page.locator('.settings-scroll-panel')).toHaveCount(1);
  await expect(page.locator('[data-settings-panel][hidden]')).toHaveCount(0);
- await category('proxy');await expect(page.locator('[data-category="proxy"]')).toHaveAttribute('aria-current','location');
- expect(await page.locator('#settings-proxy').evaluate(el=>Math.abs(el.getBoundingClientRect().top-24))).toBeLessThan(4);
+ for(const height of [768,1200]){
+  await page.setViewportSize({width:1248,height});
+  await category('proxy');await expect(page.locator('[data-category="proxy"]')).toHaveAttribute('aria-current','location');
+  const position=await page.locator('#settings-proxy').evaluate(el=>({
+   documentTop:el.getBoundingClientRect().top+scrollY,actualY:scrollY,
+   maximumY:Math.max(0,document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight)
+  }));
+  const expectedY=Math.min(Math.max(position.documentTop-24,0),position.maximumY);
+  expect(Math.abs(position.actualY-expectedY)).toBeLessThanOrEqual(2);
+  await expect(page.locator('#settings-proxy .panel-head')).toBeInViewport();
+ }
  await page.evaluate(()=>window.scrollTo(0,0));await expect(page.locator('[data-category="general"]')).toHaveAttribute('aria-current','location');
  await page.setViewportSize({width:420,height:740});
  for(const id of ['general','display','quota','proxy','data','about']){await category(id);const overflow=await page.locator('.settings-content').evaluate(root=>[...root.querySelectorAll('button,input,select')].filter(e=>e.getClientRects().length).filter(e=>{const b=e.getBoundingClientRect();return b.left<0||b.right>innerWidth;}).map(e=>e.name||e.id));expect(overflow).toEqual([]);}
