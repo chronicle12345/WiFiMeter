@@ -25,6 +25,7 @@
         </nav>
         <p id="miniError" class="mini-error" role="alert" hidden></p>
         <section id="appsPanel" class="apps-panel" aria-label="应用流量列表" hidden>
+            <div class="source-controls"><label for="liveSource">实时来源</label><select id="liveSource" aria-label="应用实时流量来源"><option value="native">原生采集</option><option value="estimated">包含端口估算</option></select></div>
             <div class="range-controls">
                 <label for="range">累计时段</label>
                 <select id="range" aria-label="应用流量累计时段"><option value="1m">最近 1 分钟</option><option value="5m">最近 5 分钟</option><option value="1h">最近 1 小时</option><option value="custom">自定义</option></select>

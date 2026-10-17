@@ -63,6 +63,8 @@ body[data-expanded="true"] .rates .rate-download svg { margin-top:0; }
 body[data-expanded="true"] .rate-upload { border-top:0; border-left:1px solid var(--line); padding-top:0; padding-left:12px; }
 body[data-expanded="true"] .apps-panel { display:flex; flex-direction:column; flex:1; min-height:0; margin-top:12px; border-top:1px solid var(--line); padding-top:10px; }
 .range-controls { display:flex; align-items:center; gap:6px; flex-shrink:0; font-size:11px; -webkit-app-region:no-drag; }
+.source-controls { display:flex; align-items:center; gap:6px; flex-shrink:0; margin-bottom:6px; font-size:11px; -webkit-app-region:no-drag; }
+.source-controls label { color:var(--muted); }
 .range-controls > label { color:var(--muted); white-space:nowrap; }
 select, input { min-width:0; height:28px; border:1px solid var(--line); border-radius:6px; padding:4px 6px; color:var(--ink); background:var(--surface-2); font:inherit; }
 select { flex:1; max-width:140px; }

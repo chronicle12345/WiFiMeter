@@ -84,7 +84,7 @@ function validatePrepared(directory, { platform = process.platform, arch = proce
     const resources = path.join(directory, 'resources');
     checkBackend(resources, platform, arch);
     assertArchitecture(path.join(resources, 'runtime', platform === 'win32' ? 'node.exe' : 'node'), platform, arch);
-    for (const file of ['runtime/host.cjs', 'runtime/native-adapter.cjs', 'runtime/host/main.cjs', 'runtime/host/desktop-runtime.cjs', 'runtime/package.json', 'licenses/Nodejs-LICENSE.txt']) {
+    for (const file of ['runtime/host.cjs', 'runtime/native-adapter.cjs', 'runtime/host/main.cjs', 'runtime/host/desktop-runtime.cjs', 'runtime/renderer/data/proxy-live.mjs', 'runtime/package.json', 'licenses/Nodejs-LICENSE.txt']) {
         if (!fs.existsSync(path.join(resources, file))) throw new Error(`Tauri 资源不完整：${file}`);
     }
     for (const file of ['main/index.html', 'mini/index.html', 'main/shared/tokens.css', 'assets/icon.png', 'favicon.ico', 'vendor/marked.esm.js', 'vendor/purify.es.mjs']) {
@@ -129,6 +129,7 @@ function prepare({ root = repositoryRoot, platform = process.platform, arch = pr
         if (file.endsWith('.cjs') && file !== 'preload.cjs') copy(path.join(appDirectory, 'host', file), path.join(runtime, 'host', file));
     }
     copy(path.join(appDirectory, 'assets'), path.join(runtime, 'assets'));
+    copy(path.join(appDirectory, 'renderer/data/proxy-live.mjs'), path.join(runtime, 'renderer/data/proxy-live.mjs'));
     fs.writeFileSync(path.join(runtime, 'package.json'), JSON.stringify({ name: 'wifimeter', version: metadata.version, private: true }, null, 2) + '\n');
     for (const name of ['wifimeter-backend', 'wifimeter-app-capture']) {
         const filename = name + (platform === 'win32' ? '.exe' : '');

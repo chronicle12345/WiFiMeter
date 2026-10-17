@@ -9,7 +9,7 @@ import { runInNewContext } from 'node:vm';
 import { createWindowControls } from '../host/window-controls.cjs';
 
 const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
-    miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15,
+    miniPinned: false, miniExcludeProxy: false, miniIncludeProxyEstimates: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15,
     promptAppCollection: true };
 
 async function fixture(t, extra = {}) {
@@ -40,6 +40,16 @@ async function fixture(t, extra = {}) {
     return { controls, deps, state, windows, handlers, userData, main, sent };
 }
 const closeEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+
+test('小窗实时估算来源保存并恢复，拒绝无效偏好值', async t => {
+    const f = await fixture(t);
+    assert.equal((await f.controls.read()).miniIncludeProxyEstimates, false);
+    await f.controls.update({ miniIncludeProxyEstimates: true });
+    assert.equal(JSON.parse(await fs.readFile(path.join(f.userData, 'window-preferences.json'), 'utf8')).miniIncludeProxyEstimates, true);
+    const restored = createWindowControls(f.deps); t.after(() => restored.dispose());
+    assert.equal((await restored.read()).miniIncludeProxyEstimates, true);
+    await assert.rejects(restored.update({ miniIncludeProxyEstimates: 'true' }), TypeError);
+});
 
 test('启动应用采集询问默认启用，保存后重新启动保留选择', async t => {
     const f = await fixture(t);

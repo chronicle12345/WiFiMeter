@@ -7,6 +7,33 @@ const minute = (date, time, patch = {}) => ({ networkId: 'home', appId: 'browser
     hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)), rxBytes: '10', txBytes: '1', ...patch });
 const live = processes => ({ state: 'connected', collector: 'running', appCollection: { enabled: true, state: 'running' }, appProcesses: processes });
 
+test('小窗切换端口估算后保留直连与原生分钟累计，不重复计算代理速度', () => {
+    const range = miniRange({ miniRange: '1m' }, new Date(2026, 9, 1, 8, 15).getTime());
+    const snapshot = { appMinuteRecords: [minute(range.from, '08:15'),
+        minute(range.from, '08:15', { appId: 'proxy.exe', name: 'Proxy', rxBytes: '900', txBytes: '90' })] };
+    const sample = { ...live([
+        { appId: 'browser', name: 'Browser', networkId: 'home', rxPerSecond: '10', txPerSecond: '2' },
+        { appId: 'proxy.exe', name: 'Proxy', networkId: 'home', rxPerSecond: '100', txPerSecond: '20' }
+    ]), proxy: { available: true, enabled: true, state: 'ready', processNames: ['proxy.exe'],
+        clients: [{ appId: 'browser', name: 'Browser', proxyAppId: 'proxy.exe', proxyName: 'Proxy', connections: 1 }] } };
+    const native = miniApplicationRows(snapshot, sample, range);
+    assert.equal(native.rows.find(row => row.appId === 'browser').rxPerSecond, '10');
+    const estimated = miniApplicationRows(snapshot, sample, range, { miniIncludeProxyEstimates: true });
+    assert.equal(estimated.miniIncludeProxyEstimates, true);
+    const browser = estimated.rows.find(row => row.appId === 'browser');
+    assert.equal(browser.rxPerSecond, '110');
+    assert.equal(browser.txPerSecond, '22');
+    assert.equal(browser.estimated, true);
+    assert.equal(browser.rxBytes, '10');
+    assert.equal(estimated.rows.find(row => row.appId === 'proxy.exe').rxBytes, '900');
+    assert.equal(estimated.rows.reduce((sum, row) => sum + BigInt(row.rxPerSecond || 0), 0n), 110n);
+    const filtered = miniApplicationRows(snapshot, sample, range, { miniIncludeProxyEstimates: true, miniExcludeProxy: true });
+    assert.equal(filtered.rows.find(row => row.appId === 'browser').rxPerSecond, '110');
+    assert.equal(filtered.rows.some(row => row.appId === 'proxy.exe'), false);
+    const paused = miniApplicationRows(snapshot, { ...sample, collector: 'paused' }, range, { miniIncludeProxyEstimates: true });
+    assert.equal(paused.rows.find(row => row.appId === 'browser').rxPerSecond, null);
+});
+
 test('最近时段按本地分钟包含当前分钟，跨日和自定义时长保留正确起点', () => {
     const now = new Date(2026, 9, 1, 0, 1, 45, 750).getTime();
     const expected = {

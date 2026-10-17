@@ -56,3 +56,16 @@ test('live view uses only current processes and never reads historical records',
     options.collecting = false;
     assert.deepEqual(viewModule.applicationViewData(options).rows, []);
 });
+
+test('live source selection attributes current proxy rates and leaves historical totals untouched', () => {
+    const options = { view: 'live', networkId: 'home', collecting: true, context: { liveProxyEstimated: true },
+        processes: [{ appId: 'proxy', name: 'Proxy', networkId: 'home', processId: 1, rxPerSecond: '90', txPerSecond: '9' }],
+        proxy: { available: true, clients: [{ appId: 'browser', name: 'Browser', proxyAppId: 'proxy', connections: 1 }] },
+        get records() { throw Error('live estimates scanned history'); } };
+    const estimated = viewModule.applicationViewData(options);
+    assert.equal(estimated.rows[0].appId, 'browser');
+    assert.equal(estimated.rows[0].estimated, true);
+    assert.equal(estimated.rows[0].totalPerSecond, '99');
+    options.context.liveProxyEstimated = false;
+    assert.equal(viewModule.applicationViewData(options).rows[0].appId, 'proxy');
+});

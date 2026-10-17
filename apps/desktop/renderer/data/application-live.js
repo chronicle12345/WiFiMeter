@@ -6,10 +6,12 @@ export function applicationLiveRows(processes, { networkId = 'all', search = '',
     for (const process of processes || []) {
         if (networkId !== 'all' && process.networkId !== networkId) continue;
         const scope = process.scope || 'wifi';
-        const key = JSON.stringify([process.appId, process.networkId, scope]);
+        const identity = [process.appId, process.networkId, scope];
+        if (process.estimated) identity.push('estimated', String(process.proxyAppId || '').toLowerCase());
+        const key = JSON.stringify(identity);
         let row = groups.get(key);
         if (!row) {
-            row = { ...process, key, scope, processIds: new Set(), rxPerSecond: 0n, txPerSecond: 0n, measurementAvailable: true };
+            row = { ...process, key, scope, live: true, processIds: new Set(), rxPerSecond: 0n, txPerSecond: 0n, measurementAvailable: true };
             groups.set(key, row);
         }
         if (process.processId) row.processIds.add(process.processId);

@@ -1,4 +1,3 @@
-import { applicationLiveRows } from './data/application-live.js';
 import { applicationViewData } from './data/application-view.js';
 import { createApplicationProxyResolver, applicationProxyClientKey } from './data/application-proxy.js';
 import { applicationTable } from './ui/application-table.js';
@@ -82,7 +81,7 @@ const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:s
 let data=store.snapshot;
 let storageFailed=false;
 const ui={page:['overview','networks','apps','history','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
-const applications={appView:'live',liveSearch:'',liveSort:'total',appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
+const applications={appView:'live',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
 function applicationView(){return appContext().appView||'history';}
@@ -311,7 +310,7 @@ function syncInert(){
  document.body.style.overflow=hasDrawer||hasModal?'hidden':'';
 }
 function openDrawer(id,tab='usage'){
- if(!getNetwork(id))return;ui.lastFocus=document.activeElement;ui.drawer={id,tab,appView:'history',liveSearch:'',liveSort:'total',appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};renderDrawer();syncInert();setTimeout(()=>$('#closeDrawer')?.focus(),0);
+ if(!getNetwork(id))return;ui.lastFocus=document.activeElement;ui.drawer={id,tab,appView:'history',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};renderDrawer();syncInert();setTimeout(()=>$('#closeDrawer')?.focus(),0);
 }
 function closeDrawer(){
  resolveApplicationProxy.clear();
@@ -331,12 +330,12 @@ function drawerApps(n){
 }
 function applicationListData(n){
  const view=applicationView(),options={view,context:appContext(),networkId:n.id,range:getRange()};
- if(view==='live'){options.collecting=['running','partial'].includes(data.appCollection?.state);if(options.collecting)options.processes=namedAppProcesses();}
+ if(view==='live'){options.collecting=['running','partial'].includes(data.appCollection?.state);if(options.collecting)options.processes=namedAppProcesses();options.proxy=measuredProxy();}
  else options.records=displayedAppRecords();
  return applicationViewData(options);
 }
 function applicationSummaryMarkup(n,viewData=applicationListData(n)){
- if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span><span class="small muted">实时速度与历史用量分别显示</span>`;
+ if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span><span class="small muted">${appContext().liveProxyEstimated&&data.proxy?.available?t('按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。'):t('实时速度与历史用量分别显示')}</span>`;
  return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span>`;
 }
 function applicationContent(n,controls){
@@ -393,7 +392,7 @@ function namedAppProcesses(){
 }
 function measuredProxy(){
  const active=['running','partial'].includes(data.appCollection?.state)&&!['paused','offline','starting'].includes(data.live.collector);
- return {...data.proxy,clients:(data.proxy?.clients||[]).map(client=>active?client:{...client,measurementAvailable:false})};
+ return {...data.proxy,available:!!data.proxy?.available&&active&&data.live.state==='connected',clients:(data.proxy?.clients||[]).map(client=>active?client:{...client,measurementAvailable:false})};
 }
 function restoreApplicationFocus(saved,root=document){
  const keys=['action','appId','key','liveKey','proxyKey','path','networkId'];
@@ -419,8 +418,8 @@ function appDetails(app){
 }
 function refreshApplicationDetails(){
  if(ui.drawer?.kind!=='app'||!ui.drawer.app.name)return;
- if(ui.drawer.app.processId!=null){
-  const current=applicationLiveRows(namedAppProcesses()).find(p=>p.key===ui.drawer.app.key);
+ if(ui.drawer.app.live||ui.drawer.app.processId!=null){
+  const current=applicationListData({id:appNetworkId()}).rows.find(p=>p.key===ui.drawer.app.key);
   ui.drawer.app={...ui.drawer.app,...current,rxPerSecond:current?.rxPerSecond??null,txPerSecond:current?.txPerSecond??null};
  }else if(ui.drawer.app.proxyClientKey){
   const current=data.proxy?.clients?.find(client=>applicationProxyClientKey(client)===ui.drawer.app.proxyClientKey);
@@ -442,7 +441,7 @@ function renderAppList(){
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
  updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
- const source=$('#appDataSource');if(source){if(!pendingApplicationFilters.has('appDataSource'))source.value=appMinuteSource()?'native':appContext().proxyEstimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=appMinuteSource()||!data.proxy?.available;}
+ const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
  const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);
@@ -740,7 +739,7 @@ const actions={
  'app-history-prev':()=>{appContext().appPage=Math.max(1,(appContext().appPage||1)-1);renderAppList();},
  'app-history-next':()=>{appContext().appPage=(appContext().appPage||1)+1;renderAppList();},
  'app-history-sort':e=>{const d=appContext();d.appPage=1;d.historyDirection=d.historySort===e.dataset.key&&d.historyDirection==='desc'?'asc':'desc';d.historySort=e.dataset.key;renderAppList();},
- 'select-live-app':e=>{const record=applicationLiveRows(namedAppProcesses()).find(p=>p.key===e.dataset.liveKey);if(record)return openApplicationDrawer({...record,name:liveAppName(record)});},
+ 'select-live-app':e=>{const record=applicationListData({id:appNetworkId()}).rows.find(p=>p.key===e.dataset.liveKey);if(record)return openApplicationDrawer({...record,name:liveAppName(record)});},
  'select-app-row':e=>{const selected=currentAppRows().find(row=>row.key===e.dataset.key);if(selected){appContext().selectedApp=selected;return openApplicationDrawer(selected);}},
  'select-app':e=>{const record=currentAppRows().find(r=>r.key===e.dataset.key);if(record){appContext().selectedApp=record;return openApplicationDrawer(record);}},
  'select-proxy-app':e=>{const client=data.proxy?.clients?.find(row=>applicationProxyClientKey(row)===e.dataset.proxyKey);return openApplicationDrawer({...client,appId:e.dataset.appId,name:e.dataset.appName,proxyClient:true,proxyClientKey:e.dataset.proxyKey});},
@@ -796,6 +795,7 @@ document.addEventListener('change',async event=>{
  if(e.id==='historyGrouping'){try{if(e.value!=='day')await ensureMinuteHistory();ui.historyGrouping=e.value;ui.historyPage=1;renderMain();}catch(error){e.value=ui.historyGrouping;toast(error.message,true);}}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
  if(e.id==='checkUpdatesOnStartup'){try{updateStatus=await window.desktop.updates.setCheckOnStartup(e.checked);}catch(error){toast(error.message,true);}renderUpdates();return;}
+ if(e.id==='appDataSource'&&applicationView()==='live'){appContext().liveProxyEstimated=e.value==='estimated'&&!!data.proxy?.available;renderAppList();return;}
  if(e.id==='appDataSource'||e.id==='appGrouping'){
   const context=appContext(),value=e.value,field=e.id,version=++applicationFilterVersions[field];
   pendingApplicationFilters.set(field,version);

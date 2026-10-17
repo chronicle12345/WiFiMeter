@@ -69,3 +69,13 @@ test('zero history totals retain an unavailable share instead of an invented per
     assert.match(html, /class="application-share-label">—<\/span>/);
     assert.doesNotMatch(html, /application-row-share|0\.0%/);
 });
+
+test('live estimates disclose their proxy attribution instead of showing a measured source', () => {
+    const row = { key: 'estimate', appId: 'client', name: 'Client', networkId: 'home', scope: 'wifi',
+        estimated: true, proxyAppId: 'proxy', proxyName: 'Proxy', rxPerSecond: '3', txPerSecond: '1', totalPerSecond: '4' };
+    const html = applicationTable([row], { mode: 'live' }, helpers);
+    assert.match(html, /application-source-badge estimated/);
+    assert.match(html, /估算/);
+    assert.match(html, /Proxy/);
+    assert.doesNotMatch(html, /实测|PID/);
+});

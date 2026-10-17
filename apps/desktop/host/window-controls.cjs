@@ -10,7 +10,7 @@ const { miniRange, miniApplicationRows, miniFilteredLive } = require('./mini-usa
 
 const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system', promptAppCollection: true,
     miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
-    miniPinned: false, miniExcludeProxy: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
+    miniPinned: false, miniExcludeProxy: false, miniIncludeProxyEstimates: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 const SHAPES = ['bar', 'square', 'circle'];
 const PALETTES = ['indigo', 'dark', 'light'];
 const THEMES = ['light', 'dark', 'system'];
@@ -196,7 +196,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (THEMES.includes(saved?.theme)) preferences.theme = saved.theme;
             if (SHAPES.includes(saved?.miniShape)) preferences.miniShape = saved.miniShape;
             if (PALETTES.includes(saved?.miniPalette)) preferences.miniPalette = saved.miniPalette;
-            for (const key of ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
+            for (const key of ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];
             if (['1m', '5m', '1h', 'custom'].includes(saved?.miniRange)) preferences.miniRange = saved.miniRange;
             if (Number.isInteger(saved?.miniCustomMinutes) && saved.miniCustomMinutes >= 1 && saved.miniCustomMinutes <= 10080) preferences.miniCustomMinutes = saved.miniCustomMinutes;
         } catch (error) {
@@ -225,7 +225,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
             || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
             || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
-            || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
+            || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
             || (Object.hasOwn(patch, 'miniRange') && !['1m', '5m', '1h', 'custom'].includes(patch.miniRange))
             || (Object.hasOwn(patch, 'miniCustomMinutes') && (!Number.isInteger(patch.miniCustomMinutes) || patch.miniCustomMinutes < 1 || patch.miniCustomMinutes > 10080))) {
             return Promise.reject(new TypeError('窗口偏好无效。'));
@@ -280,7 +280,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     handlers['mini:preferences-read'] = event => { trustedMini(event); return read(); };
     handlers['mini:preferences-update'] = (event, patch) => {
         trustedMini(event);
-        if (!patch || Object.keys(patch).some(key => !['miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniExpanded', 'miniRange', 'miniCustomMinutes'].includes(key))) throw Error('小窗设置无效。');
+        if (!patch || Object.keys(patch).some(key => !['miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded', 'miniRange', 'miniCustomMinutes'].includes(key))) throw Error('小窗设置无效。');
         return update(patch);
     };
     handlers['mini:applications'] = event => { trustedMini(event); return applicationUsage(); };
@@ -339,7 +339,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (mini && !mini.isDestroyed() && loaded) mini.webContents.send('mini:live', miniFilteredLive(event, miniSnapshot));
             if (mini && loaded && preferences.miniExpanded) applicationUsage().catch(error => {
                 logger(`小窗应用查询失败：${error.message}`);
-                if (!disposed && mini && loaded) mini.webContents.send('mini:applications', { rows: [], status: 'error', detail: error.message, range: miniRange(preferences, timers.now()), miniExcludeProxy: preferences.miniExcludeProxy });
+                if (!disposed && mini && loaded) mini.webContents.send('mini:applications', { rows: [], status: 'error', detail: error.message, range: miniRange(preferences, timers.now()), miniExcludeProxy: preferences.miniExcludeProxy, miniIncludeProxyEstimates: preferences.miniIncludeProxyEstimates });
             });
         },
         dispose() {

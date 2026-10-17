@@ -105,6 +105,9 @@ test('Windows staging contains native policy resources and a matching Node worke
     write(path.join(fixtureApp, 'src-tauri/Cargo.toml'), '[package]\nname="fixture"');
     const result = prepare({ root: fixture, backendDirectory: backend, nodeExecutable: node, license });
     validatePrepared(result.output);
+    const packagedUsage = require(path.join(result.resources, 'runtime/host/mini-usage.cjs'));
+    const packagedRange = packagedUsage.miniRange({ miniRange: '1m' });
+    assert.equal(packagedUsage.miniApplicationRows(null, null, packagedRange).miniIncludeProxyEstimates, false);
     assert.equal(result.version, '1.3.0');
     assert.equal(fs.existsSync(path.join(result.resources, 'runtime/old-module.cjs')), false);
     assert.equal(fs.existsSync(path.join(result.output, 'ui/old-page.html')), false);

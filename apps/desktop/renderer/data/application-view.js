@@ -1,4 +1,5 @@
 import { applicationLiveRows } from './application-live.js';
+import { proxyLiveProcesses } from './proxy-live.mjs';
 import { applicationRows, applicationSummary, recordInRange } from './history.js';
 import { B, sortApps } from './model.js';
 
@@ -6,7 +7,7 @@ import { B, sortApps } from './model.js';
 export function applicationViewData(options = {}) {
     const { view = 'history', context = {}, networkId = 'all', range = {} } = options;
     if (view === 'live') {
-        const rows = options.collecting ? applicationLiveRows(options.processes || [], {
+        const rows = options.collecting ? applicationLiveRows(proxyLiveProcesses(options.processes || [], options.proxy, context.liveProxyEstimated), {
             networkId, search: context.liveSearch, sort: context.liveSort
         }) : [];
         return { rows, total: 0n, hasRecords: rows.length > 0 };

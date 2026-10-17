@@ -13,6 +13,9 @@ export const english = Object.fromEntries(`
 查看所选时段的用量，原生记录与代理估算分别标注。|Usage for the selected period, with native records and proxy estimates labeled separately.
 条结果|results
 实时速度与历史用量分别显示|Live rates and historical usage are shown separately
+原生采集|Native collection
+包含端口估算|Include port estimates
+按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。|The proxy application's network rates are distributed by current port connection counts; direct client traffic is retained.
 时间|Time
 重试|Retry
 实时更新|Live updates

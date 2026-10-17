@@ -1,5 +1,7 @@
 'use strict';
 
+const { proxyLiveProcesses } = require('../renderer/data/proxy-live.mjs');
+
 const pad = value => String(value).padStart(2, '0');
 const dateOf = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 const timeOf = date => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -71,6 +73,7 @@ function miniRange(preferences, now = Date.now()) {
 function miniApplicationRows(snapshot, live, range, preferences = {}) {
     live = live || snapshot?.live;
     const miniExcludeProxy = preferences.miniExcludeProxy === true;
+    const miniIncludeProxyEstimates = preferences.miniIncludeProxyEstimates === true;
     const isProxy = miniExcludeProxy ? proxyMatcher(snapshot, live) : () => false;
     const groups = new Map();
     const ensure = item => {
@@ -97,10 +100,12 @@ function miniApplicationRows(snapshot, live, range, preferences = {}) {
     const collection = live?.appCollection || snapshot?.appCollection || {};
     const collecting = collection.enabled === true && ['running', 'partial'].includes(collection.state);
     const running = collecting && live?.collector === 'running' && live?.state === 'connected';
-    for (const item of running ? live.appProcesses || [] : []) {
+    const processes = running ? proxyLiveProcesses(live.appProcesses || [], live.proxy, miniIncludeProxyEstimates) : [];
+    for (const item of processes) {
         // 回环观测单独显示在主窗口，避免把同一流量重复加入网卡速度。
         if (item.scope === 'loopback' || typeof item.appId !== 'string' || !item.appId || isProxy(item)) continue;
         const row = ensure(item);
+        if (item.estimated) { row.estimated = true; row.unattributed ||= item.unattributed === true; }
         row.active = true;
         const rx = bytes(item.rxPerSecond), tx = bytes(item.txPerSecond);
         if (rx === null || tx === null || item.measurementAvailable === false) row.rateAvailable = false;
@@ -116,8 +121,9 @@ function miniApplicationRows(snapshot, live, range, preferences = {}) {
         rxPerSecond: running && row.rateAvailable ? row.rxRate.toString() : null,
         txPerSecond: running && row.rateAvailable ? row.txRate.toString() : null,
         measurementAvailable: running && row.rateAvailable,
+        ...(row.estimated ? { estimated: true, unattributed: row.unattributed === true } : {}),
         rxBytes: row.hasUsage ? row.rx.toString() : null, txBytes: row.hasUsage ? row.tx.toString() : null }));
-    return { rows, range, miniExcludeProxy, status: collection.enabled !== true ? 'disabled' : collection.state || 'unavailable',
+    return { rows, range, miniExcludeProxy, miniIncludeProxyEstimates, status: collection.enabled !== true ? 'disabled' : collection.state || 'unavailable',
         detail: collection.detail || '', updatedAt: snapshot?.live?.updatedAt || live?.updatedAt || null };
 }
 

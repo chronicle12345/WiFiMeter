@@ -73,6 +73,46 @@ async function openLiveApplications(){
     await expect(page.getByRole('tab',{name:'实时流量排行',exact:true})).toHaveAttribute('aria-selected','true');
 }
 
+test('实时来源可切换端口估算，详情跟随本轮速度且不重复原生代理流量 @application-views',async()=>{
+    await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
+        s.live.collector='running';s.live.state='connected';
+        s.appCollection={available:true,enabled:true,state:'running'};
+        s.appProcesses=[{appId:'C:\\Proxy\\Proxy.exe',name:'Proxy',networkId:id,processId:1,scope:'wifi',rxPerSecond:'9000',txPerSecond:'3000'},
+            {appId:'C:\\Apps\\Browser.exe',name:'Browser',networkId:id,processId:2,scope:'wifi',rxPerSecond:'100',txPerSecond:'10'},
+            {appId:'C:\\Apps\\Browser.exe',name:'Browser',networkId:'',processId:2,scope:'loopback',rxPerSecond:'9000',txPerSecond:'3000'}];
+        s.proxy.clients=[{appId:'C:\\Apps\\Browser.exe',name:'Browser',proxyAppId:'C:\\Proxy\\Proxy.exe',proxyName:'Proxy',connections:2},
+            {appId:'C:\\Apps\\Chat.exe',name:'Chat',proxyAppId:'C:\\Proxy\\Proxy.exe',proxyName:'Proxy',connections:1}];
+        s.live.proxy=s.proxy;
+    });
+    await page.reload();await openLiveApplications();
+    await expect(page.locator('#liveRankingRegion tbody tr')).toHaveCount(3);
+    const before=await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='snapshot').length);
+    await page.getByLabel('应用数据来源').selectOption('estimated');
+    await expect(page.locator('#liveRankingRegion tbody tr')).toHaveCount(4);
+    const estimated=page.locator('#liveRankingRegion tbody tr').filter({has:page.locator('.application-source-badge.estimated')});
+    await expect(estimated).toHaveCount(2);
+    const browser=estimated.filter({hasText:'Browser'});
+    await expect(browser).toContainText('6.0 KB/s');
+    await expect(page.locator('#liveRankingRegion tbody tr').filter({hasText:'Browser'}).filter({has:page.locator('.application-source-badge.measured')})).toHaveCount(2);
+    expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='snapshot').length)).toBe(before);
+    await browser.locator('[data-action="select-live-app"]').click();
+    await expect(page.locator('.application-summary')).toContainText('6.0 KB/s');
+    await expect(page.locator('.application-summary')).toContainText('按当前端口连接数分配');
+    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
+        s.appProcesses[0].rxPerSecond='18000';
+        BrowserWindow.getAllWindows()[0].webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection,appProcesses:s.appProcesses,proxy:s.proxy});
+    });
+    await expect(page.locator('.application-summary')).toContainText('12.0 KB/s');
+    await page.keyboard.press('Escape');
+    await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();
+    await expect(page.locator('#appDataSource')).toHaveValue('native');
+    await page.getByRole('tab',{name:'实时流量排行',exact:true}).click();
+    await expect(page.locator('#appDataSource')).toHaveValue('estimated');
+    await page.locator('#appDataSource').selectOption('native');
+    await expect(page.locator('#liveRankingRegion tbody tr')).toHaveCount(3);
+    await expect(page.locator('#liveRankingRegion .application-source-badge.estimated')).toHaveCount(0);
+});
+
 test('代理详情复用历史时仍更新速度，应用增量和估算不一致时及时失效 @application-views',async()=>{
     await app.evaluate(()=>{const s=globalThis.rendererFixture.snapshot,id=s.networks[0].id;
         const base={networkId:id,date:'2020-01-01',txBytes:'0'};
@@ -112,7 +152,8 @@ test('应用视图切换只显示当前列表，分别保存搜索排序和历�
     await expect(page.locator('#appViewPanel')).toHaveAttribute('aria-labelledby','appViewPanel-live');
     await expect(page.locator('#appSearch, #appSort, #appListRegion')).toHaveCount(3);
     await expect(page.locator('#liveRankingRegion')).toHaveCount(1);
-    await expect(page.locator('#appGrouping, #appDataSource, #appTotal, .toolbar [data-action="period"], [data-action="export-apps"]')).toHaveCount(0);
+    await expect(page.locator('#appDataSource')).toHaveValue('native');
+    await expect(page.locator('#appGrouping, #appTotal, .toolbar [data-action="period"], [data-action="export-apps"]')).toHaveCount(0);
     await page.locator('#appSearch').fill('Live Browser');
     await page.locator('#appSort').selectOption('tx');
     await page.getByRole('tab',{name:'应用用量记录',exact:true}).click();

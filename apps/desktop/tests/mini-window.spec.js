@@ -8,7 +8,7 @@ async function miniFixture(page) {
     const desktopRoot = new URL('../', import.meta.url);
     const bridge = await readFile(new URL('../tauri/bridge.js', import.meta.url), 'utf8');
     const preferences = { miniShape: 'bar', miniPalette: 'dark', miniExpanded: false,
-        miniPinned: false, miniAutoHide: true, miniExcludeProxy: false, miniRange: '5m', miniCustomMinutes: 15 };
+        miniPinned: false, miniAutoHide: true, miniExcludeProxy: false, miniIncludeProxyEstimates: false, miniRange: '5m', miniCustomMinutes: 15 };
     const requests = [];
     let failSave = false;
     await page.route('http://mini.test/**', async route => {
@@ -27,7 +27,8 @@ async function miniFixture(page) {
             Object.assign(preferences, args[0]);
             return { ...preferences };
         }
-        if (channel === 'mini:applications') return { rows: [], status: 'running', range: { minutes: 5 }, miniExcludeProxy: preferences.miniExcludeProxy };
+        if (channel === 'mini:applications') return { rows: [], status: 'running', range: { minutes: 5 }, miniExcludeProxy: preferences.miniExcludeProxy,
+            miniIncludeProxyEstimates: preferences.miniIncludeProxyEstimates };
         return null;
     });
     await page.addInitScript({ content: `(() => {
@@ -48,6 +49,25 @@ async function miniFixture(page) {
             await page.evaluate(value => window.__miniEvent('window-preferences:changed', value), { ...preferences });
         } };
 }
+
+test('live source switches to port estimates, labels rates and restores the saved choice', async ({ page }) => {
+    const fixture = await miniFixture(page);
+    await page.locator('#apps').click();
+    await page.getByRole('combobox', { name: '应用实时流量来源' }).selectOption('estimated');
+    expect(fixture.preferences.miniIncludeProxyEstimates).toBe(true);
+    await page.evaluate(() => window.__miniEvent('mini:applications', {
+        range: { minutes: 5 }, status: 'running', miniExcludeProxy: false, miniIncludeProxyEstimates: true,
+        rows: [{ appId: 'browser', name: 'Browser', estimated: true, measurementAvailable: true,
+            rxPerSecond: '12300', txPerSecond: '1000', rxBytes: '800', txBytes: '200' }]
+    }));
+    await expect(page.locator('#appRows')).toContainText('估算');
+    await expect(page.locator('#appRows')).toContainText('12.3');
+    await expect(page.locator('#rangeSummary')).toContainText('原生分钟记录');
+    await page.reload();
+    await expect(page.getByRole('combobox', { name: '应用实时流量来源' })).toHaveValue('estimated');
+    await page.getByRole('combobox', { name: '应用实时流量来源' }).selectOption('native');
+    expect(fixture.preferences.miniIncludeProxyEstimates).toBe(false);
+});
 
 test('pin button locks dragging and saved state survives reload', async ({ page }) => {
     const fixture = await miniFixture(page);

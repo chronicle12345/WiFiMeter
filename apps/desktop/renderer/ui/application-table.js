@@ -3,8 +3,8 @@ import { applicationAvatar } from './applications.js';
 
 function sourceBadge(row, live, esc) {
     const measured = row.measurementAvailable !== false && row.rxPerSecond != null && row.txPerSecond != null;
-    const label = live ? measured ? t('实测') : t('不可测') : row.unattributed ? t('估算 · 未归属') : row.estimated ? t('估算') : t('原生记录');
-    const state = live ? measured ? 'measured' : 'unavailable' : row.estimated || row.unattributed ? 'estimated' : '';
+    const label = row.unattributed ? t('估算 · 未归属') : row.estimated ? t('估算') : live ? measured ? t('实测') : t('不可测') : t('原生记录');
+    const state = row.estimated || row.unattributed ? 'estimated' : live ? measured ? 'measured' : 'unavailable' : '';
     return `<span class="application-source-badge${state ? ` ${state}` : ''}">${esc(label)}</span>`;
 }
 
@@ -25,7 +25,7 @@ export function applicationTable(rows, options = {}, { esc, formatValue, network
         const appButton = `<button class="network-name application-name" data-action="${action}" data-app-id="${esc(id)}" ${identity} aria-pressed="${selected}">${applicationAvatar({ ...row, name }, esc, true)}<span class="application-name-text">${esc(name)}</span></button>`;
         const network = row.scope === 'loopback' ? t('本地 TCP') : networkLabel(row.networkId) || row.networkId || '—';
         const pids = row.processIds?.join(', ') || row.processId || '—';
-        const meta = live ? `<span>${esc(network)}</span><span>PID ${esc(pids)}</span>${row.scope === 'loopback' ? '' : `<span>${t('网络采集')}</span>`}` : '';
+        const meta = live ? `<span>${esc(network)}</span>${row.estimated ? `<span>${esc(row.proxyName || row.proxyAppId)}</span>` : `<span>PID ${esc(pids)}</span>${row.scope === 'loopback' ? '' : `<span>${t('网络采集')}</span>`}`}` : '';
         let share = !live && ranked ? '<span class="application-share-label">—</span>' : '';
         if (!live && ranked && BigInt(sum) > 0n) {
             const ratio = BigInt(row.total ?? 0) * 1000n / BigInt(sum), percentage = (Number(ratio > 1000n ? 1000n : ratio) / 10).toFixed(1);

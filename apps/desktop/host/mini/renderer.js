@@ -8,6 +8,7 @@ const autoHide = document.getElementById('autoHide');
 const proxyFilter = document.getElementById('proxyFilter');
 const panel = document.getElementById('appsPanel');
 const range = document.getElementById('range');
+const liveSource = document.getElementById('liveSource');
 const custom = document.getElementById('customMinutes');
 const status = document.getElementById('appsStatus');
 const errorMessage = document.getElementById('miniError');
@@ -15,7 +16,7 @@ const tooltip = document.getElementById('miniTooltip');
 const rowsElement = document.getElementById('appRows');
 const rows = new Map();
 let preferences = { miniExpanded: false, miniPinned: false, miniAutoHide: true, miniExcludeProxy: false,
-    miniRange: '5m', miniCustomMinutes: 15 };
+    miniIncludeProxyEstimates: false, miniRange: '5m', miniCustomMinutes: 15 };
 let lastLive = null;
 let applicationResult = null;
 let applicationRequest = 0;
@@ -116,11 +117,13 @@ function applyPreferences(value) {
     proxyFilter.setAttribute('aria-label', preferences.miniExcludeProxy ? '显示全部流量' : '排除代理程序流量');
     document.querySelector('.all-traffic-label').textContent = preferences.miniExcludeProxy ? ' · 排除代理' : ' · 全部流量';
     if (document.activeElement !== range) range.value = preferences.miniRange;
+    liveSource.value = preferences.miniIncludeProxyEstimates ? 'estimated' : 'native';
     if (document.activeElement !== custom) custom.value = preferences.miniCustomMinutes;
     document.getElementById('customRange').hidden = range.value !== 'custom';
     if (tooltipButton) showTooltip(tooltipButton);
     if (previous.miniRange !== preferences.miniRange || previous.miniCustomMinutes !== preferences.miniCustomMinutes
-        || previous.miniExcludeProxy !== preferences.miniExcludeProxy) {
+        || previous.miniExcludeProxy !== preferences.miniExcludeProxy
+        || previous.miniIncludeProxyEstimates !== preferences.miniIncludeProxyEstimates) {
         applicationResult = null;
         rowsElement.replaceChildren(); rows.clear();
         document.getElementById('tableWrap').hidden = true;
@@ -131,15 +134,16 @@ function applyPreferences(value) {
 }
 
 function rangeDescription(value) {
-    if (!value?.fromTime || !value?.toTime) return '按分钟汇总，正在读取时段';
+    if (!value?.fromTime || !value?.toTime) return '累计为原生分钟记录，正在读取时段';
     const start = value.from === value.to ? value.fromTime : `${value.from} ${value.fromTime}`;
     const end = value.from === value.to ? value.toTime : `${value.to} ${value.toTime}`;
-    return `按分钟汇总，含当前分钟 · ${start}–${end}`;
+    return `累计为原生分钟记录，含当前分钟 · ${start}–${end}`;
 }
 
 function renderApplications(result) {
     if (!result || result.range?.minutes !== selectedMinutes()
-        || Boolean(result.miniExcludeProxy) !== preferences.miniExcludeProxy) return;
+        || Boolean(result.miniExcludeProxy) !== preferences.miniExcludeProxy
+        || Boolean(result.miniIncludeProxyEstimates) !== preferences.miniIncludeProxyEstimates) return;
     applicationResult = result;
     const items = Array.isArray(result.rows) ? result.rows : [];
     document.getElementById('rangeSummary').textContent = rangeDescription(result.range);
@@ -164,7 +168,7 @@ function renderApplications(result) {
             rows.set(item.appId, row);
         }
         const cells = row.children;
-        cells[0].textContent = item.name || item.appId;
+        cells[0].textContent = (item.name || item.appId) + (item.estimated ? item.unattributed ? ' · 估算未归属' : ' · 估算' : '');
         cells[1].textContent = applicationSpeed(item.rxPerSecond, item.measurementAvailable !== false);
         cells[2].textContent = applicationSpeed(item.txPerSecond, item.measurementAvailable !== false);
         cells[3].textContent = applicationBytes(item.rxBytes);
@@ -221,6 +225,14 @@ range.addEventListener('change', () => {
         patch.miniCustomMinutes = minutes;
     }
     updatePreferences(patch);
+});
+liveSource.addEventListener('change', async () => {
+    liveSource.disabled = true;
+    try { await updatePreferences({ miniIncludeProxyEstimates: liveSource.value === 'estimated' }); }
+    finally {
+        liveSource.value = preferences.miniIncludeProxyEstimates ? 'estimated' : 'native';
+        liveSource.disabled = false;
+    }
 });
 custom.addEventListener('input', () => custom.setCustomValidity(''));
 custom.addEventListener('change', () => {
