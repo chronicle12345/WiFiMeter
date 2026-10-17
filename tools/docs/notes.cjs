@@ -112,7 +112,9 @@ function checkBody(relative, text, state, errors) {
   const headings = proseLines(text).filter(line => /^## /.test(line)).map(line => line.trimEnd());
   const required = state === 'implemented'
     ? [['Problem', '问题'], ['Decision', '决定'], ['Alternatives considered', '备选方案'], ['Consequences', '影响']]
-    : [['Problem', '问题'], ['Proposal', '方案'], ['Alternatives considered', '备选方案'], ['Acceptance criteria', '验收标准'], ['Risks', '风险']];
+    : state === 'rejected'
+      ? [['Problem', '问题'], ['Proposal', '方案'], ['Alternatives considered', '备选方案']]
+      : [['Problem', '问题'], ['Proposal', '方案'], ['Alternatives considered', '备选方案'], ['Acceptance criteria', '验收标准'], ['Risks', '风险']];
   if (!['## Problem', '## 问题'].includes(headings[0])) errors.push(`${NOTE_ROOT}/${relative}: first section must be ## Problem / ## 问题`);
   for (const names of required) {
     if (!names.some(name => headings.includes(`## ${name}`))) errors.push(`${NOTE_ROOT}/${relative}: missing ## ${names.join(' / ## ')}`);

@@ -150,10 +150,22 @@ test('rejecting a proposal retains its sections and requires a reason', (t) => {
   const root = fixture(t);
   const english = pair(root, 'rejected');
   assert.deepEqual(notes().checkNotes(root), []);
-  write(root, english, noteText('rejected').replace('Status: rejected — superseded by a simpler approach', 'Status: rejected').replace('## Risks', '## Other'));
+  write(root, english, noteText('rejected').replace('Status: rejected — superseded by a simpler approach', 'Status: rejected').replace('## Proposal', '## Other'));
   const errors = notes().checkNotes(root).join('\n');
   assert.match(errors, /reason|Status/);
-  assert.match(errors, /Risks|风险/);
+  assert.match(errors, /Proposal|方案/);
+});
+
+test('rejected notes retain the original proposal without requiring new acceptance or risk sections', (t) => {
+  const root = fixture(t);
+  const english = pair(root, 'rejected');
+  for (const [filename, chinese] of [[english, false], [english.replace(/\.md$/, '.zh-CN.md'), true]]) {
+    const text = noteText('rejected', chinese);
+    const optionalStart = chinese ? '\n## 验收标准\n' : '\n## Acceptance criteria\n';
+    write(root, filename, text.slice(0, text.indexOf(optionalStart)) + '\n');
+  }
+  recordPair(root, english);
+  assert.deepEqual(notes().checkNotes(root), []);
 });
 
 test('archives a complete triplet and seals every resulting artifact', (t) => {

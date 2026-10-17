@@ -2,57 +2,104 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Agent Notes preserve a lasting decision's reasons, genuine alternatives, costs and required evidence. The [development workflow](../../docs/DEVELOPMENT.md) owns branches and review; current product and protocol facts belong in their maintained guides.
+Agent Notes preserve durable reasons, rejected options and trade-offs. Current facts belong in maintained guides; [Development](../../docs/DEVELOPMENT.md) owns the workflow.
 
-## Scope and discovery
+## When to write and update
 
-Search active Notes by mechanism or module before creating one. Update the owning record when its decision still applies. Write a new Note only when code, tests and existing documentation cannot explain a lasting choice. Mechanical edits, styling and local changes without a durable decision need no Note. Do not reconstruct unknown historical reasons or invent alternatives.
+Search active folders by mechanism or module; use relative Markdown cross-links, without a global INDEX.md.
 
-Use lifecycle/class folders and repository search. Do not maintain a global INDEX.md. Archived records are historical evidence, excluded from current guidance.
+Add or update a Note in the same change when code, tests and existing documentation leave lasting reasoning unexplained. Use proposed before delivery and implemented afterward. Mechanical or local changes without lasting decisions need none.
 
-## Paths and lifecycle
+Update unchanged decisions' paths, names, defaults and structure alongside code. A different decision needs a new linked record.
 
-Use `.agents/notes/<lifecycle>/<class>/yyyy-mm-dd-topic.md`. The date is the first proposal date and remains unchanged when the record moves. Create folders only when needed. Every active Note includes its `.zh-CN.md` counterpart and `.i18n.json` record under the [bilingual contract](../../docs/i18n/README.md).
+## Paths and classes
 
-| Lifecycle | Meaning |
+Use `.agents/notes/<lifecycle>/<class>/yyyy-mm-dd-topic.md`. Keep the first proposal date, verified from Git history, when moving. Create folders as needed.
+
+Notes have English `.md`, Chinese `.zh-CN.md` and generated `.i18n.json` files. Lifecycles are `proposed`, `implemented`, `rejected` and `archived`.
+
+| Class | Scope |
 | --- | --- |
-| `proposed` | A future decision with acceptance conditions and known risks |
-| `implemented` | A shipped decision, with facts kept current alongside code |
-| `rejected` | A declined proposal retained while its reason prevents a plausible mistake |
-| `archived` | A completed implemented decision with historical value and no continuing guidance role |
+| `feature` | New capabilities |
+| `bug-fix` | Defects or postmortem gaps |
+| `simplification` | Removal or consolidation without added capability |
+| `architecture` | Shipped source, module and runtime boundaries |
+| `process` | Tooling, policies and development/release workflows |
+| `testing` | Test infrastructure and strategy |
 
-| Class | Subject |
-| --- | --- |
-| `feature` | Product capabilities and behavior |
-| `bug-fix` | A lasting defect correction strategy |
-| `simplification` | Removal or consolidation and its trade-offs |
-| `architecture` | Shipped module, data and protocol boundaries |
-| `process` | Development, tooling and release rules |
-| `testing` | Verification strategy and coverage |
+Architecture concerns shipped code; process concerns surrounding tools/workflows. Extend classes in both checker and guide.
 
-## Format and maintenance
+## File format
 
-Both language files keep this machine-readable opening:
+The first three lines are strict, followed by a blank line and language switcher:
 
 ```markdown
 # Agent Note: <title>
 
-Status: implemented
+Status: proposed
 ```
 
-Use `proposed` for a proposal or `rejected — <reason>` for a rejection. Add the language switcher after a blank line. English and Chinese headings follow the same section order.
+One Status line matches the folder: `proposed`, `implemented`, or `rejected — <one-line reason>`. Status omits dates; qualifications belong in the body.
 
-| Lifecycle | Required sections |
-| --- | --- |
-| Proposed or rejected | Problem, Proposal, Alternatives considered, Acceptance criteria, Risks |
-| Implemented | Problem, Decision, Alternatives considered, Consequences |
+Proposed skeleton:
 
-Chinese section names are 问题、方案、备选方案、验收标准、风险、决定、影响. Describe an implemented decision as current fact; record actual evidence in a Verification section. Replace proposal headings and plans when implementation finishes. Keep paths, defaults and names accurate in the same change as code. A changed decision or rationale gets a new cross-linked Note.
+```markdown
+## Problem
+## Proposal
+## Alternatives considered
+## Acceptance criteria
+## Risks
+```
 
-## Verification and archival
+Problem explains the need independently of a solution. Proposal describes planned changes, migration and open questions. Acceptance criteria define observable completion; Risks covers failures and deliberately forgone capabilities.
 
-Run `npm run check:notes` for lifecycle and seal checks, and `npm run check:docs` for the complete documentation checks. Review both languages before `npm run docs:pair -- <path> --reviewed`. The [budget list](../../tools/docs/budgets.json) limits each Note; `npm run docs:budget` reports usage.
+Implemented skeleton:
 
-Archive only an implemented record that no longer guides active work. Run `npm run notes:archive -- <implemented-note-path>`. The command moves all three files, keeps the implemented status, adds matching archive dates, records normalized LF SHA-256 seals and refuses existing targets. Update incoming links in active documents in the same change.
+```markdown
+## Problem
+## Decision
+## Alternatives considered
+## Consequences
+```
 
-The archive manifest is append-only against the Git baseline: local checks use HEAD, and CI supplies the PR base or pre-push commit through DOCS_BASE_REF. An explicit unreadable baseline fails. Frozen triplets cannot be edited, deleted or re-recorded; line-ending normalization supports Windows checkouts. A seal establishes unchanged recorded contents, not semantic correctness.
+Decision describes delivered behavior in present tense; Consequences records benefits and costs. Technical sections and Verification describe evidence, limits and coverage gaps. Proposal, Plan, Migration plan and Acceptance criteria headings are forbidden here.
+
+Rejected Notes preserve the original proposal body and sections; only Problem, Proposal and Alternatives considered are mandatory. Record rejection in Status and retain existing plans, acceptance criteria and risks.
+
+Record real alternatives and rejection reasons, using a bold-led paragraph or a `### Why not <X>?` subsection per option. Never invent missing history.
+
+Both languages match in structure and meaning. Machine headers stay English; Chinese section names are 问题、方案、备选方案、验收标准、风险、决定、影响、验证.
+
+## Moving and replacing
+
+Move all three files together, preserve their date, update Status and incoming links, and satisfy the destination format.
+
+For proposed → implemented, rewrite Proposal as present-tense Decision. Replace plans with delivered facts; fold acceptance criteria and risks into Consequences or factual Testing/Verification, recording actual results and gaps.
+
+For proposed → rejected, add the rejection reason to Status and preserve the proposal.
+
+Partial replacement keeps both records, reciprocal links and current surviving facts. Complete absorption permits deleting the old triplet only after the current owner preserves every unique rationale, alternative, consequence, required verification and coverage gap. Repair incoming links together; Git history cannot be the sole rationale. Never rewrite an old record into its opposite.
+
+## Removing capabilities
+
+An introducing Note can merge into a removal Note only after the capability disappears from production code, configuration, schemas, persistence/protocol formats, migration and compatibility behavior, current availability guides and tests asserting supported behavior.
+
+Removing one transport, default, implementation or view is partial replacement. Remaining stored data or compatibility handling also prevents complete removal.
+
+The removal record preserves the original motivation, why it no longer justifies retention, alternatives to removal, forgone capabilities, reintroduction conditions and evidence of complete removal. Removal-verification tests may remain; obsolete implementation lists and tests of deleted behavior are not current evidence.
+
+## Archiving or deleting
+
+Delete purely mechanical or small UI triplets; repair or remove incoming links. Small bug fixes, performance changes, new capabilities and substantive behavior decisions do not qualify merely by size.
+
+Archive implemented Notes only when delivery is complete, future guidance value is low and historical value remains. Keep active records whose alternatives, ownership, guarantees, persistence/protocol semantics, security or reintroduction conditions still matter. Do not use age, length or quotas as criteria.
+
+Obsolete proposals become rejected; retain rejections only while they prevent a plausible consequential mistake, otherwise delete the triplet and repair links.
+
+Archive with `npm run notes:archive -- <implemented-note-path>`. It moves the reviewed triplet to `archived/<class>/`, retains implemented status and adds the same `Archived: YYYY-MM-DD` on line 4 in both languages. The date cannot precede the proposal. Only archive metadata and the pair record change; repair incoming links.
+
+Archived triplets are frozen: no editing, translation, formatting, moving, deletion or rerecording. Cite them only as history. [notes.cjs](../../tools/docs/notes.cjs) validates archived content.
+
+## Review and commands
+
+Review both languages under the [bilingual contract](../../docs/i18n/README.md), then run `npm run docs:pair -- <path> --reviewed`. Use `npm run check:notes`, `npm run docs:budget` and `npm run check:docs` for validation; [budgets.json](../../tools/docs/budgets.json) owns limits.
