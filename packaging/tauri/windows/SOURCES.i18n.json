@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "SOURCES.md",
+  "chinese": "SOURCES.zh-CN.md",
+  "sha256": {
+    "en": "d5222c52d4fb15a53ffdc954726a8a37268d2d7f3bd6d908a8de679811daee41",
+    "zh": "06343c63500ffd44985c6359f79c785d222d72a6f87cbd5630414674acbee699"
+  }
+}

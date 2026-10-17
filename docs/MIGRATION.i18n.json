@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "MIGRATION.md",
+  "chinese": "MIGRATION.zh-CN.md",
+  "sha256": {
+    "en": "1ff46b8fc380223df64b7b2756c92afb5b655b2e727cc8287301d893b60a4c51",
+    "zh": "feaa19f0b09ff798aaedb97d6bb600291dad89d27d1880af984d9689f6a58138"
+  }
+}

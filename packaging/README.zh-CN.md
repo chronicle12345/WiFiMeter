@@ -57,19 +57,15 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-暂停的 Linux CI 配置分别执行系统依赖安装（`tauri-linux-deps.sh system`）与通过验证的 libbpf 缓存复用（`tauri-linux-deps.sh libbpf`）；不传模式时仍执行两部分。libbpf 缓存只保留静态安装目录，固定版本的 Tauri WebDriver 使用另一个独立安装目录。使用缓存前，分别检查链接与 ABI，或检查 Cargo 安装记录、可执行文件摘要、架构及 CLI 启动结果。验证失败的目录移动到 `RUNNER_TEMP` 下的缓存归档目录，再重新构建。缓存键及必要的原生验证范围见 [CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)。本机构建不依赖这些 CI 缓存。
-
-Windows 包解包后校验所有运行资源，启动真实 WebView2 与随包后端。保留的 Linux 验证工具对三个格式分别解包校验并运行真实 WebKitGTK，但对应 CI 产品任务当前暂停。安装方法与限制见[发布说明](../docs/releases/v1.3.6.md#中文)，检查结果以对应提交的 CI 记录为准。
+CI 缓存配置及启用、暂停目标由 [CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)维护，本机构建不依赖这些 CI 缓存。包验证入口和原生依赖由[测试指南](../docs/TESTING.zh-CN.md#原生宿主与安装包)维护，安装方法和版本限制见[发布说明](../docs/releases/v1.3.6.md#中文)。
 
 RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
 
 安装与系统交互验收使用独立的测试安装和数据目录：核对安装、升级、快捷方式、托盘、唯一开机启动登记、设置与备份恢复，以及退出后重新打开的数据完整性。额度通知、真实断网和下载限速需在目标机器按实际权限与网络条件验证；卸载保留用户数据。包内 WebView 自动检查与完整安装/卸载验收分别记录，不能将前者当作后者的结果。
 
-## 测试与发布
+## 验证与发布
 
-共享桌面业务位于 `apps/desktop/host`，Tauri 适配位于 `apps/desktop/tauri`。开发态页面回归使用无头浏览器与真实页面桥接，并在隔离目录运行 Node 业务与 C++ 后端。测试替身负责窗口、对话框和系统设置，不启动 Electron。当前发布要求两个 Windows 浏览器分片及 Windows x64 后端、ETW/EStats、Rust 和包内 WebView2 检查通过。发布校验要求恰好一个 Windows x64 NSIS 安装包及对应内部 SHA-256 清单，再由 GitHub Actions 验证公开下载，详见[CI 与发布矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)。
-
-本机优先复用现有浏览器、依赖和构建缓存；测试截图、日志及临时数据写入项目 `del`，归档时只移动文件。性能比较使用同一测试范围和实际 CI 耗时，不把开发态浏览器结果描述为原生 WebView 验收。
+检查、隔离目录、诊断和证据边界遵循[测试指南](../docs/TESTING.zh-CN.md)。发布条件和产物数量由 [CI 与发布矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)维护。开发、审查和决策记录遵循[开发流程](../docs/DEVELOPMENT.zh-CN.md)。
 
 ## 图标来源与核对
 

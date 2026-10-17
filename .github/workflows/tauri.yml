@@ -33,6 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
@@ -41,10 +42,16 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - name: Install locked dependencies for packaging tests
         run: npm ci --prefix apps/desktop --ignore-scripts
+      - name: Test repository documentation and workflow tools
+        run: npm run test:docs
+      - name: Validate repository documentation and shared rules
+        env:
+          DOCS_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+        run: npm run check:docs
       - name: Validate packaging and release helpers
         run: |
           npm run test:packaging:tauri
-          node --test .github/workflows/scripts/ci.test.cjs .github/workflows/scripts/tauri-validated-run.test.cjs .github/workflows/scripts/tauri-linux-cache.test.cjs
+          npm run test:ci
       - name: Check workflow syntax with pinned actionlint
         run: |
           set -euo pipefail

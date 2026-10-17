@@ -41,4 +41,4 @@ sudo python3 backend/tests/linux_app_capture_smoke.py build/app/wifimeter-app-ca
 
 脚本只通过本机回环发送测试数据，验证 TCP/UDP、IPv4/IPv6、两个进程的收发、应用归并、
 重复快照和退出后的最终计数。需要系统授权的测试在普通用户 `ctest` 中明确标为跳过，不能据此声称真实采集通过。
-GitHub Linux 工作流单独以 root 运行该脚本；桌面、普通后端和其余测试继续使用普通权限。
+Linux CI 任务目前暂停，保留的配置会在恢复后单独以 root 运行该脚本；桌面、普通后端和其余测试继续使用普通权限。状态见 [CI 矩阵](PACKAGING-MATRIX.zh-CN.md)，验证边界见[测试指南](TESTING.zh-CN.md)。

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "PACKAGING-MATRIX.md",
+  "chinese": "PACKAGING-MATRIX.zh-CN.md",
+  "sha256": {
+    "en": "7bd36101a7ca9c437318c6c4abcf35dbe9498739aecee472bb2ca5f2ec384f7f",
+    "zh": "230fef9804facd212a6d1b076c143bae3cafd6b0e5cd2360a0be20bc361aab83"
+  }
+}

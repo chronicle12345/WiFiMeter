@@ -2,109 +2,77 @@
 
 English | [简体中文](ARCHITECTURE.zh-CN.md)
 
-The shared Tauri desktop application lives in `apps/desktop/`. Windows and Linux use the same renderer and host code. Rust provides the system WebView and native desktop capabilities, while a Node helper process reuses the existing business modules. The local C++ backend handles native network collection and business storage; both platform implementations are in place. Current releases cover Windows x64, x86 and ARM64, plus Linux x64 and ARM64. See the [build and release matrix](PACKAGING-MATRIX.md) for capabilities and verification limits.
+The shared desktop application is in `apps/desktop/`. Windows and Linux share the renderer and host. Tauri/Rust provides the system WebView and desktop capabilities; Node runs business modules; the local C++ backend owns native collection and business storage. See the [CI and release matrix](PACKAGING-MATRIX.md) for active targets.
 
 ## Current data flow
 
 ```text
-renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node business process → wifimeter-backend (JSON Lines)
-       └──────────────────────────────────→ data/model.js (validation and calculations)
-renderer → tauri/bridge.js → Rust → system file dialogs, windows, tray, system notifications
-                                → Node → autostart, data import, file I/O, updates and traffic control
+renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node → wifimeter-backend (JSON Lines)
+       └──────────────────────────────────→ data/model.js
+renderer → tauri/bridge.js → Rust → dialogs, windows, tray, notifications
+                                → Node → autostart, migration, file I/O, updates, traffic control
 ```
 
-The renderer creates data objects and reads the local backend through `backend-client.js`. Data definitions and calculations live in `model.js`. Synthetic snapshots live in `tests/fixtures/snapshot.js`; test fixtures are not copied into production renderer assets.
+`renderer/app.js` composes navigation, rendering, and events. Reusable input/display belongs in `renderer/ui/`; queries and calculations belong in `renderer/data/`. `ui/form-autosave.js` owns validation, save state, retries, retention cleanup, and draft discard through callbacks; the entry point owns confirmations and refreshes. Synthetic snapshots in `tests/fixtures/snapshot.js` are excluded from production assets.
 
-`renderer/app.js` composes page rendering, navigation and events. Reusable input and display logic belongs in `renderer/ui/`; data access and calculations belong in `renderer/data/`. `ui/form-autosave.js` manages field validation, save state, retries, retention cleanup and draft discard for settings, network quota, total quota and proxy forms. It calls existing host and data interfaces through callbacks; the page entry point handles confirmation dialogs and interface refreshes. New business logic should go into the module responsible for it, with tests that call the module interface directly.
+`ui/application-workspace.js` and `ui/application-table.js` share view controls and five-column rows. The application page starts live; the network drawer starts with history. Each view keeps its own search, sort, and source selection. Speed and byte preferences format live and historical values respectively. Missing measurements display a dash; badges distinguish measured/unavailable rates, native records, and estimates. Both views use the same application drawer and controls.
 
-The application page and the network drawer share view tabs and filters from `ui/application-workspace.js`, together with the five-column row layout in `ui/application-table.js`. The application page initially shows live traffic; the network drawer initially shows usage history. Live and historical search, sort and source selections are kept separately. The live source switches native application rates or rates including port-based proxy estimates. History supports application summaries and minute, hour, day and month groupings; its date range and native/estimated source selection do not change live values. Page composition and event routing remain in `app.js`.
+`data/proxy-live.mjs::proxyLiveProcesses`, called through `data/application-view.js` and the floating window, allocates an identified proxy's measured physical-network rates by current client TCP connection counts. Direct client rows remain, estimated shares are marked, and attributed proxy rates are replaced to count them once. Unknown clients and unallocated shares remain estimated unattributed traffic. Missing identities, weights, or measurements preserve native/unavailable values. Adapter counters, quotas, and stored records are unchanged. The application page and network drawer retain independent live choices for the session and restart with native capture. The floating window persists `miniIncludeProxyEstimates` separately from proxy exclusion; accumulated usage reads actual minute records.
 
-The shared table formats live values with the speed-unit preference and historical values with the byte-unit preference. Missing measurements display a dash. Row badges distinguish measured or unavailable rates from native records and proxy estimates. Local TCP connections remain separate from adapter usage and quota totals; sharing the display does not add rates to historical bytes. The same application drawer provides details and existing network controls from either view.
+`data/history.js` aggregates applications; `data/application-view.js` derives rows, unsearched totals, and export availability per render. `ui/app-icons.js` shares pending requests, limits concurrency, and drops queued requests without a connected matching avatar. `data/application-proxy.js` matches known application/proxy identifiers and paths, never inferring identity from a display name. Historical estimates replace proxy rows only when download and upload totals each match the same network/date/proxy's native totals. Direct client traffic remains; partial-day and minute/hour details omit daily estimates. Local TCP rates remain separate from historical bytes, adapter totals, and quotas. Fields are defined in [Contracts](../contracts/README.md).
 
-`data/proxy-live.mjs::proxyLiveProcesses` shares live port estimate calculation between the application workspace, through `data/application-view.js`, and the floating window. For each identified proxy, current client TCP connection counts weight allocation of that proxy's measured physical-network rates. Direct client rows remain alongside estimated shares, which carry an estimate marker; attributed proxy rates are replaced so totals count them once. Unknown clients and undistributed shares remain estimated unattributed traffic. Missing identities, weights or measurements preserve native or unavailable values. The calculation does not change backend counters, adapter totals, quotas or stored records. The main application and network drawer each keep a live source choice for the current session, independent of history, and default to native capture after restart. Floating-window source selection persists as `miniIncludeProxyEstimates`, independently of its proxy-exclusion preference; accumulated usage still reads actual minute records and never derives minute attribution from daily estimates.
+Proxy detail validation checks candidate groups and retains one result keyed by history revision, source arrays, identity, and selected range. Snapshots, application increments, estimate replacement, clears, and proxy configuration saves advance that revision; speed events do not. Current clients and measurement availability are reread. Closing the drawer releases history references. Callers without a revision are not cached because their arrays may mutate.
 
-`data/application-view.js` derives rows, unsearched totals and export availability once for each application render pass. Application aggregation belongs to `data/history.js`; presentation modules consume the result. `ui/app-icons.js` shares pending requests, limits concurrency and drops queued work when no matching avatar remains connected.
+Node's `host/backend.cjs` starts the backend and matches responses by request id; events are separate. Failures reach the renderer as `{ ok: false, error }`, retaining codes and messages. C++ is authoritative for history, quotas, and network settings. `host/desktop-runtime.cjs` receives capabilities from `tauri/native-adapter.cjs`; `host/main.cjs` composes them without intercepting module loading or using the Electron SDK. Browser tests run the real renderer/bridge and isolated Node host with system substitutes; native-host coverage is separate.
 
-`data/application-proxy.js` matches detail records by application identifiers and known paths, including the explicit proxy identifier when available. Live local TCP connections and validated historical estimates occupy separate detail sections. Historical estimates must match native download and upload totals for the same network, date and proxy before they can replace native proxy rows; direct client traffic remains. Partial-day and minute/hour details omit daily estimates because those estimates cannot establish usage for the shorter interval. Unknown proxy identities are not inferred from display names. The [data contracts](../contracts/README.md) define the proxy fields and measurement limits.
+`promptAppCollection` in `window-preferences.json` defaults to `true`. After successful startup/migration and showing the main window, the host asks about session capture. Only acceptance sends `setAppCollection({ enabled: true })` and permits helper authorization. Declining either question leaves capture off without another automatic attempt; adapter statistics continue. Unavailable capture or failed migration skips the question. Disabling the preference suppresses future questions; manual controls do not change it. The backend switch defaults off each session.
 
-Proxy detail validation visits only candidate groups and retains a single result keyed by the application history revision, source arrays, identity and selected range. The data client increments that revision for applied snapshots, application increments, estimate replacements, clears and proxy configuration saves. Pure speed events retain the revision; current clients and measurement availability are always read afresh. Closing the drawer releases the cached history references. The resolver does not cache callers that provide no revision, since their arrays may be modified in place.
+`host/updates.cjs` separates `updates:check`, `updates:download`, and `updates:install`. Checks read official metadata and select the matching asset; startup checks notify only. Confirmed downloads verify length/SHA-256, reuse intact cache, and stop at `downloaded` without stopping collection. Installation requires a separate confirmation and cache revalidation before settings/database save, graceful shutdown, and installer handoff. Deferral retains the candidate. After asynchronous settings confirmation, the host rechecks import, exit, and recovery state before stopping collection.
 
-The Node business process uses `host/backend.cjs` to launch the backend and match requests with responses by id. Events (`live`, `usage`, `alert`) are pushed separately. Backend failures reach the renderer as `{ ok: false, error }`, preserving their error codes and messages. The C++ backend is authoritative for history, quotas and network settings.
-
-`host/desktop-runtime.cjs` explicitly receives the desktop capabilities provided by `tauri/native-adapter.cjs`. `host/main.cjs` uses that interface to compose business behavior without intercepting Node module loading or depending on the Electron SDK. Business unit tests use interface substitutes. Development UI regression tests load the real renderer and Tauri bridge in a headless browser and run an isolated Node business host; test substitutes handle operating-system windows, tray and dialogs. Integration tests of each platform's installation packages continue to verify the real WebView, windows, installed resources and native collection.
-
-Version 1.3.5 saves the desktop preference `promptAppCollection` in `window-preferences.json`, defaulting to `true`. Settings > General exposes it as Ask about application capture at startup. After startup and migration succeed and the main window is shown, the host asks whether to enable collection for that session. Only acceptance sends `setAppCollection({ enabled: true })` and allows the native helper's system authorization. Declining the question or system authorization leaves application capture off without another automatic request in that session; adapter statistics continue. When the backend reports application capture as unavailable, the host skips the question. Failed migrations also skip it. Disabling the preference suppresses future startup questions, and manual application-page controls do not change it. The backend's capture switch remains disabled by default and applies only to its current session.
-
-Version 1.3.5 separates the update operations in `host/updates.cjs` behind `updates:check`, `updates:download` and `updates:install`. Checks only select official release metadata and the matching asset. An explicit download validates length and SHA-256, reuses an intact cache and stops at `downloaded`; it never stops collection or launches the installer. The renderer asks for download and installation separately. Installation revalidates the cached asset before settings/database saving and the existing graceful shutdown and installer handoff. Declining installation retains the downloaded candidate for later use. Startup checks only notify about an available update.
-
-The renderer completes the current range query before loading minute history as needed. Concurrent minute queries for the same range share a request, and late responses from older requests cannot replace the current range. The backend handles hourly exports: complete dates can export existing hourly records, while partial ranges aggregate hours at minute boundaries. Custom ranges use local dates and hours/minutes and include the entire ending minute.
-
-After initial backend initialization fails, a refresh repeats the handshake and restores the live subscription. A date selection made during that handshake remains the current query. The update host rechecks import, exit and recovery state after asynchronous settings confirmation, before stopping the collector.
+The renderer completes the current range query before loading minutes. Same-range minute requests are shared; late responses cannot replace a newer range. Complete-day hourly exports can use older hourly records; partial ranges aggregate at minute boundaries. Local ranges include the entire ending minute. Refresh after initialization failure repeats the handshake and restores subscriptions, preserving a date chosen during that handshake.
 
 ## C++ backend
 
-`backend/platform/network_platform.h` defines platform-independent interfaces for collection, identity lookup and disconnect control, with two implementations:
+`backend/platform/network_platform.h` defines platform-independent collection, identity, and disconnect interfaces:
 
-| Implementation | Counter source | Identity source | Disconnect method |
+| Implementation | Counters | Identity | Disconnect |
 | --- | --- | --- | --- |
-| `backend/platform/linux/` | `/proc/net/dev` | `nmcli` (only locale-independent output is parsed) | `nmcli dev disconnect`, followed by verification |
-| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN API `WlanQueryInterface` | `WlanDisconnect`, followed by polling to verify the result |
+| `backend/platform/linux/` | `/proc/net/dev` | Locale-independent `nmcli` output | `nmcli dev disconnect`, then verification |
+| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN `WlanQueryInterface` | `WlanDisconnect`, then polling |
 
-These interfaces report facts and typed failures without generating UI text. They confirm identity before and after reading counters and discard a sample if the network changes between those checks. Disconnect control first checks the connection, then performs the operation and verifies the result; it acts only when the interface is associated with the expected network.
-
-The Windows implementation has two layers so that its decision logic can be tested:
+Adapters report facts/typed failures without UI text. They check identity before and after counters and discard samples spanning a switch. Disconnect requires the expected association, performs the operation, then verifies it. Windows separates system calls from testable decisions:
 
 ```text
-platform/win32/      System calls and field transfer only (WlanOpenHandle, GetIfTable2, WlanDisconnect)
-platform/windows/    Sampling and disconnect decisions, with SystemApi dependency injection and no Win32 API calls
+platform/win32/      Win32 system calls and field transfer
+platform/windows/   Sampling/disconnect decisions through injected SystemApi; UTF-16/UTF-8 and counter conversion
 ```
 
-Decisions such as discarding samples after a network switch, waiting for asynchronous disconnect results and distinguishing an unassociated state can be verified on a Linux development machine. `platform/win32/` handles the system calls. Identity conversion (UTF-16 to UTF-8, surrogate pairs and invalid bytes) and counter conversion also live in `platform/windows/`, without dependencies on Windows types.
+`core/` owns byte formatting, local calendar/network keys, accumulation, and quotas. First samples, counter rollback, identity changes, or confirmed adapter disappearance rebuild baselines; temporarily unreadable identity retains a baseline for a bounded interval. Unassignable traffic is discarded with typed gap events. Quota ledgers are independent of historical aggregation. Byte interfaces use decimal strings and JavaScript `BigInt`; SQLite writes reject values outside signed 64-bit range.
 
-`core/` implements platform-independent business rules: byte formatting, local calendar keys, network key mapping, usage accumulation and quotas. When counters fall, identity changes or an adapter disappears from a complete report, it discards the accumulation baseline and emits a typed event so that unassignable traffic is not attributed to the wrong network.
+`storage/` incrementally persists daily, hourly, minute, and application records, networks, ledgers, and preferences. Schema 6 adds `minute_usage` and `app_minute_usage`; existing records retain precision. Time-based minute allocation preserves sample totals. Backup, restore, clear, network deletion, and retention include minutes. `coverage_gaps` distinguishes missing intervals from actual zero. Linux uses system SQLite; Windows uses the bundled amalgamation.
 
-`storage/` incrementally stores daily, hourly, minute and application usage in SQLite, together with networks, quota ledgers and preferences. Schema 6 adds `minute_usage` and `app_minute_usage`; existing data retains its original precision. Samples spanning minutes allocate bytes by time while preserving their total. Minute records participate in complete backups, restoration, clearing, network deletion and retention policies. `coverage_gaps` records missing intervals separately so that the interface can distinguish them from actual zero traffic. Linux uses the system `libsqlite3`; Windows uses the amalgamated source in `backend/third_party/sqlite`.
+A failed network-usage write retains one in-memory batch with its original time and attribution. Retry precedes new sampling, without unbounded queuing. Successful clear/restore discards it; import, retention cleanup, and normal shutdown must flush it. Forced termination can lose this pending batch. Gap queries follow local calendar-day boundaries across retained history.
 
-`ipc/` implements the protocol and event loop: requests are `{id, method, params}`, responses are `{id, ok, result|error}`, and events are `{event, ...}`. The I/O loop is selected by platform: POSIX uses `poll` to wait for standard input and the sampling timer, while Windows uses `WaitForSingleObject` on the pipe handle. The protocol and business logic are shared in full.
-
-If network-usage persistence fails, the service holds one pending batch with its original sample time. It retries that batch before reading new counters, preserving attribution and minute allocation without growing an unbounded queue. Successful clear or restore operations discard it; import, retention cleanup and normal shutdown operations must flush it first. The batch is in memory and does not survive forced process termination. Gap queries use local calendar-day boundaries and include the entire retained history.
-
-Cumulative adapter counters are used only to calculate increments between adjacent valid samples. The first sample, a counter rollback, an identity change or a confirmed adapter disappearance rebuilds the baseline so that historical counters are not attributed to the current network. If identity is temporarily unreadable, the baseline is retained for a limited time. Quota ledgers are stored independently for local daily, monthly or cumulative periods and are not recalculated from history within the retention period. Interfaces represent bytes as decimal strings, and JavaScript uses `BigInt`. Values are checked against the signed 64-bit range before SQLite writes; out-of-range values are rejected.
-
-The collection process communicates over local pipes and does not initiate external network requests. Network access is used for version checks, installation-package downloads during updates and user actions that open the official release page. On Windows, the installer downloads Microsoft's WebView2 runtime if it is missing. Backend startup failures or unexpected exits preserve the error and trigger collection recovery. The Node business host always passes the database path explicitly. See the [data contracts](../contracts/README.md) for protocol and backup fields, and [migration and recovery](MIGRATION.md) for legacy data import rules.
+`ipc/` uses `{id, method, params}` requests, `{id, ok, result|error}` responses, and `{event, ...}` events. POSIX waits with `poll`; Windows uses `WaitForSingleObject`. Collection uses local pipes and initiates no external requests. The Node host explicitly supplies the database path; startup/exit failures retain errors and trigger recovery. Network access belongs to update metadata/downloads, user-opened release pages, and missing WebView2 installation. [Contracts](../contracts/README.md) and [Migration](MIGRATION.md) own protocol and import guarantees.
 
 ## Responsibility boundaries
 
 | Module | Responsibility |
 | --- | --- |
-| Renderer | Display, input, filtering and interaction state |
-| Tauri / Rust | System WebView, windows, tray, dialogs and restricted IPC |
-| Node helper process | Backend process management, migration, updates, file I/O, system settings and traffic control |
-| C++ backend | Native collection, accumulation, quota decisions and business storage |
-| Platform adapters | Isolation of Windows/Linux system APIs |
-| contracts | Shared data and protocol conventions for the frontend and backend |
-| packaging | Assembly of installation packages for each operating system |
+| Renderer | Display, input, filters, interaction state |
+| Tauri / Rust | System WebView, windows, tray, dialogs, restricted IPC |
+| Node business host | Processes, migration, updates, files, system settings, traffic control |
+| C++ backend | Native collection, accounting, quotas, business storage |
+| Platform adapters | Windows/Linux API isolation |
+| contracts | Shared fields and protocol conventions |
+| packaging | Target installer assembly |
 
-Add platform adaptation code to the host or backend only when an actual platform difference requires it.
+Add platform adaptation only for an actual platform difference.
 
-## Builds and separation from legacy versions
+## Build layout and compatibility
 
-Root npm commands forward to the desktop application. Its lockfile and dependencies remain in the application directory.
+Root npm commands provide entry points; desktop dependencies/lockfile stay in `apps/desktop/`. Backend output uses `build/` on Linux and `build/windows/` on Windows. Packages include the matching backend; Windows never reads Linux runtime paths.
 
-- **Linux source build**: `npm run dist:linux` builds the collector and Tauri with the local toolchain, producing deb, rpm and AppImage packages.
-- **Windows native build**: `npm run dist:windows` builds the backend with local CMake, prepares Node, native control modules and renderer assets, then uses the Tauri CLI to build an NSIS installer in `dist/windows/`.
-- **UI regression tests**: `npm run test:ui` uses a headless browser. The current source, dependencies and build entry points do not require an Electron runtime.
+Product identity is centralized in `apps/desktop/host/product.cjs` and tested. Both platforms use `WiFiMeter`. Preserve Windows identifier `io.wifimeter.demo` and `%APPDATA%\WiFiMeter Demo` across display-name changes; Linux uses standard XDG directories. Before starting Node/backend, Windows holds the Electron-compatible, user-data-scoped `lockfile`, preventing simultaneous collectors. Process exit releases it; WebView2 uses a separate `webview2` subdirectory. Legacy recovery is maintained in [Migration](MIGRATION.md).
 
-C++ intermediate artifacts live under the root `build/` directory (`build/` on Linux and `build/windows/` on Windows). Installation packages include the corresponding `wifimeter-backend` executable. Windows uses its own application identifier and data directory and does not read Linux runtime-component paths.
-
-Both platforms use the product name `WiFiMeter`. Windows retains the application identifier `io.wifimeter.demo` and the data directory `%APPDATA%\WiFiMeter Demo`; Linux uses `WiFiMeter` and standard XDG directories. Identity definitions are centralized in `apps/desktop/host/product.cjs` and have unit tests. Display-name updates preserve the existing Windows application identifier and data path so that upgrades can still read existing records.
-
-Electron 1.2.x users migrate by downloading the Tauri installer for their operating system and CPU architecture. Subsequent Tauri updates select only the corresponding Tauri installation package.
-
-Before starting Node and the backend, the Windows host holds the `lockfile` used by Electron, scoped to the user data directory. Old and new versions cannot collect into the same directory simultaneously. The operating system releases the lock when the process exits. WebView2 caches live in a separate `webview2` subdirectory of that directory.
-
-`.github/workflows/tauri.yml` currently builds and tests Windows x64 and publishes one NSIS installer for `v1.3.*` tags. Windows x86/ARM64, Linux x64/ARM64 and Linux browser entries are temporarily commented out; their source helpers remain available. Development UI regressions run in two Windows shards. Packaging can begin before the full UI suite finishes; aggregation and publication require both browser shards and Windows x64 backend, ETW/EStats, Rust and packaged WebView2 checks to succeed. Production CI uses a pinned official Node.js runtime and reuses verified compilation caches and Windows x64 artifacts from the same commit. Metadata and release scripts may run on Ubuntu without building a Linux product. The old UI and historical build tools are archived; corresponding tags and release notes preserve their history. See the [build and release matrix](PACKAGING-MATRIX.md).
-
-Performance comparison tools live in `tools/performance/`: `ipc-and-autostart.cjs` compares processing of the same synthetic IPC messages and settings writes, while `renderer-history.mjs` compares event handling for the same history dataset. They are not included in installation packages, and their timings do not guarantee overall startup time or total memory usage. Local fixtures remain in `del/`. Historical baselines require the corresponding Git commit; results must identify the data volume, runtime environment and comparison commit.
-
-Project documentation defaults to English. Main product, architecture, protocol, migration, platform and packaging documents have matching Simplified Chinese copies with the `.zh-CN.md` suffix and links between both versions. Private agent rules remain local and are not uploaded; public documentation must not depend on them.
+Build commands belong to [Packaging](../packaging/README.md), verification/evidence to [Testing](TESTING.md), and active targets/publication to the [CI matrix](PACKAGING-MATRIX.md). Rules and decision records follow [Development](DEVELOPMENT.md); translation maintenance follows [Bilingual documentation](i18n/README.md).

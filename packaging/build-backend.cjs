@@ -30,12 +30,13 @@ function windowsGeneratorOptions({ arch, cache = '', generator, generators = [],
     return options;
 }
 
-function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.includes('--linux-app-capture') } = {}) {
+function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.includes('--linux-app-capture'), buildTests = false } = {}) {
     const root = path.resolve(__dirname, '..');
     const { validateNativeTarget, buildPaths, assertArchitecture } = require('./targets.cjs');
     validateNativeTarget(process.platform, arch);
     const buildDirectory = buildPaths(process.platform, arch).backend;
     const options = linuxAppCapture ? ['-DWIFIMETER_LINUX_APP_CAPTURE=ON'] : [];
+    if (buildTests) options.push('-DWIFIMETER_BUILD_TESTS=ON');
     const cacheFile = path.join(root, buildDirectory, 'CMakeCache.txt');
     const cache = fs.existsSync(cacheFile) ? fs.readFileSync(cacheFile, 'utf8') : '';
     const cmake = process.env.CMAKE_COMMAND || cacheValue(cache, 'CMAKE_COMMAND') || 'cmake';
@@ -51,7 +52,8 @@ function buildBackend({ arch = process.arch, linuxAppCapture = process.argv.incl
         options.push(...windowsGeneratorOptions({ arch, cache, generator, generators, cachedArch, toolchain: process.env.CMAKE_TOOLCHAIN_FILE }));
     }
     execFileSync(cmake, ['-S', 'backend', '-B', buildDirectory, '-DCMAKE_BUILD_TYPE=Release', ...options], { cwd: root, stdio: 'inherit', windowsHide: true });
-    execFileSync(cmake, ['--build', buildDirectory, '--target', 'wifimeter-backend', '--config', 'Release'], { cwd: root, stdio: 'inherit', windowsHide: true });
+    execFileSync(cmake, ['--build', buildDirectory, ...buildTests ? [] : ['--target', 'wifimeter-backend'], '--config', 'Release'], { cwd: root, stdio: 'inherit', windowsHide: true });
+    return { root, buildDirectory, cmake };
 }
 
 module.exports = { buildBackend, windowsGeneratorOptions };

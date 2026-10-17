@@ -2,109 +2,77 @@
 
 [English](ARCHITECTURE.md) | 简体中文
 
-共享的 Tauri 桌面应用位于 `apps/desktop/`，同一套页面和宿主代码面向 Windows/Linux。Rust 提供系统 WebView 和原生桌面能力，Node 辅助进程复用已有业务模块。真实网络采集与业务存储由本机 C++ 后端负责，两个平台层都已实现。当前发布覆盖 Windows x64、x86、ARM64 和 Linux x64、ARM64，具体能力与验证边界见[构建与发布矩阵](PACKAGING-MATRIX.zh-CN.md)。
+共享桌面应用位于 `apps/desktop/`，Windows 与 Linux 共用页面和宿主。Tauri/Rust 提供系统 WebView 与桌面能力，Node 运行业务模块，本机 C++ 后端负责原生采集和业务存储。当前目标见 [CI 与发布矩阵](PACKAGING-MATRIX.zh-CN.md)。
 
 ## 当前数据流
 
 ```text
-renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node 业务进程 → wifimeter-backend（按行 JSON）
-       └──────────────────────────────────→ data/model.js（校验与计算）
-页面 → tauri/bridge.js → Rust → 系统文件对话框、窗口、托盘、系统通知
-                           → Node → 开机启动、数据导入、文件读写、更新和流量控制
+renderer/app.js → data/backend-client.js → tauri/bridge.js → Rust → Node → wifimeter-backend (JSON Lines)
+       └──────────────────────────────────→ data/model.js
+renderer → tauri/bridge.js → Rust → dialogs, windows, tray, notifications
+                                → Node → autostart, migration, file I/O, updates, traffic control
 ```
 
-页面直接通过 `backend-client.js` 创建数据对象并读取本机后端。数据定义与计算放在 `model.js`，合成快照位于 `tests/fixtures/snapshot.js`，测试夹具不会复制到正式页面资源中。
+`renderer/app.js` 负责组合导航、显示和事件。可复用输入与显示放在 `renderer/ui/`，查询和计算放在 `renderer/data/`。`ui/form-autosave.js` 通过回调管理校验、保存状态、重试、保留期清理和草稿放弃，入口负责确认和刷新。`tests/fixtures/snapshot.js` 的虚构快照不进入正式资源。
 
-`renderer/app.js` 组合页面渲染、导航与事件。可复用的输入和显示逻辑放在 `renderer/ui/`，数据访问与计算放在 `renderer/data/`。`ui/form-autosave.js` 管理设置、网络额度、总额度与代理表单的字段校验、保存状态、重试、保留期清理及草稿放弃；它通过回调调用现有宿主和数据接口，页面入口负责确认窗口及刷新界面。新增业务应按职责进入对应模块，并直接测试模块接口。
+`ui/application-workspace.js` 和 `ui/application-table.js` 共用视图控件与五列表格。应用页初始为实时视图，网络抽屉初始为历史视图，各视图分别保留搜索、排序和来源选择。实时使用速度单位，历史使用字节单位。缺少测量时显示横线，标识区分实测或不可测速率、原生记录和估算；两个视图共用应用抽屉和控制。
 
-应用页与网络抽屉共用 `ui/application-workspace.js` 的视图标签和筛选控件，以及 `ui/application-table.js` 的五列表格。应用页初始显示实时流量，网络抽屉初始显示用量记录；实时与历史各自保存搜索、排序和来源选择。实时来源可切换原生应用速率或包含端口估算的速率。历史支持应用汇总及分钟、小时、每日、每月分组，日期范围和原生/估算来源选择不改变实时数值。页面组合与事件分发继续由 `app.js` 负责。
+`data/proxy-live.mjs::proxyLiveProcesses` 经 `data/application-view.js` 与悬浮窗调用，按当前客户端 TCP 连接数分配已识别代理的物理网络实测速率。客户端直连行保留，估算份额带标记，已归属代理速率被替换，合计只计算一次；未知客户端和未分配份额作为估算未归属。身份、权重或测量不足时保留原生值或不可用状态，不改变网卡计数、额度和存储记录。应用页和网络抽屉分别保留本次会话的实时选择，重启后回到原生采集。悬浮窗将 `miniIncludeProxyEstimates` 与代理排除偏好分开保存，累计用量读取真实分钟记录。
 
-共用表格按速度单位偏好显示实时数值，按字节单位偏好显示历史数值；缺少测量时显示横线。行内标识区分实测或不可测速率、原生记录及代理估算。本地 TCP 连接与网卡用量、额度总量分别统计，共用显示不会将速率计入历史字节数。两个视图都通过同一应用抽屉查看详情和已有网络控制。
+`data/history.js` 归并应用，`data/application-view.js` 每次显示计算列表、搜索前总量和导出状态。`ui/app-icons.js` 共用请求、限制并发，并丢弃没有连接且标识匹配头像的排队请求。`data/application-proxy.js` 只匹配已知应用、代理标识和路径，不根据显示名猜身份。历史估算仅在同一网络、日期、代理的下载和上传合计分别匹配原生值时替换代理行；客户端直连保留，部分日期及分钟、小时明细不显示每日估算。本地 TCP 速率与历史字节、网卡总量和额度分别处理，字段见[数据合约](../contracts/README.zh-CN.md)。
 
-`data/proxy-live.mjs::proxyLiveProcesses` 为应用工作区与悬浮窗共用实时端口估算，主界面通过 `data/application-view.js` 调用。对每个已识别的代理，根据当前客户端 TCP 连接数分配其物理网络实测速率。客户端直连行与估算份额分别保留，估算份额带有来源标记；已归属代理速率被替换，合计只计算一次，未知客户端和未分配份额保留为估算未归属。缺少身份、权重或测量时保留原生数值或不可用状态。此计算不改后端计数、网卡总量、额度或存储记录。主应用页与网络抽屉分别保留本次会话的实时来源选择，与历史独立，重启后默认原生采集。悬浮窗将来源选择保存为 `miniIncludeProxyEstimates`，与代理排除偏好分别保存；累计用量继续读取真实分钟记录，不使用每日估算推导分钟归属。
+代理详情仅检查候选组，按历史版本、来源数组、身份和范围缓存一个结果。快照、应用增量、估算替换、清空和代理配置保存递增版本，速度事件不递增；当前客户端和测量可用状态重新读取。关闭抽屉释放历史引用；没有版本的调用者不缓存，因为其数组可能就地修改。
 
-`data/application-view.js` 在一次应用视图刷新中计算列表、搜索前的总量和导出可用状态，供显示模块共用；应用归并逻辑位于 `data/history.js`。`ui/app-icons.js` 共用未完成的图标请求并限制并发，排队项没有仍在页面中且标识匹配的头像时会被跳过。
+Node 的 `host/backend.cjs` 启动后端，按请求 id 配对响应，事件单独推送。错误以 `{ ok: false, error }` 回到页面并保留错误码和消息。历史、额度和网络设置以 C++ 为准。`host/desktop-runtime.cjs` 接收 `tauri/native-adapter.cjs` 能力，`host/main.cjs` 组合业务，不拦截模块加载或使用 Electron SDK。浏览器测试运行真实页面、桥接和隔离 Node 宿主，系统能力使用替身；原生宿主另行验证。
 
-`data/application-proxy.js` 根据应用标识和已知路径匹配详情，存在明确代理标识时也可按该标识匹配。实时本地 TCP 连接与通过校验的历史估算分别显示。历史估算只有在同一网络、日期和代理的下载、上传合计分别等于原生总量时，才能替换原生代理记录；客户端直接流量继续保留。部分日期及分钟/小时详情不显示每日估算，因为每日估算无法确定较短时段的用量。未知代理身份不根据显示名称猜测。代理字段与测量限制见[数据约定](../contracts/README.zh-CN.md)。
+`window-preferences.json` 中的 `promptAppCollection` 默认 `true`。启动和迁移成功、主窗口显示后询问本次采集，只有同意才发送 `setAppCollection({ enabled: true })` 并允许辅助进程请求授权。拒绝任一询问后保持关闭，不再自动尝试，网卡统计继续。采集不可用或迁移失败时跳过询问。关闭偏好后不再询问，手动控制不改变偏好；后端开关每次会话默认关闭。
 
-代理详情只校验候选估算组，并按应用历史版本、来源数组、应用身份和所选范围保留最近一次结果。数据客户端在应用快照、应用增量、估算替换、清空和代理配置保存后递增版本；单纯速度事件保留版本，当前客户端与测量可用状态每次重新读取。关闭详情抽屉时释放缓存的历史引用。未提供版本的调用者不会缓存，因为其数组可能被就地修改。
+`host/updates.cjs` 区分 `updates:check`、`updates:download` 和 `updates:install`。检查只读官方元数据并选择匹配附件，启动检查仅通知。确认下载后校验长度与 SHA-256，复用完整缓存并停在 `downloaded`，不停止采集。安装另行确认，先再次验证缓存，再保存设置与数据库、正常停止并交接安装器；暂缓保留文件。异步等待设置确认后，宿主在停止采集前重新检查导入、退出和恢复状态。
 
-Node 业务进程用 `host/backend.cjs` 拉起后端并按 id 配对请求与响应，事件（`live`、`usage`、`alert`）单独推送；后端失败以 `{ ok: false, error }` 形式回给页面，保留错误码与消息。历史、额度和网络设置以 C++ 后端为准。
-
-`host/desktop-runtime.cjs` 显式接收 `tauri/native-adapter.cjs` 提供的桌面能力，`host/main.cjs` 调用该接口组合业务，不拦截 Node 模块加载，也不依赖 Electron SDK。业务单元测试使用接口替身。开发态界面回归在无头浏览器中加载真实页面及 Tauri 桥接，并运行隔离的 Node 业务宿主；操作系统窗口、托盘和对话框由测试替身处理。真实 WebView、窗口、安装资源和原生采集继续由对应平台的安装包集成测试验证。
-
-1.3.5 在 `window-preferences.json` 保存桌面偏好 `promptAppCollection`，默认值为 `true`，对应设置 > 常规中的启动时询问应用采集。启动和迁移成功、主窗口显示后，宿主询问本次是否启用采集；只有用户同意才发送 `setAppCollection({ enabled: true })`，由原生辅助进程请求系统授权。选择不开启或拒绝系统授权后，本次不采集应用流量，也不再自动请求，网卡统计继续运行。后端报告应用采集不可用时，宿主跳过启动询问；迁移失败时也不询问。关闭偏好会取消后续启动询问，应用页的手动启停不会改变该偏好。后端采集开关仍默认关闭，只对当前后端会话有效。
-
-1.3.5 将 `host/updates.cjs` 的更新操作分为 `updates:check`、`updates:download` 和 `updates:install`。检查仅读取官方版本信息并选择匹配附件；用户确认下载后，核对长度与 SHA-256，复用完整缓存并停留在 `downloaded` 状态，期间不停止采集或启动安装器。页面分别确认下载和安装，安装前再次校验缓存，再执行设置与数据库保存、正常关闭采集器和安装交接。暂不安装时保留已下载的候选文件，供稍后使用；启动检查仅提醒有可用更新。
-
-页面先完成当前范围查询，再按需读取分钟历史；同范围的并发分钟查询共用请求，晚到的旧请求不会覆盖当前范围。小时导出由后端处理，完整日期可导出旧小时记录，部分时段按分钟边界计算小时合计。自定义范围使用本地日期和时分，完整包含结束分钟。
-
-首次后端初始化失败后，刷新会重新握手并恢复实时订阅，握手期间选择的新日期继续作为当前查询范围。更新宿主在异步等待设置保存后，重新检查导入、退出和恢复状态，再停止采集器。
+页面先完成当前范围查询，再按需读取分钟数据。同范围分钟请求共用，旧响应不覆盖新范围。完整日期的小时导出可用旧小时记录，部分时段按分钟边界汇总。本地范围完整包含结束分钟。初始化失败后刷新重新握手并恢复订阅，握手期间所选日期继续生效。
 
 ## C++ 后端
 
-`backend/platform/network_platform.h` 定义平台无关的采集、身份识别与断开控制接口，两个实现：
+`backend/platform/network_platform.h` 定义平台无关的采集、身份和断开接口：
 
-| 实现 | 计数来源 | 身份来源 | 断开方式 |
+| 实现 | 计数 | 身份 | 断开 |
 | --- | --- | --- | --- |
-| `backend/platform/linux/` | `/proc/net/dev` | `nmcli`（只解析与语言环境无关的部分） | `nmcli dev disconnect` + 复核 |
-| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN API `WlanQueryInterface` | `WlanDisconnect` + 轮询复核 |
+| `backend/platform/linux/` | `/proc/net/dev` | 与语言无关的 `nmcli` 输出 | `nmcli dev disconnect` 后复核 |
+| `backend/platform/win32/` | IP Helper `GetIfTable2` | WLAN `WlanQueryInterface` | `WlanDisconnect` 后轮询 |
 
-接口只报告事实与类型化失败，不生成界面文案；读取计数前后各确认一次身份，期间切换网络则丢弃样本；断开先判定、再执行、最后复核，只在关联到期望网络时才动手。
-
-Windows 的实现分成两层，这是它可测试的关键：
+适配层报告事实与类型化失败，不生成界面文字。读计数前后检查身份，跨切换样本丢弃；断开要求关联到预期网络，执行后再验证。Windows 将系统调用与可测试判断分开：
 
 ```text
-platform/win32/      只做系统调用与字段搬运（WlanOpenHandle、GetIfTable2、WlanDisconnect）
-platform/windows/    采样与断开的判断逻辑，通过 SystemApi 依赖注入，不调用任何 Win32 API
+platform/win32/      Win32 system calls and field transfer
+platform/windows/   Sampling/disconnect decisions through injected SystemApi; UTF-16/UTF-8 and counter conversion
 ```
 
-采样期间切换网络时丢弃样本、等待异步断开结果、区分未关联状态等判断，可以在 Linux 开发机上验证；`platform/win32/` 负责系统调用。身份字段（UTF-16 → UTF-8、代理对、非法字节）与计数器转换同样在 `platform/windows/` 里，不依赖 Windows 类型。
+`core/` 负责字节格式、本地日期与网络键、累计和额度。首个样本、计数回退、身份变化或确认网卡消失时重建基线；身份短暂不可读时保留有限时长。无法归属的流量丢弃并报告类型化缺失事件。额度账本独立于历史汇总。字节接口使用十进制字符串和 JavaScript `BigInt`，SQLite 写入拒绝超出有符号 64 位范围的数值。
 
-`core/` 实现与平台无关的业务规则：字节格式转换、本地日历键、网络键映射、用量累计与额度。计数回落、身份变化或网卡从完整报告中消失时，丢弃累计基线并上报类型化事件，避免把无法归属的流量记到错误的网络。
+`storage/` 增量保存每日、小时、分钟、应用记录、网络、额度账本和偏好。schema 6 增加 `minute_usage` 与 `app_minute_usage`，旧记录保留原精度。按时间分配分钟字节时保留样本总量，备份、恢复、清空、删除网络及保留期清理都处理分钟数据。`coverage_gaps` 区分缺失和真实零。Linux 用系统 SQLite，Windows 用随源码提供的合并版本。
 
-`storage/` 用 SQLite 增量保存每日、小时、分钟及应用用量，并存储网络、额度账本和偏好。schema 6 新增 `minute_usage`、`app_minute_usage`，旧数据保留已有精度；采样跨分钟时按时间分配字节并保持总量不变。分钟记录纳入完整备份、恢复、清空、删除网络及保留策略。`coverage_gaps` 单独记录缺失区间，界面将其与真实零流量区分。Linux 用系统 `libsqlite3`，Windows 用 `backend/third_party/sqlite` 的合并源码。
+网络用量写入失败时，只在内存保留一批带原时间和归属的数据，新采样前先重试，不无限排队。成功清空或恢复后丢弃该批次；导入、保留期清理和正常退出前必须写入。强制终止可能丢失待写批次。缺失查询按本地日期边界覆盖保留期内历史。
 
-`ipc/` 是协议与事件循环：请求 `{id, method, params}`、响应 `{id, ok, result|error}`、事件 `{event, ...}`。输入输出循环按平台选择——POSIX 用 `poll` 同时等待标准输入与采样定时器，Windows 用 `WaitForSingleObject` 等待管道句柄——协议与业务逻辑完全共用。
-
-网络用量写入失败时，服务只保留一轮待写批次及原采样时间，先重试再读取新计数，保留网络归属和分钟分配，避免不断扩大队列。清空或恢复成功后撤销批次；导入、保留期清理和正常退出前必须先成功补写。批次保存在内存中，强制结束进程后无法恢复。缺失区间按本地日历日边界查询，并覆盖完整保留历史。
-
-网卡累计计数只用于计算相邻有效样本的增量。首次采样、计数回退、身份变化或确认网卡消失时重建基线，避免将历史计数归到当前网络；身份暂时不可读时只在有限时间内保留基线。额度账本按本地日、月或累计周期独立保存，不根据保留期内的历史记录重算。字节在接口中使用十进制字符串，在 JavaScript 中使用 `BigInt`；写入 SQLite 前核对有符号 64 位范围，超出范围会拒绝写入。
-
-采集进程通过本机管道通信，不主动发送外网请求。联网入口包括版本检查、更新下载安装包及用户打开官方版本页；Windows 缺少 WebView2 时安装器下载微软运行时。后端启动失败或意外退出会保留错误并恢复采集，数据库路径始终由 Node 业务宿主显式传入。协议与备份字段见[数据合约](../contracts/README.zh-CN.md)，旧数据导入规则见[迁移与恢复](MIGRATION.zh-CN.md)。
+`ipc/` 使用 `{id, method, params}` 请求、`{id, ok, result|error}` 响应和 `{event, ...}` 事件。POSIX 通过 `poll` 等待，Windows 使用 `WaitForSingleObject`。采集使用本机管道，不主动联网。Node 显式传入数据库路径，启动失败或异常退出保留错误并触发恢复。联网用于更新信息、下载安装包、用户打开版本页和安装缺失 WebView2。协议及导入保证由[数据合约](../contracts/README.zh-CN.md)与[迁移说明](MIGRATION.zh-CN.md)维护。
 
 ## 职责边界
 
 | 模块 | 职责 |
 | --- | --- |
-| 页面 | 展示、输入、筛选、交互状态 |
+| 页面 | 显示、输入、筛选、交互状态 |
 | Tauri / Rust | 系统 WebView、窗口、托盘、对话框、受限 IPC |
-| Node 辅助进程 | 后端进程管理、迁移、更新、文件读写、系统设置与流量控制 |
-| C++ 后端 | 真实采集、累计、额度判断、业务存储 |
-| 平台适配 | 隔离 Windows/Linux 系统 API |
-| contracts | 描述前后端需要共享的数据与协议约定 |
-| packaging | 按系统组装安装包 |
+| Node 业务宿主 | 进程、迁移、更新、文件、系统设置、网络控制 |
+| C++ 后端 | 原生采集、统计、额度、业务存储 |
+| 平台适配 | 隔离 Windows/Linux API |
+| contracts | 共用字段和协议约定 |
+| packaging | 组装目标安装包 |
 
-只有实际出现平台差异时才在宿主或后端中增加平台适配代码。
+只在实际存在平台差异时增加平台适配。
 
-## 构建与旧版隔离
+## 构建目录与兼容性
 
-根目录 npm 命令转发到桌面应用，锁文件与依赖保留在应用目录。
+根 npm 命令提供入口，桌面依赖和锁文件留在 `apps/desktop/`。后端在 Linux 使用 `build/`，Windows 使用 `build/windows/`。安装包包含匹配后端，Windows 不读取 Linux 运行时路径。
 
-- **Linux 源码构建**：`npm run dist:linux` 使用本机工具链构建采集器与 Tauri，生成 deb、rpm、AppImage。
-- **Windows（本机）**：`npm run dist:windows` 用本机 CMake 构建后端，准备 Node、原生控制模块和页面，再由 Tauri CLI 构建 NSIS 安装包，输出到 `dist/windows/`。
-- **页面回归**：`npm run test:ui` 使用无头浏览器；当前源码、依赖与构建入口均不需要 Electron 运行时。
+产品身份集中在 `apps/desktop/host/product.cjs` 并接受测试。两个平台都使用 `WiFiMeter`。修改显示名称时保留 Windows 标识 `io.wifimeter.demo` 和 `%APPDATA%\WiFiMeter Demo`，Linux 用标准 XDG 目录。启动 Node 和后端前，Windows 持有与 Electron 兼容且限定用户数据目录的 `lockfile`，防止同时采集；退出后由系统释放。WebView2 使用独立 `webview2` 子目录。旧版恢复由[迁移说明](MIGRATION.zh-CN.md)维护。
 
-C++ 中间产物位于根目录 `build/`（Linux 在 `build/`，Windows 在 `build/windows/`），安装包随包分发对应的 `wifimeter-backend` 可执行文件。Windows 使用独立的应用标识与数据目录，不读取 Linux 的运行组件路径。
-
-两个平台的产品名统一为 `WiFiMeter`：Windows 沿用应用标识 `io.wifimeter.demo` 与数据目录 `%APPDATA%\WiFiMeter Demo`；Linux 使用 `WiFiMeter` 与标准的 XDG 目录。身份定义集中在 `apps/desktop/host/product.cjs` 并有单元测试；显示名称更新时保留 Windows 的原有应用标识与数据路径，使升级后仍能读取已有记录。
-
-Electron 1.2.x 用户通过下载对应系统和 CPU 架构的 Tauri 安装版完成迁移；Tauri 后续更新只选择对应的 Tauri 安装包。
-
-Windows 宿主在启动 Node 和后端之前持有 Electron 使用的 `lockfile`，锁的范围为用户数据目录。新旧版本不能同时使用同一目录采集，进程退出后由系统释放锁；WebView2 的缓存保存在该目录下独立的 `webview2` 子目录。
-
-`.github/workflows/tauri.yml` 当前构建和测试 Windows x64，为 `v1.3.*` 标签发布一个 NSIS 安装包。Windows x86/ARM64、Linux x64/ARM64 及 Linux 浏览器配置暂时注释，对应源码工具继续保留。开发态页面回归通过两个 Windows 分片运行；打包无需先等待完整页面回归，汇总和发布要求两个浏览器分片及 Windows x64 后端、ETW/EStats、Rust 和包内 WebView2 检查通过。正式 CI 使用固定版本的官方 Node.js 运行时，复用已验证的编译缓存和同一提交的 Windows x64 产物。元数据和发布脚本可在 Ubuntu 上运行，不构建 Linux 产品。旧 UI 与历史构建工具已归档，对应标签与发布说明保留历史。详见[构建与发布矩阵](PACKAGING-MATRIX.zh-CN.md)。
-
-性能对比工具集中在 `tools/performance/`：`ipc-and-autostart.cjs` 比较同一合成 IPC 消息和设置写入，`renderer-history.mjs` 比较同一历史数据集的事件处理。它们不进入安装包，耗时不能当作整机启动或整体内存的保证；本机夹具保留在 `del/`。使用历史基线时传入对应 Git 提交，结果须标明数据量、运行环境和对比提交。
-
-项目文档默认使用英文。主要产品、架构、协议、迁移、平台与打包文档同步维护 `.zh-CN.md` 后缀的简体中文版，两版互相链接。个人代理规则仅保留在本机，不上传；公开文档不得依赖这些规则。
+构建命令见[打包说明](../packaging/README.zh-CN.md)，验证和证据见[测试指南](TESTING.zh-CN.md)，目标和发布见 [CI 矩阵](PACKAGING-MATRIX.zh-CN.md)。规则与决策记录遵循[开发流程](DEVELOPMENT.zh-CN.md)，翻译维护遵循[双语文档](i18n/README.zh-CN.md)。

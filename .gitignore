@@ -47,17 +47,16 @@ secrets.json
 *.dmp
 *.stackdump
 
-# Personal editor and agent configuration.
+# Shared instructions and .agents/notes are versioned; other agent state is local.
 .agent/
-.agents/
+.agents/*
+!.agents/notes/
 .claude/
 .gemini/
 .vscode/
 .idea/
 *.code-workspace
-AGENTS.md
 AGENTS.override.md
-CLAUDE.md
 CLAUDE.local.md
 GEMINI.md
 /docs/superpowers/

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "TESTING.md",
+  "chinese": "TESTING.zh-CN.md",
+  "sha256": {
+    "en": "5a13256315003bb41e94e79755e67f46967b336d8722d9e3d8cf64cdbcb944a3",
+    "zh": "864afb5cf2c3e3d8e4be69ad5c970fbf93522040a4a917316447aa70150fd7d3"
+  }
+}
