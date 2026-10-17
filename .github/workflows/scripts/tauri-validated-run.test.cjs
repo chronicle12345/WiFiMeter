@@ -11,9 +11,7 @@ const sha = 'a'.repeat(40);
 const requiredNames = [
     'Workflow checks and Tauri release metadata',
     'Windows browser UI shard 1/2', 'Windows browser UI shard 2/2',
-    'Linux browser UI shard 1/2', 'Linux browser UI shard 2/2',
-    'Windows x64 Tauri', 'Windows ia32 Tauri', 'Windows arm64 Tauri',
-    'Linux x64 Tauri', 'Linux arm64 Tauri', 'Required Tauri checks'
+    'Windows x64 Tauri', 'Required Tauri checks'
 ];
 
 function fixtures() {
@@ -24,12 +22,11 @@ function fixtures() {
             head_branch: 'main', head_sha: sha, status: 'completed', conclusion: 'success',
             repository: { id: 789, full_name: repository }, head_repository: { id: 789, full_name: repository }
         },
-        jobs: [...requiredNames, 'Publish verified multi-platform Tauri v1.3 release'].map((name, index) => ({
+        jobs: [...requiredNames, 'Publish verified Windows x64 Tauri v1.3 release'].map((name, index) => ({
             id: 1000 + index, run_id: 456, head_sha: sha, name, status: 'completed',
             conclusion: name.startsWith('Publish ') ? 'skipped' : 'success'
         })),
-        artifacts: ['tauri-release-windows-x64', 'tauri-release-windows-ia32', 'tauri-release-windows-arm64',
-            'tauri-release-linux-x64', 'tauri-release-linux-arm64'].map((name, index) => ({
+        artifacts: ['tauri-release-windows-x64'].map((name, index) => ({
             id: 2000 + index, name, size_in_bytes: 1024, expired: false,
             workflow_run: { id: 456, head_sha: sha, repository_id: 789, head_repository_id: 789, head_branch: 'main' }
         }))
@@ -69,7 +66,7 @@ function find(fetchImpl, overrides = {}) {
     return findValidatedRun({ repository, sha, refType: 'tag', token: 'fixture-token', fetchImpl, ...overrides });
 }
 
-test('a tag reuses only its same-commit main run with all eleven required jobs successful', async () => {
+test('a tag reuses only its same-commit main run with all five Windows x64 required jobs successful', async () => {
     const data = fixtures();
     assert.equal(await find(api(data)), '456');
 });
@@ -151,18 +148,16 @@ test('an invalid newest run does not hide an earlier valid main run for the same
     assert.equal(await find(api(data, { runs: [wrong, data.run] })), '456');
 });
 
-test('each of the five release artifacts must be present, nonempty, unique and unexpired', async () => {
-    for (let index = 0; index < 5; index++) {
-        for (const invalid of ['missing', 'duplicate', 'expired', 'empty', 'invalid-id']) {
-            const data = fixtures();
-            const artifact = data.artifacts[index];
-            if (invalid === 'missing') data.artifacts.splice(index, 1);
-            else if (invalid === 'duplicate') data.artifacts.push({ ...artifact, id: 9999 });
-            else if (invalid === 'expired') artifact.expired = true;
-            else if (invalid === 'empty') artifact.size_in_bytes = 0;
-            else artifact.id = '2000\n';
-            assert.equal(await find(api(data)), '', `${artifact.name}: ${invalid}`);
-        }
+test('the Windows x64 release artifact must be present, nonempty, unique and unexpired', async () => {
+    for (const invalid of ['missing', 'duplicate', 'expired', 'empty', 'invalid-id']) {
+        const data = fixtures();
+        const artifact = data.artifacts[0];
+        if (invalid === 'missing') data.artifacts.splice(0, 1);
+        else if (invalid === 'duplicate') data.artifacts.push({ ...artifact, id: 9999 });
+        else if (invalid === 'expired') artifact.expired = true;
+        else if (invalid === 'empty') artifact.size_in_bytes = 0;
+        else artifact.id = '2000\n';
+        assert.equal(await find(api(data)), '', `${artifact.name}: ${invalid}`);
     }
 });
 
@@ -183,10 +178,14 @@ test('missing source metadata or an empty main-run search falls back to the full
 });
 
 test('unexpected release artifacts on any page reject reuse while diagnostics do not', async () => {
+    for (const name of ['tauri-release-windows-unknown', 'tauri-release-windows-ia32',
+        'tauri-release-windows-arm64', 'tauri-release-linux-x64', 'tauri-release-linux-arm64']) {
+        const data = fixtures();
+        const extra = { ...data.artifacts[0], id: 9999, name };
+        assert.equal(await find(api(data, { artifactsPages: [data.artifacts, [extra]] })), '', name);
+    }
     const data = fixtures();
-    const extra = { ...data.artifacts[0], id: 9999, name: 'tauri-release-windows-unknown' };
-    assert.equal(await find(api(data, { artifactsPages: [data.artifacts, [extra]] })), '');
-    extra.name = 'tauri-diagnostics-linux-x64-1';
+    const extra = { ...data.artifacts[0], id: 9999, name: 'tauri-diagnostics-windows-x64-1' };
     assert.equal(await find(api(data, { artifactsPages: [data.artifacts, [extra]] })), '456');
 });
 

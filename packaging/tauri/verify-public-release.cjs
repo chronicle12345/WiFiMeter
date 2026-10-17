@@ -68,7 +68,7 @@ async function githubJson(url, token, fetch) {
 
 async function readExpectedAssets(directory, version) {
     try {
-        // Reuse the five-matrix checks, including each local binary's manifest hash.
+        // Reuse the configured release matrices, including each local binary's manifest hash.
         await releaseFiles(directory, version);
         const expected = new Map();
         for (const [platform, arch] of matrices) {
@@ -92,7 +92,7 @@ function validateMetadata(repo, release, tag, expected) {
         && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(release.published_at)
         && Number.isFinite(Date.parse(release.published_at)), 'Release 缺少有效的发布时间。');
     requireValue(Array.isArray(release.assets) && release.assets.length === expected.size,
-        '公开 Release 必须恰好包含五个矩阵的九个安装包。');
+        '公开 Release 必须恰好包含当前发布矩阵的安装包。');
     const remaining = new Set(expected.keys()), assets = new Map();
     for (const asset of release.assets) {
         requireValue(asset && remaining.delete(asset.name), '公开 Release 包含未知或重复附件。');
@@ -169,8 +169,8 @@ async function verifyPublicRelease({ directory, version, tag, token, fetch = glo
     requireValue(tag === `v${version}`, '公开校验标签必须与当前版本一致。');
     requireValue(!token || (typeof token === 'string' && !/[\r\n]/.test(token)), 'GitHub API 凭据格式无效。');
     const names = matrices.flatMap(([platform, arch]) => assetNames(version, platform, arch));
-    requireValue(matrices.length === 5 && names.length === 9 && new Set(names).size === 9,
-        '发布配置必须提供五个矩阵及九个唯一安装包。');
+    requireValue(matrices.length > 0 && names.length > 0 && new Set(names).size === names.length,
+        '发布配置必须提供非空矩阵及唯一安装包。');
     const expected = await readExpectedAssets(directory, version);
     const [repo, release] = await Promise.all([
         githubJson(API, token, fetch), githubJson(`${API}/releases/tags/${encodeURIComponent(tag)}`, token, fetch)
@@ -188,7 +188,7 @@ async function verifyPublicRelease({ directory, version, tag, token, fetch = glo
 async function main(args = process.argv.slice(2), { env = process.env, root = repositoryRoot, fetch = globalThis.fetch,
     onAsset = asset => console.log(JSON.stringify({ name: asset.name, size: asset.size, verified: true })) } = {}) {
     try {
-        requireValue(args.length === 1, '请提供已验证的五矩阵 Actions 附件目录。');
+        requireValue(args.length === 1, '请提供已验证的 Actions 发布附件目录。');
         requireValue(env.GITHUB_ACTIONS === 'true' && env.RUNNER_ENVIRONMENT === 'github-hosted',
             '完整公开下载校验仅允许在 GitHub 托管的 Actions runner 执行。');
         requireValue(env.GITHUB_REPOSITORY === REPOSITORY && env.GITHUB_REF_TYPE === 'tag', '公开校验仅允许指定仓库的发布标签。');

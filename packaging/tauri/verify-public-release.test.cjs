@@ -70,15 +70,15 @@ function fixture(t) {
         options: { directory, version, tag, token, fetch } };
 }
 
-test('public verification streams exactly nine anonymous installers and binds their hashes to internal manifests', async t => {
+test('public verification streams the Windows x64 installer anonymously and binds its hash to the internal manifest', async t => {
     const f = fixture(t), verified = [];
     const result = await implementation().verifyPublicRelease({ ...f.options, onAsset: asset => verified.push(asset) });
     assert.equal(result.passed, true);
     assert.equal(result.tag, tag);
-    assert.equal(result.installerCount, 9);
+    assert.equal(result.installerCount, 1);
     assert.deepEqual(verified.map(asset => asset.name), names);
     assert.equal(result.totalBytes, [...f.contents.values()].reduce((sum, bytes) => sum + bytes.length, 0));
-    assert.equal(f.calls.length, 11);
+    assert.equal(f.calls.length, 3);
     for (const { url, init } of f.calls) {
         if (url.startsWith('https://api.github.com/')) {
             assert.equal(init.headers.Authorization, `Bearer ${token}`);
@@ -109,7 +109,7 @@ test('every GitHub CDN redirect remains anonymous and is bound to the original r
         } }));
         return f.fetch(input, init);
     } });
-    assert.equal(result.installerCount, 9);
+    assert.equal(result.installerCount, 1);
     assert.equal(calls.find(call => call.url === cdn).init.headers.Authorization, undefined);
     assert.ok(!JSON.stringify(result).includes('fixture-private-query'));
 });
@@ -125,7 +125,7 @@ for (const mutation of ['wrong repository', 'private repository', 'wrong tag', '
         if (mutation === 'prerelease') f.release.prerelease = true;
         if (mutation === 'missing publication') delete f.release.published_at;
         if (mutation === 'missing installer') f.release.assets.pop();
-        if (mutation === 'duplicate installer') f.release.assets[8] = { ...f.release.assets[0] };
+        if (mutation === 'duplicate installer') f.release.assets.push({ ...f.release.assets[0] });
         if (mutation === 'extra checksum') f.release.assets.push({ ...f.release.assets[0], name: 'SHA256SUMS.txt' });
         if (mutation === 'wrong architecture') f.release.assets[0].name = 'WiFiMeter-1.3.2-windows-mips-Tauri-Setup.exe';
         if (mutation === 'wrong asset URL') f.release.assets[0].browser_download_url = 'https://evil.example/file.exe?token=private';
@@ -256,8 +256,8 @@ test('CLI uses the current tag and bilingual metadata before verifying public fi
     const f = fixture(t), env = writeMetadata(f), output = [];
     const result = await implementation().main([f.directory], { env, root: f.root, fetch: f.fetch,
         onAsset: asset => output.push(asset) });
-    assert.equal(result.installerCount, 9);
-    assert.equal(output.length, 9);
+    assert.equal(result.installerCount, 1);
+    assert.equal(output.length, 1);
 });
 
 for (const kind of ['local execution', 'self-hosted runner', 'fork', 'branch', 'wrong tag', 'missing English', 'missing Chinese', 'version mismatch', 'stale README']) {

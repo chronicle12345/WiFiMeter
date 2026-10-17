@@ -5,13 +5,16 @@ const workflowPath = '.github/workflows/tauri.yml';
 const requiredJobs = [
     'Workflow checks and Tauri release metadata',
     'Windows browser UI shard 1/2', 'Windows browser UI shard 2/2',
-    'Linux browser UI shard 1/2', 'Linux browser UI shard 2/2',
-    'Windows x64 Tauri', 'Windows ia32 Tauri', 'Windows arm64 Tauri',
-    'Linux x64 Tauri', 'Linux arm64 Tauri', 'Required Tauri checks'
+    // 'Linux browser UI shard 1/2', 'Linux browser UI shard 2/2',
+    'Windows x64 Tauri',
+    // 'Windows ia32 Tauri', 'Windows arm64 Tauri',
+    // 'Linux x64 Tauri', 'Linux arm64 Tauri',
+    'Required Tauri checks'
 ];
 const requiredArtifacts = [
-    'tauri-release-windows-x64', 'tauri-release-windows-ia32', 'tauri-release-windows-arm64',
-    'tauri-release-linux-x64', 'tauri-release-linux-arm64'
+    'tauri-release-windows-x64',
+    // 'tauri-release-windows-ia32', 'tauri-release-windows-arm64',
+    // 'tauri-release-linux-x64', 'tauri-release-linux-arm64'
 ];
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
 

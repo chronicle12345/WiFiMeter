@@ -6,7 +6,15 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 
 const repositoryRoot = path.resolve(__dirname, '../..');
-const matrices = [['win32', 'x64'], ['win32', 'ia32'], ['win32', 'arm64'], ['linux', 'x64'], ['linux', 'arm64']];
+const supportedMatrices = [['win32', 'x64'], ['win32', 'ia32'], ['win32', 'arm64'], ['linux', 'x64'], ['linux', 'arm64']];
+// Temporarily release Windows x64 only; retain the remaining targets for restoration.
+const matrices = [
+    ['win32', 'x64'],
+    // ['win32', 'ia32'],
+    // ['win32', 'arm64'],
+    // ['linux', 'x64'],
+    // ['linux', 'arm64']
+];
 
 function validateVersion(version) {
     assert.ok(typeof version === 'string' && /^1\.3\.(0|[1-9]\d*)$/.test(version) && !/[\r\n]/.test(version),
@@ -53,7 +61,7 @@ function readMetadata(root = repositoryRoot, { refType, refName } = {}) {
 
 function assetPrefix(version, platform, arch) {
     validateVersion(version);
-    assert.ok(matrices.some(([p, a]) => p === platform && a === arch), `不支持的 Tauri 发布矩阵：${platform}/${arch}。`);
+    assert.ok(supportedMatrices.some(([p, a]) => p === platform && a === arch), `不支持的 Tauri 发布矩阵：${platform}/${arch}。`);
     return `WiFiMeter-${version}-${platform === 'win32' ? 'windows' : 'linux'}-${arch}-Tauri`;
 }
 
@@ -67,7 +75,7 @@ function checksumName(version, platform = 'win32', arch = 'x64') {
 }
 
 function artifactName(platform, arch) {
-    assert.ok(matrices.some(([p, a]) => p === platform && a === arch), `不支持的 Tauri 发布矩阵：${platform}/${arch}。`);
+    assert.ok(supportedMatrices.some(([p, a]) => p === platform && a === arch), `不支持的 Tauri 发布矩阵：${platform}/${arch}。`);
     return `tauri-release-${platform === 'win32' ? 'windows' : 'linux'}-${arch}`;
 }
 
@@ -119,7 +127,7 @@ async function stageAssets(source, destination, version, { platform = 'win32', a
 async function releaseFiles(directory, version) {
     const expected = matrices.map(([platform, arch]) => artifactName(platform, arch));
     const entries = fs.readdirSync(directory, { withFileTypes: true });
-    assert.deepEqual(entries.map(entry => entry.name).sort(), [...expected].sort(), '发布必须包含全部五个矩阵的产物目录。');
+    assert.deepEqual(entries.map(entry => entry.name).sort(), [...expected].sort(), '发布必须恰好包含当前发布矩阵的产物目录。');
     assert.ok(entries.every(entry => entry.isDirectory()), '发布矩阵产物必须为普通目录。');
     const files = [];
     for (const [platform, arch] of matrices) {

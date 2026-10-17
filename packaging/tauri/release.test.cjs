@@ -68,7 +68,7 @@ function assetFixture(t, platform = 'win32', arch = 'x64', directory = temporary
 
 function releaseFixture(t) {
     const directory = temporary(t);
-    for (const [platform, arch] of matrices) assetFixture(t, platform, arch, path.join(directory, artifactName(platform, arch)));
+    assetFixture(t, 'win32', 'x64', path.join(directory, artifactName('win32', 'x64')));
     return directory;
 }
 
@@ -194,28 +194,26 @@ test('staging copies only validated release files from a build output tree', asy
     await assert.rejects(helper.stageAssets(source, destination, version), /已存在/);
 });
 
-test('publishing requires all five matrices and returns only the nine installers', async t => {
+test('publishing requires only the Windows x64 installer and its internal checksum', async t => {
     const directory = releaseFixture(t);
     const files = await helper.releaseFiles(directory, version);
-    const expected = matrices.flatMap(([platform, arch, names]) => names.map(name => path.join(directory, artifactName(platform, arch), name)));
+    const expected = matrices[0][2].map(name => path.join(directory, artifactName('win32', 'x64'), name));
     assert.deepEqual(files, expected);
-    assert.equal(files.length, 9);
+    assert.equal(files.length, 1);
     assert.ok(files.every(file => !/Portable|SHA256SUMS|\.txt$/.test(file)));
 });
 
 test('publishing rejects a missing matrix or an unexpected artifact directory', async t => {
     for (const kind of ['missing', 'extra']) {
         const directory = releaseFixture(t);
-        if (kind === 'missing') fs.renameSync(path.join(directory, artifactName('linux', 'arm64')), path.join(temporary(t), 'held'));
-        else fs.mkdirSync(path.join(directory, 'tauri-release-linux-ia32'));
+        if (kind === 'missing') fs.renameSync(path.join(directory, artifactName('win32', 'x64')), path.join(temporary(t), 'held'));
+        else fs.mkdirSync(path.join(directory, 'tauri-release-linux-arm64'));
         await assert.rejects(helper.releaseFiles(directory, version), /矩阵/);
     }
 });
 
-test('publishing detects modified installers across every architecture', async t => {
-    for (const [platform, arch, names] of matrices) {
-        const directory = releaseFixture(t);
-        write(path.join(directory, artifactName(platform, arch), names[0]), 'changed after staging');
-        await assert.rejects(helper.releaseFiles(directory, version), /SHA-256/);
-    }
+test('publishing detects a Windows x64 installer modified after staging', async t => {
+    const directory = releaseFixture(t);
+    write(path.join(directory, artifactName('win32', 'x64'), matrices[0][2][0]), 'changed after staging');
+    await assert.rejects(helper.releaseFiles(directory, version), /SHA-256/);
 });

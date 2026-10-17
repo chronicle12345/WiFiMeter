@@ -71,17 +71,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [Windows, Linux]
+        # Temporarily validate and build Windows x64 only.
+        # platform: [Windows, Linux]
+        platform: [Windows]
         shard: [1, 2]
         include:
           - platform: Windows
             runner: windows-2022
             native_platform: win32
             build_directory: build/windows
-          - platform: Linux
-            runner: ubuntu-22.04
-            native_platform: linux
-            build_directory: build
+          # - platform: Linux
+          #   runner: ubuntu-22.04
+          #   native_platform: linux
+          #   build_directory: build
     defaults:
       run:
         shell: pwsh
@@ -117,13 +119,13 @@ jobs:
         with:
           path: ${{ runner.temp }}/playwright-browsers
           key: tauri-browser-v1-${{ runner.os }}-${{ steps.browser.outputs.version }}
-      - name: Install browser system dependencies
-        if: runner.os == 'Linux'
-        run: |
-          node apps/desktop/node_modules/@playwright/test/cli.js install-deps chromium
-          if ($LASTEXITCODE) { throw 'Chromium system dependencies failed' }
-          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config libsqlite3-dev
-          if ($LASTEXITCODE) { throw 'Browser fixture backend build dependencies failed' }
+      # - name: Install browser system dependencies
+      #   if: runner.os == 'Linux'
+      #   run: |
+      #     node apps/desktop/node_modules/@playwright/test/cli.js install-deps chromium
+      #     if ($LASTEXITCODE) { throw 'Chromium system dependencies failed' }
+      #     sudo apt-get install -y --no-install-recommends cmake ninja-build g++ pkg-config libsqlite3-dev
+      #     if ($LASTEXITCODE) { throw 'Browser fixture backend build dependencies failed' }
       - name: Install the locked Chromium runtime on a cache miss
         if: steps.browser_cache.outputs.cache-hit != 'true'
         run: |
@@ -176,18 +178,18 @@ jobs:
             node_version: 22.23.3
             cmake_arch: x64
             target: x86_64-pc-windows-msvc
-          - runner: windows-2022
-            arch: ia32
-            node_arch: x86
-            node_version: 22.23.3
-            cmake_arch: Win32
-            target: i686-pc-windows-msvc
-          - runner: windows-11-arm
-            arch: arm64
-            node_arch: arm64
-            node_version: 22.23.3
-            cmake_arch: ARM64
-            target: aarch64-pc-windows-msvc
+          # - runner: windows-2022
+          #   arch: ia32
+          #   node_arch: x86
+          #   node_version: 22.23.3
+          #   cmake_arch: Win32
+          #   target: i686-pc-windows-msvc
+          # - runner: windows-11-arm
+          #   arch: arm64
+          #   node_arch: arm64
+          #   node_version: 22.23.3
+          #   cmake_arch: ARM64
+          #   target: aarch64-pc-windows-msvc
     defaults:
       run:
         shell: pwsh
@@ -322,123 +324,125 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  linux:
-    name: Linux ${{ matrix.arch }} Tauri
-    needs: metadata
-    if: needs.metadata.outputs.source_run_id == ''
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-22.04
-            arch: x64
-            target: x86_64-unknown-linux-gnu
-          - runner: ubuntu-22.04-arm
-            arch: arm64
-            target: aarch64-unknown-linux-gnu
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: 22.23.3
-          architecture: ${{ matrix.arch }}
-          cache: npm
-          cache-dependency-path: apps/desktop/package-lock.json
-      - name: Resolve native paths and Rust target
-        run: |
-          node .github/workflows/scripts/ci.cjs environment linux '${{ matrix.arch }}'
-          rustup target add '${{ matrix.target }}'
-          tauri_rust_version=$(rustc --version)
-          echo "TAURI_RUST_VERSION=$tauri_rust_version" >> "$GITHUB_ENV"
-      - name: Cache Rust dependencies and compiled targets
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/desktop/src-tauri/target/**/deps
-            apps/desktop/src-tauri/target/**/.fingerprint
-            apps/desktop/src-tauri/target/**/build
-            apps/desktop/src-tauri/target/.rustc_info.json
-          key: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml') }}
-          restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
-      - name: Install native backend, Tauri and integration system dependencies
-        run: bash .github/workflows/scripts/tauri-linux-deps.sh system
-      - name: Resolve pinned Linux dependency cache metadata
-        id: linux_dependencies
-        run: node .github/workflows/scripts/tauri-linux-cache.cjs metadata
-      - name: Cache verified libbpf static installation
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: ${{ steps.linux_dependencies.outputs.libbpf_directory }}
-          key: tauri-libbpf-v1-ubuntu-${{ steps.linux_dependencies.outputs.libbpf_baseline }}-${{ matrix.arch }}-${{ steps.linux_dependencies.outputs.libbpf_toolchain }}-${{ steps.linux_dependencies.outputs.libbpf_sha256 }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-deps.sh', '.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
-      - name: Verify or rebuild pinned libbpf static installation
-        run: bash .github/workflows/scripts/tauri-linux-deps.sh libbpf
-      - name: Cache pinned Tauri WebDriver installation
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
-        with:
-          path: ${{ steps.linux_dependencies.outputs.driver_directory }}
-          key: tauri-driver-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ steps.linux_dependencies.outputs.driver_version }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
-      - name: Install locked desktop dependencies
-        run: npm ci --prefix apps/desktop
-      - name: Build and test with the Ubuntu 22.04 compatibility baseline
-        run: |
-          cmake -S backend -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON -DWIFIMETER_LINUX_APP_CAPTURE=ON \
-            -DWIFIMETER_BPF_CLANG=/usr/bin/clang-14 -DWIFIMETER_LIBBPF_INCLUDE_DIR="$TAURI_LIBBPF_INCLUDE" -DWIFIMETER_LIBBPF_LIBRARY="$TAURI_LIBBPF_LIBRARY"
-          cmake --build "$BUILD_DIR" --parallel 2
-          ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error -E '^linux_app_capture_smoke$'
-          node .github/workflows/scripts/ci.cjs backend linux '${{ matrix.arch }}' "$BUILD_DIR/app"
-      - name: Require actual native eBPF capture
-        run: sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
-      - name: Desktop host and backend integration unit tests
-        run: |
-          npm run test:unit
-      - name: Validate the official Node runtime and locate its license
-        run: |
-          node packaging/tauri/runtime-check.cjs
-          node -e "const fs = require('node:fs'), path = require('node:path'); const license = require('./packaging/tauri/prepare.cjs').nodeLicense({ license: path.resolve(path.dirname(process.execPath), '..', 'LICENSE') }); fs.appendFileSync(process.env.GITHUB_ENV, 'WIFIMETER_NODE_LICENSE=' + license + '\n')"
-      - name: Build Tauri deb, rpm and AppImage packages
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: node packaging/tauri/build.cjs --platform linux --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats deb,rpm,appimage --skip-backend
-      - name: Rust host tests on the target architecture
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --target '${{ matrix.target }}' --locked
-      - name: Verify or install pinned Tauri WebDriver
-        env:
-          TAURI_DRIVER_CACHE: ${{ steps.linux_dependencies.outputs.driver_directory }}
-        run: node .github/workflows/scripts/tauri-linux-cache.cjs driver "$TAURI_DRIVER_CACHE"
-      - name: Validate every extracted package in native WebKitGTK
-        run: node packaging/tauri/verify-linux.cjs --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
-      - name: Stage verified packages and internal checksum
-        id: stage
-        run: node packaging/tauri/release.cjs stage linux '${{ matrix.arch }}' "$OUTPUT_DIR"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: tauri-release-linux-${{ matrix.arch }}
-          path: ${{ steps.stage.outputs.directory }}
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 14
-      - name: Upload Tauri integration failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
-        with:
-          name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
-          path: |
-            build/tauri-smoke-linux/**
-            build/tauri-package-check-*/result.json
-            ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-          retention-days: 14
+  # Linux builds are temporarily paused while the Windows x64 release is validated.
+  # linux:
+  #   name: Linux ${{ matrix.arch }} Tauri
+  #   needs: metadata
+  #   if: needs.metadata.outputs.source_run_id == ''
+  #   runs-on: ${{ matrix.runner }}
+  #   timeout-minutes: 60
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - runner: ubuntu-22.04
+  #           arch: x64
+  #           target: x86_64-unknown-linux-gnu
+  #         - runner: ubuntu-22.04-arm
+  #           arch: arm64
+  #           target: aarch64-unknown-linux-gnu
+  #   steps:
+  #     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+  #       with:
+  #         persist-credentials: false
+  #     - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+  #       with:
+  #         node-version: 22.23.3
+  #         architecture: ${{ matrix.arch }}
+  #         cache: npm
+  #         cache-dependency-path: apps/desktop/package-lock.json
+  #     - name: Resolve native paths and Rust target
+  #       run: |
+  #         node .github/workflows/scripts/ci.cjs environment linux '${{ matrix.arch }}'
+  #         rustup target add '${{ matrix.target }}'
+  #         tauri_rust_version=$(rustc --version)
+  #         echo "TAURI_RUST_VERSION=$tauri_rust_version" >> "$GITHUB_ENV"
+  #     - name: Cache Rust dependencies and compiled targets
+  #       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+  #       with:
+  #         path: |
+  #           ~/.cargo/registry
+  #           ~/.cargo/git
+  #           apps/desktop/src-tauri/target/**/deps
+  #           apps/desktop/src-tauri/target/**/.fingerprint
+  #           apps/desktop/src-tauri/target/**/build
+  #           apps/desktop/src-tauri/target/.rustc_info.json
+  #         key: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ hashFiles('apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/Cargo.toml') }}
+  #         restore-keys: tauri-rust-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-
+  #     - name: Install native backend, Tauri and integration system dependencies
+  #       run: bash .github/workflows/scripts/tauri-linux-deps.sh system
+  #     - name: Resolve pinned Linux dependency cache metadata
+  #       id: linux_dependencies
+  #       run: node .github/workflows/scripts/tauri-linux-cache.cjs metadata
+  #     - name: Cache verified libbpf static installation
+  #       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+  #       with:
+  #         path: ${{ steps.linux_dependencies.outputs.libbpf_directory }}
+  #         key: tauri-libbpf-v1-ubuntu-${{ steps.linux_dependencies.outputs.libbpf_baseline }}-${{ matrix.arch }}-${{ steps.linux_dependencies.outputs.libbpf_toolchain }}-${{ steps.linux_dependencies.outputs.libbpf_sha256 }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-deps.sh', '.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
+  #     - name: Verify or rebuild pinned libbpf static installation
+  #       run: bash .github/workflows/scripts/tauri-linux-deps.sh libbpf
+  #     - name: Cache pinned Tauri WebDriver installation
+  #       uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+  #       with:
+  #         path: ${{ steps.linux_dependencies.outputs.driver_directory }}
+  #         key: tauri-driver-v1-${{ matrix.runner }}-${{ matrix.arch }}-${{ env.TAURI_RUST_VERSION }}-${{ steps.linux_dependencies.outputs.driver_version }}-${{ hashFiles('.github/workflows/scripts/tauri-linux-cache.cjs', 'packaging/targets.cjs') }}
+  #     - name: Install locked desktop dependencies
+  #       run: npm ci --prefix apps/desktop
+  #     - name: Build and test with the Ubuntu 22.04 compatibility baseline
+  #       run: |
+  #         cmake -S backend -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWIFIMETER_BUILD_TESTS=ON -DWIFIMETER_LINUX_APP_CAPTURE=ON \
+  #           -DWIFIMETER_BPF_CLANG=/usr/bin/clang-14 -DWIFIMETER_LIBBPF_INCLUDE_DIR="$TAURI_LIBBPF_INCLUDE" -DWIFIMETER_LIBBPF_LIBRARY="$TAURI_LIBBPF_LIBRARY"
+  #         cmake --build "$BUILD_DIR" --parallel 2
+  #         ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error -E '^linux_app_capture_smoke$'
+  #         node .github/workflows/scripts/ci.cjs backend linux '${{ matrix.arch }}' "$BUILD_DIR/app"
+  #     - name: Require actual native eBPF capture
+  #       run: sudo python3 backend/tests/linux_app_capture_smoke.py "$BUILD_DIR/app/wifimeter-app-capture"
+  #     - name: Desktop host and backend integration unit tests
+  #       run: |
+  #         npm run test:unit
+  #     - name: Validate the official Node runtime and locate its license
+  #       run: |
+  #         node packaging/tauri/runtime-check.cjs
+  #         node -e "const fs = require('node:fs'), path = require('node:path'); const license = require('./packaging/tauri/prepare.cjs').nodeLicense({ license: path.resolve(path.dirname(process.execPath), '..', 'LICENSE') }); fs.appendFileSync(process.env.GITHUB_ENV, 'WIFIMETER_NODE_LICENSE=' + license + '\n')"
+  #     - name: Build Tauri deb, rpm and AppImage packages
+  #       env:
+  #         APPIMAGE_EXTRACT_AND_RUN: '1'
+  #       run: node packaging/tauri/build.cjs --platform linux --arch '${{ matrix.arch }}' --target '${{ matrix.target }}' --formats deb,rpm,appimage --skip-backend
+  #     - name: Rust host tests on the target architecture
+  #       run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --features custom-protocol --target '${{ matrix.target }}' --locked
+  #     - name: Verify or install pinned Tauri WebDriver
+  #       env:
+  #         TAURI_DRIVER_CACHE: ${{ steps.linux_dependencies.outputs.driver_directory }}
+  #       run: node .github/workflows/scripts/tauri-linux-cache.cjs driver "$TAURI_DRIVER_CACHE"
+  #     - name: Validate every extracted package in native WebKitGTK
+  #       run: node packaging/tauri/verify-linux.cjs --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
+  #     - name: Stage verified packages and internal checksum
+  #       id: stage
+  #       run: node packaging/tauri/release.cjs stage linux '${{ matrix.arch }}' "$OUTPUT_DIR"
+  #     - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+  #       with:
+  #         name: tauri-release-linux-${{ matrix.arch }}
+  #         path: ${{ steps.stage.outputs.directory }}
+  #         if-no-files-found: error
+  #         compression-level: 0
+  #         retention-days: 14
+  #     - name: Upload Tauri integration failure diagnostics
+  #       if: failure()
+  #       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+  #       with:
+  #         name: tauri-diagnostics-linux-${{ matrix.arch }}-${{ github.run_attempt }}
+  #         path: |
+  #           build/tauri-smoke-linux/**
+  #           build/tauri-package-check-*/result.json
+  #           ${{ env.BUILD_DIR }}/Testing/Temporary/LastTest.log
+  #         if-no-files-found: ignore
+  #         retention-days: 14
 
   required:
     name: Required Tauri checks
     if: always()
-    needs: [metadata, renderer, windows, linux]
+    # needs: [metadata, renderer, windows, linux]
+    needs: [metadata, renderer, windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -447,23 +451,24 @@ jobs:
           METADATA_RESULT: ${{ needs.metadata.result }}
           RENDERER_RESULT: ${{ needs.renderer.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
-          LINUX_RESULT: ${{ needs.linux.result }}
+          # LINUX_RESULT: ${{ needs.linux.result }}
           SOURCE_RUN_ID: ${{ needs.metadata.outputs.source_run_id }}
         run: |
           test "$METADATA_RESULT" = success
           if [ -n "$SOURCE_RUN_ID" ]; then
             test "$RENDERER_RESULT" = skipped
             test "$WINDOWS_RESULT" = skipped
-            test "$LINUX_RESULT" = skipped
+            # test "$LINUX_RESULT" = skipped
           else
             test "$RENDERER_RESULT" = success
             test "$WINDOWS_RESULT" = success
-            test "$LINUX_RESULT" = success
+            # test "$LINUX_RESULT" = success
           fi
 
   publish:
-    name: Publish verified multi-platform Tauri v1.3 release
-    needs: [metadata, renderer, windows, linux, required]
+    name: Publish verified Windows x64 Tauri v1.3 release
+    # needs: [metadata, renderer, windows, linux, required]
+    needs: [metadata, renderer, windows, required]
     if: ${{ !cancelled() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.3.') && needs.required.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -487,10 +492,10 @@ jobs:
           merge-multiple: false
           run-id: ${{ needs.metadata.outputs.source_run_id || github.run_id }}
           github-token: ${{ github.token }}
-      - name: Require all five matrices, nine installers and matching internal SHA-256
+      - name: Require the Windows x64 installer and matching internal SHA-256
         id: assets
         run: node packaging/tauri/release.cjs release-files "$RUNNER_TEMP/tauri-release-artifacts"
-      - name: Upload all installers to a draft before publishing
+      - name: Upload the Windows x64 installer to a draft before publishing
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
@@ -504,7 +509,7 @@ jobs:
           # Creation fails if this tag already has a release, including a draft.
           gh release create "$RELEASE_TAG" --verify-tag --draft --title "WiFiMeter $VERSION" --notes-file "$NOTES_FILE" "${assets[@]}"
           gh release edit "$RELEASE_TAG" --draft=false
-      - name: Verify nine public downloads against the internal SHA-256 manifests
+      - name: Verify the public Windows x64 download against the internal SHA-256 manifest
         env:
           GH_TOKEN: ${{ github.token }}
         run: node packaging/tauri/verify-public-release.cjs "$RUNNER_TEMP/tauri-release-artifacts"
