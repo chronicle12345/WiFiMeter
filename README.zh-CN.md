@@ -72,6 +72,8 @@ Tauri 安装包使用系统 WebView，随包提供 Node 辅助进程和 C++ 采�
 
 ## 构建与测试
 
+日常开发先切换到 `dev`，并保持与 `origin/dev` 同步。`main` 保留稳定代码，验证通过后将 `dev` 合并至 `main`。已合并且没有独立提交的临时分支可以清理。
+
 安装 Node.js、Rust、CMake 和支持 C++20 的编译器，以及 [Tauri 平台依赖](https://v2.tauri.app/start/prerequisites/) 后运行：
 
 ```sh

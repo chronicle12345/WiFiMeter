@@ -2,7 +2,7 @@ name: Desktop CI and release
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ['v1.3.*']
   pull_request:
   workflow_dispatch:

@@ -72,6 +72,8 @@ Application capture requires supported native facilities and permission. Linux e
 
 ## Build and test
 
+For daily development, switch to `dev` first and keep it synchronized with `origin/dev`. Keep stable code on `main`; merge `dev` into `main` after validation passes. Temporary branches can be deleted once merged if they have no unique commits.
+
 Install Node.js, Rust, CMake, a C++20 compiler and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/), then:
 
 ```sh

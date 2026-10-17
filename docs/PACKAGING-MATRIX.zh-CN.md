@@ -16,7 +16,7 @@
 
 [tauri.yml](../.github/workflows/tauri.yml) 当前使用 x64 Windows runner、x64 Node 和 `x86_64-pc-windows-msvc` Rust 目标构建产品。暂停目标的配置保留 x64 Windows 上的 32 位 Node 与 `i686-pc-windows-msvc`、原生 ARM64 runner，以及 Ubuntu 22.04 / glibc 2.35 Linux 基线。元数据、检查汇总和发布脚本可在 Ubuntu 上运行，不构建 Linux 产品。
 
-main push、pull request、手动运行及 `v1.3.*` 标签共用一套 Desktop CI。Windows x64 构建实际后端、Rust 宿主和 NSIS 安装包，核对可执行文件架构与运行资源。后端单元测试、真实 ETW/EStats 辅助进程检查、Rust 测试和包内 WebView2 集成检查继续保留。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。任何必需检查失败都阻止发布。
+main 和 dev push、pull request、手动运行及 `v1.3.*` 标签共用一套 Desktop CI。Windows x64 构建实际后端、Rust 宿主和 NSIS 安装包，核对可执行文件架构与运行资源。后端单元测试、真实 ETW/EStats 辅助进程检查、Rust 测试和包内 WebView2 集成检查继续保留。业务界面回归检查实际执行数量，并拒绝意外跳过、失败或不稳定重试。任何必需检查失败都阻止发布。
 
 开发态 Playwright 检查自动发现 `apps/desktop/tests/` 中的所有 `*.spec.js`，在 Windows x64 无头浏览器中通过两个并行分片执行完整回归，Linux 浏览器配置暂时注释。测试加载真实 Tauri 页面桥接与隔离的 Node 业务宿主，C++ 数据夹具仍实际运行，系统能力使用替身。浏览器回归与 Windows x64 编译打包独立推进，最终必需检查汇总两个浏览器分片与 Windows x64 结果。主线不安装或启动 Electron。
 
