@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.5.md#中文"><img src="https://img.shields.io/badge/version-1.3.5-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.5" /></a>
-  <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20%2F%20Linux-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows and Linux release targets" /></a>
+  <a href="docs/releases/v1.3.6.md#中文"><img src="https://img.shields.io/badge/version-1.3.6-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.6" /></a>
+  <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows x64 release target" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md#c-后端"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
 </p>
@@ -24,9 +24,9 @@
 
 <p align="center"><a href="README.md">English</a> &nbsp;|&nbsp; <strong>简体中文</strong></p>
 
-WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。发布目标包括 Windows x64、x86、ARM64 及 Linux x64、ARM64，当前可用安装包见[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)。
+WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码。桌面宿主使用 Tauri 和系统 WebView，采样、计数和存储由 C++ 后端处理，历史记录保存在本机 SQLite 数据库中。1.3.6 仅构建并发布 Windows x64 安装包，Windows x86/ARM64 和 Linux x64/ARM64 的 CI 构建暂时注释；源码继续保留，旧版安装包仍可从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取。
 
-1.3.5 为悬浮窗按钮增加主题说明，将更新分为检查、下载和安装，并在启动时询问是否开启应用采集。常规设置可保存是否显示启动询问；选择不开启或拒绝系统授权后，本次不采集应用流量。同时隔离原生测试中的询问，修复 Windows 测试竞态。发布说明记录了具体改动和验证范围。
+1.3.6 在应用工作区与悬浮窗增加实时流量来源切换，可选择原生采集或包含端口估算。估算应用速率带有标记，并替换已归属的代理速率，避免重复计数；网卡总量和额度继续使用实测数据。同时减少设置页面底部空白，将 CI 和发布验证暂时集中于 Windows x64。发布说明记录了安装方法与限制。
 
 以下总览和应用历史截图均使用虚构数据。
 
@@ -40,15 +40,15 @@ WiFiMeter 是桌面流量统计工具，Windows 和 Linux 共用同一套源码�
 - 使用 Windows ETW 采集非回环应用流量，使用 TCP EStats 实测回环及代理客户端的实时字节，或通过 Linux eBPF 采集，并显示权限和覆盖状态。总览首屏保留核心指标，完整应用实时排行位于下方滚动区。应用页与网络详情共用应用流量工作区，可切换实时流量与用量记录，各视图保留搜索和排序选择，并通过抽屉查看应用详情；历史支持按分钟、小时、日、月汇总，并导出当前筛选结果。
 - 支持单网络额度和独立的 Wi-Fi 总额度，周期可选每日、每月或累计。有线流量不计入 Wi-Fi 总额度，可设置提醒及达到额度后断开 Wi-Fi。
 - Windows 支持按应用禁止联网，以及独立设置和取消上传、下载限速。Windows x64 包随附 WinDivert 驱动，下载限速在 WiFiMeter 运行期间生效；经独立代理进程接收的流量需限制代理程序。Linux 暂不提供这些控制。
-- Windows 支持可选的代理流量估算，与原生记录和本地 TCP 代理实测速率分开显示。每日估算依据已观测的 TCP 连接权重；合计不匹配时保留原生记录，部分日期及分钟/小时查询不显示每日估算，证据不足的部分保留为未归属流量。
+- Windows 支持可选的代理流量估算，与原生记录和本地 TCP 代理实测速率分开显示。实时视图可切换为包含端口估算，按当前客户端 TCP 连接数分配代理程序的本轮物理网络速率，客户端直连行与估算份额分别保留；替换已归属的代理行，避免合计重复，无法分配的份额保留为估算未归属。主窗口在本次会话内保留实时选择。每日历史估算依据已观测的 TCP 连接权重；合计不匹配时保留原生记录，部分日期及分钟/小时查询不显示每日估算。先在现有设置中配置代理端口，通过观测识别代理程序，也可选填进程名辅助确认；证据不足时保留原生数值或不可用状态。
 - 自定义范围可选择具体小时和分钟，包含结束分钟；网络与应用都可查看分钟明细。分钟数据从升级后开始积累，旧数据保留已有精度。支持全部历史查询、CSV/JSON 导出、完整备份、保存天数、中英切换、托盘和开机启动。
-- Windows 悬浮窗显示全部实时上传、下载速度，可展开应用列表，查看各应用实时速度和累计用量。可固定位置、保持显示或选择排除代理程序流量；自动隐藏仅在屏幕左右边缘生效，固定后不吸附、不隐藏。1 分钟表示当前日历分钟，5 分钟和 1 小时分别包含当前分钟及之前 4 个、59 个分钟；自定义支持 1 到 10080 分钟，范围自动保存，详见[悬浮窗说明](docs/FLOATING_WINDOW.zh-CN.md)。
+- Windows 悬浮窗显示全部实时上传、下载速度，可展开应用列表，查看各应用实时速度和累计用量。应用实时来源可在原生采集与包含端口估算之间切换，悬浮窗会保存此选择，重启后继续使用；累计用量仍来自真实分钟记录。可固定位置、保持显示或选择排除代理程序流量；自动隐藏仅在屏幕左右边缘生效，固定后不吸附、不隐藏。1 分钟表示当前日历分钟，5 分钟和 1 小时分别包含当前分钟及之前 4 个、59 个分钟；自定义支持 1 到 10080 分钟，范围自动保存，详见[悬浮窗说明](docs/FLOATING_WINDOW.zh-CN.md)。
 
 ## 原有数据与升级
 
-使用 Electron 1.2.x 的用户需从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取与系统及 CPU 架构匹配的 Tauri 安装版，程序会继续读取已有数据目录。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
+Windows x64 上使用 Electron 1.2.x 的用户可从[版本下载](https://github.com/chronicle12345/WiFiMeter/releases)获取本版 Tauri 安装包，程序会继续读取已有数据目录。其他架构在恢复构建前继续使用最近的对应安装包。安装 Tauri 后，后续更新检查会选择对应的 Tauri 安装包。
 
-Windows 1.3.3 和 1.3.4 用户可通过应用内更新升级至 1.3.5，也可手动运行对应安装包，升级时的提示由当前安装的版本决定。Linux 更新检查打开官方版本页，由用户手动安装。Windows 手动升级前请正常退出 WiFiMeter；受更新问题影响的旧版本也可能需要手动安装。
+Windows x64 用户可通过应用内更新升级至 1.3.6，也可手动运行 Windows x64 安装包，升级时的提示由当前安装的版本决定。1.3.6 不提供 Windows x86/ARM64 或 Linux 安装包。Linux 更新检查打开官方版本页，由用户手动安装已有的对应版本。Windows 手动升级前请正常退出 WiFiMeter；受更新问题影响的旧版本也可能需要手动安装。
 
 1.3.5 检查更新时仅读取版本信息；Windows 用户确认后下载对应安装包，长度和 SHA-256 校验通过后，再确认自动安装。安装时保存设置和数据库，静默安装并重启。不下载时不会传输安装包；暂不安装时保留已校验安装包，稍后使用前再次复核。启动检查仅提醒有可用更新。
 
@@ -64,7 +64,7 @@ Windows 会发现旧文件版的默认目录 `%LOCALAPPDATA%\WiFiMeter\data`，�
 
 ## 安装包
 
-Windows x64、x86、ARM64 分别提供 NSIS 安装程序，Linux x64、ARM64 分别提供 deb、rpm、AppImage。便携压缩包已取消。校验清单仅用于 CI 内部验证，下载页面只列应用安装包。五组目标的发布条件见[构建与发布矩阵](docs/PACKAGING-MATRIX.zh-CN.md)。
+1.3.6 提供一个 Windows x64 NSIS 安装包。Windows x86/ARM64 和 Linux x64/ARM64 的 CI 任务暂时注释，源码构建工具继续保留，旧版本的安装包不变。便携压缩包已取消。校验清单仅用于 CI 内部验证，下载页面只列应用安装包。当前 Windows x64 的检查与暂停目标见[构建与发布矩阵](docs/PACKAGING-MATRIX.zh-CN.md)。
 
 Tauri 安装包使用系统 WebView，随包提供 Node 辅助进程和 C++ 采集器，不再携带 Electron 或 Chromium。Windows 安装版会在缺少 WebView2 时下载并安装运行时，Linux 使用 WebKitGTK 4.1。各产物名称含 Tauri，构建会核对宿主、Node、后端和采集器的架构。macOS 和 32 位 Linux 暂不在发布目标中，Windows ARM64 暂不支持 WinDivert 下载限速。
 
@@ -88,7 +88,7 @@ node packaging/tauri/build.cjs --platform win32 --arch x64 --formats nsis
 node packaging/tauri/verify-windows.cjs
 ```
 
-平台依赖及其他源码构建命令见[打包说明](packaging/README.zh-CN.md)。测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。1.3.x 发布流程要求五组目标的后端、Rust 宿主和安装包检查全部通过，再发布完整的九个安装包。
+平台依赖及其他源码构建命令见[打包说明](packaging/README.zh-CN.md)。测试使用虚构数据和隔离目录。构建产物、运行数据、日志与本机凭据不提交 Git。当前发布流程要求两个 Windows 浏览器分片及 Windows x64 的后端、原生采集、Rust 宿主和安装包检查全部通过，再发布一个安装包。内部 SHA-256 清单与公开下载由 GitHub Actions 验证。
 
 ## 文档
 

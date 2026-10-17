@@ -6,8 +6,16 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+## [1.3.6] - 2026-10-17
+
+- Add independent live source selection to the application workspace and Windows floating window: native capture or included port estimates. Distribute a proxy's measured physical-network rates by observed local TCP client connection counts, retain clients' direct rates and mark estimated rows. Replace attributed proxy rates to avoid duplicate totals and retain unmatched shares as estimated unattributed traffic. Missing evidence preserves native or unavailable values; adapter totals, quotas and historical records do not change.
+- Keep live and historical source choices separate. The main application's live choices last for the session; the floating window saves its choice across restarts. Floating-window accumulated usage continues to use actual minute records.
+- Temporarily build and publish only Windows x64. Comment out Windows x86/ARM64, Linux x64/ARM64 and Linux browser CI entries while retaining their definitions and source helpers. Require both Windows browser shards and Windows x64 backend, ETW/EStats, Rust and packaged WebView2 checks; validate one NSIS installer with internal SHA-256 and public-download verification in GitHub Actions.
 - Remove the startup application-capture description from Settings and size the last settings section to its content, avoiding excess blank space at the bottom.
 
+- 应用工作区和 Windows 悬浮窗分别增加实时来源选择，可选原生采集或包含端口估算。根据已观测的本地 TCP 客户端连接数分配代理程序的物理网络实测速率，保留客户端直连速率，标记估算行；替换已归属代理速率，避免合计重复，无法归属的份额保留为估算未归属。证据缺失时保留原生数值或不可用状态，不改网卡总量、额度或历史记录。
+- 实时与历史分别保存来源选择。主窗口实时选择在本次会话有效，悬浮窗选择在重启后保留；悬浮窗累计用量继续使用真实分钟记录。
+- 暂时仅构建并发布 Windows x64，注释 Windows x86/ARM64、Linux x64/ARM64 和 Linux 浏览器 CI 配置，保留定义及源码工具。发布要求两个 Windows 浏览器分片及 Windows x64 后端、ETW/EStats、Rust 和包内 WebView2 检查通过；一个 NSIS 安装包继续由 GitHub Actions 验证内部 SHA-256 与公开下载。
 - 移除设置中启动应用采集开关下的说明，最后一个设置分区按内容显示，减少页面底部的空白。
 
 ## [1.3.5] - 2026-10-17
