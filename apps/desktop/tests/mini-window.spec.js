@@ -53,7 +53,9 @@ async function miniFixture(page) {
 test('live source switches to port estimates, labels rates and restores the saved choice', async ({ page }) => {
     const fixture = await miniFixture(page);
     await page.locator('#apps').click();
+    await expect(page.locator('#apps')).toBeEnabled();
     await page.getByRole('combobox', { name: '应用实时流量来源' }).selectOption('estimated');
+    await expect(page.getByRole('combobox', { name: '应用实时流量来源' })).toBeEnabled();
     expect(fixture.preferences.miniIncludeProxyEstimates).toBe(true);
     await page.evaluate(() => window.__miniEvent('mini:applications', {
         range: { minutes: 5 }, status: 'running', miniExcludeProxy: false, miniIncludeProxyEstimates: true,
@@ -66,6 +68,7 @@ test('live source switches to port estimates, labels rates and restores the save
     await page.reload();
     await expect(page.getByRole('combobox', { name: '应用实时流量来源' })).toHaveValue('estimated');
     await page.getByRole('combobox', { name: '应用实时流量来源' }).selectOption('native');
+    await expect(page.getByRole('combobox', { name: '应用实时流量来源' })).toBeEnabled();
     expect(fixture.preferences.miniIncludeProxyEstimates).toBe(false);
 });
 
