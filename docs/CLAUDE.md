@@ -2,6 +2,8 @@
 
 # Documentation scope
 
+- State features, usage and material constraints directly. Keep implementation details in their owning reference; remove speculative cases and explanations written only to pre-empt objections.
+- Keep product introductions concise; give normative guides complete rules, decision criteria and maintenance steps.
 - Keep maintained guides in the responsibility boundaries defined by [Development](DEVELOPMENT.md#where-information-belongs); link to the owner instead of repeating changing details.
 - Follow [Bilingual documentation](i18n/README.md) for pairs and review records. Preserve historical release facts and the original license material.
 - Keep protocol and accounting statements aligned with [Contracts](../contracts/README.md). Update commands, platform limits, and evidence claims together.
