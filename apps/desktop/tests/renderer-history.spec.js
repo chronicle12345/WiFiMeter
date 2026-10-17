@@ -81,6 +81,29 @@ test('自定义时分筛选网络和应用分钟明细，包含结束分钟并�
     await expect(page.locator('#appListRegion')).toContainText('5.2 KB');
 });
 
+test('日期筛选接受浏览器提交的零秒时间，并向后端传递分钟格式',async()=>{
+    const clockSession=await page.context().newCDPSession(page);
+    await clockSession.send('Emulation.setTimezoneOverride',{timezoneId:'Asia/Shanghai'});
+    await page.clock.setFixedTime('2026-10-18T02:00:00+08:00');
+    await page.locator('[data-value="custom"]').click();
+    await page.locator('#rangeStart').fill('2026-10-18');await page.locator('#rangeEnd').fill('2026-10-18');
+    const values=await page.evaluate(()=>{
+        for(const [id,value] of [['rangeStartTime','00:00:00'],['rangeEndTime','01:59:00']]){
+            const input=document.getElementById(id);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));
+        }
+        const form=document.getElementById('rangeForm');
+        return {valid:form.checkValidity(),values:Object.fromEntries(new FormData(form))};
+    });
+    expect(values).toMatchObject({valid:true,values:{startTime:'00:00:00',endTime:'01:59:00'}});
+    await page.getByRole('button',{name:'应用筛选',exact:true}).click();
+    await expect(page.locator('.modal')).toHaveCount(0);
+    await expect(page.locator('.date-text')).toContainText('00:00');
+    await expect(page.locator('.date-text')).toContainText('01:59');
+    const calls=await app.evaluate(()=>globalThis.rendererFixture.calls);
+    expect(calls.some(c=>c.method==='snapshot'&&c.params.from==='2026-10-18'&&c.params.to==='2026-10-18'
+        &&c.params.fromTime==='00:00'&&c.params.toTime==='01:59')).toBe(true);
+});
+
 test('同日结束时间早于开始时间时保留弹窗并给出错误',async()=>{
     await page.locator('[data-value="custom"]').click();
     await page.locator('#rangeStart').fill('2020-01-01');await page.locator('#rangeEnd').fill('2020-01-01');
@@ -486,4 +509,45 @@ test('代理文本自动保存合并快速输入，失败后保留输入并允�
  await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([8080]);
  await expect(page.locator('#proxySaveStatus')).toHaveAttribute('data-state','saved');
  await page.reload();await page.locator('[data-category="proxy"]').click();await expect(page.locator('#proxyPorts')).toHaveValue('8080');
+});
+
+test('日期范围弹窗在中英明暗和窄窗口下分组清晰并保持键盘操作',async({},testInfo)=>{
+ const scenarios=[['zh-CN','light',1248],['zh-CN','dark',480],['en','light',1248],['en','dark',360]];
+ for(const [language,theme,width] of scenarios){
+  await app.evaluate((_host,language)=>{globalThis.rendererFixture.snapshot.settings.language=language;},language);
+  await page.reload();
+  await page.evaluate(theme=>window.desktop.windowPreferences.update({theme}),theme);
+  await expect(page.locator('html')).toHaveAttribute('data-theme',theme);
+  await page.setViewportSize({width,height:768});
+  await page.locator('[data-action="period"][data-value="custom"]').click();
+  const dialog=page.getByRole('dialog'),groups=dialog.getByRole('group');
+  await expect(groups).toHaveCount(2);
+  await expect(dialog).toContainText(language==='en'?'Local time':'按本地时间');
+  await expect(page.locator('#rangeStart')).toBeFocused();
+  await expect(page.locator('#rangeError')).toBeHidden();
+  const layout=await dialog.evaluate(element=>{
+   const modal=element.getBoundingClientRect(),inputs=[...element.querySelectorAll('input')].map(input=>input.getBoundingClientRect());
+   return {outside:modal.left<0||modal.right>innerWidth,bounds:{left:modal.left,right:modal.right,viewport:innerWidth},
+    overflow:element.scrollWidth>element.clientWidth,
+    inputOutside:inputs.some(rect=>rect.left<modal.left||rect.right>modal.right),
+    inputHeights:inputs.map(rect=>Math.round(rect.height))};
+  });
+  expect(layout,`${language} ${theme} ${width}px ${JSON.stringify(layout)}`).toMatchObject({outside:false,overflow:false,inputOutside:false});
+  expect(new Set(layout.inputHeights).size).toBe(1);
+  const apply=dialog.locator('button[type="submit"]'),close=dialog.locator('[aria-label]').first();
+  await apply.focus();await page.keyboard.press('Tab');await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');await expect(apply).toBeFocused();
+  await page.locator('#rangeStart').fill('2020-01-01');await page.locator('#rangeEnd').fill('2020-01-01');
+  await page.locator('#rangeStartTime').fill('00:00');await page.locator('#rangeEndTime').fill('01:59');
+  await dialog.locator('h2').click();
+  await dialog.screenshot({path:testInfo.outputPath(`date-range-${language}-${theme}-${width}.png`),animations:'disabled'});
+  if(language==='en'&&theme==='dark'){
+   await page.locator('#rangeStartTime').fill('02:00');await apply.click();
+   await expect(page.locator('#rangeError')).toBeVisible();
+   expect(await dialog.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);
+   await dialog.locator('h2').click();
+   await dialog.screenshot({path:testInfo.outputPath('date-range-en-dark-error.png'),animations:'disabled'});
+  }
+  await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);
+ }
 });

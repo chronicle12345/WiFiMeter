@@ -17,6 +17,9 @@ export const english = Object.fromEntries(`
 包含端口估算|Include port estimates
 按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。|The proxy application's network rates are distributed by current port connection counts; direct client traffic is retained.
 时间|Time
+开始|Start
+结束|End
+按本地时间筛选，包含结束分钟。|Local time. The ending minute is included.
 重试|Retry
 实时更新|Live updates
 查看应用详情|View application details

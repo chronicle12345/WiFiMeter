@@ -435,3 +435,25 @@ html[data-page="overview"] #content .chart-row>.panel{overflow:visible}
 .release-notes-body table{border-collapse:collapse;width:100%}.release-notes-body th,.release-notes-body td{padding:8px;border:1px solid var(--line)}
 #updateStatusRegion{margin:12px 23px}.update-progress{margin:14px 0}.update-progress-label{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:10px;flex-wrap:wrap}.update-progress progress{display:block;width:100%;height:10px;accent-color:var(--accent-fill);border:0;border-radius:8px;overflow:hidden}.update-progress progress::-webkit-progress-bar{background:var(--track)}.update-progress progress::-webkit-progress-value{background:var(--accent-fill);border-radius:8px}
 #updateBanner{position:sticky;top:10px;z-index:15;margin-bottom:18px}.update-banner{padding:14px 18px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--small-shadow)}.update-banner-head{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}.update-banner-head .btn{min-height:32px;padding:5px 10px}.update-banner>p{font-size:12px;line-height:1.7;overflow-wrap:anywhere}.update-banner>p:empty{display:none}.update-banner .update-progress{margin:10px 0 0}.update-banner[data-state="error"]{border-color:var(--red-line)}
+
+/* The range dialog keeps each boundary's date and time together. */
+.modal:has(>.range-form){width:min(470px,100%);min-width:0}
+.range-form .range-hint{margin:8px 0 20px;color:var(--muted);font-size:12px;line-height:1.7}
+.range-groups{display:grid;gap:16px}
+.range-group{min-width:0;margin:0;padding:10px 14px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2)}
+.range-group legend{padding:0 6px;color:var(--ink);font-size:12px;font-weight:600}
+.range-fields{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px}
+.range-form .field{min-width:0;margin:0}
+.range-form .field label{margin-bottom:7px;color:var(--muted);font-size:11px}
+.range-form .input{min-width:0;height:40px;padding:8px 10px;font-size:13px;font-variant-numeric:tabular-nums}
+.range-form .form-error{margin:16px 0 0;padding:10px 12px;border:1px solid var(--red-line);border-radius:8px;background:var(--red-soft);overflow-wrap:anywhere}
+.range-form .form-error:empty{display:none}
+.range-form .modal-actions{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+.range-form .modal-actions .btn{min-height:38px}
+@media(max-width:420px){
+ .modal:has(>.range-form){padding:20px}
+ .range-form .range-hint{margin-bottom:16px}
+ .range-group{padding:8px 10px 12px}
+ .range-fields{grid-template-columns:minmax(0,1fr);gap:12px}
+ .range-form .modal-actions .btn{flex:1;justify-content:center;padding-inline:10px}
+}

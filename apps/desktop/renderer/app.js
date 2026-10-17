@@ -23,7 +23,7 @@ import { updateRegion } from './data/render.js';
 import { createAppControlModel, legacyMessage } from './data/desktop-actions.js';
 import { historyRange, applicationRows, applicationSummary, applicationCsv, recordInRange } from './data/history.js';
 import { minuteUsageRows } from './data/minute-usage.js';
-import { validTime } from './data/model.js';
+import { validTime, minuteInputTime } from './data/model.js';
 import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, sortApps } from './data/model.js';
 import { createDataClient } from './data/backend-client.js';
 
@@ -506,7 +506,8 @@ async function dataDownload(filename,body){
 }
 function csvCell(value){let text=String(value??'');if(/^[\s]*[=+\-@]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';}
 async function doExport(values){
- const {networkId,start,end,format,startTime='00:00',endTime='23:59',grouping='day'}=values;
+ const {networkId,start,end,format,startTime:inputStartTime='00:00',endTime:inputEndTime='23:59',grouping='day'}=values;
+ const startTime=minuteInputTime(inputStartTime),endTime=minuteInputTime(inputEndTime);
  if(!validDate(start)||!validDate(end)||!validTime(startTime)||!validTime(endTime)||`${start} ${startTime}`>`${end} ${endTime}`||end>today())throw Error(t('请确认起止日期和时间有效，结束时间不早于开始时间，且日期不晚于今天。'));
  const result=await store.exportUsage({from:start,to:end,fromTime:startTime,toTime:endTime,grouping,networkKey:networkId==='all'?'':networkId});
  const rows=(result.records||[]).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''));
@@ -682,7 +683,21 @@ async function ensureMinuteHistory(){
  }
 }
 function customRangeModal(){
- const r=getRange();showModal(t('选择日期范围'),tr`<form id="rangeForm"><div class="field-row"><div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div><div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div></div><div class="field-row"><div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div><div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div></div><div class="form-error" id="rangeError" role="alert"></div><div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div></form>`);
+ const r=getRange();showModal(t('选择日期范围'),tr`<form id="rangeForm" class="range-form" aria-describedby="rangeHint">
+  <p class="range-hint" id="rangeHint">按本地时间筛选，包含结束分钟。</p>
+  <div class="range-groups">
+   <fieldset class="range-group"><legend>开始</legend><div class="range-fields">
+    <div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div>
+    <div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div>
+   </div></fieldset>
+   <fieldset class="range-group"><legend>结束</legend><div class="range-fields">
+    <div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div>
+    <div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div>
+   </div></fieldset>
+  </div>
+  <div class="form-error" id="rangeError" role="alert"></div>
+  <div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div>
+ </form>`);
 }
 let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
@@ -781,7 +796,8 @@ document.addEventListener('submit',async event=>{
   else if(form.id==='appDownloadThrottleForm')await controlOperation('throttle',{downloadKBps:Number(new FormData(form).get('downloadKBps'))});
   else if(form.id==='exportForm')await doExport(Object.fromEntries(new FormData(form)));
   else if(form.id==='rangeForm'){
-   const {start,end,startTime,endTime}=Object.fromEntries(new FormData(form));
+   const {start,end,startTime:inputStartTime,endTime:inputEndTime}=Object.fromEntries(new FormData(form));
+   const startTime=minuteInputTime(inputStartTime),endTime=minuteInputTime(inputEndTime);
    if(!validDate(start)||!validDate(end)||!validTime(startTime)||!validTime(endTime)||`${start} ${startTime}`>`${end} ${endTime}`||end>today())throw Error(t('请确认起止日期和时间有效，结束时间不早于开始时间，且日期不晚于今天。'));
    await selectRange('custom',{start,end,startTime,endTime});closeModal();
   }

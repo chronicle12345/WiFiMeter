@@ -6,6 +6,12 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+- Accept whole-minute browser time values that include zero seconds in custom date filters and exports, normalizing them to minute precision before validation and queries.
+- Group the date-range dialog by start and end, align date/time inputs and actions, and adapt its layout and error message to narrow windows and both themes.
+
+- 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
+- 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
+
 ## [1.3.6] - 2026-10-17
 
 - Add independent live source selection to the application workspace and Windows floating window: native capture or included port estimates. Distribute a proxy's measured physical-network rates by observed local TCP client connection counts, retain clients' direct rates and mark estimated rows. Replace attributed proxy rates to avoid duplicate totals and retain unmatched shares as estimated unattributed traffic. Missing evidence preserves native or unavailable values; adapter totals, quotas and historical records do not change.
