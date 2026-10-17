@@ -203,6 +203,29 @@ test('publishing requires only the Windows x64 installer and its internal checks
     assert.ok(files.every(file => !/Portable|SHA256SUMS|\.txt$/.test(file)));
 });
 
+test('the named release artifact downloads into the matrix directory required by validation', async t => {
+    const workflow = fs.readFileSync(path.resolve(__dirname, '../../.github/workflows/tauri.yml'), 'utf8');
+    const step = workflow.match(/^      - uses: actions\/download-artifact@[^\r\n]+\r?\n        with:\r?\n((?:          [^\r\n]*\r?\n)+)/m);
+    assert.ok(step, 'The publish job must download its validated artifact.');
+    const inputs = Object.fromEntries(step[1].trimEnd().split(/\r?\n/)
+        .filter(line => !line.trimStart().startsWith('#'))
+        .map(line => {
+            const entry = line.trim().match(/^([^:]+):\s*(.+)$/);
+            assert.ok(entry, 'Download inputs must have a name and value.');
+            return [entry[1], entry[2]];
+        }));
+    assert.equal(inputs.name, artifactName('win32', 'x64'));
+    assert.equal(inputs.pattern, undefined, 'A named artifact must not use multi-artifact selection.');
+    const directory = temporary(t);
+    assert.ok(inputs.path.startsWith('${{ runner.temp }}/'), 'The artifact must stay in the runner temporary directory.');
+    const destination = path.resolve(directory, inputs.path.slice('${{ runner.temp }}/'.length));
+    assert.ok(destination.startsWith(directory + path.sep));
+    // A named single artifact extracts its files directly into the configured path.
+    assetFixture(t, 'win32', 'x64', destination);
+    const files = await helper.releaseFiles(path.join(directory, 'tauri-release-artifacts'), version);
+    assert.deepEqual(files, matrices[0][2].map(name => path.join(destination, name)));
+});
+
 test('publishing rejects a missing matrix or an unexpected artifact directory', async t => {
     for (const kind of ['missing', 'extra']) {
         const directory = releaseFixture(t);

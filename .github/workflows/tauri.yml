@@ -487,9 +487,12 @@ jobs:
         run: node packaging/tauri/release.cjs metadata
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          pattern: tauri-release-*
-          path: ${{ runner.temp }}/tauri-release-artifacts
-          merge-multiple: false
+          # Restore these inputs when multi-platform releases resume.
+          # pattern: tauri-release-*
+          # path: ${{ runner.temp }}/tauri-release-artifacts
+          # merge-multiple: false
+          name: tauri-release-windows-x64
+          path: ${{ runner.temp }}/tauri-release-artifacts/tauri-release-windows-x64
           run-id: ${{ needs.metadata.outputs.source_run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Require the Windows x64 installer and matching internal SHA-256
