@@ -8,9 +8,13 @@ Changes are listed by release.
 
 - Accept whole-minute browser time values that include zero seconds in custom date filters and exports, normalizing them to minute precision before validation and queries.
 - Group the date-range dialog by start and end, align date/time inputs and actions, and adapt its layout and error message to narrow windows and both themes.
+- Refresh the main window with a neutral palette and one blue accent, a shared 36 px control height, consistent text sizes, spacing and corner radii, and aligned settings rows, tables and dialogs in both themes. The floating window keeps its palettes.
+- Draw the usage chart at its container's actual size, so bars and labels stay sharp and fill the card at every window size.
 
 - 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
 - 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
+- 主窗口改用中性色加单一蓝色强调色，统一 36 px 控件高度、字号、间距和圆角，并对齐明暗主题下的设置行、表格和弹窗。悬浮窗配色保持不变。
+- 用量图表按容器实际尺寸绘制，各种窗口大小下柱形和标签保持清晰并填满卡片。
 
 ## [1.3.6] - 2026-10-17
 
