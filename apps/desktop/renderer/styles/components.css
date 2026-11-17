@@ -8,7 +8,6 @@
 .btn.primary:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
 .btn.danger { background:var(--red-fill); border-color:var(--red-fill); color:var(--on-accent); }
 .btn.danger:hover { filter:brightness(.92); }
-.btn.ghost { background:transparent; border-color:transparent; }
 .btn.small-btn { height:30px; padding:0 10px; font-size:var(--text-sm); }
 .icon-btn { display:grid; place-items:center; flex-shrink:0; width:32px; height:32px; border-radius:var(--radius-control); color:var(--muted); transition:background .15s, color .15s; }
 .icon-btn:hover { background:var(--hover); color:var(--ink); }

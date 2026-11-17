@@ -2,7 +2,7 @@
    Neutral surfaces with one blue accent; the renderer resolves "system" to light or dark. */
 :root {
   color-scheme:light;
-  --canvas:#f3f4f6; --surface:#ffffff; --surface-2:#f8f9fa; --panel:var(--surface);
+  --canvas:#f3f4f6; --surface:#ffffff; --surface-2:#f8f9fa;
   --ink:#1c1f24; --text:#3d434c; --muted:#667080; --line:#e2e5ea;
   --accent:#2f66c9; --accent-dark:#244f9e; --accent-soft:#e9f0fc;
   --accent-fill:#2f66c9; --accent-hover:#2757ad; --on-accent:#ffffff;

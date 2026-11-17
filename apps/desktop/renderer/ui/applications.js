@@ -4,7 +4,7 @@ export { applicationSummary } from '../data/history.js';
 
 export function applicationSourceFilter(proxy, estimated, live = false) {
     const title = live ? t('按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。') : t('代理估算与原生采集独立；仅替换匹配网络和日期的代理记录，保留客户端直接流量。');
-    return tr`<label class="application-source-filter"><span class="sr-only">应用数据来源</span><select class="select compact" id="appDataSource" title="${title}"><option value="native" ${!estimated?'selected':''}>${live ? t('原生采集') : t('原生记录')}</option><option value="estimated" ${estimated?'selected':''} ${proxy?.available?'':'disabled'}>${live ? t('包含端口估算') : t('包含代理估算')}</option></select></label>`;
+    return tr`<label class="application-source-filter"><span class="sr-only">应用数据来源</span><select class="select" id="appDataSource" title="${title}"><option value="native" ${!estimated?'selected':''}>${live ? t('原生采集') : t('原生记录')}</option><option value="estimated" ${estimated?'selected':''} ${proxy?.available?'':'disabled'}>${live ? t('包含端口估算') : t('包含代理估算')}</option></select></label>`;
 }
 
 export function applicationDetails(app, { esc, fmtWithUnit, appRate, estimateLabel, proxyDetails = { clients: [], estimates: [] }, rangeLabel = '' }) {
