@@ -9,10 +9,8 @@ export const english = Object.fromEntries(`
 实时流量排行|Live traffic ranking
 应用用量记录|Application usage history
 应用视图|Application view
-点击应用查看实时详情与代理归属。|Select an application to view live details and proxy attribution.
-查看所选时段的用量，原生记录与代理估算分别标注。|Usage for the selected period, with native records and proxy estimates labeled separately.
+代理估算按天记录：请选择整天的时间范围，并按应用汇总、日或月分组。|Proxy estimates are stored per day: choose whole days and group by summary, day or month.
 条结果|results
-实时速度与历史用量分别显示|Live rates and historical usage are shown separately
 原生采集|Native collection
 包含端口估算|Include port estimates
 按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。|The proxy application's network rates are distributed by current port connection counts; direct client traffic is retained.
@@ -52,7 +50,6 @@ export const english = Object.fromEntries(`
 规则未启用|Rules disabled
 偏好已保存，但开启开机启动失败。|Preferences saved, but enabling startup failed.
 偏好已保存，但关闭开机启动失败。|Preferences saved, but disabling startup failed.
-列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。|This list saves the last queried state. Query to check current restrictions; download limits stop when WiFiMeter exits.
 还没有应用限制记录。设置成功后会显示在这里。|No restriction records yet. Successfully configured restrictions will appear here.
 应用限制记录未能读取。|Unable to read application restriction records.
 正在读取记录…|Reading records…

@@ -14,7 +14,7 @@ import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
 import { settingsView } from './ui/settings.js';
 import { drawerShell } from './ui/drawer.js';
-import { applicationDetails, applicationAvatar } from './ui/applications.js';
+import { applicationDetails, applicationAvatar, applicationSourceTitle } from './ui/applications.js';
 import { createAppIconLoader } from './ui/app-icons.js';
 import { appControlView, appRulesView } from './ui/app-control.js';
 import { t, tr, setLanguage, getLocale } from './i18n.js';
@@ -97,7 +97,7 @@ async function changeApplicationView(view){
  if(ui.drawer?.tab==='apps')renderDrawer();else renderMain();
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
-function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}<details class="panel app-proxy-panel"><summary>代理估算设置</summary>${proxyForm(data.proxy)}</details><div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
+function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
 let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
@@ -270,7 +270,7 @@ window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;setti
 window.addEventListener('resize',()=>{settingsCategoryScrollY=null;updateSettingsScroll();fitCharts();});
 function renderMain(){
  const drafts=formAutosaves.drafts(['settingsForm','totalQuotaForm','proxyConfigForm']);
- const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd,proxyOpen=$('.app-proxy-panel')?.open;
+ const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd;
  renderChrome();
  renderUpdateBanner();
  updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
@@ -279,7 +279,6 @@ function renderMain(){
   if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
  }
  if(focused?.isConnected&&drafts.some(form=>form.contains(focused))){focused.focus({preventScroll:true});if(selectionStart!=null&&focused.setSelectionRange)focused.setSelectionRange(selectionStart,selectionEnd);}
- if(proxyOpen&&$('.app-proxy-panel'))$('.app-proxy-panel').open=true;
  syncSaveFlags();
  syncInert();
  appIcons.hydrate(document);
@@ -348,8 +347,8 @@ function applicationListData(n){
  return applicationViewData(options);
 }
 function applicationSummaryMarkup(n,viewData=applicationListData(n)){
- if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span><span class="small muted">${appContext().liveProxyEstimated&&data.proxy?.available?t('按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。'):t('实时速度与历史用量分别显示')}</span>`;
- return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span>`;
+ if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span>`;
+ return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span>总用量</span>`;
 }
 function applicationContent(n,controls){
  const view=applicationView(),viewData=applicationListData(n);
@@ -357,12 +356,12 @@ function applicationContent(n,controls){
 }
 function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${controls&&c.available?captureButton(c):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${controls&&c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
+ return `<div class="between app-status">${!controls||c.state==='disabled'?'':`<span class="muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${controls&&c.available?captureButton(c):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${controls&&c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
 }
 function captureButton(c){return button('app-collection',c.enabled?t('停止应用采集'):t('开启应用采集'),c.enabled?'pause':'play',c.enabled?'capture-stop':'capture-start',appCollectionBusy?'disabled':'');}
 function appCaptureControl(){
  const c=data.appCollection||{},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="app-capture-control"><span class="capture-status" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
+ return `<div class="app-capture-control"><span class="${['disabled','running'].includes(c.state)?'sr-only':'capture-status'}" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
 }
 function renderCapture(){
  const region=$('#appCaptureRegion'),focused=region?.contains(document.activeElement)?document.activeElement.dataset.action:null;
@@ -454,7 +453,7 @@ function renderAppList(){
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
  updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
- const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;}
+ const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;source.title=applicationSourceTitle(live,!live&&appMinuteSource());}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
  const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);

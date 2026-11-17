@@ -3,20 +3,20 @@
 /* Capture control in the page toolbar */
 #appCaptureRegion { display:flex; align-items:center; min-width:0; }
 .app-capture-control { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-.capture-status { display:inline-flex; align-items:center; gap:6px; max-width:230px; color:var(--muted); font-size:var(--text-sm); line-height:1.5; overflow-wrap:anywhere; }
+.capture-status { max-width:230px; color:var(--amber); font-size:var(--text-md); line-height:1.5; overflow-wrap:anywhere; }
 .btn.capture-start { background:var(--green-fill); border-color:var(--green-fill); color:#fff; font-weight:600; }
 .btn.capture-start:hover { background:var(--green-hover); border-color:var(--green-hover); }
 .btn.capture-stop { background:var(--red-fill); border-color:var(--red-fill); color:var(--on-accent); font-weight:600; }
 .btn.capture-stop:hover { filter:brightness(.92); }
 
-/* Workspace: header with view tabs, then filters, summary and the table */
-.application-workspace-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3) var(--space-4); flex-wrap:wrap; padding:14px 20px; border-bottom:1px solid var(--line); }
-.application-workspace-head > div:first-child { flex:1 1 200px; min-width:0; }
+/* Workspace: title and view tabs, one row of filters, the total, then a full-width table */
+.application-workspace { --pad:20px; }
+.application-workspace-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3) var(--space-4); flex-wrap:wrap; padding:16px var(--pad) 0; }
 .application-view-tabs { display:inline-flex; align-items:center; flex-shrink:0; gap:2px; max-width:100%; height:var(--control-height); padding:3px; border-radius:var(--radius-control); background:var(--track); }
 .application-view-tabs [role="tab"] { height:100%; padding:0 14px; border-radius:4px; color:var(--text); font-size:var(--text-md); white-space:nowrap; transition:background .15s, color .15s; }
 .application-view-tabs [role="tab"]:hover { color:var(--ink); }
 .application-view-tabs [role="tab"][aria-selected="true"] { background:var(--surface); color:var(--ink); font-weight:600; box-shadow:var(--small-shadow); }
-.applications-content { min-width:0; padding:16px 20px 20px; }
+.applications-content { min-width:0; padding:14px var(--pad) 8px; }
 
 .application-toolbar { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; min-width:0; margin-bottom:var(--space-3); }
 .application-toolbar .search-box { flex:1 1 230px; min-width:min(100%,180px); }
@@ -24,47 +24,51 @@
 .application-toolbar .btn.small-btn { height:var(--control-height); padding:0 12px; font-size:var(--text-md); }
 .application-source-filter { display:flex; align-items:center; min-width:0; }
 
-.app-status { margin:0 0 var(--space-3); }
+.app-status { margin:0 0 var(--space-3); font-size:var(--text-md); }
 .app-status:empty { display:none; }
-.app-diagnostic { max-width:340px; color:var(--muted); font-size:var(--text-sm); line-height:1.7; }
+.app-diagnostic { max-width:420px; margin-bottom:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.7; }
 .app-diagnostic summary { color:var(--accent); cursor:pointer; }
 .app-diagnostic p { margin-top:6px; }
 
-#applicationSummaryRegion { display:flex; align-items:baseline; justify-content:space-between; gap:6px var(--space-4); flex-wrap:wrap; margin-bottom:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.6; }
+#applicationSummaryRegion { display:flex; align-items:baseline; gap:4px var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.6; }
 #applicationSummaryRegion:empty { display:none; }
 #applicationSummaryRegion strong { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
-#applicationSummaryRegion .applications-total { color:var(--ink); font-size:20px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
-#applicationSummaryRegion .applications-total span { margin-left:4px; color:var(--muted); font-size:var(--text-sm); font-weight:400; }
+#applicationSummaryRegion .applications-total { color:var(--ink); font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+#applicationSummaryRegion .applications-total span { margin-left:4px; color:var(--muted); font-size:var(--text-md); font-weight:400; }
 
 /* Application table */
 #appListRegion { min-width:0; }
-.application-table-scroll { max-width:100%; overflow-x:auto; overflow-y:hidden; border:1px solid var(--line); border-radius:var(--radius-control); }
+/* On the page the table runs edge to edge like the other panels; the drawer keeps a framed one. */
+.application-table-scroll { max-width:100%; overflow-x:auto; overflow-y:hidden; }
+.application-workspace .application-table-scroll { max-width:none; margin-inline:calc(-1 * var(--pad)); }
+.drawer-content .application-table-scroll { border:1px solid var(--line); border-radius:var(--radius-control); }
+.drawer-content .application-table th { border-top:0; }
 .application-table { table-layout:fixed; min-width:600px; }
 .application-table th, .application-table td { padding:10px 12px; vertical-align:middle; }
-.application-table th { border-top:0; }
-.application-table th:nth-child(1) { width:8%; }
-.application-table th:nth-child(2) { width:38%; }
-.application-table th:nth-child(n+3) { width:18%; text-align:right; }
+.application-workspace .application-table :is(th, td):first-child { padding-left:var(--pad); }
+.application-workspace .application-table :is(th, td):last-child { padding-right:var(--pad); }
+.application-workspace .application-table tbody tr:last-child td { border-bottom:0; }
+/* The rank hugs the application; the name takes the remaining width. */
+.application-table th:nth-child(1) { width:56px; }
+.application-table th:nth-child(n+3) { width:16%; text-align:right; }
 .application-table:not([data-grouping="live"]):not([data-grouping="summary"]) th:nth-child(1) { width:18%; }
-.application-table:not([data-grouping="live"]):not([data-grouping="summary"]) th:nth-child(2) { width:31%; }
-.application-table:not([data-grouping="live"]):not([data-grouping="summary"]) th:nth-child(n+3) { width:17%; }
 .application-table th .link-btn { max-width:100%; padding:2px 0; color:inherit; font-size:inherit; }
 .application-table th[aria-sort]:not([aria-sort="none"]) .link-btn { color:var(--ink); font-weight:600; }
 .application-table-row:hover { background:var(--surface-2); }
 .application-table-row:focus-within { background:var(--accent-soft); }
-.application-table .application-row-rank { color:var(--muted); font-size:var(--text-sm); overflow-wrap:anywhere; }
+.application-table .application-row-rank { padding-right:0; color:var(--muted); }
 .application-table .application-name { display:flex; align-items:center; gap:var(--space-2); width:100%; max-width:100%; min-width:0; white-space:normal; }
 .application-name-text { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.application-row-meta { display:flex; align-items:center; gap:4px 8px; flex-wrap:wrap; min-width:0; margin:2px 0 0 36px; color:var(--muted); font-size:var(--text-xs); line-height:1.6; overflow-wrap:anywhere; }
-.application-source-badge { display:inline-flex; align-items:center; max-width:100%; padding:0 6px; border:1px solid var(--line); border-radius:4px; background:var(--surface-2); color:var(--muted); font-size:var(--text-xs); line-height:18px; }
-.application-source-badge.measured { border-color:transparent; background:var(--accent-soft); color:var(--accent-dark); }
-.application-source-badge:is(.estimated, .unavailable) { border-color:var(--amber-line); background:var(--amber-soft); color:var(--amber); }
+.application-row-meta { display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap; min-width:0; margin:2px 0 0 36px; color:var(--muted); font-size:var(--text-sm); line-height:1.6; overflow-wrap:anywhere; }
+.application-source-badge { display:inline-flex; align-items:center; max-width:100%; padding:0 6px; border-radius:4px; background:var(--hover); color:var(--muted); font-size:var(--text-sm); line-height:18px; }
+.application-source-badge.measured { background:var(--accent-soft); color:var(--accent-dark); }
+.application-source-badge:is(.estimated, .unavailable) { background:var(--amber-soft); color:var(--amber); }
 .application-table .application-metric { text-align:right; white-space:nowrap; }
 .application-table .application-metric:last-child { color:var(--ink); font-weight:600; }
-.application-row-share { height:3px; margin:6px 0 0 36px; overflow:hidden; border-radius:2px; background:var(--track); }
+.application-row-share { flex:0 1 120px; height:4px; overflow:hidden; border-radius:2px; background:var(--track); }
 .application-row-share > span { display:block; height:100%; max-width:100%; border-radius:inherit; background:var(--chart-rx); }
-.application-share-label { display:block; margin:2px 0 0 36px; color:var(--muted); font-size:var(--text-xs); line-height:1.6; }
-.application-workspace .pagination { flex-wrap:wrap; margin-top:var(--space-2); padding:8px 0 0; border-top:0; }
+.application-share-label { font-variant-numeric:tabular-nums; }
+.application-workspace .pagination { flex-wrap:wrap; margin-inline:calc(-1 * var(--pad)); padding:10px var(--pad) 4px; }
 .application-workspace .empty-state { padding:32px 20px; }
 
 /* Application icons fall back to the first letter of the name. */
@@ -73,16 +77,9 @@
 .app-avatar.app-avatar--compact { display:inline-grid; flex:0 0 28px; width:28px; height:28px; margin:0 8px 0 0; font-size:var(--text-sm); vertical-align:middle; }
 .application-name .app-avatar.app-avatar--compact { margin:0; }
 
-/* Proxy estimate settings and detected proxy clients */
-.app-proxy-panel, .app-rules-panel { margin-top:var(--space-3); }
-/* The summary spans the clipped panel, so its focus ring sits inside the edge. */
-.app-proxy-panel > summary { padding:14px 20px; color:var(--ink); font-size:14px; font-weight:600; cursor:pointer; outline-offset:-2px; }
-.app-proxy-panel > summary::marker { color:var(--muted); }
-.app-proxy-panel[open] > summary { border-bottom:1px solid var(--line); }
-.app-proxy-panel > .settings-group { margin:0; border:0; border-radius:0; background:transparent; }
-.app-proxy-panel #proxyClientsRegion { padding:16px 20px; }
-.app-proxy-panel .detail-section { margin:0; }
-.proxy-clients > p { margin-top:10px; }
+/* Detected proxy clients under the live ranking */
+.app-rules-panel { margin-top:var(--space-3); }
+#proxyClientsRegion:not(:empty) { padding-bottom:var(--space-3); }
 .proxy-client-table { table-layout:fixed; min-width:0 !important; }
 .proxy-client-table th:nth-child(1) { width:24%; }
 .proxy-client-table th:nth-child(2) { width:34%; }
@@ -99,7 +96,7 @@
 .app-rule-row { display:flex; align-items:center; gap:var(--space-3); padding:14px 0; border-top:1px solid var(--line); }
 .app-rule-meta { flex:1; min-width:0; line-height:1.6; overflow-wrap:anywhere; }
 .app-rule-name { color:var(--ink); font-size:var(--text-md); font-weight:600; }
-.app-rule-meta .app-source { color:var(--muted); font-size:var(--text-sm); }
+.app-rule-meta :is(.app-source, .small) { color:var(--muted); font-size:var(--text-md); }
 .app-rule-limits { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 4px; }
 .app-rule-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); flex-shrink:0; flex-wrap:wrap; }
 .app-rules-panel .empty-state { padding-block:28px; }
@@ -137,14 +134,12 @@
   .app-rule-actions { width:100%; justify-content:flex-start; padding-left:calc(32px + var(--space-3)); }
 }
 @media (max-width:650px) {
-  .application-workspace-head > div:first-child { flex-basis:100%; }
   .application-control > dl { grid-template-columns:1fr; gap:4px; }
   .application-control > dl dd { margin-bottom:var(--space-2); }
   .drawer-content .application-summary .kv-grid { grid-template-columns:minmax(0,1fr); }
 }
 @media (max-width:520px) {
-  .application-workspace-head { padding:12px 16px; }
-  .applications-content { padding:14px 16px 16px; }
+  .application-workspace { --pad:16px; }
   .application-view-tabs { width:100%; }
   .application-view-tabs [role="tab"] { flex:1; }
   .application-toolbar > label:not(.search-box) { flex:1 1 150px; }

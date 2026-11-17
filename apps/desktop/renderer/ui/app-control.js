@@ -34,8 +34,7 @@ export function appRulesView(control, { button, esc }) {
             ${record.operationError ? tr`<div class="small form-error">上次操作未完成：${esc(record.operationError.message)}</div>` : ''}</div>
             <div class="app-rule-actions">${button('select-controlled-app', t('查看与调整'), '', 'small-btn', `type="button" data-path="${esc(record.path)}" data-name="${esc(record.name || record.path)}" ${disabled}`)}</div></li>`;
     }).join('');
-    return tr`<section class="panel app-rules-panel" aria-label="应用限制记录"><div class="panel-head"><div><h2>应用限制记录</h2>
-        <div class="panel-sub">列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。</div></div>
+    return tr`<section class="panel app-rules-panel" aria-label="应用限制记录"><div class="panel-head"><h2>应用限制记录</h2>
         ${button('app-rules-refresh', t('刷新记录'), 'reset', 'small-btn', `type="button" ${disabled}`)}</div>
         ${control.rulesBusy ? tr`<p class="small muted" role="status">正在读取记录…</p>` : ''}
         ${control.rulesError ? `<p class="form-error" role="alert">${esc(control.rulesError)}</p>` : ''}

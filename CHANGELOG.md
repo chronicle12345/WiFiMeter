@@ -10,13 +10,15 @@ Changes are listed by release.
 - Group the date-range dialog by start and end, align date/time inputs and actions, and adapt its layout and error message to narrow windows and both themes.
 - Refresh the main window with a neutral palette and one blue accent, a shared 36 px control height, consistent text sizes, spacing and corner radii, and aligned settings rows, tables and dialogs in both themes. The floating window's light and dark palettes follow the new colors; its indigo palette and shape are unchanged.
 - Draw the usage chart at its container's actual size, so bars and labels stay sharp and fill the card at every window size.
-- Show the autosave retry button only after a save fails in the network drawer and the proxy settings on the applications page.
+- Show the autosave retry button only after a save fails in the network drawer and the proxy settings.
+- Simplify the applications page: one filter row, the total beside its label, and a full-width table with the rank next to the application and usage share on one line. Proxy estimate settings now live only under Settings > Proxy. Explanatory notes are removed or moved to tooltips, and the source selector explains that proxy estimates need whole-day ranges.
 
 - 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
 - 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
 - 主窗口改用中性色加单一蓝色强调色，统一 36 px 控件高度、字号、间距和圆角，并对齐明暗主题下的设置行、表格和弹窗。悬浮窗的浅色和深色配色随之更新，靛蓝配色与外形不变。
 - 用量图表按容器实际尺寸绘制，各种窗口大小下柱形和标签保持清晰并填满卡片。
-- 网络详情和应用页代理设置中的自动保存“重试”按钮仅在保存失败后显示。
+- 网络详情和代理设置中的自动保存“重试”按钮仅在保存失败后显示。
+- 精简应用流量页：筛选合并为一行，总用量与标签并排，表格铺满面板，排名紧邻应用，占比与进度条同行显示。代理估算设置只保留在“设置 > 代理”。说明性小字删除或改为悬停提示，来源选择器会提示代理估算需要整天的时间范围。
 
 ## [1.3.6] - 2026-10-17
 
