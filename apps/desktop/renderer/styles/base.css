@@ -6,7 +6,10 @@ button { border:0; background:none; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.45; }
 button, input, select, a { -webkit-tap-highlight-color:transparent; }
 a { color:var(--accent); }
-:is(button, input, select, a, [tabindex]):focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+/* :where() keeps the ring at the lowest specificity, so a component can move or replace it. */
+:where(button, input, select, a, summary, [tabindex]):focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+/* Author display values would otherwise override the hidden attribute. */
+[hidden] { display:none !important; }
 
 h1, h2, h3, p { margin:0; }
 h1 { font-size:22px; line-height:1.4; font-weight:650; }

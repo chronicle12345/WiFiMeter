@@ -1,5 +1,6 @@
 @import url("../../renderer/shared/tokens.css");
-:root { background:transparent; }
+/* The floating window keeps rounder corners than the main window's panels. */
+:root { background:transparent; --radius:14px; }
 * { box-sizing:border-box; }
 html, body { width:100%; height:100%; overflow:hidden; }
 body { margin:0; user-select:none; background:transparent; color:var(--ink); }
@@ -50,7 +51,7 @@ body[data-shape="circle"] .rate-download .rate-number { font-size:28px; line-hei
 body[data-shape="circle"] .rate-upload .rate-number { font-size:16px; }
 body[data-shape="circle"] nav { bottom:16px; left:50%; transform:translateX(-50%); }
 .edge-strip { display:none; }
-body[data-expanded="true"] main { display:flex; flex-direction:column; padding:12px; border-radius:14px; }
+body[data-expanded="true"] main { display:flex; flex-direction:column; padding:12px; border-radius:var(--radius); }
 body[data-expanded="true"] .mini-heading { justify-content:flex-start; flex-shrink:0; margin-inline:0; }
 body[data-expanded="true"] .all-traffic-label { display:inline; }
 body[data-expanded="true"] nav { top:7px; right:8px; bottom:auto; left:auto; transform:none; }

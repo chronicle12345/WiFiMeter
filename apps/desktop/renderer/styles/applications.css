@@ -52,7 +52,7 @@
 .application-table th[aria-sort]:not([aria-sort="none"]) .link-btn { color:var(--ink); font-weight:600; }
 .application-table-row:hover { background:var(--surface-2); }
 .application-table-row:focus-within { background:var(--accent-soft); }
-.application-table .application-row-rank { color:var(--muted); font-size:var(--text-sm); }
+.application-table .application-row-rank { color:var(--muted); font-size:var(--text-sm); overflow-wrap:anywhere; }
 .application-table .application-name { display:flex; align-items:center; gap:var(--space-2); width:100%; max-width:100%; min-width:0; white-space:normal; }
 .application-name-text { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .application-row-meta { display:flex; align-items:center; gap:4px 8px; flex-wrap:wrap; min-width:0; margin:2px 0 0 36px; color:var(--muted); font-size:var(--text-xs); line-height:1.6; overflow-wrap:anywhere; }
@@ -75,7 +75,8 @@
 
 /* Proxy estimate settings and detected proxy clients */
 .app-proxy-panel, .app-rules-panel { margin-top:var(--space-3); }
-.app-proxy-panel > summary { padding:14px 20px; color:var(--ink); font-size:14px; font-weight:600; cursor:pointer; }
+/* The summary spans the clipped panel, so its focus ring sits inside the edge. */
+.app-proxy-panel > summary { padding:14px 20px; color:var(--ink); font-size:14px; font-weight:600; cursor:pointer; outline-offset:-2px; }
 .app-proxy-panel > summary::marker { color:var(--muted); }
 .app-proxy-panel[open] > summary { border-bottom:1px solid var(--line); }
 .app-proxy-panel > .settings-group { margin:0; border:0; border-radius:0; background:transparent; }
@@ -96,9 +97,9 @@
 .app-rules-panel > p { margin:0; padding:0 20px 12px; }
 .app-rules-list { margin:0; padding:0 20px 4px; list-style:none; }
 .app-rule-row { display:flex; align-items:center; gap:var(--space-3); padding:14px 0; border-top:1px solid var(--line); }
-.app-rule-meta { flex:1; min-width:0; line-height:1.6; }
-.app-rule-name { color:var(--ink); font-size:var(--text-md); font-weight:600; overflow-wrap:anywhere; }
-.app-rule-meta .app-source { color:var(--muted); font-size:var(--text-sm); overflow-wrap:anywhere; }
+.app-rule-meta { flex:1; min-width:0; line-height:1.6; overflow-wrap:anywhere; }
+.app-rule-name { color:var(--ink); font-size:var(--text-md); font-weight:600; }
+.app-rule-meta .app-source { color:var(--muted); font-size:var(--text-sm); }
 .app-rule-limits { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 4px; }
 .app-rule-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); flex-shrink:0; flex-wrap:wrap; }
 .app-rules-panel .empty-state { padding-block:28px; }
@@ -132,7 +133,8 @@
   .application-toolbar .search-box { flex-basis:100%; }
   .capture-status { max-width:180px; }
   .app-rule-row { align-items:flex-start; flex-wrap:wrap; }
-  .app-rule-actions { width:100%; justify-content:flex-start; }
+  /* The wrapped actions line up with the text beside the 32px avatar. */
+  .app-rule-actions { width:100%; justify-content:flex-start; padding-left:calc(32px + var(--space-3)); }
 }
 @media (max-width:650px) {
   .application-workspace-head > div:first-child { flex-basis:100%; }
@@ -149,6 +151,7 @@
   .application-toolbar .select { width:100%; }
   .capture-status { max-width:130px; }
   .app-rules-list, .app-rules-panel > p { padding-inline:16px; }
+  .app-rule-actions { padding-left:0; }
   .proxy-detail-metrics { grid-template-columns:minmax(0,1fr); }
   .applications-page .proxy-client-table { min-width:560px !important; }
 }

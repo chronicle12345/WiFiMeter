@@ -139,18 +139,14 @@ function chartRows(networkId=ui.networkId){
  return all;
 }
 function chartUnit(rows){return byteUnitFor(rows.reduce((peak,r)=>r.rx+r.tx>peak?r.rx+r.tx:peak,0n),data.settings.unit);}
-// 图表按容器的实际像素尺寸绘制；尺寸变化后由 fitCharts 原地重绘一次。
+// 图表按容器的实际像素尺寸绘制，尺寸变化后原地重绘；聚焦中的图表等焦点离开后再重绘，以保留键盘焦点。
 const chartSizes=new Map();
 function fitCharts(){
- let changed=false;
  for(const chart of $$('svg.chart[data-chart-id]')){
-  const box=chart.getBoundingClientRect(),size={w:Math.round(box.width),h:Math.round(box.height)},known=chartSizes.get(chart.dataset.chartId);
-  if(size.w<160||size.h<100||known&&known.w===size.w&&known.h===size.h)continue;
-  chartSizes.set(chart.dataset.chartId,size);changed=true;
- }
- if(!changed)return;
- for(const chart of $$('svg.chart[data-chart-id]')){
-  const id=chart.dataset.chartId,wrapper=document.createElement('div');
+  const id=chart.dataset.chartId,box=chart.getBoundingClientRect(),size={w:Math.round(box.width),h:Math.round(box.height)},known=chartSizes.get(id);
+  if(size.w<160||size.h<100||known&&known.w===size.w&&known.h===size.h||chart.contains(document.activeElement))continue;
+  chartSizes.set(id,size);
+  const wrapper=document.createElement('div');
   wrapper.innerHTML=chartSvg(chartRows(id==='drawer-chart'?ui.drawer?.id:ui.networkId),id);
   if(wrapper.firstElementChild?.matches('svg'))chart.replaceWith(wrapper.firstElementChild);
  }

@@ -127,7 +127,7 @@ td.strong { color:var(--ink); font-weight:600; }
 .chart .bar-tx { fill:var(--chart-tx); }
 .chart .bar-missing { stroke:var(--chart-missing); stroke-dasharray:2 2; }
 .chart .bar-group:focus { outline:none; }
-.chart .bar-group:is(:hover, :focus) .bar-rx { fill:var(--accent-fill); }
+.chart .bar-group:is(:hover, :focus) .bar-rx { fill:var(--accent); }
 .chart .bar-hit { fill:transparent; }
 .chart-caption { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 20px 12px; color:var(--muted); font-size:var(--text-sm); line-height:18px; }
 .legend { display:flex; align-items:center; gap:var(--space-3); color:var(--muted); font-size:var(--text-sm); }
