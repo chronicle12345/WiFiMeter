@@ -15,6 +15,7 @@ Changes are listed by release.
 - Add a close button to finished update notices (new version, downloaded, failed). A closed notice returns when the update status changes; Settings > About still shows it.
 - Split proxy estimates by the bytes each client actually exchanged with the proxy, separately for download and upload, instead of giving every client the same download/upload ratio from connection counts. Connection counts remain the fallback when no byte evidence exists. Estimates are now also available per minute, so custom time ranges and minute or hour grouping can include them.
 - Add a Rules page to the sidebar for application network restrictions: the saved restriction records and the program picker move there from the applications page.
+- Tidy the square and circle floating windows: they show only the rates, and the toolbar appears in place of the title while the pointer or keyboard focus is inside, instead of crowding six buttons along the bottom edge.
 
 - 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
 - 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
@@ -25,6 +26,7 @@ Changes are listed by release.
 - “发现新版本”“已下载”“更新失败”这类更新提示可以点右上角关闭；更新状态变化后会再次出现，“设置 > 关于更新”中始终可见。
 - 代理估算改为按各客户端与代理之间实际收发的字节分别分配下载和上传，不再让所有客户端按连接数得到相同的收发比例；没有字节证据时才退回按连接数分配。估算同时支持分钟级，自定义起止时间以及按分钟、小时分组时也能包含代理估算。
 - 侧边栏新增“规则”页，用于设置应用联网限制：应用限制记录和选择程序入口从应用流量页移到这里。
+- 整理方形和圆形悬浮窗：平时只显示速度，鼠标移入或键盘聚焦时工具栏出现在标题位置，不再把六个按钮挤在底部边缘。
 
 ## [1.3.6] - 2026-10-17
 
