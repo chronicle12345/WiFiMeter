@@ -80,7 +80,8 @@ $('.brand-name').textContent = productName;
 const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:showAlert});
 let data=store.snapshot;
 let storageFailed=false;
-const ui={page:['overview','networks','apps','history','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
+const PAGES=['overview','networks','apps','rules','history','settings'];
+const ui={page:PAGES.includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
 const applications={appView:'live',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
@@ -97,7 +98,8 @@ async function changeApplicationView(view){
  if(ui.drawer?.tab==='apps')renderDrawer();else renderMain();
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
-function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
+function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}`;}
+function rulesPage(){return `<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
 let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
@@ -185,10 +187,10 @@ function renderChrome(){
  document.documentElement.dataset.page=ui.page;
  setLanguage(data.settings.language||'zh-CN');document.documentElement.lang=getLocale();
  $('.brand-sub')?.remove();$('.nav-label')?.remove();$('.sidebar').setAttribute('aria-label',t('主导航'));
- const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
+ const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],rules:[t('应用规则'),t('阻止程序联网，或限制它的上传和下载速度。')],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
  const [title,description]=labels[ui.page];document.title=`${productName} · ${title}`;
  updateRegion($('#brandMark'),'<img src="../assets/icon.png" alt="" width="37" height="37">');
- updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','shield',t('应用流量')],['history','history',t('历史')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
+ updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','transfer',t('应用流量')],['rules','shield',t('规则')],['history','history',t('历史')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
  const running=data.live.collector==='running'&&data.live.state!=='offline',paused=data.live.collector==='paused';
  updateRegion($('#collector'),tr`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?t('统计已暂停'):running?t('正在采集'):t('采集器未就绪')}</span></div>${button('pause',paused?t('恢复统计'):t('暂停统计'),paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`);
  updateRegion($('#sidebarFooter'),'');
@@ -273,7 +275,7 @@ function renderMain(){
  const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd;
  renderChrome();
  renderUpdateBanner();
- updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
+ updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,rules:rulesPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
  for(const draft of drafts){
   const replacement=$('#'+draft.id);
   if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
@@ -889,7 +891,7 @@ document.addEventListener('focusin',e=>{const point=e.target.closest('[data-char
 window.addEventListener('blur',()=>$('#tooltip').style.display='none');
 window.wifimeterHasUnsavedChanges=()=>settingsDirty||networkDirty||totalQuotaDirty||proxyDirty;
 window.addEventListener('beforeunload',event=>{if(window.wifimeterHasUnsavedChanges()){event.preventDefault();event.returnValue='';}});
-window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(['overview','networks','apps','history','settings'].includes(p))navigate(p);});
+window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(PAGES.includes(p))navigate(p);});
 const stopPreferences=window.desktop.windowPreferences?.onChanged(receiveWindowPreferences);
 window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEventListener('change',applyTheme);},{once:true});
 window.addEventListener('focus',()=>reloadWindowPreferences().catch(console.error));

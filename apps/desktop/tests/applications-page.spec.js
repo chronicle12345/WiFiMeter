@@ -307,21 +307,26 @@ test('应用流量页展示全部实时排行并按下载、上传速度排序',
     await page.locator('#appSort').selectOption('tx');await expect(page.locator('#appListRegion tbody tr').first()).toContainText('App11');
 });
 
-test('已设置的应用限制可从列表查询并进入调整，无需应用正在运行',async()=>{
+test('已设置的应用限制可从规则页查询并进入调整，无需应用正在运行',async({},testInfo)=>{
     await app.evaluate(()=>{globalThis.rendererFixture.rules=[{
         path:'C:\\Apps\\OfflineTool.exe',name:'OfflineTool.exe',savedAt:'2026-10-12T00:00:00.000Z',
         state:{Blocked:true,Throttled:true,UploadKbps:1024,DownloadThrottled:false}
     }];});
     await openApplications();
+    await expect(page.locator('.app-rules-panel')).toHaveCount(0);
+    await page.locator('.nav [data-page="rules"]').click();
+    await expect(page).toHaveTitle(/应用规则/);
     if(process.platform!=='win32'){
-        await expect(page.locator('.app-rules-panel, .app-rule-row, [data-action="app-rules-refresh"]')).toHaveCount(0);
+        await expect(page.locator('.app-rules-panel')).toContainText('当前平台暂不支持');
+        await expect(page.locator('.app-rule-row, [data-action="app-rules-refresh"]')).toHaveCount(0);
+        await openApplications();
         await page.locator('[data-action="application-control"]').click();
         await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
         await expect(page.locator('[data-action="choose-program"], [data-operation], #uploadKBps, #downloadKBps')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
         await page.keyboard.press('Escape');
         await page.reload();
-        await expect(page.locator('.app-rules-panel, .app-rule-row')).toHaveCount(0);
+        await expect(page.locator('.app-rule-row')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
         return;
     }
@@ -330,6 +335,7 @@ test('已设置的应用限制可从列表查询并进入调整，无需应用�
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('OfflineTool.exe');
     await expect(row).toContainText('128 KB/s');
+    await page.screenshot({path:testInfo.outputPath('rules.png'),fullPage:true});
     await row.locator('[data-action="select-controlled-app"]').click();
     await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\OfflineTool.exe');
     expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control').at(-1).params)).toMatchObject({action:'read',path:'C:\\Apps\\OfflineTool.exe'});

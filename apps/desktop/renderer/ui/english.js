@@ -49,7 +49,12 @@ export const english = Object.fromEntries(`
 规则未启用|Rules disabled
 偏好已保存，但开启开机启动失败。|Preferences saved, but enabling startup failed.
 偏好已保存，但关闭开机启动失败。|Preferences saved, but disabling startup failed.
-还没有应用限制记录。设置成功后会显示在这里。|No restriction records yet. Successfully configured restrictions will appear here.
+还没有应用限制记录|No restriction records yet
+选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。|Choose a program to block its network access or limit its speed. Configured restrictions appear here.
+应用规则|Application rules
+规则|Rules
+阻止程序联网，或限制它的上传和下载速度。|Block a program's network access, or limit its upload and download speed.
+当前平台暂不支持|Not supported on this platform
 应用限制记录未能读取。|Unable to read application restriction records.
 正在读取记录…|Reading records…
 上次操作未完成：|Previous operation incomplete:
