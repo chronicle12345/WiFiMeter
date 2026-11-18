@@ -29,4 +29,6 @@ Windows 原生源也默认不采集，通过专用管道连接授权辅助进程
 
 本地 TCP 速率来自连接测量，数值单位为字节每秒。`measurementAvailable` 为 false 时，即使仍有旧数值字段，页面也显示横线，避免将不可测量当作零流量。停止或暂停采集后，页面中的代理速率不可用。这些速率与网卡总量、额度账本及已存历史估算分别处理，无法据此还原 UDP/QUIC 流量或精确的客户端历史用量。应用详情根据客户端 `appId` 或明确的 `proxyAppId` 匹配；Windows 路径先统一分隔符，并忽略大小写。
 
-`proxyEstimatedRecords` 保存每日归属记录，字段为 `{networkId, date, proxyAppId, appId, name, rxBytes, txBytes, estimated, unattributed}`。历史归属按观测到的连接权重估算。页面替换原生代理记录前，同一网络、日期和代理标识的下载、上传估算合计必须分别等于原生总量，否则继续显示原生记录；客户端直接记录继续保留。详情沿用所选网络与日期范围，选中具体日期或月份时进一步筛选估算行；部分日期范围及分钟/小时详情不显示每日估算。
+`proxyEstimatedRecords` 保存每日归属记录，字段为 `{networkId, date, proxyAppId, appId, name, rxBytes, txBytes, estimated, unattributed}`。历史归属按各客户端与代理之间回环连接的收发字节分别分配下载和上传；某方向没有字节证据时，该方向退回按观测到的连接数分配。页面替换原生代理记录前，同一网络、日期和代理标识的下载、上传估算合计必须分别等于原生总量，否则继续显示原生记录；客户端直接记录继续保留。详情沿用所选网络与日期范围，选中具体日期或月份时进一步筛选估算行；分钟/小时详情不显示每日估算。
+
+快照包含分钟记录时，`proxyEstimatedMinuteRecords` 提供同样的记录，并附带 `time`（`HH:mm`）、`hour` 和 `minute`。每分钟使用当分钟的权重，没有时退回当天的权重。页面按网络、日期、分钟和代理分别做同样的收发合计校验。实时事件通过 `proxyEstimatedMinuteUpdates` 下发当前和上一分钟发生变化的分组。

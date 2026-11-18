@@ -692,6 +692,83 @@ void proxyClientIdentityIsExplicitInMemory()
     WIFIMETER_CHECK(!clients->at(2).boolOr("pathAvailable", true));
 }
 
+// 客户端回环字节决定各方向的份额；分钟行用当分钟权重，没有时退回当天合计。
+void minuteWeightsFollowLoopbackBytesPerDirection()
+{
+    Harness h;
+    h.proxyReport=observed();
+    configure(h); enable(h);
+    const auto start=utcTime(2026,10,1,0,0,0);
+    h.apps.report.samples={{"loopback","a.exe","Client A","12:100",12,1000,2000,true,"a-key"},
+        {"loopback","b.exe","Client B","13:100",13,500,500,true,"b-key-1"}};
+    h.service->collectOnce(start);
+    WIFIMETER_CHECK_EQ(h.count("proxy_minute_weights"),std::int64_t(2));
+    h.apps.report.samples[0].rxBytes+=600; h.apps.report.samples[0].txBytes+=200;
+    h.apps.report.samples[1].rxBytes+=300; h.apps.report.samples[1].txBytes+=50;
+    h.service->collectOnce(start+std::chrono::seconds(5));
+    // 同一分钟内重复采样只累加字节增量，连接数取去重后的最大值。
+    h.service->collectOnce(start+std::chrono::seconds(10));
+    WIFIMETER_CHECK_EQ(h.count("proxy_minute_weights"),std::int64_t(2));
+    storage::Status status;
+    auto stored=h.store->database().prepare("SELECT app_id,connections,rx_bytes,tx_bytes FROM proxy_minute_weights ORDER BY app_id;",status);
+    WIFIMETER_CHECK(stored && stored->step());
+    if (!stored) return;
+    WIFIMETER_CHECK_EQ(stored->columnInt64(1),std::int64_t(1));
+    WIFIMETER_CHECK_EQ(stored->columnInt64(2),std::int64_t(600));
+    WIFIMETER_CHECK_EQ(stored->columnInt64(3),std::int64_t(200));
+    WIFIMETER_CHECK(stored->step());
+    WIFIMETER_CHECK_EQ(stored->columnInt64(1),std::int64_t(2));
+    WIFIMETER_CHECK_EQ(stored->columnInt64(2),std::int64_t(300));
+    WIFIMETER_CHECK_EQ(stored->columnInt64(3),std::int64_t(50));
+    stored.reset();
+
+    h.raw("net-a","2026-10-01","proxy.exe",990,275);
+    WIFIMETER_CHECK(h.store->usage().addAppMinute({"net-a","2026-10-01",0,0,"proxy.exe","Proxy",900,250}).ok);
+    WIFIMETER_CHECK(h.store->usage().addAppMinute({"net-a","2026-10-01",0,7,"proxy.exe","Proxy",90,25}).ok);
+    const auto snapshot=h.call("snapshot",json(R"({"from":"2026-10-01","to":"2026-10-01","includeMinutes":true})"));
+    WIFIMETER_CHECK(snapshot.ok());
+    const auto* daily=snapshot.result.find("proxyEstimatedRecords");
+    const auto* minutes=snapshot.result.find("proxyEstimatedMinuteRecords");
+    WIFIMETER_CHECK(daily && daily->size()==2 && minutes && minutes->size()==4);
+    if (!daily || daily->size()!=2 || !minutes || minutes->size()!=4) return;
+    // 连接数是 1:2，但回环字节是 2:1（下载）和 4:1（上传）。
+    WIFIMETER_CHECK_EQ(daily->at(0).stringOr("appId"),std::string("a.exe"));
+    WIFIMETER_CHECK_EQ(daily->at(0).stringOr("rxBytes"),std::string("660"));
+    WIFIMETER_CHECK_EQ(daily->at(0).stringOr("txBytes"),std::string("220"));
+    WIFIMETER_CHECK_EQ(daily->at(1).stringOr("rxBytes"),std::string("330"));
+    WIFIMETER_CHECK_EQ(daily->at(1).stringOr("txBytes"),std::string("55"));
+    WIFIMETER_CHECK(!daily->at(0).has("time"));
+    WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("time"),std::string("00:00"));
+    WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("rxBytes"),std::string("600"));
+    WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("txBytes"),std::string("200"));
+    WIFIMETER_CHECK_EQ(minutes->at(1).stringOr("rxBytes"),std::string("300"));
+    WIFIMETER_CHECK_EQ(minutes->at(1).stringOr("txBytes"),std::string("50"));
+    WIFIMETER_CHECK_EQ(minutes->at(2).stringOr("time"),std::string("00:07"));
+    WIFIMETER_CHECK_EQ(minutes->at(2).stringOr("rxBytes"),std::string("60"));
+    WIFIMETER_CHECK_EQ(minutes->at(2).stringOr("txBytes"),std::string("20"));
+    WIFIMETER_CHECK_EQ(minutes->at(3).stringOr("rxBytes"),std::string("30"));
+    WIFIMETER_CHECK_EQ(minutes->at(3).stringOr("txBytes"),std::string("5"));
+    WIFIMETER_CHECK(!h.call("snapshot").result.find("proxyEstimatedMinuteRecords")->size());
+
+    // 实时事件只在分组变化时携带当前分钟的估算。
+    const auto updatesOf=[](const ipc::BackendService::Events& events) -> const JsonValue* {
+        for (const auto& item : events.items) if (item.has("proxyEstimatedMinuteUpdates")) return item.find("proxyEstimatedMinuteUpdates");
+        return nullptr;
+    };
+    const auto first=h.service->collectOnce(start+std::chrono::seconds(15));
+    const auto* updates=updatesOf(first);
+    WIFIMETER_CHECK(updates && updates->size()==1);
+    if (updates && updates->size())
+    {
+        WIFIMETER_CHECK_EQ(updates->at(0).stringOr("time"),std::string("00:00"));
+        WIFIMETER_CHECK_EQ(updates->at(0).find("records")->size(),std::size_t(2));
+    }
+    WIFIMETER_CHECK(updatesOf(h.service->collectOnce(start+std::chrono::seconds(20)))==nullptr);
+
+    WIFIMETER_CHECK(h.call("clearUsage").ok());
+    WIFIMETER_CHECK_EQ(h.count("proxy_minute_weights"),std::int64_t(0));
+}
+
 int main(int argc, char** argv)
 {
     test::useTimeZone("UTC");
@@ -706,6 +783,7 @@ int main(int argc, char** argv)
     detectedClientsNeverBecomeByteWeights();
     explainsCollectionAndPermissionState();
     keepsRawRecordsAndSelectsTheRequestedNetworkAndDay();
+    minuteWeightsFollowLoopbackBytesPerDirection();
     validatesConfigWithoutOverwritingTheSavedValue();
     retentionAndClearFollowTheUserSettings();
     failedObservationDoesNotWritePartialEvidence();

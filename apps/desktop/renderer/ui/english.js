@@ -9,7 +9,6 @@ export const english = Object.fromEntries(`
 实时流量排行|Live traffic ranking
 应用用量记录|Application usage history
 应用视图|Application view
-代理估算按天记录：请选择整天的时间范围，并按应用汇总、日或月分组。|Proxy estimates are stored per day: choose whole days and group by summary, day or month.
 条结果|results
 原生采集|Native collection
 包含端口估算|Include port estimates

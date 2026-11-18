@@ -586,3 +586,23 @@ test('故障事件晚于旧快照时不会被快照恢复为正常采集', async
     assert.equal(client.snapshot.live.collector, 'offline'); assert.deepEqual(client.snapshot.appProcesses, []);
     assert.equal(client.snapshot.appCollection.state, 'unavailable');
 });
+
+test('分钟估算更新只在已加载分钟记录时生效，并与按天的估算分开保存', async t => {
+ const original=globalThis.window;t.after(()=>{globalThis.window=original;});
+ let receive,included=false;
+ globalThis.window={desktop:{backend:{request:async method=>({ok:true,result:method==='snapshot'?{minuteRecordsIncluded:included,proxyEstimatedRecords:[],proxyEstimatedMinuteRecords:[]}:{}}),onEvent:handler=>{receive=handler;return()=>{};}}}};
+ const client=createDataClient({});await client.start({from:'2026-10-01',to:'2026-10-02'});
+ const record={networkId:'home',date:'2026-10-02',time:'08:30',proxyAppId:'C:\\Proxy.exe',appId:'client',name:'client',rxBytes:'7',txBytes:'1',estimated:true};
+ const update={networkId:'home',date:'2026-10-02',time:'08:30',proxyAppId:'c:\\proxy.exe',records:[record]};
+ receive({event:'live',proxyEstimatedMinuteUpdates:[update]});
+ assert.deepEqual(client.snapshot.proxyEstimatedMinuteRecords,[]);
+ included=true;await client.queryRange({from:'2026-10-01',to:'2026-10-02',includeMinutes:true});
+ receive({event:'live',proxyEstimatedMinuteUpdates:[update]});
+ receive({event:'live',proxyEstimatedMinuteUpdates:[update]});
+ assert.deepEqual(client.snapshot.proxyEstimatedMinuteRecords,[record]);
+ assert.deepEqual(client.snapshot.proxyEstimatedRecords,[]);
+ receive({event:'live',proxyEstimatedMinuteUpdates:[{...update,time:'08:31',records:[{...record,time:'08:31'}]}]});
+ assert.equal(client.snapshot.proxyEstimatedMinuteRecords.length,2);
+ receive({event:'live',proxyEstimatedMinuteUpdates:[{...update,records:[]}]});
+ assert.deepEqual(client.snapshot.proxyEstimatedMinuteRecords.map(row=>row.time),['08:31']);
+});

@@ -19,6 +19,7 @@ const emptySnapshot = () => ({
     appRecords: [],
     appMinuteRecords: [],
     proxyEstimatedRecords: [],
+    proxyEstimatedMinuteRecords: [],
     appCollection: { enabled: false, available: false, state: 'disabled' },
     appProcesses: [],
     appGaps: [],
@@ -76,7 +77,7 @@ export function createDataClient(handlers = {}) {
             }
         }
         if (message.event === 'live' || message.event === 'appUsage') {
-            for (const update of message.proxyEstimatedUpdates ?? []) {
+            for (const update of [...message.proxyEstimatedUpdates ?? [], ...message.proxyEstimatedMinuteUpdates ?? []]) {
                 remember(pendingSnapshot.groups, proxyUsageKey(update), update);
             }
         }
@@ -219,16 +220,17 @@ export function createDataClient(handlers = {}) {
         }
     }
 
-    // live/appUsage 只携带受影响组的完整累计值；空 records 表示撤销该组。
+    // live/appUsage 只携带受影响组的完整累计值；空 records 表示撤销该组。带 time 的组属于分钟估算。
     function applyProxyEstimatedUpdates(updates) {
         if (!updates?.length) return;
-        const groups = new Map(updates.filter(inActiveRange).map(update => [proxyUsageKey(update), update.records]));
-        if (!groups.size) return;
-        applicationRevision++;
-        snapshot.proxyEstimatedRecords = snapshot.proxyEstimatedRecords
-            .filter(row => !groups.has(proxyUsageKey(row)));
-        for (const records of groups.values()) {
-            snapshot.proxyEstimatedRecords.push(...records.map(row => ({ ...row })));
+        for (const [field, minute] of [['proxyEstimatedRecords', false], ['proxyEstimatedMinuteRecords', true]]) {
+            if (minute && snapshot.minuteRecordsIncluded !== true) continue;
+            const groups = new Map(updates.filter(update => !!update.time === minute && inActiveRange(update))
+                .map(update => [proxyUsageKey(update), update.records]));
+            if (!groups.size) continue;
+            applicationRevision++;
+            snapshot[field] = snapshot[field].filter(row => !groups.has(proxyUsageKey(row)));
+            for (const records of groups.values()) snapshot[field].push(...records.map(row => ({ ...row })));
         }
     }
 
@@ -243,7 +245,7 @@ export function createDataClient(handlers = {}) {
                 return;
             }
             if (message.event === 'live') {
-                applyProxyEstimatedUpdates(message.proxyEstimatedUpdates);
+                applyProxyEstimatedUpdates([...message.proxyEstimatedUpdates ?? [], ...message.proxyEstimatedMinuteUpdates ?? []]);
                 snapshot.live = payloadOf(message);
                 snapshot.appCollection = message.appCollection ?? snapshot.appCollection;
                 snapshot.proxy = message.proxy ?? snapshot.proxy;
@@ -378,6 +380,7 @@ export function createDataClient(handlers = {}) {
             snapshot.appRecords = [];
             snapshot.appMinuteRecords = [];
             snapshot.proxyEstimatedRecords = [];
+            snapshot.proxyEstimatedMinuteRecords = [];
             snapshot.appGaps = [];
             snapshot.appProcesses = [];
             snapshot.gaps = [];

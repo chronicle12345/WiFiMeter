@@ -22,6 +22,9 @@ struct ProxyClientObservation
     std::uint64_t connections = 0;
     // 当前快照内已去重的四元组键；调用方可按日期、代理路径、客户端路径跨快照去重。
     std::vector<std::string> connectionKeys{};
+    // 客户端回环连接的收发字节；某方向为 0 时该方向退回按连接数分配。
+    std::uint64_t rxWeight = 0;
+    std::uint64_t txWeight = 0;
 };
 
 struct ProxyProcess

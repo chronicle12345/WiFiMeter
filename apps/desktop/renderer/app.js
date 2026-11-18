@@ -14,7 +14,7 @@ import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
 import { settingsView } from './ui/settings.js';
 import { drawerShell } from './ui/drawer.js';
-import { applicationDetails, applicationAvatar, applicationSourceTitle } from './ui/applications.js';
+import { applicationDetails, applicationAvatar } from './ui/applications.js';
 import { createAppIconLoader } from './ui/app-icons.js';
 import { appControlView, appRulesView } from './ui/app-control.js';
 import { t, tr, setLanguage, getLocale } from './i18n.js';
@@ -334,7 +334,7 @@ function drawerUsage(n){
  return tr`<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">本机采样</span></div><div class="drawer-total"><div class="small muted">总用量</div><div class="metric-number">${fmtNumber(v.total,rows.length)}</div></div><div class="metrics"><div class="metric"><div class="metric-title">下载 ${icon('down')}</div><div class="metric-number">${fmtNumber(v.rx,rows.length)}</div></div><div class="metric"><div class="metric-title">上传 ${icon('up')}</div><div class="metric-number">${fmtNumber(v.tx,rows.length)}</div></div></div><div class="detail-section"><div class="between"><h3>用量趋势</h3><div class="legend"><span><i></i>下载</span><span><i class="tx"></i>上传</span></div></div><div class="chart-wrap">${chartSvg(chartRows(n.id),'drawer-chart')}</div></div>${connection&&data.live.state==='connected'?tr`<dl class="kv-grid"><div><dt>${isEthernet(n)?t('有线网卡'):t('无线网卡')}</dt><dd>${esc(connection.adapterAlias)}</dd></div>${isEthernet(n)||isEthernet(connection)?'':tr`<div><dt>频段 / 信号</dt><dd>${esc(connection.band)} / ${connection.signal}%</dd></div>`}<div><dt>连接开始</dt><dd>${esc(new Date(connection.since).toLocaleString(getLocale(),{hour12:false}))}</dd></div><div><dt>统计状态</dt><dd>${data.live.collector==='paused'?t('已暂停'):t('采样中')}</dd></div></dl>`:''}<div class="detail-section"><h3>最近记录</h3>${days.length?tr`<table><thead><tr><th>日期</th><th class="right">下载</th><th class="right">上传</th></tr></thead><tbody>${days.map(d=>`<tr><td>${niceDate(d.date)}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td></tr>`).join('')}</tbody></table>`:t('<p class="small muted">所选时间内没有该网络的记录。</p>')}</div>${button('export-network',t('导出此网络记录'),'export','','data-id="'+n.id+'"')}`;
 }
 function appMinuteSource(){return minuteRange()||['minute','hour'].includes(appContext().appGrouping);}
-function displayedAppRecords(){return appMinuteSource()?data.appMinuteRecords||[]:proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,appContext().proxyEstimated&&data.proxy?.available);}
+function displayedAppRecords(){const estimated=appContext().proxyEstimated&&data.proxy?.available;return appMinuteSource()?proxyUsageRecords(data.appMinuteRecords||[],data.proxyEstimatedMinuteRecords,estimated):proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,estimated);}
 function displayedAppSummary(networkId,start,end){return applicationSummary(displayedAppRecords(),{...getRange(),networkId,start,end});}
 function drawerApps(n){
  const view=applicationView();
@@ -352,7 +352,7 @@ function applicationSummaryMarkup(n,viewData=applicationListData(n)){
 }
 function applicationContent(n,controls){
  const view=applicationView(),viewData=applicationListData(n);
- return `${applicationFilters(appContext(),{view,minuteSource:appMinuteSource(),proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
+ return `${applicationFilters(appContext(),{view,proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
 }
 function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
@@ -425,7 +425,7 @@ function appList(n,viewData=applicationListData(n)){
 }
 function appDetails(app){
  const proxy=measuredProxy();
- const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!minuteRange()&&!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
+ const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
  return applicationDetails(app,{esc,fmtWithUnit,appRate,estimateLabel,proxyDetails,rangeLabel:rangeText()});
 }
 function refreshApplicationDetails(){
@@ -453,7 +453,7 @@ function renderAppList(){
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
  updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
- const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;source.title=applicationSourceTitle(live,!live&&appMinuteSource());}
+ const source=$('#appDataSource');if(source){const estimated=applicationView()==='live'?appContext().liveProxyEstimated:appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!data.proxy?.available;}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
  const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);

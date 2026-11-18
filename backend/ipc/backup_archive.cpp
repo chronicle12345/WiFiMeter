@@ -114,7 +114,7 @@ Status restoreAdditionalTables(storage::Database& db, const JsonValue& document)
 {
     if (const auto valid=validateProxyBackupRows(document); !valid) return valid;
     if (const auto initialized=ensureProxySchema(db); !initialized) return initialized;
-    if (const auto cleared = db.exec("DELETE FROM legacy_imports; DELETE FROM legacy_network_keys; DELETE FROM proxy_observations; DELETE FROM proxy_apps; DELETE FROM proxy_config;"); !cleared) return cleared;
+    if (const auto cleared = db.exec("DELETE FROM legacy_imports; DELETE FROM legacy_network_keys; DELETE FROM proxy_observations; DELETE FROM proxy_minute_weights; DELETE FROM proxy_apps; DELETE FROM proxy_config;"); !cleared) return cleared;
     for (const auto& table : tables)
     {
         const auto* rows = document.find(table.field);
