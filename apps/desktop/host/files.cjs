@@ -16,7 +16,7 @@ function createFileActions(dialog, getWindow, io = fs) {
                 }
                 const filename = path.basename(payload.filename);
                 const extension = path.extname(filename).slice(1);
-                if (!['csv', 'json'].includes(extension)) throw Error('仅支持 CSV 和 JSON 文件。');
+                if (!['csv', 'json', 'log'].includes(extension)) throw Error('仅支持 CSV、JSON 和日志文件。');
                 if (extension === 'json') assertBackupSize(Buffer.byteLength(payload.body, 'utf8'));
                 const result = await dialog.showSaveDialog(getWindow(), {
                     title: '保存 WiFiMeter 数据', defaultPath: filename,

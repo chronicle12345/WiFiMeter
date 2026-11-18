@@ -73,6 +73,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
         './app-icons.cjs': { registerAppIcons() {} },
         './app-control.cjs': { createAppControl: () => ({}) },
+        './logs.cjs': { createLogStore: () => ({ write() {}, read: () => ({ entries: [], total: 0, level: 'info' }), text: () => '', setLevel: level => level, clear() {}, level: 'info' }), captureConsole() {} },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { calls.push('handoff'); if (failure === 'handoff') throw Error('helper failed'); await handoffReady; } },
         './updates.cjs': { createUpdateService(options) { hooks = options; if (updateFactory) return updateFactory(options); return { settings: async () => ({ checkOnStartup: true }),
             check: async () => ({ state: 'available', canDownload: true, canInstall: true, downloaded: false }),

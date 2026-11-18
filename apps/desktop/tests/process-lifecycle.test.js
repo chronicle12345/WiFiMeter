@@ -119,6 +119,7 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
         './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => preferences, publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
         './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({}) },
+        './logs.cjs': { createLogStore: () => ({ write() {}, read: () => ({ entries: [], total: 0, level: 'info' }), text: () => '', setLevel: level => level, clear() {}, level: 'info' }), captureConsole() {} },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { await handoff; throw Error('fixture handoff failed'); } },
         './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), async install() {
             try { await options.beforeInstall(); await options.launchInstaller('fixture.exe', [], { digest: '0'.repeat(64) }); return { state: 'installing' }; }

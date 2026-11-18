@@ -19,6 +19,10 @@ pub fn allowed_channel(window: &str, channel: &str) -> bool {
                 | "updates:check"
                 | "updates:download"
                 | "updates:install"
+                | "logs:read"
+                | "logs:level"
+                | "logs:clear"
+                | "logs:write"
                 | "window:confirm-close"
         ),
         "mini" => matches!(channel, "mini:open-main" | "mini:close" | "mini:drag"
@@ -42,6 +46,8 @@ mod tests {
         assert!(allowed_channel("main", "app-control:list"));
         assert!(allowed_channel("main", "updates:download"));
         assert!(!allowed_channel("mini", "updates:download"));
+        assert!(allowed_channel("main", "logs:read"));
+        assert!(!allowed_channel("mini", "logs:read"));
         assert!(!allowed_channel("mini", "app-control:list"));
     }
 }

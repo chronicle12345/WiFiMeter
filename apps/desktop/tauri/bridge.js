@@ -86,6 +86,12 @@
             request: payload => request('app-control:request', payload),
             list: () => request('app-control:list')
         },
+        logs: {
+            read: query => request('logs:read', query),
+            setLevel: level => request('logs:level', level),
+            clear: () => request('logs:clear'),
+            write: (level, message) => request('logs:write', { level, message })
+        },
         legacy: { status: () => request('legacy:status'), importDirectory: () => request('legacy:import') },
         saveFile: payload => request('files:save', payload),
         openBackup: () => request('files:open-backup'),

@@ -9,6 +9,7 @@ import { quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
 import { updatesView, refreshUpdates, updateBannerView, updateBannerKey } from './ui/updates.js';
+import { logsView, logList } from './ui/logs.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -47,6 +48,7 @@ const icons = {
  help:'<circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.6 2.6 0 0 1 5.2 0c0 2-2.6 2-2.6 4M12 17h.01"/>',
  pause:'<path d="M8 5v14M16 5v14"/>',play:'<path d="m8 4 12 8-12 8Z"/>',
  search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+ list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/>',
  close:'<path d="m6 6 12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 6"/>',
  home:'<path d="m3 10 9-7 9 7M5 9v12h14V9M10 21v-7h4v7"/>',
  office:'<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h1M15 7h1M8 11h1M15 11h1M10 21v-6h4v6"/>',
@@ -80,7 +82,7 @@ $('.brand-name').textContent = productName;
 const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:showAlert});
 let data=store.snapshot;
 let storageFailed=false;
-const PAGES=['overview','networks','apps','rules','history','settings'];
+const PAGES=['overview','networks','apps','rules','history','logs','settings'];
 const ui={page:PAGES.includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
 const applications={appView:'live',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
@@ -99,6 +101,22 @@ async function changeApplicationView(view){
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
 function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}`;}
+const logsState={available:!!window.desktop.logs,entries:[],total:0,level:'info',minimum:'info',search:'',error:''};
+let logsVersion=0;
+function logsPage(){return logsView(logsState,{button,esc,icon,option});}
+async function loadLogs(full=true){
+ if(!logsState.available)return;
+ const version=++logsVersion;
+ try{const result=await window.desktop.logs.read({minimum:logsState.minimum,search:logsState.search,limit:500});if(version!==logsVersion)return;Object.assign(logsState,{entries:result.entries,total:result.total,level:result.level,error:''});}
+ catch(error){if(version!==logsVersion)return;Object.assign(logsState,{entries:[],total:0,error:error.message});}
+ if(ui.page!=='logs')return;
+ if(full)renderMain();else updateRegion($('#logListRegion'),logList(logsState,{esc}));
+}
+async function exportLogs(){
+ try{const {text}=await window.desktop.logs.read({text:true,limit:1});if(await dataDownload(`WiFiMeter_${today()}.log`,text||''))toast(t('日志已导出'));}
+ catch(error){toast(error.message,true);}
+}
+function clearLogs(){confirmModal(t('清空日志？'),t('已记录的日志会被清除，之后的日志照常记录。'),t('清空日志'),async()=>{await window.desktop.logs.clear();await loadLogs();},true);}
 function rulesPage(){return `<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
 let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
@@ -187,10 +205,10 @@ function renderChrome(){
  document.documentElement.dataset.page=ui.page;
  setLanguage(data.settings.language||'zh-CN');document.documentElement.lang=getLocale();
  $('.brand-sub')?.remove();$('.nav-label')?.remove();$('.sidebar').setAttribute('aria-label',t('主导航'));
- const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],rules:[t('应用规则'),t('阻止程序联网，或限制它的上传和下载速度。')],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
+ const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],rules:[t('应用规则'),t('阻止程序联网，或限制它的上传和下载速度。')],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],logs:[t('运行日志'),t('查看采集、更新和备份的运行记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
  const [title,description]=labels[ui.page];document.title=`${productName} · ${title}`;
  updateRegion($('#brandMark'),'<img src="../assets/icon.png" alt="" width="37" height="37">');
- updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','transfer',t('应用流量')],['rules','shield',t('规则')],['history','history',t('历史')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
+ updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','transfer',t('应用流量')],['rules','shield',t('规则')],['history','history',t('历史')],['logs','list',t('日志')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
  const running=data.live.collector==='running'&&data.live.state!=='offline',paused=data.live.collector==='paused';
  updateRegion($('#collector'),tr`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?t('统计已暂停'):running?t('正在采集'):t('采集器未就绪')}</span></div>${button('pause',paused?t('恢复统计'):t('暂停统计'),paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`);
  updateRegion($('#sidebarFooter'),'');
@@ -275,7 +293,7 @@ function renderMain(){
  const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd;
  renderChrome();
  renderUpdateBanner();
- updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,rules:rulesPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
+ updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,rules:rulesPage,history:historyPage,logs:logsPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
  for(const draft of drafts){
   const replacement=$('#'+draft.id);
   if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
@@ -313,6 +331,7 @@ async function doNavigate(page){
  if(page==='history'&&ui.historyGrouping!=='day'||page==='apps'&&applications.appView==='history'&&['minute','hour'].includes(applications.appGrouping))await ensureMinuteHistory();
  if(version!==navigationVersion)return;
  settingsCategoryScrollY=null;
+ if(page==='logs')loadLogs().catch(console.error);
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
  updateSettingsScroll();
 }
@@ -749,6 +768,7 @@ function confirmUpdate(action){
 }
 const actions={
  'check-updates':()=>updateAction('check'),
+ 'logs-refresh':()=>loadLogs(),'logs-export':exportLogs,'logs-clear':clearLogs,
  'dismiss-update':()=>{dismissedUpdate=updateBannerKey(updateStatus);renderUpdateBanner();},
  'download-update':()=>confirmUpdate('download'),
  'install-update':()=>updateStatus.recoveryRequired||!updateStatus.canInstall?updateAction('install'):confirmUpdate('install'),
@@ -824,6 +844,8 @@ document.addEventListener('submit',async event=>{
 document.addEventListener('change',async event=>{
  const e=event.target;
  if(autosaveForms.has(e.form?.id)){editAutosave(e,true);return;}
+ if(e.id==='logMinimum'){logsState.minimum=e.value;await loadLogs();return;}
+ if(e.id==='logLevel'){try{await window.desktop.logs.setLevel(e.value);}catch(error){toast(error.message,true);}await loadLogs();return;}
  if(e.id==='networkFilter'){ui.networkId=e.value;ui.historyPage=1;renderMain();}
  if(e.id==='historyGrouping'){try{if(e.value!=='day')await ensureMinuteHistory();ui.historyGrouping=e.value;ui.historyPage=1;renderMain();}catch(error){e.value=ui.historyGrouping;toast(error.message,true);}}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
@@ -850,6 +872,7 @@ document.addEventListener('change',async event=>{
 document.addEventListener('input',event=>{
  const e=event.target;
  if(e.id==='networkSearch'){ui.search=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
+ if(e.id==='logSearch'){logsState.search=e.value;loadLogs(false);return;}
  if(e.id==='appSearch'){appContext()[applicationView()==='live'?'liveSearch':'appSearch']=e.value;appContext().appPage=1;renderAppList();}
  if(e.id==='confirmText')$('#confirmAction').disabled=e.value!==t('清空');
  if(autosaveForms.has(e.form?.id)&&e.type!=='checkbox'&&e.tagName!=='SELECT')editAutosave(e,false);

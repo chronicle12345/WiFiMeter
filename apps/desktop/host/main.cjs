@@ -12,6 +12,7 @@ const { createWindowControls } = require('./window-controls.cjs');
 const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
+const { createLogStore, captureConsole } = require('./logs.cjs');
 const timers = require('node:timers');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
@@ -152,6 +153,9 @@ if (process.env.WIFIMETER_TEST_ISOLATION === '1') {
 
 const backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1' && Boolean(process.env.WIFIMETER_USER_DATA);
 app.whenReady().then(async () => {
+    const logs = createLogStore({ directory: path.join(app.getPath('userData'), 'logs') });
+    captureConsole(logs);
+    console.log(`[app] ${productName} ${app.getVersion()} 启动`);
     window = new BrowserWindow({
         width: 1280, height: 900, minWidth: 900, minHeight: 650,
         ...(backgroundTest ? { show: false, x: -32000, y: -32000, skipTaskbar: true, focusable: false } : {}),
@@ -301,6 +305,10 @@ app.whenReady().then(async () => {
     });
 
     registerAppIcons({ ipcMain, trusted, app, request: (method, params) => requestBackend(method, params) });
+    ipcMain.handle('logs:read', (event, query) => { if (!trusted(event)) throw Error('Unsupported page.'); return { ...logs.read(query ?? {}), text: query?.text === true ? logs.text() : undefined }; });
+    ipcMain.handle('logs:level', (event, level) => { if (!trusted(event)) throw Error('Unsupported page.'); return { level: logs.setLevel(level) }; });
+    ipcMain.handle('logs:clear', event => { if (!trusted(event)) throw Error('Unsupported page.'); logs.clear(); return { level: logs.level }; });
+    ipcMain.handle('logs:write', (event, entry) => { if (!trusted(event)) throw Error('Unsupported page.'); logs.write(entry?.level, 'renderer', entry?.message); });
 
     ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
     ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.update(patch); });

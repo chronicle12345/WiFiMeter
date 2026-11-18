@@ -52,6 +52,31 @@ export const english = Object.fromEntries(`
 还没有应用限制记录|No restriction records yet
 选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。|Choose a program to block its network access or limit its speed. Configured restrictions appear here.
 应用规则|Application rules
+运行日志|Activity log
+日志|Logs
+查看采集、更新和备份的运行记录。|Review what collection, updates and backups have been doing.
+调试|Debug
+信息|Info
+警告|Warning
+错误|Error
+无法读取日志|Unable to read the log
+没有符合条件的日志|No matching log entries
+调整显示级别或搜索内容。|Change the display level or the search text.
+仅显示最近的日志：|Showing the most recent entries:
+日志时间|Time
+日志级别|Level
+日志来源|Source
+日志内容|Message
+当前环境不提供日志|Logs are unavailable in this environment
+搜索日志|Search the log
+显示级别|Display level
+记录级别|Recording level
+低于此级别的日志不会写入文件。|Entries below this level are not written to the file.
+导出日志|Export
+清空日志|Clear
+日志已导出|Log exported
+清空日志？|Clear the log?
+已记录的日志会被清除，之后的日志照常记录。|Recorded entries are removed. New entries continue to be recorded.
 规则|Rules
 阻止程序联网，或限制它的上传和下载速度。|Block a program's network access, or limit its upload and download speed.
 当前平台暂不支持|Not supported on this platform
