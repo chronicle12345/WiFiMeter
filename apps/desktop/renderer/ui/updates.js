@@ -33,10 +33,15 @@ function updateButton(status, busy) {
     }
     return label?`<button class="btn primary" data-action="${action}" ${lockedUpdate(status,busy)?'disabled':''}>${label}</button>`:'';
 }
-export function updateBannerView(status = {}, busy = false) {
+// A finished notice can be closed; running phases and a pending recovery stay until they resolve.
+export const updateBannerKey = status => activePhases.has(status.state) || status.recoveryRequired ? '' : [status.state, status.latestVersion, status.error].join('|');
+export function updateBannerView(status = {}, busy = false, { dismissedKey = '', closeIcon = '' } = {}) {
+    const key=updateBannerKey(status);
+    if (key && key === dismissedKey) return '';
+    const close=key?`<button class="icon-btn" data-action="dismiss-update" aria-label="${t('关闭')}" title="${t('关闭')}">${closeIcon}</button>`:'';
     if (!activePhases.has(status.state) && !['available','downloaded','error'].includes(status.state) && !status.recoveryRequired) return '';
     const action=updateButton(status,busy)||(status.state==='error'?`<button class="btn" data-action="check-updates" ${lockedUpdate(status,busy)?'disabled':''}>${t('重试更新')}</button>`:'');
-    return `<section class="update-banner" aria-label="${t('软件更新')}" data-state="${esc(status.state)}"><div class="update-banner-head"><strong>${t('软件更新')}${status.latestVersion?' · '+esc(status.latestVersion):''}</strong>${action}</div><p role="status">${updateMessage(status)}</p>${updateProgress(status)}</section>`;
+    return `<section class="update-banner" aria-label="${t('软件更新')}" data-state="${esc(status.state)}"><div class="update-banner-head"><strong>${t('软件更新')}${status.latestVersion?' · '+esc(status.latestVersion):''}</strong><span class="update-banner-actions">${action}${close}</span></div><p role="status">${updateMessage(status)}</p>${updateProgress(status)}</section>`;
 }
 export function updatesView(status = {}, busy = false) {
     const locked=lockedUpdate(status,busy);

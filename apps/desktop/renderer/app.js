@@ -8,7 +8,7 @@ import { createFormAutosave, autosaveFormIds } from './ui/form-autosave.js';
 import { quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
-import { updatesView, refreshUpdates, updateBannerView } from './ui/updates.js';
+import { updatesView, refreshUpdates, updateBannerView, updateBannerKey } from './ui/updates.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -234,7 +234,7 @@ function historyPage(){
  const table=details.length?tr`<div class="table-scroll"><table><thead><tr><th>${ui.historyGrouping==='day'?t('日期'):t('时间')}</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th></tr></thead><tbody>${sliced.map(row=>`<tr><td>${esc(row.key)}</td><td class="right">${fmtWithUnit(row.rx)}</td><td class="right">${fmtWithUnit(row.tx)}</td><td class="right strong">${fmtWithUnit(row.rx+row.tx)}</td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>${t('记录数')} ${details.length}</span><div class="flex gap8">${button('history-prev',t('上一页'),'','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next',t('下一页'),'','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty(t('所选时段没有记录'),ui.historyGrouping==='day'?t('更换日期或网络试试；缺失记录不会被当作零流量。'):t('分钟明细从升级后开始记录，旧记录保留原有时间精度。'));
  return `${toolbar()}${stats}${trendPanel()}<section class="panel" data-history-details><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
 }
-let updateStatus = {}, updateBusy = false, updateExitPrepared = false;
+let updateStatus = {}, updateBusy = false, updateExitPrepared = false, dismissedUpdate = '';
 function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
@@ -717,7 +717,7 @@ let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
 async function copySsid(id){const text=getNetwork(id)?.ssid||'';try{await navigator.clipboard.writeText(text);toast(t('已复制原始 SSID。'));}catch(e){showModal(t('复制网络名称'),tr`<p class="modal-desc">浏览器不允许直接写入剪贴板。可以选中下方名称复制。</p><input class="input" value="${esc(text)}" readonly autofocus>`,button('close-modal',t('完成'),'','primary'),()=>$('.modal input')?.select());}}
 function renderStatusHelp(){refreshStatusHelp($('#settings-status'),{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus});}
-function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy);updateRegion(banner,view);banner.hidden=!view;}
+function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy,{dismissedKey:dismissedUpdate,closeIcon:icon('close')});updateRegion(banner,view);banner.hidden=!view;}
 function renderUpdates(){if(['error','recovered','cancelled','latest','manual','unchecked'].includes(updateStatus.state))updateExitPrepared=false;syncInert();renderUpdateBanner();renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
 async function updateAction(action){
  if(updateBusy)return;
@@ -747,6 +747,7 @@ function confirmUpdate(action){
 }
 const actions={
  'check-updates':()=>updateAction('check'),
+ 'dismiss-update':()=>{dismissedUpdate=updateBannerKey(updateStatus);renderUpdateBanner();},
  'download-update':()=>confirmUpdate('download'),
  'install-update':()=>updateStatus.recoveryRequired||!updateStatus.canInstall?updateAction('install'):confirmUpdate('install'),
  refresh:async e=>{

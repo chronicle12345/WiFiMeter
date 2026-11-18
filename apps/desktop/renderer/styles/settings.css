@@ -86,7 +86,9 @@
 .update-banner { padding:12px 16px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); box-shadow:var(--small-shadow); }
 .update-banner[data-state="error"] { border-color:var(--red-line); }
 .update-banner-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); font-size:var(--text-md); }
+.update-banner-actions { display:flex; align-items:center; gap:var(--space-2); flex-shrink:0; }
 .update-banner-head .btn { height:30px; padding:0 10px; }
+.update-banner-head .icon-btn { width:30px; height:30px; margin-right:-6px; }
 .update-banner > p { font-size:var(--text-sm); line-height:1.7; overflow-wrap:anywhere; }
 .update-banner > p:empty { display:none; }
 .update-banner .update-progress { margin:10px 0 0; }

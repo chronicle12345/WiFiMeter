@@ -12,6 +12,7 @@ Changes are listed by release.
 - Draw the usage chart at its container's actual size, so bars and labels stay sharp and fill the card at every window size.
 - Show the autosave retry button only after a save fails in the network drawer and the proxy settings.
 - Simplify the applications page: one filter row, the total beside its label, and a full-width table with the rank next to the application and usage share on one line. Proxy estimate settings now live only under Settings > Proxy. Explanatory notes are removed or moved to tooltips, and the source selector explains that proxy estimates need whole-day ranges.
+- Add a close button to finished update notices (new version, downloaded, failed). A closed notice returns when the update status changes; Settings > About still shows it.
 
 - 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
 - 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
@@ -19,6 +20,7 @@ Changes are listed by release.
 - 用量图表按容器实际尺寸绘制，各种窗口大小下柱形和标签保持清晰并填满卡片。
 - 网络详情和代理设置中的自动保存“重试”按钮仅在保存失败后显示。
 - 精简应用流量页：筛选合并为一行，总用量与标签并排，表格铺满面板，排名紧邻应用，占比与进度条同行显示。代理估算设置只保留在“设置 > 代理”。说明性小字删除或改为悬停提示，来源选择器会提示代理估算需要整天的时间范围。
+- “发现新版本”“已下载”“更新失败”这类更新提示可以点右上角关闭；更新状态变化后会再次出现，“设置 > 关于更新”中始终可见。
 
 ## [1.3.6] - 2026-10-17
 
