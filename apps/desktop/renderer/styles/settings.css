@@ -82,6 +82,19 @@
 .release-notes-body :is(th, td) { padding:8px; border:1px solid var(--line); }
 
 /* Update notice above every page */
+/* Cloud backup settings */
+.cloud-credentials, .cloud-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:0 var(--space-4); }
+.cloud-sections { display:flex; flex-wrap:wrap; gap:var(--space-2) var(--space-5); margin:0 0 var(--space-4); padding:0; border:0; }
+.cloud-sections legend { margin-bottom:var(--space-2); padding:0; font-size:var(--text-md); font-weight:500; }
+.cloud-sections .quota-check { margin:0; }
+.cloud-backup .settings-actions { margin-top:var(--space-4); }
+.cloud-status { min-height:20px; margin-top:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.6; overflow-wrap:anywhere; }
+.cloud-files { margin:0; padding:0 20px 8px; list-style:none; }
+.cloud-files li { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); flex-wrap:wrap; padding:12px 0; border-top:1px solid var(--line); }
+.cloud-file-meta { display:grid; gap:2px; min-width:0; font-size:var(--text-md); overflow-wrap:anywhere; }
+.cloud-file-meta span { color:var(--muted); }
+.cloud-empty, #cloudFilesRegion > .form-error { margin:0; padding:0 20px 16px; color:var(--muted); font-size:var(--text-md); }
+
 /* Logs page */
 .logs-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; justify-content:flex-end; }
 .logs-toolbar { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; padding:0 20px 14px; }

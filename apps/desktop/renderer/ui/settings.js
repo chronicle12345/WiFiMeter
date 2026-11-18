@@ -44,7 +44,7 @@ function storage(settings, { button, option, legacy }) {
         row(t('数据备份'),t('完整备份包含网络备注、额度及记录，不含 Wi-Fi 密码。'),`<div class="settings-actions">${button('backup',t('备份'),'export','small-btn','type="button"')}${button('restore',t('恢复'),'upload','small-btn','type="button"')}</div>`) +
         row(t('清空历史记录'),t('只清除用量记录，保留网络备注与偏好设置。'),button('clear-records',t('清空记录'),'trash','small-btn','type="button"')));
 }
-const categories = [['general','常规'],['display','显示'],['data','数据与迁移'],['quota','流量额度'],['proxy','代理'],['status','状态与帮助'],['about','关于更新']];
+const categories = [['general','常规'],['display','显示'],['data','数据与迁移'],['cloud','云备份'],['quota','流量额度'],['proxy','代理'],['status','状态与帮助'],['about','关于更新']];
 export function settingsView(settings, controls) {
     const selected = controls.category || 'general';
     const panel = (id, body) => `<div id="settings-${id}" data-settings-panel="${id}" role="region" aria-labelledby="settings-tab-${id}">${body}</div>`;
@@ -53,7 +53,7 @@ export function settingsView(settings, controls) {
         <div class="settings-content settings-scroll-panel"><form class="settings-main" id="settingsForm">
         ${panel('general',startup(settings,controls))}${panel('display',display(settings,controls))}${panel('data',migration(controls)+storage(settings,{...controls,legacy:''}))}
         ${autosaveStatus('settingsSaveHint')}
-        </form>${panel('quota',controls.quota)}${panel('proxy',controls.proxy)}${panel('status',statusHelpView(controls.status, controls))}${panel('about',controls.updates||group(t('关于更新'),'<div class="setting-row">WiFiMeter</div>'))}</div>
+        </form>${panel('cloud',controls.cloud||'')}${panel('quota',controls.quota)}${panel('proxy',controls.proxy)}${panel('status',statusHelpView(controls.status, controls))}${panel('about',controls.updates||group(t('关于更新'),'<div class="setting-row">WiFiMeter</div>'))}</div>
     </div>`;
 }
 function migration({legacy}) {

@@ -164,7 +164,8 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
     const mainChannels = new Set(['backend:request', 'files:save', 'files:open-backup', 'window-preferences:read', 'window-preferences:update',
         'app-icons:get', 'app-control:choose', 'app-control:request', 'app-control:list', 'legacy:status', 'legacy:import', 'updates:open-link',
         'updates:status', 'updates:setting', 'updates:check', 'updates:download', 'updates:install',
-        'logs:read', 'logs:level', 'logs:clear', 'logs:write']);
+        'logs:read', 'logs:level', 'logs:clear', 'logs:write', 'cloud-backup:status', 'cloud-backup:configure', 'cloud-backup:test',
+        'cloud-backup:estimate', 'cloud-backup:backup', 'cloud-backup:list', 'cloud-backup:remove', 'cloud-backup:restore']);
     async function receive(message) {
         if (message.type === 'native-result') {
             const entry = pending.get(message.id);

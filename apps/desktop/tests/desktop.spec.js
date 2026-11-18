@@ -115,7 +115,7 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
     await expect(page.locator('.history-stat').first()).toContainText('3.6');
     await navigate('设置');
     await expect(page.locator('.settings-aside')).toHaveCount(0);
-    await expect(page.locator('[data-action="settings-category"]')).toHaveCount(7);
+    await expect(page.locator('[data-action="settings-category"]')).toHaveCount(8);
 });
 
 test('日志页显示宿主记录，支持级别筛选、搜索、调整记录级别、导出和清空', async ({}, testInfo) => {
@@ -510,7 +510,7 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     await saveDialog(backupFile);
     await navigate('设置');
     await page.locator('[data-category="data"]').click();
-    await page.getByRole('button', { name: '备份' }).click();
+    await page.getByRole('button', { name: '备份', exact: true }).click();
     await expectToast('已导出完整数据备份');
     const backup = JSON.parse(await readFile(backupFile, 'utf8'));
     expect(backup.backupType).toBe('wifimeter-backend-backup');

@@ -52,6 +52,57 @@ export const english = Object.fromEntries(`
 还没有应用限制记录|No restriction records yet
 选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。|Choose a program to block its network access or limit its speed. Configured restrictions appear here.
 应用规则|Application rules
+WebDAV 云备份|WebDAV cloud backup
+云备份设置已保存|Cloud backup settings saved
+云备份|Cloud backup
+WebDAV 地址|WebDAV address
+用户名|User name
+访问密码|Password
+删除备份|Delete
+已保存，留空则不修改|Saved. Leave empty to keep it
+备份内容|What to back up
+系统设置|Settings
+网络与额度|Networks and quotas
+按天流量|Daily usage
+按小时流量|Hourly usage
+按分钟流量|Per-minute usage
+数据范围|Data range
+最近 7 天|Last 7 days
+最近 30 天|Last 30 days
+最近 90 天|Last 90 days
+最近一年|Last year
+保留本机备份份数|Backups to keep for this device
+自动同步间隔|Automatic sync interval
+每小时|Every hour
+每天|Every day
+每周|Every week
+自动同步到 WebDAV|Sync to WebDAV automatically
+测试连接|Test connection
+估算大小|Estimate size
+立即备份|Back up now
+查看远端备份|Show remote backups
+正在保存…|Saving…
+正在备份…|Backing up…
+正在恢复…|Restoring…
+正在测试连接…|Testing the connection…
+正在读取远端备份…|Reading remote backups…
+正在估算大小…|Estimating the size…
+正在删除…|Deleting…
+上次备份失败：|Last backup failed:
+上次备份：|Last backup:
+远端还没有备份。|There are no remote backups yet.
+ · 本机| · this device
+连接成功，远端有 |Connected. The remote folder has
+ 份备份| backups
+预计上传 |Estimated upload
+已备份 |Backed up
+已恢复：|Restored:
+ 天 · | days ·
+ 条应用记录| application records
+从这份云备份恢复？|Restore from this cloud backup?
+备份包含的内容会覆盖本机对应的数据，其余数据保留。恢复前会在本机保存一份还原点，恢复后采集会暂停。|What the backup contains replaces the matching local data; everything else stays. A local restore point is saved first, and collection pauses afterwards.
+删除这份远端备份？|Delete this remote backup?
+删除后无法从 WebDAV 找回。|It cannot be recovered from WebDAV afterwards.
 运行日志|Activity log
 日志|Logs
 查看采集、更新和备份的运行记录。|Review what collection, updates and backups have been doing.

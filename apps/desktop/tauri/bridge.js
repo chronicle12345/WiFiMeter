@@ -86,6 +86,17 @@
             request: payload => request('app-control:request', payload),
             list: () => request('app-control:list')
         },
+        cloudBackup: {
+            status: () => request('cloud-backup:status'),
+            configure: patch => request('cloud-backup:configure', patch),
+            test: () => request('cloud-backup:test'),
+            estimate: () => request('cloud-backup:estimate'),
+            backup: () => request('cloud-backup:backup'),
+            list: () => request('cloud-backup:list'),
+            remove: name => request('cloud-backup:remove', name),
+            restore: name => request('cloud-backup:restore', name),
+            onStatus: handler => subscribe('cloud-backup:status', handler)
+        },
         logs: {
             read: query => request('logs:read', query),
             setLevel: level => request('logs:level', level),

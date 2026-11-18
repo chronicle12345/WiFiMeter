@@ -13,6 +13,7 @@ const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
 const { createLogStore, captureConsole } = require('./logs.cjs');
+const { createCloudBackup } = require('./cloud-backup.cjs');
 const timers = require('node:timers');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
@@ -271,6 +272,20 @@ app.whenReady().then(async () => {
     const trusted = event => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
         && event.senderFrame.url.split(/[?#]/)[0] === pageURL;
 
+    // 设置改动或恢复后立刻作用于系统，并把实际生效的结果一并返回。页面请求和云备份恢复共用。
+    async function callBackend(method, params) {
+        const result = await requestBackend(method, params, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
+        if (['updateSettings', 'restore'].includes(method) && result?.settings) {
+            speedUnit = result.settings.speedUnit || 'auto';
+            const explicitAutoStart = method === 'restore' || Object.prototype.hasOwnProperty.call(params?.settings ?? {}, 'autoStart');
+            if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
+                if (explicitAutoStart) preserveUnmatchedLoginItem = false;
+                result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
+            }
+        }
+        return result;
+    }
+
     // 失败以结果信封返回而不是抛出：跨进程调用只保留错误消息，会丢掉错误码，
     // 而界面需要靠错误码决定提示文案。
     ipcMain.handle('backend:request', async (event, payload) => {
@@ -288,23 +303,26 @@ app.whenReady().then(async () => {
                 if (choice.response !== 0) throw Error(migrationStatus.error);
                 migrationStatus = { ...migrationStatus, error: '', importWarning: migrationStatus.error };
             }
-            const result = await requestBackend(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
-            // 设置改动或恢复后立刻作用于系统，并把实际生效的结果回给页面。
-            if (['updateSettings', 'restore'].includes(method) && result?.settings) {
-                speedUnit = result.settings.speedUnit || 'auto';
-                const explicitAutoStart = method === 'restore' || Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart');
-                if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
-                    if (explicitAutoStart) preserveUnmatchedLoginItem = false;
-                    result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
-                }
-            }
-            return { ok: true, result };
+            return { ok: true, result: await callBackend(method, payload.params ?? {}) };
         } catch (error) {
             return { ok: false, error: { code: error.code ?? 'unavailable', message: error.message } };
         }
     });
 
     registerAppIcons({ ipcMain, trusted, app, request: (method, params) => requestBackend(method, params) });
+    const cloud = createCloudBackup({ userData: app.getPath('userData'), logs: () => logs.text(),
+        request: async (method, params) => { await startup; if (migrationBusy || installingUpdate) throw Error('正在迁移或更新，暂时不能备份。'); return requestBackend(method, params ?? {}, { timeout: 300000 }); },
+        restore: document => callBackend('restore', { backup: document }),
+        logger: (level, message) => console[level === 'error' ? 'error' : 'log'](`[backup] ${message}`),
+        onChange: state => { if (window && !window.isDestroyed()) window.webContents.send('cloud-backup:status', state); } });
+    for (const action of ['status', 'configure', 'test', 'estimate', 'backup', 'list', 'remove', 'restore']) {
+        ipcMain.handle(`cloud-backup:${action}`, async (event, input) => {
+            if (!trusted(event)) throw Error('Unsupported page.');
+            try { return { ok: true, result: await cloud[action](input) }; }
+            catch (error) { return { ok: false, error: error.message }; }
+        });
+    }
+    if (!backgroundTest) startup.then(() => cloud.start()).catch(() => {});
     ipcMain.handle('logs:read', (event, query) => { if (!trusted(event)) throw Error('Unsupported page.'); return { ...logs.read(query ?? {}), text: query?.text === true ? logs.text() : undefined }; });
     ipcMain.handle('logs:level', (event, level) => { if (!trusted(event)) throw Error('Unsupported page.'); return { level: logs.setLevel(level) }; });
     ipcMain.handle('logs:clear', event => { if (!trusted(event)) throw Error('Unsupported page.'); logs.clear(); return { level: logs.level }; });

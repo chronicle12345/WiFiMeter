@@ -23,6 +23,14 @@ pub fn allowed_channel(window: &str, channel: &str) -> bool {
                 | "logs:level"
                 | "logs:clear"
                 | "logs:write"
+                | "cloud-backup:status"
+                | "cloud-backup:configure"
+                | "cloud-backup:test"
+                | "cloud-backup:estimate"
+                | "cloud-backup:backup"
+                | "cloud-backup:list"
+                | "cloud-backup:remove"
+                | "cloud-backup:restore"
                 | "window:confirm-close"
         ),
         "mini" => matches!(channel, "mini:open-main" | "mini:close" | "mini:drag"
@@ -48,6 +56,8 @@ mod tests {
         assert!(!allowed_channel("mini", "updates:download"));
         assert!(allowed_channel("main", "logs:read"));
         assert!(!allowed_channel("mini", "logs:read"));
+        assert!(allowed_channel("main", "cloud-backup:restore"));
+        assert!(!allowed_channel("mini", "cloud-backup:restore"));
         assert!(!allowed_channel("mini", "app-control:list"));
     }
 }

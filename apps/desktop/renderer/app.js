@@ -10,6 +10,7 @@ import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
 import { updatesView, refreshUpdates, updateBannerView, updateBannerKey } from './ui/updates.js';
 import { logsView, logList } from './ui/logs.js';
+import { cloudBackupView, cloudBackupPatch, cloudSummary, sizeText } from './ui/cloud-backup.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -101,6 +102,63 @@ async function changeApplicationView(view){
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
 function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}`;}
+const cloudState={available:!!window.desktop.cloudBackup,config:null,busy:'',files:null,listError:'',message:'',error:''};
+// 重绘保留尚未保存的输入；密码只在保存失败时保留，保存成功后清空。
+function renderCloud(keepDraft=true,keepPassword=true){
+ const panel=$('#settings-cloud');if(!panel||ui.page!=='settings')return;
+ const old=$('#cloudBackupForm'),draft=keepDraft&&old?cloudBackupPatch(old):null,focus=document.activeElement?.id;
+ panel.innerHTML=cloudBackupView(cloudState,{button,esc,option});
+ if(draft){
+  const form=$('#cloudBackupForm');
+  for(const name of ['url','username','days','keep'])form.elements[name].value=draft[name];
+  form.elements.syncInterval.value=draft.interval;
+  form.elements.auto.checked=draft.auto;
+  for(const box of form.elements.sections)box.checked=draft.sections.includes(box.value);
+  if(keepPassword)form.elements.password.value=draft.password||'';
+ }
+ if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+}
+async function cloudCall(action,input){const response=await window.desktop.cloudBackup[action](input);if(!response.ok)throw Error(response.error);return response.result;}
+async function loadCloud(){if(!cloudState.available)return;try{cloudState.config=await cloudCall('status');}catch(error){cloudState.error=error.message;}renderCloud(false);}
+// 先保存表单再执行操作，保证操作用的是界面上看到的设置；同一时间只进行一项操作。
+// 改动即保存，与其他设置一致。不重绘表单，避免打断正在进行的点击和输入。
+let cloudVersion=0;
+async function saveCloud(form){
+ if(cloudState.busy)return;
+ const version=++cloudVersion;
+ let message='',error='';
+ try{cloudState.config=await cloudCall('configure',cloudBackupPatch(form));message=t('云备份设置已保存');}catch(failure){error=failure.message;}
+ if(version!==cloudVersion||cloudState.busy||!form.isConnected)return;
+ Object.assign(cloudState,{message,error});
+ form.querySelector('.form-error').textContent=error;form.querySelector('.cloud-status').textContent=message;
+ if(!error){form.elements.password.value='';if(cloudState.config.hasPassword)form.elements.password.placeholder=t('已保存，留空则不修改');}
+}
+async function cloudAction(action,input,done){
+ if(cloudState.busy)return;
+ cloudVersion++;
+ const form=$('#cloudBackupForm'),patch=form?cloudBackupPatch(form):null;
+ Object.assign(cloudState,{error:'',message:'',busy:action||'save'});renderCloud();
+ let saved=false;
+ try{
+  if(patch){cloudState.config=await cloudCall('configure',patch);saved=true;}
+  if(action){const result=await cloudCall(action,input);cloudState.message=done?.(result)||'';}
+  else cloudState.message=t('云备份设置已保存');
+ }catch(error){cloudState.error=error.message;}
+ cloudState.busy='';renderCloud(true,!saved);
+}
+async function listCloud(){cloudState.listError='';await cloudAction('list',undefined,files=>{cloudState.files=files;return '';});if(cloudState.error){cloudState.listError=cloudState.error;cloudState.error='';renderCloud();}}
+function restoreCloud(name){
+ confirmModal(t('从这份云备份恢复？'),t('备份包含的内容会覆盖本机对应的数据，其余数据保留。恢复前会在本机保存一份还原点，恢复后采集会暂停。'),t('确认恢复'),async()=>{
+  if(!await saveBeforeDataChange())return;
+  await cloudAction('restore',name,summary=>tr`已恢复：${cloudSummary(summary)}`);
+  if(cloudState.error)return;
+  await store.reload();data.live={...data.live,collector:'paused'};
+  ui.networkId='all';ui.search='';ui.historyPage=1;restartSampler();renderMain();toast(t('已恢复备份，采集已暂停。'));
+ });
+}
+function removeCloud(name){confirmModal(t('删除这份远端备份？'),t('删除后无法从 WebDAV 找回。'),t('删除备份'),async()=>{await cloudAction('remove',name);if(!cloudState.error)await listCloud();},true);}
+// 宿主在每次保存后都会推送状态；只有自动同步改变了备份结果时才重绘，避免替换正在编辑的表单。
+window.desktop.cloudBackup?.onStatus(state=>{if(cloudState.busy||state.busy)return;const old=cloudState.config||{};cloudState.config=state;if(old.lastBackupAt!==state.lastBackupAt||old.lastError!==state.lastError)renderCloud();});
 const logsState={available:!!window.desktop.logs,entries:[],total:0,level:'info',minimum:'info',search:'',error:''};
 let logsVersion=0;
 function logsPage(){return logsView(logsState,{button,esc,icon,option});}
@@ -255,7 +313,7 @@ function historyPage(){
  return `${toolbar()}${stats}${trendPanel()}<section class="panel" data-history-details><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
 }
 let updateStatus = {}, updateBusy = false, updateExitPrepared = false, dismissedUpdate = '';
-function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
+function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy),cloud:cloudBackupView(cloudState,{button,esc,option})});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
  for(const key of ['promptAppCollection','miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']){
@@ -332,6 +390,7 @@ async function doNavigate(page){
  if(version!==navigationVersion)return;
  settingsCategoryScrollY=null;
  if(page==='logs')loadLogs().catch(console.error);
+ if(page==='settings')loadCloud().catch(console.error);
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
  updateSettingsScroll();
 }
@@ -768,6 +827,10 @@ function confirmUpdate(action){
 }
 const actions={
  'check-updates':()=>updateAction('check'),
+ 'cloud-test':()=>cloudAction('test',undefined,result=>tr`连接成功，远端有 ${result.backups} 份备份`),
+ 'cloud-estimate':()=>cloudAction('estimate',undefined,result=>tr`预计上传 ${sizeText(result.size)}：${cloudSummary(result)}`),
+ 'cloud-backup':()=>cloudAction('backup',undefined,result=>{if(cloudState.files)queueMicrotask(listCloud);return tr`已备份 ${sizeText(result.size)}：${cloudSummary(result)}`;}),
+ 'cloud-list':listCloud,'cloud-restore':e=>restoreCloud(e.dataset.name),'cloud-remove':e=>removeCloud(e.dataset.name),
  'logs-refresh':()=>loadLogs(),'logs-export':exportLogs,'logs-clear':clearLogs,
  'dismiss-update':()=>{dismissedUpdate=updateBannerKey(updateStatus);renderUpdateBanner();},
  'download-update':()=>confirmUpdate('download'),
@@ -829,6 +892,7 @@ document.addEventListener('submit',async event=>{
  form.dataset.busy='true';
  try{
   if(autosaveForms.has(form.id))await formAutosave(form).flush();
+  else if(form.id==='cloudBackupForm')await cloudAction();
   else if(form.id==='appThrottleForm')await controlOperation('throttle',Number(new FormData(form).get('uploadKBps')));
   else if(form.id==='appDownloadThrottleForm')await controlOperation('throttle',{downloadKBps:Number(new FormData(form).get('downloadKBps'))});
   else if(form.id==='exportForm')await doExport(Object.fromEntries(new FormData(form)));
@@ -843,6 +907,7 @@ document.addEventListener('submit',async event=>{
 });
 document.addEventListener('change',async event=>{
  const e=event.target;
+ if(e.form?.id==='cloudBackupForm'){saveCloud(e.form);return;}
  if(autosaveForms.has(e.form?.id)){editAutosave(e,true);return;}
  if(e.id==='logMinimum'){logsState.minimum=e.value;await loadLogs();return;}
  if(e.id==='logLevel'){try{await window.desktop.logs.setLevel(e.value);}catch(error){toast(error.message,true);}await loadLogs();return;}
