@@ -17,7 +17,9 @@ Changes are listed by release.
 - Add a Rules page to the sidebar for application network restrictions: the saved restriction records and the program picker move there from the applications page.
 - Tidy the square and circle floating windows: they show only the rates, and the toolbar appears in place of the title while the pointer or keyboard focus is inside, instead of crowding six buttons along the bottom edge.
 - Add a Logs page to the sidebar. The desktop host records leveled entries (debug, info, warning, error) to a size-limited file in the data directory; the page filters by level, searches, changes the recording level, exports and clears the log.
-- Add WebDAV cloud backup under Settings > Cloud backup: choose what to include (settings, networks and quotas, daily, hourly, application and per-minute usage, logs) and how many recent days, test the connection, estimate the size, back up now or automatically every hour, day or week, and keep a set number of backups per device. Any device can list every device's backups and restore one; a restore replaces only what that backup contains and first saves a local restore point. The password is protected with Windows DPAPI and never leaves the device.
+- Add WebDAV cloud backup under Settings > Cloud backup: choose what to include (settings, networks and quotas, daily, hourly, application and per-minute usage, logs) and how many recent days, test the connection, estimate the size, back up now or automatically every hour, day or week, and keep a set number of backups per device. Any device can list every device's backups and restore one; a restore replaces only what that backup contains and first saves a local restore point. The password is protected locally with Windows DPAPI and is never included in backups.
+
+- Preserve minute proxy byte evidence in complete and selected backups, display minute estimates in application details, and restore desktop settings and logs through a complete local restore point, capture pause, failure recovery and concurrency guards. Keep old archives readable and prevent same-second backups from overwriting each other.
 
 - 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
 - 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
@@ -30,7 +32,9 @@ Changes are listed by release.
 - 侧边栏新增“规则”页，用于设置应用联网限制：应用限制记录和选择程序入口从应用流量页移到这里。
 - 整理方形和圆形悬浮窗：平时只显示速度，鼠标移入或键盘聚焦时工具栏出现在标题位置，不再把六个按钮挤在底部边缘。
 - 侧边栏新增“日志”页。桌面宿主按级别（调试、信息、警告、错误）把运行记录写入数据目录下有大小上限的文件；页面可以按级别筛选、搜索、调整记录级别、导出和清空。
-- “设置 > 云备份”新增 WebDAV 备份：可选择备份内容（系统设置、网络与额度、按天、按小时、应用和按分钟流量、运行日志）和最近多少天的数据，支持测试连接、估算大小、立即备份，以及按每小时、每天或每周自动同步，并按设备保留指定份数。任意设备都能列出所有设备的备份并恢复其中一份；恢复只覆盖该备份包含的内容，并先在本机保存还原点。密码用 Windows DPAPI 保护，不会离开本机。
+- “设置 > 云备份”新增 WebDAV 备份：可选择备份内容（系统设置、网络与额度、按天、按小时、应用和按分钟流量、运行日志）和最近多少天的数据，支持测试连接、估算大小、立即备份，以及按每小时、每天或每周自动同步，并按设备保留指定份数。任意设备都能列出所有设备的备份并恢复其中一份；恢复只覆盖该备份包含的内容，并先在本机保存还原点。密码在本机用 Windows DPAPI 保护，不会进入备份。
+
+- 完整与可选内容备份保留分钟代理字节证据，应用详情显示对应分钟估算；桌面设置和日志恢复支持完整本地还原点、采集暂停、失败恢复和并发保护，兼容旧备份，并避免同一秒的备份互相覆盖。
 
 ## [1.3.6] - 2026-10-17
 

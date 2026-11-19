@@ -60,7 +60,8 @@ test('merge replaces only what the cloud backup covers and keeps the rest of the
 
 test('file names carry a safe device name and time, and only this device\'s older backups expire', () => {
     const name = selection.backupFileName('My PC/一号', new Date('2026-11-18T04:05:06Z'));
-    assert.equal(name, 'wifimeter_My-PC_20261118T040506Z.json.gz');
+    assert.match(name, /^wifimeter_My-PC_20261118T040506Z_[a-z0-9]{16}\.json\.gz$/);
+    assert.deepEqual(selection.parseBackupFileName('wifimeter_My-PC_20261118T040506Z.json.gz'), { device: 'My-PC', createdAt: '2026-11-18T04:05:06.000Z' });
     assert.deepEqual(selection.parseBackupFileName(name), { device: 'My-PC', createdAt: '2026-11-18T04:05:06.000Z' });
     for (const other of ['notes.txt', 'wifimeter_x_20261118.json.gz', 'wifimeter_x_20261340T000000Z.json.gz']) assert.equal(selection.parseBackupFileName(other), null);
     const files = ['wifimeter_pc_20261101T000000Z.json.gz', 'wifimeter_pc_20261103T000000Z.json.gz', 'wifimeter_pc_20261102T000000Z.json.gz',
@@ -112,12 +113,18 @@ function harness({ config } = {}) {
     const remote = new Map(), files = new Map(), restored = [], changes = [];
     if (config) files.set('cloud-backup.json', JSON.stringify(config));
     const base = name => name.replace(/^.*[\\/]/, '');
-    let clock = new Date(now), failUpload = false;
+    let clock = new Date(now), failUpload = false, paused = false;
     const service = createCloudBackup({
         userData: '/data', device: 'pc', now: () => clock, logs: () => 'log line',
-        request: async method => { assert.equal(method, 'backup'); return { backup: full() }; },
-        restore: async document => { restored.push(document); },
-        io: { readFile: async name => { if (!files.has(base(name))) throw Error('ENOENT'); return files.get(base(name)); }, writeFile: async (name, body) => { files.set(base(name), body); } },
+        logStore: { snapshot: () => 'log line', restore: () => {} },
+        request: async (method, params) => {
+            if (method === 'hello') return { paused };
+            if (method === 'setPaused') { paused = params.paused; return { paused }; }
+            assert.equal(method, 'backup'); return { backup: full() };
+        },
+        restore: async document => { restored.push(document); paused = true; },
+        io: { mkdir: async () => {}, readFile: async name => { if (!files.has(base(name))) throw Error('ENOENT'); return files.get(base(name)); }, writeFile: async (name, body) => { files.set(base(name), body); },
+            rename: async (from, to) => { files.set(base(to), files.get(base(from))); files.delete(base(from)); }, unlink: async name => files.delete(base(name)) },
         secrets: { protect: async text => 'test:' + text.split('').reverse().join(''), reveal: async stored => stored.slice(5).split('').reverse().join('') },
         createClient: options => {
             if (!/^https?:/.test(options.url)) throw Error('WebDAV 地址无效。');
@@ -193,4 +200,388 @@ test('automatic backup runs only when enabled and due, and records a failure wit
     assert.equal((await service.status()).lastError, '');
     const estimate = await service.estimate();
     assert.ok(estimate.size > 0 && estimate.days === 2);
+});
+
+
+test('application or minute selection carries recent proxy minute evidence once and old archives clear covered evidence', () => {
+    const local = full();
+    local.proxyMinuteWeights = [
+        { date: '2026-11-01', hour: '3', minute: '1', proxyAppId: 'p', appId: 'old', name: 'Old', connections: '1', rxBytes: '1', txBytes: '1' },
+        { date: '2026-11-18', hour: '3', minute: '1', proxyAppId: 'p', appId: 'local', name: 'Local', connections: '1', rxBytes: '3', txBytes: '2' }
+    ];
+    for (const sections of [['apps'], ['minutes'], ['apps', 'minutes']]) {
+        const cloud = selection.selectBackup(local, { sections, days: 7, now });
+        assert.deepEqual(cloud.proxyMinuteWeights, [local.proxyMinuteWeights[1]]);
+        cloud.proxyMinuteWeights = [{ ...local.proxyMinuteWeights[1], appId: 'remote' }];
+        assert.deepEqual(selection.mergeBackup(local, cloud).proxyMinuteWeights.map(row => row.appId), ['old', 'remote']);
+        delete cloud.proxyMinuteWeights;
+        assert.deepEqual(selection.mergeBackup(local, cloud).proxyMinuteWeights.map(row => row.appId), ['old']);
+        cloud.from = '';
+        assert.deepEqual(selection.mergeBackup(local, cloud).proxyMinuteWeights, []);
+    }
+    const daily = selection.selectBackup(local, { sections: ['daily'], days: 7, now });
+    assert.equal(daily.proxyMinuteWeights, undefined);
+    assert.deepEqual(selection.mergeBackup(local, daily).proxyMinuteWeights, local.proxyMinuteWeights);
+});
+
+function recoveryHarness({ failHost = false, failLogs = false, failBackend = false, failRollback = false, maxBackupBytes, writeFailure = false, renameFailure = false,
+    initialPaused = false, pauseFailure = false, resumeFailure = false, failBackendBeforeMutation = false, onHostSnapshot } = {}) {
+    const files = new Map(), remote = new Map(), calls = [], restored = [];
+    const clone = value => JSON.parse(JSON.stringify(value));
+    let paused = initialPaused, pendingUsage = 'pending-native-sample';
+    let data = full(), host = { windowPreferences: { theme: 'light', promptAppCollection: false }, logLevel: 'warn',
+        appNetworkRecords: { version: 1, records: [{ path: 'C:\\Apps\\Local.exe', name: 'Local.exe', savedAt: '2026-11-18T00:00:00.000Z', state: { Blocked: true } }] } };
+    let logRows = { version: 1, entries: [{ time: '2026-11-18T00:00:00.000Z', level: 'warn', source: 'app', message: 'local retained log' }] };
+    const original = () => ({ data: clone(data), host: clone(host), logs: clone(logRows) });
+    const basename = name => name.replace(/^.*[\\/]/, '');
+    const io = {
+        mkdir: async () => {},
+        readFile: async name => { if (!files.has(basename(name))) throw Object.assign(Error('ENOENT'), { code: 'ENOENT' }); return files.get(basename(name)); },
+        writeFile: async (name, body) => { if (writeFailure) throw Error('disk full'); files.set(basename(name), body); },
+        rename: async (from, to) => { if (renameFailure) throw Error('rename blocked'); files.set(basename(to), files.get(basename(from))); files.delete(basename(from)); },
+        unlink: async name => { files.delete(basename(name)); }
+    };
+    const validateHost = value => {
+        if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['windowPreferences', 'logLevel', 'appNetworkRecords'].includes(key))) throw Error('云备份桌面设置无效。');
+        if (value.windowPreferences && (Object.keys(value.windowPreferences).some(key => !['theme', 'promptAppCollection'].includes(key))
+            || (value.windowPreferences.theme !== undefined && !['light', 'dark', 'system'].includes(value.windowPreferences.theme))
+            || (value.windowPreferences.promptAppCollection !== undefined && typeof value.windowPreferences.promptAppCollection !== 'boolean'))) throw Error('窗口偏好无效。');
+        if (value.logLevel !== undefined && !['debug', 'info', 'warn', 'error'].includes(value.logLevel)) throw Error('Unsupported log level.');
+        if (value.appNetworkRecords !== undefined && (value.appNetworkRecords.version !== 1 || !Array.isArray(value.appNetworkRecords.records)
+            || value.appNetworkRecords.records.some(row => !/^C:\\Apps\\[A-Za-z]+\.exe$/.test(row.path)))) throw Error('应用限制记录格式无效。');
+        return clone(value);
+    };
+    const { validateLogSnapshot } = require('../host/logs.cjs');
+    const service = createCloudBackup({ userData: '/data', device: 'pc', now: () => new Date(now), io, maxBackupBytes,
+        secrets: { protect: async value => 'test:' + value, reveal: async value => value.slice(5) },
+        request: async (method, params) => {
+            calls.push(method);
+            if (method === 'hello') return { paused };
+            if (method === 'setPaused') {
+                if (params.paused && pauseFailure) throw Error('pause failed');
+                if (!params.paused && resumeFailure) throw Error('resume failed');
+                paused = params.paused; return { paused };
+            }
+            assert.equal(method, 'backup'); return { backup: clone(data) };
+        },
+        restore: async document => { calls.push('restore'); restored.push(clone(document));
+            if (failBackendBeforeMutation && restored.length === 1) throw Object.assign(Error('invalid backup data'), { code: 'invalidParams' });
+            data = clone(document); paused = true; pendingUsage = '';
+            if ((failBackend && restored.length === 1) || (failRollback && restored.length > 1)) throw Error('backend restore failed'); },
+        hostSettings: { snapshot: async () => { await onHostSnapshot?.(); return clone(host); }, validate: validateHost, restore: async value => { host = { ...host, ...clone(value) };
+            if (failHost) { failHost = false; throw Error('host disk full'); } } },
+        logStore: { snapshot: () => clone(logRows), validate: value => validateLogSnapshot ? validateLogSnapshot(value, now) : value,
+            restore: value => { logRows = clone(value); if (failLogs) { failLogs = false; throw Error('log rename blocked'); } } },
+        createClient: () => ({ ensureDirectory: async () => {}, list: async () => [], upload: async (name, bytes) => remote.set(name, bytes),
+            download: async name => remote.get(name), remove: async name => remote.delete(name) })
+    });
+    const put = cloud => { const name = 'wifimeter_remote_20261118T000000Z.json.gz'; remote.set(name, zlib.gzipSync(Buffer.from(JSON.stringify(cloud)))); return name; };
+    return { service, files, remote, calls, restored, original, put, get paused() { return paused; }, get pendingUsage() { return pendingUsage; },
+        sample: value => { if (paused) return false; data.records[0].rxBytes = value; return true; },
+        setWriteFailure: value => { writeFailure = value; }, setRenameFailure: value => { renameFailure = value; } };
+}
+
+const remoteHost = () => ({ windowPreferences: { theme: 'dark', promptAppCollection: true }, logLevel: 'debug',
+    appNetworkRecords: { version: 1, records: [{ path: 'C:\\Apps\\Remote.exe', name: 'Remote.exe', savedAt: '2026-11-18T01:00:00.000Z', state: { Blocked: true, DownloadThrottled: true, DownloadKbps: 2048 } }] } });
+const remoteLogs = () => ({ version: 1, entries: [{ time: '2026-11-18T01:00:00.000Z', level: 'info', source: 'backup', message: 'restored remote log' }] });
+const hostCloud = () => ({ ...selection.selectBackup(full(), { sections: ['settings', 'logs'], now }), hostSettings: remoteHost(), logs: remoteLogs() });
+
+test('restore replaces selected logs and portable host settings and saves every local portion before mutation', async () => {
+    const h = recoveryHarness(), before = h.original();
+    await h.service.configure({ url: 'https://dav.example/x', username: 'local', password: 'local-secret' });
+    h.files.set('update-cache.bin', Buffer.from('local installer'));
+    await h.service.restore(h.put(hostCloud()));
+    assert.deepEqual(h.original().host, remoteHost());
+    assert.deepEqual(h.original().logs, remoteLogs());
+    const point = JSON.parse(zlib.gunzipSync(h.files.get('before-cloud-restore.json.gz')).toString());
+    assert.equal(point.backupType, 'wifimeter-backend-backup');
+    assert.deepEqual(point.hostSettings, before.host);
+    assert.deepEqual(point.logs, before.logs);
+    assert.deepEqual(point.records, before.data.records);
+    assert.equal(JSON.parse(h.files.get('cloud-backup.json')).secret, 'test:local-secret');
+    assert.equal(h.files.get('update-cache.bin').toString(), 'local installer');
+});
+
+test('omitted host portions and legacy archives without host data preserve local settings and logs', async () => {
+    const h = recoveryHarness(), before = h.original();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    for (const sections of [['daily'], ['settings'], ['logs']]) {
+        const cloud = selection.selectBackup(full(), { sections, now });
+        delete cloud.logs;
+        await h.service.restore(h.put(cloud));
+        assert.deepEqual(h.original().host, before.host);
+        assert.deepEqual(h.original().logs, before.logs);
+    }
+});
+
+test('backup includes structured logs and selected host settings without local credentials or update caches', async () => {
+    const h = recoveryHarness();
+    await h.service.configure({ url: 'https://dav.example/x', password: 'local-secret', sections: ['settings', 'logs'] });
+    const result = await h.service.backup();
+    const cloud = JSON.parse(zlib.gunzipSync(h.remote.get(result.name)).toString());
+    assert.deepEqual(cloud.hostSettings, h.original().host);
+    assert.deepEqual(cloud.logs, h.original().logs);
+    assert.ok(!JSON.stringify(cloud).includes('local-secret'));
+});
+
+test('invalid host settings or logs are rejected before requesting or replacing backend data', async () => {
+    const variants = [
+        { hostSettings: { ...remoteHost(), windowPreferences: { theme: 'malicious' } } },
+        { hostSettings: { ...remoteHost(), logLevel: 'trace' } },
+        { hostSettings: { ...remoteHost(), appNetworkRecords: { version: 1, records: [{ ...remoteHost().appNetworkRecords.records[0], path: '../../policy.exe' }] } } },
+        { hostSettings: { ...remoteHost(), cloudBackup: { secret: 'remote-secret' } } },
+        { logs: { version: 1, entries: [{ ...remoteLogs().entries[0], level: 'trace' }] } },
+        { logs: { version: 1, entries: [{ ...remoteLogs().entries[0], message: 'x'.repeat(2001) }] } },
+        { logs: 'x'.repeat(2 * 1024 * 1024 + 1) }
+    ];
+    for (const patch of variants) {
+        const h = recoveryHarness(), before = h.original();
+        await h.service.configure({ url: 'https://dav.example/x' });
+        await assert.rejects(h.service.restore(h.put({ ...hostCloud(), ...patch })));
+        assert.deepEqual(h.calls, []);
+        assert.deepEqual(h.original(), before);
+        assert.ok(!h.files.has('before-cloud-restore.json.gz'));
+    }
+});
+
+test('a failed backend or host replacement restores original data and reports the saved recovery point', async () => {
+    for (const failure of [{ failBackend: true }, { failHost: true }, { failLogs: true }]) {
+        const h = recoveryHarness(failure), before = h.original();
+        await h.service.configure({ url: 'https://dav.example/x' });
+        await assert.rejects(h.service.restore(h.put(hostCloud())), /已恢复原数据/);
+        assert.deepEqual(h.original(), before);
+        assert.ok(h.files.has('before-cloud-restore.json.gz'));
+        assert.match((await h.service.status()).lastError, /恢复失败/);
+    }
+});
+
+test('a failed rollback reports the incomplete recovery and retains the complete local restore point', async () => {
+    const h = recoveryHarness({ failHost: true, failRollback: true });
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await assert.rejects(h.service.restore(h.put(hostCloud())), error => /回滚未完成/.test(error.message) && /before-cloud-restore/.test(error.message));
+    assert.ok(h.files.has('before-cloud-restore.json.gz'));
+});
+
+test('restore point rename failure preserves the previous point and performs no replacement', async () => {
+    const h = recoveryHarness(), before = h.original(), old = Buffer.from('existing restore point');
+    await h.service.configure({ url: 'https://dav.example/x' });
+    h.files.set('before-cloud-restore.json.gz', old);
+    h.setRenameFailure(true);
+    await assert.rejects(h.service.restore(h.put(hostCloud())), /rename blocked/);
+    assert.deepEqual(h.original(), before);
+    assert.deepEqual(h.calls, ['hello', 'setPaused', 'backup', 'setPaused']);
+    assert.equal(h.paused, false);
+    assert.equal(h.files.get('before-cloud-restore.json.gz'), old);
+});
+
+test('configuration write failure preserves the last persisted state and does not change memory', async () => {
+    const h = recoveryHarness();
+    await h.service.configure({ url: 'https://dav.example/x', username: 'saved' });
+    const disk = h.files.get('cloud-backup.json');
+    h.setWriteFailure(true);
+    await assert.rejects(h.service.configure({ username: 'unsaved' }), /disk full/);
+    assert.equal((await h.service.status()).username, 'saved');
+    assert.equal(h.files.get('cloud-backup.json'), disk);
+});
+
+test('decompression is bounded before backend or host data can be touched', async () => {
+    const h = recoveryHarness({ maxBackupBytes: 1024 }), before = h.original();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    const cloud = { ...hostCloud(), padding: 'a'.repeat(10000) };
+    await assert.rejects(h.service.restore(h.put(cloud)), /解压后/);
+    assert.deepEqual(h.calls, []);
+    assert.deepEqual(h.original(), before);
+});
+
+test('restore rejects path-bearing and noncanonical device file names', async () => {
+    const h = recoveryHarness();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    const name = 'wifimeter_../remote_20261118T000000Z.json.gz';
+    h.remote.set(name, zlib.gzipSync(Buffer.from(JSON.stringify(hostCloud()))));
+    await assert.rejects(h.service.restore(name), /不是 WiFiMeter 的备份文件/);
+    assert.deepEqual(h.calls, []);
+});
+
+
+test('concurrent configuration saves wait in order and preserve a password and independent fields', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const files = new Map(), requests = [], uploads = [];
+    const base = name => name.replace(/^.*[\\/]/, '');
+    const service = createCloudBackup({ userData: '/data',
+        io: { mkdir: async () => {}, readFile: async () => { throw Error('ENOENT'); }, writeFile: async (name, body) => files.set(base(name), body),
+            rename: async (from, to) => { files.set(base(to), files.get(base(from))); files.delete(base(from)); }, unlink: async name => files.delete(base(name)) },
+        secrets: { protect: async value => { await pending; return 'test:' + value; }, reveal: async value => value.slice(5) },
+        request: async () => { requests.push('backup'); return { backup: full() }; },
+        createClient: options => ({ ensureDirectory: async () => {}, list: async () => [], upload: async () => uploads.push(options) }) });
+    await service.status();
+    const first = service.configure({ url: 'https://dav.example/original', password: 'saved-password' });
+    await new Promise(setImmediate);
+    let settled = false;
+    const second = service.configure({ username: 'other' }).then(value => { settled = true; return value; });
+    second.catch(() => {});
+    const backup = service.backup(); backup.catch(() => {});
+    await new Promise(setImmediate);
+    assert.equal(settled, false);
+    assert.deepEqual(requests, []);
+    release(); await first; await second; await backup;
+    assert.equal(uploads[0].username, 'other');
+    assert.equal(uploads[0].password, 'saved-password');
+    const state = await service.status();
+    assert.equal(state.url, 'https://dav.example/original');
+    assert.equal(state.username, 'other');
+    assert.equal(state.hasPassword, true);
+});
+
+test('stopping automatic backup during its snapshot prevents a later upload', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const uploads = [];
+    const service = createCloudBackup({ userData: '/data', now: () => new Date(now),
+        io: { mkdir: async () => {}, readFile: async () => { throw Error('ENOENT'); }, writeFile: async () => {}, rename: async () => {}, unlink: async () => {} },
+        request: async () => { await pending; return { backup: full() }; },
+        createClient: () => ({ ensureDirectory: async () => {}, list: async () => [], upload: async (...args) => uploads.push(args) }) });
+    await service.configure({ url: 'https://dav.example/x', auto: true });
+    const operation = service.autoBackup();
+    await new Promise(setImmediate);
+    service.stop(); release(); await operation;
+    assert.deepEqual(uploads, []);
+});
+
+
+test('the complete local restore point restores desktop settings and logs again through the full-backup path', async () => {
+    const h = recoveryHarness(), original = h.original();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await h.service.restore(h.put(hostCloud()));
+    const point = JSON.parse(zlib.gunzipSync(h.files.get('before-cloud-restore.json.gz')).toString());
+    assert.equal(typeof h.service.restoreDocument, 'function');
+    await h.service.restoreDocument(point);
+    assert.deepEqual(h.original(), original);
+    const secondPoint = JSON.parse(zlib.gunzipSync(h.files.get('before-cloud-restore.json.gz')).toString());
+    assert.deepEqual(secondPoint.hostSettings, remoteHost());
+    assert.deepEqual(secondPoint.logs, remoteLogs());
+});
+
+test('a malformed full restore point is rejected before mutation and old full backups keep omitted desktop data', async () => {
+    const h = recoveryHarness(), original = h.original();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    assert.equal(typeof h.service.restoreDocument, 'function');
+    await assert.rejects(h.service.restoreDocument({ ...full(), hostSettings: { ...remoteHost(), logLevel: 'trace' }, logs: remoteLogs() }));
+    assert.deepEqual(h.calls, []);
+    await h.service.restoreDocument(full());
+    assert.deepEqual(h.original().host, original.host);
+    assert.deepEqual(h.original().logs, original.logs);
+});
+
+
+test('a completed configuration response is idle and cannot leave cloud controls permanently busy', async () => {
+    const h = recoveryHarness();
+    const response = await h.service.configure({ url: 'https://dav.example/x' });
+    assert.equal(response.busy, '');
+    assert.equal((await h.service.status()).busy, '');
+});
+
+
+test('successive backups in the same second keep separate files and retention resolves time ties consistently', async () => {
+    const h = harness();
+    await h.service.configure({ url: 'https://dav.example/x', sections: ['daily'], keep: 5 });
+    const first = await h.service.backup(), second = await h.service.backup();
+    assert.notEqual(first.name, second.name);
+    assert.equal(h.remote.size, 2);
+    assert.equal(selection.parseBackupFileName(first.name).createdAt, selection.parseBackupFileName(second.name).createdAt);
+    assert.deepEqual((await h.service.list()).map(row => row.name), [second.name, first.name]);
+    const third = await h.service.backup();
+    const files = [first, second, third].map(row => ({ name: row.name }));
+    assert.deepEqual(selection.expiredBackups(files, 'pc', 1), [first.name, second.name]);
+    assert.deepEqual(selection.expiredBackups([...files].reverse(), 'pc', 1), [first.name, second.name]);
+});
+
+test('disabling automatic backup in an already queued configuration prevents the pending automatic upload', async () => {
+    const h = recoveryHarness();
+    await h.service.configure({ url: 'https://dav.example/x', auto: true });
+    const configure = h.service.configure({ auto: false });
+    const automatic = h.service.autoBackup();
+    await Promise.all([configure, automatic]);
+    assert.equal(h.remote.size, 0);
+    assert.deepEqual(h.calls, []);
+});
+
+
+test('logs-only restore freezes native sampling before its complete restore point so omitted usage cannot go backward', async () => {
+    let entered, release;
+    const ready = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    const h = recoveryHarness({ onHostSnapshot: async () => { entered(); await gate; } });
+    h.sample('100');
+    await h.service.configure({ url: 'https://dav.example/x' });
+    const cloud = { ...selection.selectBackup(full(), { sections: ['logs'], now }), logs: remoteLogs() };
+    const restoration = h.service.restore(h.put(cloud));
+    await ready;
+    const frozen = h.paused, sampled = h.sample('200');
+    release(); await restoration;
+    assert.equal(frozen, true);
+    assert.equal(sampled, false);
+    assert.equal(h.original().data.records[0].rxBytes, '100');
+    assert.equal(h.paused, true);
+    assert.deepEqual(h.calls.slice(0, 3), ['hello', 'setPaused', 'backup']);
+});
+
+test('failure to pause collection aborts before any restore point or dataset replacement and preserves the original state', async () => {
+    const h = recoveryHarness({ pauseFailure: true }), before = h.original();
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await assert.rejects(h.service.restore(h.put(hostCloud())), /pause failed/);
+    assert.deepEqual(h.original(), before);
+    assert.equal(h.paused, false);
+    assert.equal(h.calls.includes('backup'), false);
+    assert.equal(h.calls.includes('restore'), false);
+    assert.equal(h.files.has('before-cloud-restore.json.gz'), false);
+});
+
+test('invalid backend input or complete host rollback resumes the original running collection state', async () => {
+    for (const fault of [{ failBackendBeforeMutation: true }, { failHost: true }]) {
+        const h = recoveryHarness(fault), before = h.original();
+        await h.service.configure({ url: 'https://dav.example/x' });
+        await assert.rejects(h.service.restore(h.put(hostCloud())), fault.failBackendBeforeMutation ? /原数据已保留/ : /已恢复原数据/);
+        assert.deepEqual(h.original(), before);
+        assert.equal(h.paused, false);
+        assert.equal(h.calls.at(-1), 'setPaused');
+    }
+    const h = recoveryHarness({ failHost: true, failRollback: true });
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await assert.rejects(h.service.restore(h.put(hostCloud())), /回滚未完成/);
+    assert.equal(h.paused, true);
+});
+
+test('failure to recover the original sampling state is reported with the preserved local restore point', async () => {
+    const h = recoveryHarness({ failHost: true, resumeFailure: true });
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await assert.rejects(h.service.restore(h.put(hostCloud())), error => /原采集状态未能恢复/.test(error.message) && /resume failed/.test(error.message));
+    assert.equal(h.paused, true);
+    assert.ok(h.files.has('before-cloud-restore.json.gz'));
+});
+
+
+test('an explicit invalidParams rejection never re-restores the original database or discards its pending native sample', async () => {
+    const h = recoveryHarness({ failBackendBeforeMutation: true }), before = h.original(), pending = h.pendingUsage;
+    await h.service.configure({ url: 'https://dav.example/x' });
+    await assert.rejects(h.service.restore(h.put(hostCloud())));
+    assert.equal(h.restored.length, 1);
+    assert.deepEqual(h.original(), before);
+    assert.equal(h.pendingUsage, pending);
+    assert.equal(h.paused, false);
+});
+
+
+test('proxy minute evidence produced from valid backend rows round-trips long identifiers and names without an arbitrary field cap', () => {
+    const source = full();
+    const row = { date: '2026-11-18', hour: '3', minute: '1', proxyAppId: 'p'.repeat(4097), appId: 'a'.repeat(4097),
+        name: 'x'.repeat(4097), connections: '1', rxBytes: '9223372036854775807', txBytes: '0' };
+    source.proxyMinuteWeights = [row];
+    const cloud = selection.selectBackup(source, { sections: ['apps', 'minutes'], days: 7, now });
+    assert.doesNotThrow(() => selection.validateCloudBackup(cloud));
+    assert.deepEqual(selection.mergeBackup(full(), cloud).proxyMinuteWeights, [row]);
+    for (const value of ['unknown', 'proxy/unattributed', 'bad\0identity']) {
+        for (const key of ['proxyAppId', 'appId']) assert.throws(() => selection.validateCloudBackup({ ...cloud, proxyMinuteWeights: [{ ...row, [key]: value }] }));
+    }
+    // The backend producer exports canonical integer strings, preserving exact byte values.
+    assert.equal(cloud.proxyMinuteWeights[0].rxBytes, '9223372036854775807');
 });

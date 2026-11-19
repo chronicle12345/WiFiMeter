@@ -1,13 +1,15 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { promisify } = require('node:util');
+const gunzip = promisify(require('node:zlib').gunzip);
 
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
-function assertBackupSize(bytes) {
-    if (bytes > MAX_BACKUP_BYTES) throw Error('备份超过 512 MiB，未写入或读取文件。');
+function assertBackupSize(bytes, maximum = MAX_BACKUP_BYTES) {
+    if (bytes > maximum) throw Error('备份超过 512 MiB，未写入或读取文件。');
 }
 
-function createFileActions(dialog, getWindow, io = fs) {
+function createFileActions(dialog, getWindow, io = fs, { maxBackupBytes = MAX_BACKUP_BYTES } = {}) {
     return {
         async saveFile(payload) {
             try {
@@ -17,7 +19,7 @@ function createFileActions(dialog, getWindow, io = fs) {
                 const filename = path.basename(payload.filename);
                 const extension = path.extname(filename).slice(1);
                 if (!['csv', 'json', 'log'].includes(extension)) throw Error('仅支持 CSV、JSON 和日志文件。');
-                if (extension === 'json') assertBackupSize(Buffer.byteLength(payload.body, 'utf8'));
+                if (extension === 'json') assertBackupSize(Buffer.byteLength(payload.body, 'utf8'), maxBackupBytes);
                 const result = await dialog.showSaveDialog(getWindow(), {
                     title: '保存 WiFiMeter 数据', defaultPath: filename,
                     filters: [{ name: extension.toUpperCase(), extensions: [extension] }]
@@ -49,13 +51,22 @@ function createFileActions(dialog, getWindow, io = fs) {
             try {
                 const result = await dialog.showOpenDialog(getWindow(), {
                     title: '恢复 WiFiMeter 备份', properties: ['openFile'],
-                    filters: [{ name: 'JSON 备份', extensions: ['json'] }]
+                    filters: [{ name: 'JSON 备份', extensions: ['json', 'gz'] }]
                 });
                 if (result.canceled || !result.filePaths.length) return { canceled: true };
                 const file = result.filePaths[0];
-                assertBackupSize((await io.stat(file)).size);
-                const body = await io.readFile(file, 'utf8');
-                assertBackupSize(Buffer.byteLength(body, 'utf8'));
+                assertBackupSize((await io.stat(file)).size, maxBackupBytes);
+                let body;
+                if (path.extname(file).toLowerCase() === '.gz') {
+                    const bytes = await io.readFile(file);
+                    assertBackupSize(bytes.length, maxBackupBytes);
+                    try { body = (await gunzip(bytes, { maxOutputLength: maxBackupBytes })).toString('utf8'); }
+                    catch (error) {
+                        if (error.code === 'ERR_BUFFER_TOO_LARGE') throw Error('备份解压后超过 512 MiB，未恢复。', { cause: error });
+                        throw error;
+                    }
+                } else body = await io.readFile(file, 'utf8');
+                assertBackupSize(Buffer.byteLength(body, 'utf8'), maxBackupBytes);
                 return { body, canceled: false };
             } catch (error) {
                 return { error: `无法读取备份：${error.message}` };

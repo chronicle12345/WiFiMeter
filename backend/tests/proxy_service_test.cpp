@@ -1,4 +1,5 @@
 #include "../ipc/service.h"
+#include "../ipc/backup_archive.h"
 #include "test_support.h"
 
 #include <memory>
@@ -601,7 +602,7 @@ void fullBackupRestoresProxyEvidenceWithoutOnStart()
     observations.push(observations.at(0));duplicate.set("proxyObservations",observations);reject(duplicate);
     auto legacy=JsonValue::makeObject();
     for (const auto& field : document.fields())
-        if (field.first!="proxyConfig" && field.first!="proxyApps" && field.first!="proxyObservations") legacy.set(field.first,field.second);
+        if (field.first!="proxyConfig" && field.first!="proxyApps" && field.first!="proxyObservations" && field.first!="proxyMinuteWeights") legacy.set(field.first,field.second);
     WIFIMETER_CHECK(restored.call("restore",restoreParams(legacy)).ok());
     WIFIMETER_CHECK_EQ(restored.count("proxy_config"),std::int64_t(0));
     WIFIMETER_CHECK_EQ(restored.count("proxy_apps"),std::int64_t(0));
@@ -609,6 +610,191 @@ void fullBackupRestoresProxyEvidenceWithoutOnStart()
     const auto cleared=restored.call("snapshot",query);
     WIFIMETER_CHECK_EQ(cleared.result.find("proxy")->find("ports")->size(),std::size_t(0));
     WIFIMETER_CHECK_EQ(cleared.result.find("appRecords")->dump(),document.find("appRecords")->dump());
+}
+void fullBackupRestoresProxyMinuteWeights()
+{
+    Harness empty(false,false);
+    const auto emptyBackup=empty.call("backup");
+    WIFIMETER_CHECK(emptyBackup.ok());
+    if (emptyBackup.ok())
+    {
+        const auto* weights=emptyBackup.result.find("backup")->find("proxyMinuteWeights");
+        WIFIMETER_CHECK(weights && weights->isArray() && weights->size()==0);
+    }
+
+    Harness source;
+    configure(source); enable(source); source.proxyReport=observed();
+    source.service->collectOnce(utcTime(2026,10,1,0,0,0));
+    WIFIMETER_CHECK(source.store->database().exec(
+        "DELETE FROM proxy_minute_weights;"
+        "INSERT INTO proxy_minute_weights(day,hour,minute,proxy_app_id,app_id,name,connections,rx_bytes,tx_bytes) VALUES"
+        "('2026-10-01',0,0,'proxy.exe','a.exe','Client A',1,600,200),"
+        "('2026-10-01',0,0,'proxy.exe','b.exe','Client B',2,300,50),"
+        "('2026-10-01',0,7,'proxy.exe','a.exe','Client A',1,9007199254740993,9007199254740997);").ok);
+    source.raw("net-a","2026-10-01","proxy.exe",990,275);
+    source.raw("net-a","2026-10-01","a.exe",20,30);
+    WIFIMETER_CHECK(source.store->usage().addAppMinute({"net-a","2026-10-01",0,0,"proxy.exe","Proxy",900,250}).ok);
+    WIFIMETER_CHECK(source.store->usage().addAppMinute({"net-a","2026-10-01",0,7,"proxy.exe","Proxy",90,25}).ok);
+    WIFIMETER_CHECK(source.store->usage().addAppMinute({"net-a","2026-10-01",0,0,"a.exe","Client A",20,30}).ok);
+    const auto exported=source.call("backup");
+    WIFIMETER_CHECK(exported.ok());
+    if (!exported.ok()) return;
+    const auto document=*exported.result.find("backup");
+    const auto* weights=document.find("proxyMinuteWeights");
+    WIFIMETER_CHECK(weights && weights->isArray() && weights->size()==3);
+    if (!weights || !weights->isArray() || weights->size()!=3) return;
+    for (const auto& row : weights->items())
+        for (const auto* field : {"hour","minute","connections","rxBytes","txBytes"})
+            WIFIMETER_CHECK(row.find(field) && row.find(field)->isString());
+    WIFIMETER_CHECK_EQ(weights->at(2).stringOr("rxBytes"),std::string("9007199254740993"));
+    WIFIMETER_CHECK_EQ(weights->at(2).stringOr("txBytes"),std::string("9007199254740997"));
+
+    Harness restored(true,false);
+    WIFIMETER_CHECK(restored.call("restore",restoreParams(document)).ok());
+    WIFIMETER_CHECK_EQ(restored.count("proxy_minute_weights"),std::int64_t(3));
+    const auto roundtrip=restored.call("backup");
+    WIFIMETER_CHECK(roundtrip.ok());
+    if (!roundtrip.ok()) return;
+    for (const auto* field : {"proxyMinuteWeights","proxyConfig","proxyApps","proxyObservations","appRecords","appMinuteRecords","totalQuota"})
+        WIFIMETER_CHECK_EQ(roundtrip.result.find("backup")->find(field)->dump(),document.find(field)->dump());
+    const auto query=json(R"({"networkKey":"net-a","from":"2026-10-01","to":"2026-10-01","includeMinutes":true})");
+    const auto before=source.call("snapshot",query),after=restored.call("snapshot",query);
+    WIFIMETER_CHECK(before.ok() && after.ok());
+    if (!before.ok() || !after.ok()) return;
+    const auto* minutes=before.result.find("proxyEstimatedMinuteRecords");
+    WIFIMETER_CHECK(minutes && minutes->size()>=3);
+    if (minutes && minutes->size()>=3)
+    {
+        WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("rxBytes"),std::string("600"));
+        WIFIMETER_CHECK_EQ(minutes->at(1).stringOr("rxBytes"),std::string("300"));
+    }
+    for (const auto* field : {"proxyEstimatedRecords","proxyEstimatedMinuteRecords","appRecords","appMinuteRecords"})
+        WIFIMETER_CHECK_EQ(after.result.find(field)->dump(),before.result.find(field)->dump());
+
+    // 缺少可选分钟权重的旧备份仍可整体替换，不能保留目标库原来的权重。
+    auto legacy=JsonValue::makeObject();
+    for (const auto& field : document.fields())
+        if (field.first!="proxyMinuteWeights") legacy.set(field.first,field.second);
+    WIFIMETER_CHECK(restored.call("restore",restoreParams(legacy)).ok());
+    WIFIMETER_CHECK_EQ(restored.count("proxy_minute_weights"),std::int64_t(0));
+    const auto legacyRoundtrip=restored.call("backup");
+    WIFIMETER_CHECK(legacyRoundtrip.ok());
+    if (legacyRoundtrip.ok())
+        for (const auto* field : {"proxyConfig","proxyApps","proxyObservations","appRecords","appMinuteRecords"})
+            WIFIMETER_CHECK_EQ(legacyRoundtrip.result.find("backup")->find(field)->dump(),document.find(field)->dump());
+}
+
+void rejectsInvalidProxyMinuteWeightsBeforeReplacingData()
+{
+    Harness target;
+    configure(target);
+    target.raw("net-a","2026-10-01","keep.exe",17,19);
+    WIFIMETER_CHECK(target.store->database().exec(
+        "INSERT INTO proxy_minute_weights(day,hour,minute,proxy_app_id,app_id,name,connections,rx_bytes,tx_bytes) "
+        "VALUES('2026-10-01',0,0,'keep-proxy.exe','keep.exe','Keep',3,17,19);").ok);
+    const auto preserved=*target.call("backup").result.find("backup");
+    Harness source;
+    const auto base=*source.call("backup").result.find("backup");
+    const auto validRow=json(R"({"date":"2026-10-01","hour":"0","minute":"7","proxyAppId":"proxy.exe","appId":"client.exe","name":"Client","connections":"2","rxBytes":"9007199254740993","txBytes":"19"})");
+    const auto reject=[&](JsonValue rows) {
+        auto document=base;
+        document.set("proxyMinuteWeights",std::move(rows));
+        // 直接校验归档，确保非法字段在开始清空事务之前就被拒绝。
+        WIFIMETER_CHECK(!ipc::validateBackupRows(document).ok);
+        const auto response=target.call("restore",restoreParams(document));
+        WIFIMETER_CHECK_EQ(response.error.code,std::string(ipc::errorCode::kInvalidParams));
+        const auto retained=target.call("backup");
+        WIFIMETER_CHECK(retained.ok());
+        if (retained.ok()) WIFIMETER_CHECK_EQ(retained.result.find("backup")->dump(),preserved.dump());
+        WIFIMETER_CHECK_EQ(target.count("proxy_minute_weights"),std::int64_t(1));
+    };
+    const auto rejectRow=[&](const JsonValue& row) {
+        auto rows=JsonValue::makeArray(); rows.push(row); reject(std::move(rows));
+    };
+    const auto rejectField=[&](const char* field,const JsonValue& value) {
+        auto row=validRow; row.set(field,value); rejectRow(row);
+    };
+    for (const auto& value : {JsonValue::makeNull(),JsonValue::makeObject(),JsonValue::makeString("[]"),JsonValue::makeInt(1)})
+    {
+        reject(value);
+        rejectRow(value);
+    }
+    for (const auto* omitted : {"date","hour","minute","proxyAppId","appId","name","connections","rxBytes","txBytes"})
+    {
+        auto row=JsonValue::makeObject();
+        for (const auto& field : validRow.fields()) if (field.first!=omitted) row.set(field.first,field.second);
+        rejectRow(row);
+    }
+    for (const auto* field : {"date","proxyAppId","appId","name"})
+        for (const auto& value : {JsonValue::makeNull(),JsonValue::makeBool(true),JsonValue::makeInt(1),JsonValue::makeObject()})
+            rejectField(field,value);
+    for (const auto* field : {"proxyAppId","appId"})
+        for (const auto& value : {std::string{},std::string("unknown"),std::string("proxy/unattributed"),std::string("client\0.exe",11)})
+            rejectField(field,JsonValue::makeString(value));
+    for (const auto* date : {"2026-02-30","2026-2-01","2026-10-01T00:00:00Z","2026-10-01x"})
+        rejectField("date",JsonValue::makeString(date));
+    for (const auto* field : {"hour","minute","connections"})
+    {
+        for (const auto& value : {JsonValue::makeNull(),JsonValue::makeBool(true),JsonValue::makeNumber(1.5),JsonValue::makeArray()})
+            rejectField(field,value);
+        for (const auto* value : {"-1","1.5","1e1","+1"," 1","9223372036854775808"})
+            rejectField(field,JsonValue::makeString(value));
+    }
+    rejectField("hour",JsonValue::makeInt(24));
+    rejectField("minute",JsonValue::makeInt(60));
+    rejectField("connections",JsonValue::makeInt(0));
+    for (const auto* field : {"rxBytes","txBytes"})
+    {
+        for (const auto& value : {JsonValue::makeNull(),JsonValue::makeBool(true),JsonValue::makeInt(19),JsonValue::makeNumber(1.5),JsonValue::makeObject()})
+            rejectField(field,value);
+        for (const auto* value : {"","-0","-1","1.5","1e1","+1"," 1","1 ","9223372036854775808","18446744073709551615"})
+            rejectField(field,JsonValue::makeString(value));
+    }
+    auto incomplete=validRow; incomplete.set("txBytes",JsonValue::makeString("1.5"));
+    auto mixed=JsonValue::makeArray(); mixed.push(validRow); mixed.push(incomplete); reject(mixed);
+    auto duplicate=JsonValue::makeArray(); duplicate.push(validRow); duplicate.push(validRow); reject(duplicate);
+    auto caseVariant=validRow;
+    caseVariant.set("proxyAppId",JsonValue::makeString("PROXY.EXE"));
+    caseVariant.set("appId",JsonValue::makeString("CLIENT.EXE"));
+    duplicate=JsonValue::makeArray(); duplicate.push(validRow); duplicate.push(caseVariant); reject(duplicate);
+    // 主键按整数比较，字符串的前导零不能绕过重复检查。
+    auto alternateMinute=validRow; alternateMinute.set("minute",JsonValue::makeString("07"));
+    duplicate=JsonValue::makeArray(); duplicate.push(validRow); duplicate.push(alternateMinute); reject(duplicate);
+
+    auto valid=base,rows=JsonValue::makeArray(); rows.push(validRow); valid.set("proxyMinuteWeights",rows);
+    WIFIMETER_CHECK(ipc::validateBackupRows(valid).ok);
+    // 合法数据的插入失败也必须回滚前面的网络、应用、配置和权重替换。
+    WIFIMETER_CHECK(target.store->database().exec(
+        "CREATE TRIGGER reject_proxy_minute_restore BEFORE INSERT ON proxy_minute_weights "
+        "BEGIN SELECT RAISE(ABORT,'test rollback'); END;").ok);
+    WIFIMETER_CHECK(!target.call("restore",restoreParams(valid)).ok());
+    const auto rolledBack=target.call("backup");
+    WIFIMETER_CHECK(rolledBack.ok());
+    if (rolledBack.ok()) WIFIMETER_CHECK_EQ(rolledBack.result.find("backup")->dump(),preserved.dump());
+    WIFIMETER_CHECK_EQ(target.count("proxy_minute_weights"),std::int64_t(1));
+}
+
+void acceptsMinuteWeightIntegerBoundaries()
+{
+    Harness source;
+    auto document=*source.call("backup").result.find("backup");
+    auto rows=JsonValue::makeArray();
+    rows.push(json(R"({"date":"2024-02-29","hour":23,"minute":59,"proxyAppId":"proxy.exe","appId":"client.exe","name":"","connections":1,"rxBytes":"9223372036854775807","txBytes":"000"})"));
+    rows.push(json(R"({"date":"2024-02-29","hour":"0","minute":"0","proxyAppId":"proxy.exe","appId":"other.exe","name":"Other","connections":"9223372036854775807","rxBytes":"0","txBytes":"9007199254740993"})"));
+    document.set("proxyMinuteWeights",rows);
+    WIFIMETER_CHECK(ipc::validateBackupRows(document).ok);
+    Harness restored(true,false);
+    WIFIMETER_CHECK(restored.call("restore",restoreParams(document)).ok());
+    WIFIMETER_CHECK_EQ(restored.count("proxy_minute_weights"),std::int64_t(2));
+    const auto exported=restored.call("backup");
+    WIFIMETER_CHECK(exported.ok());
+    if (!exported.ok()) return;
+    const auto* weights=exported.result.find("backup")->find("proxyMinuteWeights");
+    WIFIMETER_CHECK(weights && weights->isArray() && weights->size()==2);
+    if (!weights || !weights->isArray() || weights->size()!=2) return;
+    WIFIMETER_CHECK_EQ(weights->at(0).stringOr("connections"),std::string("9223372036854775807"));
+    WIFIMETER_CHECK_EQ(weights->at(1).stringOr("rxBytes"),std::string("9223372036854775807"));
+    WIFIMETER_CHECK_EQ(weights->at(1).stringOr("txBytes"),std::string("0"));
 }
 JsonValue legacyProxyParams(const std::string& proxy=R"({"Ports":[1080],"ProcessNames":["LegacyProxy.exe"]})")
 {
@@ -789,6 +975,9 @@ int main(int argc, char** argv)
     failedObservationDoesNotWritePartialEvidence();
     nativeAvailabilityIsExplicit();
     fullBackupRestoresProxyEvidenceWithoutOnStart();
+    fullBackupRestoresProxyMinuteWeights();
+    rejectsInvalidProxyMinuteWeightsBeforeReplacingData();
+    acceptsMinuteWeightIntegerBoundaries();
     migratesOnlyInitialProxySettingsInTheImportTransaction();
     return WIFIMETER_REPORT();
 }

@@ -26,7 +26,8 @@ const std::vector<Table> tables = {
     {"legacy_network_keys", "legacyNetworkMappings", "", {{"ssid","ssid"},{"network_key","networkKey"}}},
     {"proxy_config", "proxyConfig", "", {{"id","id",true},{"ports_json","portsJson"},{"process_names_json","processNamesJson"}}},
     {"proxy_apps", "proxyApps", "", {{"day","date"},{"proxy_app_id","proxyAppId"},{"proxy_name","proxyName"}}},
-    {"proxy_observations", "proxyObservations", "", {{"day","date"},{"proxy_app_id","proxyAppId"},{"app_id","appId"},{"name","name"},{"connection_key","connectionKey"}}}
+    {"proxy_observations", "proxyObservations", "", {{"day","date"},{"proxy_app_id","proxyAppId"},{"app_id","appId"},{"name","name"},{"connection_key","connectionKey"}}},
+    {"proxy_minute_weights", "proxyMinuteWeights", "", {{"day","date"},{"hour","hour",true},{"minute","minute",true},{"proxy_app_id","proxyAppId"},{"app_id","appId"},{"name","name"},{"connections","connections",true},{"rx_bytes","rxBytes",true},{"tx_bytes","txBytes",true}}}
 };
 bool integer(const JsonValue* value, std::int64_t& number)
 {
@@ -43,6 +44,23 @@ std::string columnsOf(const Table& table)
 }
 Status invalid(const std::string& field) { return Status::failure("备份字段无效：" + field); }
 
+bool proxyIdentity(const JsonValue* value)
+{
+    if (!value || !value->isString()) return false;
+    const auto& text=value->asString();
+    return !text.empty() && text!="unknown" && text!="proxy/unattributed" && text.find('\0')==std::string::npos;
+}
+std::string asciiNoCase(std::string value)
+{
+    // SQLite NOCASE 只折叠 ASCII 大写字母，重复检查必须使用相同的主键规则。
+    for (auto& ch : value) if (ch>='A' && ch<='Z') ch=static_cast<char>(ch-'A'+'a');
+    return value;
+}
+bool byteString(const JsonValue* value, std::int64_t& number)
+{
+    return value && value->isString() && !value->asString().empty() &&
+        value->asString().front()>='0' && value->asString().front()<='9' && integer(value,number);
+}
 Status validateProxyBackupRows(const JsonValue& document)
 {
     if (const auto* rows=document.find("proxyConfig"))
@@ -74,6 +92,24 @@ Status validateProxyBackupRows(const JsonValue& document)
             }
             else if (row.stringOr("appId").empty() || row.stringOr("connectionKey").empty() ||
                 !row.find("name") || !row.find("name")->isString()) return invalid(field);
+        }
+    }
+    if (const auto* rows=document.find("proxyMinuteWeights"))
+    {
+        if (!rows->isArray()) return invalid("proxyMinuteWeights");
+        std::set<std::tuple<std::string,std::int64_t,std::int64_t,std::string,std::string>> seen;
+        for (const auto& row : rows->items())
+        {
+            core::TimePoint day;
+            std::int64_t hour=0,minute=0,connections=0,rx=0,tx=0;
+            if (!row.isObject() || !core::parseDayKey(row.stringOr("date"),day) ||
+                !proxyIdentity(row.find("proxyAppId")) || !proxyIdentity(row.find("appId")) ||
+                !row.find("name") || !row.find("name")->isString() ||
+                !integer(row.find("hour"),hour) || hour>23 || !integer(row.find("minute"),minute) || minute>59 ||
+                !integer(row.find("connections"),connections) || connections==0 ||
+                !byteString(row.find("rxBytes"),rx) || !byteString(row.find("txBytes"),tx) ||
+                !seen.emplace(row.stringOr("date"),hour,minute,asciiNoCase(row.stringOr("proxyAppId")),asciiNoCase(row.stringOr("appId"))).second)
+                return invalid("proxyMinuteWeights");
         }
     }
     return Status::success();

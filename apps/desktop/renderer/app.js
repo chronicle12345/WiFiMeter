@@ -504,8 +504,8 @@ function appList(n,viewData=applicationListData(n)){
  return applicationTable(rows,{mode:'usage',grouping:'summary',selectedKey:appContext().selectedApp?.key,sum:total},appTableHelpers());
 }
 function appDetails(app){
- const proxy=measuredProxy();
- const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
+ const proxy=measuredProxy(),minute=appMinuteSource();
+ const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:minute?data.appMinuteRecords:data.appRecords,estimatedRecords:minute?data.proxyEstimatedMinuteRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),grouping:appContext().appGrouping});
  return applicationDetails(app,{esc,fmtWithUnit,appRate,estimateLabel,proxyDetails,rangeLabel:rangeText()});
 }
 function refreshApplicationDetails(){

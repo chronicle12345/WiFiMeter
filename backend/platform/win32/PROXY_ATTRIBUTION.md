@@ -2,7 +2,7 @@
 
 English | [简体中文](PROXY_ATTRIBUTION.zh-CN.md)
 
-This contract separates proxy identity evidence and connection-weight history estimates from [measured live loopback traffic](APP_TRAFFIC.md). It does not turn client connection counts into measured historical bytes or add estimates to adapter totals.
+This contract separates proxy identity evidence and weighted history estimates from [measured live loopback traffic](APP_TRAFFIC.md). It does not turn client connection counts into measured historical bytes or add estimates to adapter totals.
 
 ## Proxy identity evidence
 
@@ -19,7 +19,7 @@ Do not complete identity when the same PID has different creation times or paths
 
 After identity validation, persist the real proxy path and deduplicated connection keys for the observation date in the existing tables. Do not backfill earlier dates with current client weights or modify `app_usage`. An old record without observations on its own date can yield only `proxy/unattributed`; today's connections cannot attribute yesterday's traffic.
 
-Historical `proxyEstimatedRecords` uses connection-count weights and `estimated=true`, separately from live measured values. Full paths are case-insensitive identifiers; filenames cannot substitute for them. The native proxy amount remains the authoritative amount being attributed, with any unmatched share explicitly unattributed. [Application contracts](../../../contracts/APPLICATION_TRAFFIC.md) define the shared data fields.
+Historical `proxyEstimatedRecords` uses separate receive/send byte weights and `estimated=true`, with connection counts as the fallback for a direction without byte evidence. It remains separate from live measured values. Full paths are case-insensitive identifiers; filenames cannot substitute for them. The native proxy amount remains the authoritative amount being attributed, with any unmatched share explicitly unattributed. [Application contracts](../../../contracts/APPLICATION_TRAFFIC.md) define the shared data fields.
 
 ## Estimate update events
 

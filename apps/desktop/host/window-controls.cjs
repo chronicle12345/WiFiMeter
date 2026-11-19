@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 
 const { miniSize, snapBounds, collapsedBounds, isNear } = require('./mini-geometry.cjs');
 const { miniRange, miniApplicationRows, miniFilteredLive } = require('./mini-usage.cjs');
@@ -16,11 +17,27 @@ const PALETTES = ['indigo', 'dark', 'light'];
 const THEMES = ['light', 'dark', 'system'];
 const ACTIONS = ['ask', 'tray', 'exit'];
 
+function validateWindowPreferences(patch) {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)
+        || Object.keys(patch).some(key => !Object.hasOwn(DEFAULTS, key))
+        || (Object.hasOwn(patch, 'miniWindow') && typeof patch.miniWindow !== 'boolean')
+        || (Object.hasOwn(patch, 'closeAction') && !ACTIONS.includes(patch.closeAction))
+        || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
+        || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
+        || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
+        || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
+        || (Object.hasOwn(patch, 'miniRange') && !['1m', '5m', '1h', 'custom'].includes(patch.miniRange))
+        || (Object.hasOwn(patch, 'miniCustomMinutes') && (!Number.isInteger(patch.miniCustomMinutes) || patch.miniCustomMinutes < 1 || patch.miniCustomMinutes > 10080))) {
+        throw new TypeError('窗口偏好无效。');
+    }
+    return { ...patch };
+}
+
 // 桌面宿主由调用方注入，测试不会加载原生窗口或更改登录启动项。
 function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData, getWindow,
     hideToTray, requestQuit, isQuitting = () => false, platform = process.platform,
     logger = () => {}, fileSystem = fs, backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1',
-    timers = { setInterval, clearInterval, now: Date.now }, requestMiniSnapshot = null }) {
+    timers = { setInterval, clearInterval, now: Date.now }, requestMiniSnapshot = null, assertWritable = () => {} }) {
     const file = path.join(userData, 'window-preferences.json');
     const miniFile = path.join(__dirname, 'mini', 'index.html');
     const miniURL = pathToFileURL(miniFile).href;
@@ -211,26 +228,32 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
         const temporary = `${file}.${randomUUID()}.tmp`;
         try {
             await fileSystem.writeFile(temporary, JSON.stringify(next, null, 2) + '\n', { flag: 'wx' });
-            await fileSystem.rename(temporary, file);
+            for (let attempt = 0; ; attempt++) {
+                try { await fileSystem.rename(temporary, file); break; }
+                catch (error) {
+                    // Windows readers can briefly prevent replacement. Bound retries and retain the old file on persistent failure.
+                    if (platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 2) throw error;
+                    await delay(20 * (attempt + 1));
+                }
+            }
         } finally {
             await fileSystem.rm(temporary, { force: true });
         }
     }
 
+    function assertPreferenceWritable() {
+        assertWritable();
+        if (isQuitting()) throw Error('窗口正在关闭，暂时不能修改设置。');
+    }
     function update(patch) {
-        if (!patch || typeof patch !== 'object' || Array.isArray(patch)
-            || Object.keys(patch).some(key => !Object.hasOwn(DEFAULTS, key))
-            || (Object.hasOwn(patch, 'miniWindow') && typeof patch.miniWindow !== 'boolean')
-            || (Object.hasOwn(patch, 'closeAction') && !ACTIONS.includes(patch.closeAction))
-            || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
-            || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
-            || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
-            || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
-            || (Object.hasOwn(patch, 'miniRange') && !['1m', '5m', '1h', 'custom'].includes(patch.miniRange))
-            || (Object.hasOwn(patch, 'miniCustomMinutes') && (!Number.isInteger(patch.miniCustomMinutes) || patch.miniCustomMinutes < 1 || patch.miniCustomMinutes > 10080))) {
-            return Promise.reject(new TypeError('窗口偏好无效。'));
-        }
-        const changes = { ...patch };
+        try { assertPreferenceWritable(); } catch (error) { return Promise.reject(error); }
+        return applyPreferences(patch);
+    }
+    // Only trusted host recovery calls this method; no renderer/mini handler accepts a bypass flag.
+    function restore(patch) { return applyPreferences(patch); }
+    function applyPreferences(patch) {
+        let changes;
+        try { changes = validateWindowPreferences(patch); } catch (error) { return Promise.reject(error); }
         const operation = queue.then(async () => {
             if (disposed) throw Error('窗口控制器已关闭。');
             const next = { ...preferences, ...changes };
@@ -293,6 +316,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
         closeFlight = (async () => {
             await queue;
             if (disposed || isQuitting()) return false;
+            assertPreferenceWritable();
             let action = preferences.closeAction, remember = false;
             if (action === 'ask') {
                 const window = getWindow();
@@ -306,6 +330,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
                 remember = choice.checkboxChecked === true;
             }
             if (!action || disposed || isQuitting()) return false;
+            assertPreferenceWritable();
             if (action === 'tray') {
                 if (!await hideToTray()) return false;
                 if (remember && !disposed) await update({ closeAction: 'tray' });
@@ -321,7 +346,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     }
 
     return {
-        read, update, onMainClose,
+        read, update, restore, validate: validateWindowPreferences, onMainClose,
         publishLive(event) {
             if (disposed) return;
             if (event?.event === 'collectorStatus') {
@@ -352,4 +377,4 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
     };
 }
 
-module.exports = { createWindowControls };
+module.exports = { createWindowControls, validateWindowPreferences };

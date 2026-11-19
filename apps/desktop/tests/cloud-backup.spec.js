@@ -1,7 +1,7 @@
 // 云备份端到端：真实后端 + 本地内存 WebDAV 服务。
 import { test, expect } from '@playwright/test';
 import { desktop } from './support/browser-desktop.mjs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import zlib from 'node:zlib';
 import os from 'node:os';
@@ -34,22 +34,32 @@ function startWebdav() {
 }
 
 test.beforeEach(async () => {
-    profile = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-cloud-'));
     harness = await createHarness();
+    profile = harness.directory;
+    await writeFile(path.join(profile, 'app-network-records.json'), JSON.stringify({ version: 1, records: [{ path: 'C:\\Apps\\Source.exe', name: 'Source.exe',
+        savedAt: '2026-11-18T00:00:00.000Z', state: { Blocked: true, DownloadThrottled: true, DownloadKbps: 1024 } }] }));
     app = await desktop.launch({ env: { ...process.env, WIFIMETER_BACKGROUND_TEST: '1', WIFIMETER_USER_DATA: profile, ...harness.env } });
     page = await app.firstWindow();
     await expect(page.locator('.connection-title')).not.toHaveText('等待本机采集器');
 });
 test.afterEach(async () => {
     if (app) await app.close();
-    harness?.cleanup();
+    if (harness) {
+        const target = path.resolve(harness.directory);
+        if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith('wifimeter-ui-')) throw Error('Unexpected synthetic profile path.');
+        harness.cleanup();
+    }
     await new Promise(resolve => (server ? server.close(resolve) : resolve()));
     server = null;
-    if (profile) await rm(profile, { recursive: true, force: true });
 });
 
 test('云备份保存设置、按所选内容备份、列出、恢复并删除远端备份', async ({}, testInfo) => {
     const url = await startWebdav();
+    await page.evaluate(async () => {
+        await window.desktop.windowPreferences.update({ theme: 'dark', promptAppCollection: false });
+        await window.desktop.logs.setLevel('debug');
+        await window.desktop.logs.write('warn', 'cloud source log marker');
+    });
     await page.locator('.nav [data-page="settings"]').click();
     await page.locator('[data-category="cloud"]').click();
     const form = page.locator('#cloudBackupForm'), status = page.locator('.cloud-status');
@@ -84,13 +94,38 @@ test('云备份保存设置、按所选内容备份、列出、恢复并删除�
     expect(files.size).toBe(1);
     const [[name, bytes]] = [...files];
     const document = JSON.parse(zlib.gunzipSync(bytes).toString());
-    expect(name).toMatch(/^wifimeter_.+_\d{8}T\d{6}Z\.json\.gz$/);
+    expect(name).toMatch(/^wifimeter_.+_\d{8}T\d{6}Z_[a-z0-9]{16}\.json\.gz$/);
     expect(document.backupType).toBe('wifimeter-cloud-backup');
     expect(document.sections).toEqual(['settings', 'networks', 'daily', 'logs']);
     expect(document.appRecords).toBeUndefined();
     expect(document.networks.length).toBeGreaterThan(0);
-    expect(document.logs).toContain('[app]');
+    expect(document.logs.version).toBe(1);
+    expect(document.logs.entries.some(entry => entry.source === 'app')).toBe(true);
+    expect(document.logs.entries.some(entry => entry.message === 'cloud source log marker')).toBe(true);
+    expect(document.hostSettings.windowPreferences).toMatchObject({ theme: 'dark', promptAppCollection: false });
+    expect(document.hostSettings.logLevel).toBe('debug');
+    expect(document.hostSettings.appNetworkRecords.records[0].name).toBe('Source.exe');
     expect(JSON.stringify(document)).not.toContain('secret');
+
+
+    // Replace local values after upload so a successful restore must change actual host state.
+    const localRecord = await page.evaluate(async networkKey => {
+        const current = await window.desktop.backend.request('backup');
+        if (!current.ok) throw Error(current.error.message);
+        const record = { path: 'C:\\Apps\\AfterBackup.exe', name: 'AfterBackup.exe', savedAt: '2026-11-18T01:00:00.000Z', state: { Blocked: true } };
+        const replaced = await window.desktop.backend.request('restore', { backup: { ...current.result.backup,
+            hostSettings: { appNetworkRecords: { version: 1, records: [record] } } } });
+        if (!replaced.ok) throw Error(replaced.error.message);
+        await window.desktop.windowPreferences.update({ theme: 'light', promptAppCollection: true });
+        await window.desktop.logs.clear();
+        await window.desktop.logs.write('warn', 'local after backup marker');
+        await window.desktop.logs.setLevel('error');
+        const settings = await window.desktop.backend.request('updateSettings', { settings: { speedUnit: 'Mbps' } });
+        const network = await window.desktop.backend.request('updateNetwork', { key: networkKey, alias: 'local changed network' });
+        if (!settings.ok || !network.ok) throw Error('Could not prepare local restore changes.');
+        await window.desktop.backend.request('setPaused', { paused: false });
+        return record;
+    }, document.networks[0].key);
 
     await page.locator('[data-action="cloud-list"]').click();
     const row = page.locator('.cloud-files li');
@@ -100,6 +135,34 @@ test('云备份保存设置、按所选内容备份、列出、恢复并删除�
     await page.locator('.modal [data-action="confirm"]').click();
     await expect(page.locator('.toast').last()).toContainText('已恢复备份，采集已暂停。');
     await expect(page.locator('.sidebar')).toContainText('统计已暂停');
+
+    const restoredState = await page.evaluate(async () => ({
+        preferences: await window.desktop.windowPreferences.read(), logs: await window.desktop.logs.read({ limit: 2000 }),
+        records: await window.desktop.appControl.list(), backend: await window.desktop.backend.request('snapshot')
+    }));
+    expect(restoredState.preferences).toMatchObject({ theme: 'dark', promptAppCollection: false });
+    expect(restoredState.logs.level).toBe('debug');
+    expect(restoredState.logs.entries.some(entry => entry.message === 'cloud source log marker')).toBe(true);
+    expect(restoredState.logs.entries.some(entry => entry.message === 'local after backup marker')).toBe(false);
+    expect(restoredState.records.records).toEqual(document.hostSettings.appNetworkRecords.records);
+    expect(restoredState.backend.result.settings.speedUnit).toBe(document.settings.speedUnit);
+    expect(restoredState.backend.result.networks[0].alias).toBe(document.networks[0].alias);
+
+    const point = JSON.parse(zlib.gunzipSync(await readFile(path.join(profile, 'before-cloud-restore.json.gz'))).toString());
+    expect(point.hostSettings.windowPreferences).toMatchObject({ theme: 'light', promptAppCollection: true });
+    expect(point.hostSettings.logLevel).toBe('error');
+    expect(point.hostSettings.appNetworkRecords.records).toEqual([localRecord]);
+    expect(point.logs.entries.some(entry => entry.message === 'local after backup marker')).toBe(true);
+    const reopened = await page.evaluate(backup => window.desktop.backend.request('restore', { backup }), point);
+    expect(reopened.ok).toBe(true);
+    const localAgain = await page.evaluate(async () => ({ preferences: await window.desktop.windowPreferences.read(),
+        logs: await window.desktop.logs.read({ limit: 2000 }), records: await window.desktop.appControl.list(), cloud: await window.desktop.cloudBackup.status() }));
+    expect(localAgain.preferences).toMatchObject({ theme: 'light', promptAppCollection: true });
+    expect(localAgain.logs.level).toBe('error');
+    expect(localAgain.logs.entries.some(entry => entry.message === 'local after backup marker')).toBe(true);
+    expect(localAgain.records.records).toEqual([localRecord]);
+    expect(localAgain.cloud.result).toMatchObject({ url, username: 'me', hasPassword: true });
+
 
     await page.locator('.nav [data-page="settings"]').click();
     await page.locator('[data-category="cloud"]').click();
@@ -111,6 +174,6 @@ test('云备份保存设置、按所选内容备份、列出、恢复并删除�
     expect(requests.filter(line => line.startsWith('GET ')).length).toBe(1);
 
     await page.locator('.nav [data-page="logs"]').click();
-    await expect(page.locator('.log-table')).toContainText('已上传云备份');
-    await expect(page.locator('.log-table')).toContainText('恢复');
+    await expect(page.locator('.log-table')).toContainText('local after backup marker');
+    await expect(page.locator('.log-table')).not.toContainText('cloud source log marker');
 });

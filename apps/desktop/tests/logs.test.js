@@ -15,6 +15,7 @@ function memoryIo() {
         appendFileSync(file, text) { files.set(file, (files.get(file) || '') + text); },
         statSync(file) { if (!files.has(file)) throw Error('ENOENT'); return { size: Buffer.byteLength(files.get(file)) }; },
         renameSync(from, to) { if (!files.has(from)) throw Error('ENOENT'); files.set(to, files.get(from)); files.delete(from); },
+        unlinkSync(file) { files.delete(file); },
         truncateSync(file) { if (!files.has(file)) throw Error('ENOENT'); files.set(file, ''); }
     };
 }
@@ -85,4 +86,83 @@ test('console capture keeps terminal output, maps levels and records forwarded c
     assert.equal(warning.source, 'app');
     assert.match(warning.message, /^plain \{"code":7\} Error: bad/);
     assert.deepEqual(parseLine('[window-controls] moved'), { source: 'window-controls', message: 'moved' });
+});
+
+
+test('structured snapshots replace saved logs and survive restart without changing the recording level', () => {
+    const io = memoryIo(), logs = store(io);
+    logs.setLevel('warn'); logs.write('warn', 'app', 'original warning');
+    const snapshot = { version: 1, entries: [
+        { time: '2026-11-17T23:00:00.000Z', level: 'debug', source: 'backend', message: 'restored hidden debug' },
+        { time: '2026-11-18T00:00:00.000Z', level: 'error', source: 'backup', message: 'restored error' }
+    ] };
+    assert.equal(typeof logs.restore, 'function');
+    logs.restore(snapshot);
+    assert.deepEqual(logs.snapshot(), snapshot);
+    assert.deepEqual(store(io).snapshot(), snapshot);
+    assert.equal(logs.level, 'warn');
+    snapshot.entries[0].message = 'external mutation';
+    assert.equal(logs.read().entries[1].message, 'restored hidden debug');
+});
+
+test('legacy cloud log text restores timestamps, levels, sources and multiline messages', () => {
+    const logs = store(memoryIo());
+    assert.equal(typeof logs.restore, 'function');
+    logs.restore('2026-11-17T23:00:00.000Z INFO  [app] old line\n2026-11-18T00:00:00.000Z ERROR [backend] failure\nstack continuation');
+    assert.deepEqual(logs.read().entries.map(row => [row.level, row.source, row.message]), [
+        ['error', 'backend', 'failure\nstack continuation'], ['info', 'app', 'old line']
+    ]);
+});
+
+test('malformed or excessive imported logs leave both files unchanged', () => {
+    const io = memoryIo(), logs = store(io);
+    logs.write('warn', 'app', 'local');
+    const before = [...io.files];
+    assert.equal(typeof logs.restore, 'function');
+    const entry = { time: '2026-11-18T00:00:00.000Z', level: 'info', source: 'backup', message: 'imported' };
+    for (const invalid of [null, [], { version: 2, entries: [] }, { version: 1, entries: [{ ...entry, time: 'yesterday' }] },
+        { version: 1, entries: [{ ...entry, source: '../path\n' }] }, { version: 1, entries: [{ ...entry, message: 'x'.repeat(2001) }] },
+        { version: 1, entries: [{ ...entry, path: '../arbitrary-file' }] }, 'x'.repeat(2 * 1024 * 1024 + 1)]) {
+        assert.throws(() => logs.restore(invalid));
+        assert.deepEqual([...io.files], before);
+    }
+});
+
+test('log replacement rolls both files back when the second atomic rename fails', () => {
+    const io = memoryIo(), initial = store(io, { maxBytes: 200 });
+    for (let n = 0; n < 3; n++) initial.write('warn', 'app', 'local ' + n);
+    const before = initial.read().entries;
+    let renames = 0;
+    const logs = store({ ...io, renameSync(from, to) { if (++renames === 2) throw Error('rename blocked'); io.renameSync(from, to); } }, { maxBytes: 200 });
+    assert.equal(typeof logs.restore, 'function');
+    assert.throws(() => logs.restore({ version: 1, entries: [{ time: '2026-11-18T00:00:00.000Z', level: 'info', source: 'backup', message: 'replacement' }] }), /rename blocked/);
+    assert.deepEqual(logs.read().entries, before);
+    assert.deepEqual(store(io, { maxBytes: 200 }).read().entries, before);
+});
+
+test('failed log-level persistence keeps the effective and persisted level unchanged', () => {
+    const io = memoryIo(), initial = store(io);
+    initial.setLevel('warn');
+    const logs = store({ ...io, writeFileSync() { throw Error('disk full'); } });
+    assert.throws(() => logs.setLevel('debug'), /disk full/);
+    assert.equal(logs.level, 'warn');
+    assert.equal(store(io).level, 'warn');
+});
+
+
+test('a complete log snapshot reports unreadable retained files instead of silently backing up an empty log', () => {
+    const io = memoryIo(), initial = store(io);
+    initial.write('warn', 'app', 'must remain recoverable');
+    const current = [...io.files.keys()].find(file => file.endsWith('wifimeter.log'));
+    const logs = store({ ...io, readFileSync(file) { if (file === current) throw Object.assign(Error('retained log locked'), { code: 'EACCES' }); return io.readFileSync(file); } });
+    assert.deepEqual(logs.read().entries, []);
+    assert.throws(() => logs.snapshot(), /retained log locked/);
+    assert.equal(initial.read().entries[0].message, 'must remain recoverable');
+});
+
+
+test('legacy Windows CRLF messages retain their original time, level, source and line endings', () => {
+    const logs = store(memoryIo());
+    logs.restore('2026-11-17T23:00:00.000Z ERROR [backend] failure\r\nstack continuation');
+    assert.deepEqual(logs.snapshot(), { version: 1, entries: [{ time: '2026-11-17T23:00:00.000Z', level: 'error', source: 'backend', message: 'failure\r\nstack continuation' }] });
 });

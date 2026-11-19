@@ -33,8 +33,9 @@ export const english = Object.fromEntries(`
 应用列表|Application list
 记录范围|Record period
 未知代理|Unknown proxy
-历史用量按连接权重估算|Historical usage is estimated by connection weight
+历史下载和上传分别按客户端与代理之间的字节比例估算；缺少字节记录的方向按连接数分配。|Historical download and upload are estimated separately by the share of bytes exchanged between each client and the proxy; directions without byte evidence use connection counts.
 本地 TCP 实时速度不计入 Wi-Fi 用量。|Live local TCP rates are separate from Wi-Fi usage.
+代理估算按网络和时段匹配原生代理用量，保留客户端直接流量。|Proxy estimates match native proxy usage for the selected network and period; direct client traffic is retained.
 代理估算设置|Proxy estimation settings
 开启应用采集|Start application collection
 应用限制记录|Application restriction records
@@ -53,6 +54,32 @@ export const english = Object.fromEntries(`
 选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。|Choose a program to block its network access or limit its speed. Configured restrictions appear here.
 应用规则|Application rules
 WebDAV 云备份|WebDAV cloud backup
+无法确认原采集状态，未恢复备份。|Unable to confirm the previous collection state; the backup was not restored.
+无法暂停采集，未恢复备份。|Unable to pause collection; the backup was not restored.
+采集状态确认失败。|Could not confirm the collection state.
+窗口正在关闭，暂时不能修改设置。|The window is closing; settings cannot be changed now.
+原采集状态未能恢复|Could not restore the previous collection state
+云备份设置无效。|Invalid cloud backup settings.
+应用限制记录超过大小或条数上限。|Application restriction records exceed the size or entry limit.
+WebDAV 备份文件过大。|The WebDAV backup file is too large.
+这不是 WiFiMeter 的完整备份文件。|This is not a complete WiFiMeter backup.
+正在恢复备份，暂时不能修改数据。|A backup is being restored. Data cannot be changed during restore.
+请等待退出确认、数据导入、更新或采集恢复完成后重试恢复备份。|Wait for quit confirmation, data import, the update or collection recovery to finish before retrying the backup restore.
+请等待备份恢复完成后重试导入。|Wait for the backup restore to finish before retrying the import.
+请等待备份恢复完成后重试更新。|Wait for the backup restore to finish before retrying the update.
+请等待退出确认或采集恢复完成后重试更新。|Wait for quit confirmation or collection recovery to finish before retrying the update.
+日志恢复失败，回滚未完成|Log restore failed; rollback is incomplete
+本地恢复点|Local restore point
+。本地恢复点|. Local restore point
+云备份桌面设置无效。|The cloud backup contains invalid desktop settings.
+云备份日志无效。|The cloud backup contains invalid logs.
+云备份日志超过大小或条数上限。|The cloud backup logs exceed the size or entry limit.
+当前版本无法恢复这份备份的桌面设置。|This version cannot restore the desktop settings in this backup.
+当前版本无法恢复这份备份的日志。|This version cannot restore the logs in this backup.
+备份解压后超过 512 MiB，未恢复。|The extracted backup exceeds 512 MiB. Restore was cancelled.
+云备份内容无效，原数据已保留|Invalid cloud backup; the original data was preserved
+云备份恢复失败，已恢复原数据|Cloud restore failed; the original data was restored
+云备份恢复失败，回滚未完成|Cloud restore failed; rollback is incomplete
 云备份设置已保存|Cloud backup settings saved
 云备份|Cloud backup
 WebDAV 地址|WebDAV address
@@ -309,7 +336,6 @@ WebDAV 地址|WebDAV address
 最多设置 64 个端口、32 个进程名；进程名最长 64 个字符且不能包含控制字符。|Use up to 64 ports and 32 process names. Each name must be at most 64 characters without control characters.
 后端尚未提供代理估算接口。|The backend does not provide proxy estimates yet.
 当前平台不支持代理流量估算，原生应用采集不受影响。|Proxy traffic estimates are unsupported on this platform. Native application collection is unaffected.
-代理估算与原生采集独立；仅替换匹配网络和日期的代理记录，保留客户端直接流量。|Proxy estimates are separate from native collection. They replace proxy records only for matching networks and dates; direct client traffic is retained.
 应用数据来源|Application data source
 原生记录|Native records
 包含代理估算|Include proxy estimates
