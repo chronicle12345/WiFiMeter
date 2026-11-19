@@ -842,3 +842,90 @@ test('分钟快照补充代理身份后同步更新顶部速度和应用列表',
     assert.deepEqual(applications.rows, []);
     assert.deepEqual(latestLive().ratesWithoutProxy, { rxPerSecond: '400', txPerSecond: '80' });
 });
+
+
+test('恢复前可单独校验窗口偏好，校验不会保存或通知窗口', async t => {
+    const f = await fixture(t);
+    const before = await f.controls.read();
+    assert.equal(typeof f.controls.validate, 'function');
+    assert.deepEqual(f.controls.validate({ theme: 'dark', promptAppCollection: false }), { theme: 'dark', promptAppCollection: false });
+    for (const invalid of [null, [], { theme: 'unknown' }, { miniWindow: 'true' }, { miniCustomMinutes: 10081 }, { credential: 'secret' }]) {
+        assert.throws(() => f.controls.validate(invalid), TypeError);
+    }
+    assert.deepEqual(await f.controls.read(), before);
+    assert.equal(f.sent.length, 0);
+    assert.deepEqual(await fs.readdir(f.userData), []);
+});
+
+
+test('恢复保护在窗口模块内阻止小窗偏好和关闭修改，可信恢复入口仍可保存备份偏好', async t => {
+    for (const action of ['preferences', 'close', 'native-close']) {
+        let blocked = false;
+        const f = await fixture(t, { assertWritable: () => { if (blocked) throw Error('正在恢复备份，暂时不能修改数据。'); } });
+        await f.controls.update({ miniWindow: true });
+        const mini = f.windows[0];
+        mini.webContents.mainFrame.url = pathToFileURL(mini.file).href;
+        const event = { sender: mini.webContents, senderFrame: mini.webContents.mainFrame };
+        blocked = true;
+        if (action === 'preferences') await assert.rejects(async () => f.handlers.get('mini:preferences-update')(event, { miniPinned: true }), /恢复备份/);
+        else if (action === 'close') await assert.rejects(async () => f.handlers.get('mini:close')(event), /恢复备份/);
+        else { mini.emit('close', closeEvent()); await f.controls.read(); }
+        assert.equal((await f.controls.read()).miniWindow, true);
+        assert.equal((await f.controls.read()).miniPinned, false);
+        assert.equal(typeof f.controls.restore, 'function');
+        await f.controls.restore({ theme: 'dark', miniWindow: false });
+        assert.equal((await f.controls.read()).theme, 'dark');
+        assert.equal((await f.controls.read()).miniWindow, false);
+    }
+});
+
+test('关闭选择对话框返回后重查保护，不记住偏好也不在恢复中隐藏或退出', async t => {
+    for (const response of [1, 2]) {
+        let blocked = false, release;
+        const pending = new Promise(resolve => { release = resolve; });
+        const f = await fixture(t, { assertWritable: () => { if (blocked) throw Error('正在恢复备份，暂时不能修改数据。'); },
+            dialog: { showMessageBox: async () => pending } });
+        await f.controls.update({ closeAction: 'ask' });
+        const closing = f.controls.onMainClose(closeEvent());
+        await new Promise(setImmediate);
+        blocked = true; release({ response, checkboxChecked: true });
+        assert.equal(await closing, false);
+        assert.equal((await f.controls.read()).closeAction, 'ask');
+        assert.equal(f.state.hides, 0);
+        assert.equal(f.state.quits, 0);
+    }
+});
+
+
+test('Windows 短暂共享锁释放后完成原子保存，成功前不改变内存或发送偏好通知', async t => {
+    for (const code of ['EPERM', 'EBUSY', 'EACCES']) {
+        let transient = false, attempts = 0;
+        const f = await fixture(t, { fileSystem: { ...fs,
+            rename: async (...args) => { if (transient && ++attempts === 1) throw Object.assign(Error('temporary read lock'), { code }); return fs.rename(...args); } } });
+        await f.controls.update({ theme: 'light' });
+        f.sent.length = 0; transient = true;
+        await f.controls.update({ theme: 'dark' });
+        assert.equal(attempts, 2);
+        assert.equal((await f.controls.read()).theme, 'dark');
+        assert.equal(JSON.parse(await fs.readFile(path.join(f.userData, 'window-preferences.json'), 'utf8')).theme, 'dark');
+        assert.equal(f.sent.length, 1);
+        assert.deepEqual(await fs.readdir(f.userData), ['window-preferences.json']);
+    }
+});
+
+test('Windows 持续共享锁在有限重试后保留原文件和内存，锁释放后队列仍可再次保存', async t => {
+    let locked = false, attempts = 0;
+    const f = await fixture(t, { fileSystem: { ...fs,
+        rename: async (...args) => { if (locked) { attempts++; throw Object.assign(Error('persistent read lock'), { code: 'EPERM' }); } return fs.rename(...args); } } });
+    await f.controls.update({ theme: 'light' });
+    const file = path.join(f.userData, 'window-preferences.json'), original = await fs.readFile(file, 'utf8');
+    f.sent.length = 0; locked = true;
+    await assert.rejects(f.controls.update({ theme: 'dark' }), /persistent read lock/);
+    assert.equal(attempts, 3);
+    assert.equal((await f.controls.read()).theme, 'light');
+    assert.equal(await fs.readFile(file, 'utf8'), original);
+    assert.equal(f.sent.length, 0);
+    assert.deepEqual(await fs.readdir(f.userData), ['window-preferences.json']);
+    locked = false; await f.controls.update({ theme: 'dark' });
+    assert.equal((await f.controls.read()).theme, 'dark');
+});

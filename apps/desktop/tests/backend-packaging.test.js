@@ -47,6 +47,25 @@ test('后端构建拒绝跨系统目标，Windows 本机仍可选择 Visual Stud
     }
 });
 
+test('后端测试入口启用 CTest 并构建测试目标，构建失败时不执行 CTest', async () => {
+    const { runBackendTests } = require('../../../tools/test-backend.cjs');
+    const calls = [];
+    runBackendTests({
+        build: options => {
+            assert.equal(options.buildTests, true);
+            return { root: 'fixture', buildDirectory: 'build/windows', cmake: 'cmake' };
+        },
+        run: (command, args, options) => calls.push({ command, args, options }),
+        env: {}
+    });
+    assert.deepEqual(calls[0].args, ['--test-dir', 'build/windows', '-C', 'Release', '--output-on-failure', '--no-tests=error']);
+    assert.equal(calls[0].options.windowsHide, true);
+    assert.throws(() => runBackendTests({
+        build: () => { throw new Error('fixture build failed'); },
+        run: () => assert.fail('CTest must not run after a failed build')
+    }), /fixture build failed/);
+});
+
 test('读取 PE 和 ELF 架构，拒绝混合架构、截断文件和伪造文件头', t => {
     const { binaryArchitecture, assertArchitecture } = require('../../../packaging/targets.cjs');
     const directory = mkdtempSync(path.join(os.tmpdir(), 'wifimeter-arch-'));

@@ -218,6 +218,17 @@ test('update progress stays visible across pages and download retry waits for co
  await expect.poll(()=>app.evaluate(()=>globalThis.retryRequests)).toBe(1);await expect(banner).toBeHidden();await expect(page.locator('.modal')).toHaveCount(0);
 });
 
+test('finished update notices can be dismissed and return when the status changes',async()=>{
+ const send=async value=>app.evaluate(({BrowserWindow},status)=>BrowserWindow.getAllWindows()[0].webContents.send('updates:status',status),value);
+ const banner=page.locator('#updateBanner'),close=banner.locator('[data-action="dismiss-update"]');
+ await send({state:'error',busy:false,error:'fixture offline',errorPhase:'downloading',canInstall:true,latestVersion:'1.3.2'});
+ await expect(banner).toContainText('下载更新失败');await close.click();await expect(banner).toBeHidden();
+ await send({state:'error',busy:false,error:'fixture offline',errorPhase:'downloading',canInstall:true,latestVersion:'1.3.2'});await expect(banner).toBeHidden();
+ await send({state:'downloading',busy:true,progress:{receivedBytes:1,totalBytes:2,percent:50}});await expect(banner).toBeVisible();await expect(close).toHaveCount(0);
+ await send({state:'available',currentVersion:'1.3.1',latestVersion:'1.3.2',canInstall:true});await expect(banner).toContainText('发现新版本');await close.click();await expect(banner).toBeHidden();
+ await page.locator('.nav [data-page="settings"]').click();await page.locator('[data-category="about"]').click();await expect(page.locator('#updatesPanel')).toContainText('发现新版本');
+});
+
 test('unsupported platforms keep the explicit official release page action',async()=>{
  await app.evaluate(({ipcMain})=>{globalThis.manualRequests=0;ipcMain.removeHandler('updates:install');ipcMain.handle('updates:install',()=>{globalThis.manualRequests++;return {state:'manual',busy:false,canInstall:false};});});
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.send('updates:status',{state:'available',canInstall:false,manual:true,latestVersion:'1.3.2'}));

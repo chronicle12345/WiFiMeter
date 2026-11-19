@@ -1,0 +1,152 @@
+/* Applications page and the application views reused inside the network drawer. */
+
+/* Capture control in the page toolbar */
+#appCaptureRegion { display:flex; align-items:center; min-width:0; }
+.app-capture-control { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.capture-status { max-width:230px; color:var(--amber); font-size:var(--text-md); line-height:1.5; overflow-wrap:anywhere; }
+.btn.capture-start { background:var(--green-fill); border-color:var(--green-fill); color:#fff; font-weight:600; }
+.btn.capture-start:hover { background:var(--green-hover); border-color:var(--green-hover); }
+.btn.capture-stop { background:var(--red-fill); border-color:var(--red-fill); color:var(--on-accent); font-weight:600; }
+.btn.capture-stop:hover { filter:brightness(.92); }
+
+/* Workspace: title and view tabs, one row of filters, the total, then a full-width table */
+.application-workspace { --pad:20px; }
+.application-workspace-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3) var(--space-4); flex-wrap:wrap; padding:16px var(--pad) 0; }
+.application-view-tabs { display:inline-flex; align-items:center; flex-shrink:0; gap:2px; max-width:100%; height:var(--control-height); padding:3px; border-radius:var(--radius-control); background:var(--track); }
+.application-view-tabs [role="tab"] { height:100%; padding:0 14px; border-radius:4px; color:var(--text); font-size:var(--text-md); white-space:nowrap; transition:background .15s, color .15s; }
+.application-view-tabs [role="tab"]:hover { color:var(--ink); }
+.application-view-tabs [role="tab"][aria-selected="true"] { background:var(--surface); color:var(--ink); font-weight:600; box-shadow:var(--small-shadow); }
+.applications-content { min-width:0; padding:14px var(--pad) 8px; }
+
+.application-toolbar { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; min-width:0; margin-bottom:var(--space-3); }
+.application-toolbar .search-box { flex:1 1 230px; min-width:min(100%,180px); }
+.application-toolbar > label { min-width:0; max-width:100%; }
+.application-toolbar .btn.small-btn { height:var(--control-height); padding:0 12px; font-size:var(--text-md); }
+.application-source-filter { display:flex; align-items:center; min-width:0; }
+
+.app-status { margin:0 0 var(--space-3); font-size:var(--text-md); }
+.app-status:empty { display:none; }
+.app-diagnostic { max-width:420px; margin-bottom:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.7; }
+.app-diagnostic summary { color:var(--accent); cursor:pointer; }
+.app-diagnostic p { margin-top:6px; }
+
+#applicationSummaryRegion { display:flex; align-items:baseline; gap:4px var(--space-3); flex-wrap:wrap; margin-bottom:var(--space-3); color:var(--muted); font-size:var(--text-md); line-height:1.6; }
+#applicationSummaryRegion:empty { display:none; }
+#applicationSummaryRegion strong { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; }
+#applicationSummaryRegion .applications-total { color:var(--ink); font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
+#applicationSummaryRegion .applications-total span { margin-left:4px; color:var(--muted); font-size:var(--text-md); font-weight:400; }
+
+/* Application table */
+#appListRegion { min-width:0; }
+/* On the page the table runs edge to edge like the other panels; the drawer keeps a framed one. */
+.application-table-scroll { max-width:100%; overflow-x:auto; overflow-y:hidden; }
+.application-workspace .application-table-scroll { max-width:none; margin-inline:calc(-1 * var(--pad)); }
+.drawer-content .application-table-scroll { border:1px solid var(--line); border-radius:var(--radius-control); }
+.drawer-content .application-table th { border-top:0; }
+.application-table { table-layout:fixed; min-width:600px; }
+.application-table th, .application-table td { padding:10px 12px; vertical-align:middle; }
+.application-workspace .application-table :is(th, td):first-child { padding-left:var(--pad); }
+.application-workspace .application-table :is(th, td):last-child { padding-right:var(--pad); }
+.application-workspace .application-table tbody tr:last-child td { border-bottom:0; }
+/* The rank hugs the application; the name takes the remaining width. */
+.application-table th:nth-child(1) { width:56px; }
+.application-table th:nth-child(n+3) { width:16%; text-align:right; }
+.application-table:not([data-grouping="live"]):not([data-grouping="summary"]) th:nth-child(1) { width:18%; }
+.application-table th .link-btn { max-width:100%; padding:2px 0; color:inherit; font-size:inherit; }
+.application-table th[aria-sort]:not([aria-sort="none"]) .link-btn { color:var(--ink); font-weight:600; }
+.application-table-row:hover { background:var(--surface-2); }
+.application-table-row:focus-within { background:var(--accent-soft); }
+.application-table .application-row-rank { padding-right:0; color:var(--muted); }
+.application-table .application-name { display:flex; align-items:center; gap:var(--space-2); width:100%; max-width:100%; min-width:0; white-space:normal; }
+.application-name-text { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.application-row-meta { display:flex; align-items:center; gap:4px 10px; flex-wrap:wrap; min-width:0; margin:2px 0 0 36px; color:var(--muted); font-size:var(--text-sm); line-height:1.6; overflow-wrap:anywhere; }
+.application-source-badge { display:inline-flex; align-items:center; max-width:100%; padding:0 6px; border-radius:4px; background:var(--hover); color:var(--muted); font-size:var(--text-sm); line-height:18px; }
+.application-source-badge.measured { background:var(--accent-soft); color:var(--accent-dark); }
+.application-source-badge:is(.estimated, .unavailable) { background:var(--amber-soft); color:var(--amber); }
+.application-table .application-metric { text-align:right; white-space:nowrap; }
+.application-table .application-metric:last-child { color:var(--ink); font-weight:600; }
+.application-row-share { flex:0 1 120px; height:4px; overflow:hidden; border-radius:2px; background:var(--track); }
+.application-row-share > span { display:block; height:100%; max-width:100%; border-radius:inherit; background:var(--chart-rx); }
+.application-share-label { font-variant-numeric:tabular-nums; }
+.application-workspace .pagination { flex-wrap:wrap; margin-inline:calc(-1 * var(--pad)); padding:10px var(--pad) 4px; }
+.application-workspace .empty-state { padding:32px 20px; }
+
+/* Application icons fall back to the first letter of the name. */
+.app-avatar { display:grid; place-items:center; flex-shrink:0; width:32px; height:32px; border-radius:var(--radius-control); background:var(--accent-soft); color:var(--accent-dark); font-size:var(--text-md); font-weight:600; }
+.app-avatar img { width:100%; height:100%; object-fit:contain; }
+.app-avatar.app-avatar--compact { display:inline-grid; flex:0 0 28px; width:28px; height:28px; margin:0 8px 0 0; font-size:var(--text-sm); vertical-align:middle; }
+.application-name .app-avatar.app-avatar--compact { margin:0; }
+
+/* Detected proxy clients under the live ranking */
+#proxyClientsRegion:not(:empty) { padding-bottom:var(--space-3); }
+.proxy-client-table { table-layout:fixed; min-width:0 !important; }
+.proxy-client-table th:nth-child(1) { width:24%; }
+.proxy-client-table th:nth-child(2) { width:34%; }
+.proxy-client-table th:nth-child(3) { width:10%; }
+.proxy-client-table th:nth-child(n+4) { width:16%; }
+.proxy-client-table th, .proxy-client-table td { padding:10px 8px; overflow-wrap:anywhere; }
+.proxy-client-table th { white-space:normal; }
+.proxy-client-table td:nth-child(n+3) { white-space:nowrap; }
+.proxy-client-table .network-name { max-width:100%; overflow:visible; white-space:normal; overflow-wrap:anywhere; }
+
+/* Saved application limits */
+.app-rules-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; justify-content:flex-end; }
+.app-rules-panel > p { margin:0; padding:0 20px 12px; }
+.app-rules-list { margin:0; padding:0 20px 4px; list-style:none; }
+.app-rule-row { display:flex; align-items:center; gap:var(--space-3); padding:14px 0; border-top:1px solid var(--line); }
+.app-rule-meta { flex:1; min-width:0; line-height:1.6; overflow-wrap:anywhere; }
+.app-rule-name { color:var(--ink); font-size:var(--text-md); font-weight:600; }
+.app-rule-meta :is(.app-source, .small) { color:var(--muted); font-size:var(--text-md); }
+.app-rule-limits { display:flex; gap:6px; flex-wrap:wrap; margin:6px 0 4px; }
+.app-rule-actions { display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); flex-shrink:0; flex-wrap:wrap; }
+.app-rules-panel .empty-state { padding-block:28px; }
+
+/* Application drawer: details, proxy attribution and network control */
+.application-summary .kv-grid { margin-top:0; }
+.application-proxy-details { margin-top:var(--space-5); }
+.application-proxy-details h3 { margin-bottom:10px; }
+.application-proxy-details > p { line-height:1.7; }
+.proxy-detail-list { display:grid; gap:var(--space-2); margin:0 0 10px; padding:0; list-style:none; }
+.proxy-detail-item { min-width:0; padding:12px 14px; border:1px solid var(--line); border-radius:var(--radius-control); background:var(--surface-2); }
+.proxy-detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-2); flex-wrap:wrap; font-size:var(--text-md); }
+.proxy-detail-head strong { min-width:0; font-weight:600; overflow-wrap:anywhere; }
+.proxy-detail-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px var(--space-4); margin:12px 0 0; }
+.proxy-detail-metrics dt { color:var(--muted); font-size:var(--text-sm); }
+.proxy-detail-metrics dd { margin:0; font-size:var(--text-md); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.application-control > dl { display:grid; grid-template-columns:100px minmax(0,1fr); gap:10px var(--space-4); margin:var(--space-4) 0; padding:14px 16px; border-radius:var(--radius-control); background:var(--surface-2); font-size:var(--text-md); line-height:1.6; }
+.application-control > dl dt { color:var(--muted); }
+.application-control > dl dd { margin:0; overflow-wrap:anywhere; }
+.application-control .settings-actions { display:grid; grid-template-columns:1fr 1fr; gap:var(--space-2); margin:var(--space-4) 0; }
+.application-control .settings-actions .btn { height:var(--control-height); font-size:var(--text-md); }
+.application-control form { margin-top:var(--space-4); padding:14px 16px; border:1px solid var(--line); border-radius:var(--radius-control); }
+.application-control form .settings-actions { margin-bottom:0; }
+.application-control > p { margin-top:var(--space-2); }
+
+.drawer-content .application-view-tabs { margin-bottom:var(--space-3); }
+.drawer-content .application-toolbar .search-box { flex-basis:100%; }
+.drawer-content .application-table { min-width:480px; }
+
+@media (max-width:760px) {
+  .application-toolbar .search-box { flex-basis:100%; }
+  .capture-status { max-width:180px; }
+  .app-rule-row { align-items:flex-start; flex-wrap:wrap; }
+  /* The wrapped actions line up with the text beside the 32px avatar. */
+  .app-rule-actions { width:100%; justify-content:flex-start; padding-left:calc(32px + var(--space-3)); }
+}
+@media (max-width:650px) {
+  .application-control > dl { grid-template-columns:1fr; gap:4px; }
+  .application-control > dl dd { margin-bottom:var(--space-2); }
+  .drawer-content .application-summary .kv-grid { grid-template-columns:minmax(0,1fr); }
+}
+@media (max-width:520px) {
+  .application-workspace { --pad:16px; }
+  .application-view-tabs { width:100%; }
+  .application-view-tabs [role="tab"] { flex:1; }
+  .application-toolbar > label:not(.search-box) { flex:1 1 150px; }
+  .application-toolbar .select { width:100%; }
+  .capture-status { max-width:130px; }
+  .app-rules-list, .app-rules-panel > p { padding-inline:16px; }
+  .app-rule-actions { padding-left:0; }
+  .proxy-detail-metrics { grid-template-columns:minmax(0,1fr); }
+  .applications-page .proxy-client-table { min-width:560px !important; }
+}

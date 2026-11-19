@@ -37,6 +37,11 @@ const defaults = {unit:'GB', speedUnit:'auto', interval:5, retention:90, autoSta
 function totalOf(rows) {let rx=0n,tx=0n;for(const r of rows){rx+=B(r.rxBytes);tx+=B(r.txBytes);}return {rx,tx,total:rx+tx};}
 function validDate(key){return typeof key==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(key)&&!Number.isNaN(+dateOf(key))&&dayKey(dateOf(key))===key;}
 export function validTime(value) { return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value); }
+// Native time controls can serialize a whole minute with zero seconds.
+export function minuteInputTime(value) {
+    return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d(?::00(?:\.0{1,3})?)?$/.test(value)
+        ? value.slice(0, 5) : null;
+}
 export function recordTime(record) {
     if (validTime(record.time)) return record.time;
     if (!Number.isInteger(record.hour) || record.hour < 0 || record.hour > 23

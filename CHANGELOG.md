@@ -6,6 +6,38 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+## [1.3.7] - 2026-11-20
+
+- Accept whole-minute browser time values that include zero seconds in custom date filters and exports, normalizing them to minute precision before validation and queries.
+- Group the date-range dialog by start and end, align date/time inputs and actions, and adapt its layout and error message to narrow windows and both themes.
+- Refresh the main window with a neutral palette and one blue accent, a shared 36 px control height, consistent text sizes, spacing and corner radii, and aligned settings rows, tables and dialogs in both themes. The floating window's light and dark palettes follow the new colors; its indigo palette and shape are unchanged.
+- Draw the usage chart at its container's actual size, so bars and labels stay sharp and fill the card at every window size.
+- Show the autosave retry button only after a save fails in the network drawer and the proxy settings.
+- Simplify the applications page with one filter row, the total beside its label, and a full-width table that keeps each rank next to the application and each usage share on one line. Manage proxy estimates under Settings > Proxy.
+- Add a close button to finished update notices (new version, downloaded, failed). A closed notice returns when the update status changes; Settings > About still shows it.
+- Allocate historical proxy estimates using the observed bytes each client exchanged with the proxy. Calculate download and upload separately, using connection counts when byte evidence for that direction is unavailable. Minute estimates support custom time ranges and minute or hour grouping.
+- Add a Rules page to the sidebar for application network restrictions: the saved restriction records and the program picker move there from the applications page.
+- Tidy the square and circle floating windows: they show only the rates, and the toolbar appears in place of the title while the pointer or keyboard focus is inside, instead of crowding six buttons along the bottom edge.
+- Add a Logs page to the sidebar. The desktop host records leveled entries (debug, info, warning, error) to a size-limited file in the data directory; the page filters by level, searches, changes the recording level, exports and clears the log.
+- Add WebDAV cloud backup under Settings > Cloud backup: choose what to include (settings, networks and quotas, daily, hourly, application and per-minute usage, logs) and how many recent days, test the connection, estimate the size, back up now or automatically every hour, day or week, and keep a set number of backups per device. Any device can list every device's backups and restore one; a restore replaces only what that backup contains and first saves a local restore point. The password is protected locally with Windows DPAPI and is never included in backups.
+
+- Preserve minute proxy byte evidence in complete and selected backups, display minute estimates in application details, and restore desktop settings and logs through a complete local restore point, capture pause, failure recovery and concurrency guards. Keep old archives readable and prevent same-second backups from overwriting each other.
+
+- 修复自定义日期筛选和导出误拒绝带零秒的浏览器时间输入，在校验和查询前统一为分钟格式。
+- 日期范围弹窗按开始和结束分组，统一日期、时间与按钮布局，适配窄窗口、明暗主题及错误提示。
+- 主窗口改用中性色加单一蓝色强调色，统一 36 px 控件高度、字号、间距和圆角，并对齐明暗主题下的设置行、表格和弹窗。悬浮窗的浅色和深色配色随之更新，靛蓝配色与外形不变。
+- 用量图表按容器实际尺寸绘制，各种窗口大小下柱形和标签保持清晰并填满卡片。
+- 网络详情和代理设置中的自动保存“重试”按钮仅在保存失败后显示。
+- 精简应用流量页，将筛选合并为一行，总用量与标签并排，表格铺满面板，排名紧邻应用，占比与进度条同行。代理估算在设置 > 代理中管理。
+- “发现新版本”“已下载”“更新失败”这类更新提示可以点右上角关闭；更新状态变化后会再次出现，“设置 > 关于更新”中始终可见。
+- 历史代理估算按各客户端与代理之间观测到的字节数分别分配下载和上传。某一方向缺少字节记录时，按连接数分配该方向的流量。分钟估算支持自定义时段，以及按分钟或小时分组。
+- 侧边栏新增“规则”页，用于设置应用联网限制：应用限制记录和选择程序入口从应用流量页移到这里。
+- 整理方形和圆形悬浮窗：平时只显示速度，鼠标移入或键盘聚焦时工具栏出现在标题位置，不再把六个按钮挤在底部边缘。
+- 侧边栏新增“日志”页。桌面宿主按级别（调试、信息、警告、错误）把运行记录写入数据目录下有大小上限的文件；页面可以按级别筛选、搜索、调整记录级别、导出和清空。
+- “设置 > 云备份”新增 WebDAV 备份：可选择备份内容（系统设置、网络与额度、按天、按小时、应用和按分钟流量、运行日志）和最近多少天的数据，支持测试连接、估算大小、立即备份，以及按每小时、每天或每周自动同步，并按设备保留指定份数。任意设备都能列出所有设备的备份并恢复其中一份；恢复只覆盖该备份包含的内容，并先在本机保存还原点。密码在本机用 Windows DPAPI 保护，不会进入备份。
+
+- 完整与可选内容备份保留分钟代理字节证据，应用详情显示对应分钟估算；桌面设置和日志恢复支持完整本地还原点、采集暂停、失败恢复和并发保护，兼容旧备份，并避免同一秒的备份互相覆盖。
+
 ## [1.3.6] - 2026-10-17
 
 - Add independent live source selection to the application workspace and Windows floating window: native capture or included port estimates. Distribute a proxy's measured physical-network rates by observed local TCP client connection counts, retain clients' direct rates and mark estimated rows. Replace attributed proxy rates to avoid duplicate totals and retain unmatched shares as estimated unattributed traffic. Missing evidence preserves native or unavailable values; adapter totals, quotas and historical records do not change.

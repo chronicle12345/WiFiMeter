@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "APP_TRAFFIC.md",
+  "chinese": "APP_TRAFFIC.zh-CN.md",
+  "sha256": {
+    "en": "f952c103f1a8ef63a61698d1dd8cbc57be868feaf80eb84698b4d9f66d5c70c7",
+    "zh": "86579263c0fe1d16de0fe17c856a94b060411f62caca760313273e8049199597"
+  }
+}

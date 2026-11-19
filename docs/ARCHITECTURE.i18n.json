@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "ARCHITECTURE.md",
+  "chinese": "ARCHITECTURE.zh-CN.md",
+  "sha256": {
+    "en": "80a08f374eb9f1714881cc8e528c67a855f20cbd3e1d4144c3d978ae6debd2b0",
+    "zh": "897fb5c34096a50281fe6c7868d8688f9bd80e34ccb03a9833a7bd6c35a7a9c0"
+  }
+}

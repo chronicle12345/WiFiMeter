@@ -107,7 +107,13 @@ Status ensureProxySchema(storage::Database& database)
         "CREATE TABLE IF NOT EXISTS proxy_config(id INTEGER PRIMARY KEY CHECK(id=1),ports_json TEXT NOT NULL,process_names_json TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS proxy_apps(day TEXT NOT NULL,proxy_app_id TEXT COLLATE NOCASE NOT NULL,proxy_name TEXT NOT NULL,PRIMARY KEY(day,proxy_app_id));"
         "CREATE TABLE IF NOT EXISTS proxy_observations(day TEXT NOT NULL,proxy_app_id TEXT COLLATE NOCASE NOT NULL,app_id TEXT COLLATE NOCASE NOT NULL,"
-        "name TEXT NOT NULL,connection_key TEXT NOT NULL,PRIMARY KEY(day,proxy_app_id,app_id,connection_key));");
+        "name TEXT NOT NULL,connection_key TEXT NOT NULL,PRIMARY KEY(day,proxy_app_id,app_id,connection_key));"
+        // 分钟权重存去重后的连接数和客户端回环连接的收发字节，持续连接不会每分钟写入一行连接键。
+        "CREATE TABLE IF NOT EXISTS proxy_minute_weights(day TEXT NOT NULL,hour INTEGER NOT NULL CHECK(hour BETWEEN 0 AND 23),"
+        "minute INTEGER NOT NULL CHECK(minute BETWEEN 0 AND 59),proxy_app_id TEXT COLLATE NOCASE NOT NULL,app_id TEXT COLLATE NOCASE NOT NULL,"
+        "name TEXT NOT NULL,connections INTEGER NOT NULL CHECK(connections>0),"
+        "rx_bytes INTEGER NOT NULL DEFAULT 0 CHECK(rx_bytes>=0),tx_bytes INTEGER NOT NULL DEFAULT 0 CHECK(tx_bytes>=0),"
+        "PRIMARY KEY(day,hour,minute,proxy_app_id,app_id)) WITHOUT ROWID;");
 }
 
 Status saveProxyOptions(storage::Database& database, const platform::ProxyOptions& options)

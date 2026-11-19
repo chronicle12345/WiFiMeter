@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, open } from 'node:fs/promises';
 import os from 'node:os';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { createFileActions, MAX_BACKUP_BYTES, assertBackupSize } from '../host/files.cjs';
 
@@ -205,4 +206,32 @@ test('a Windows-locked destination is preserved and the failed save leaves no te
     assert.deepEqual(await actions.saveFile({ filename: 'backup.json', body: '{"replacement":true}' }), { canceled: false });
     assert.equal(await readFile(file, 'utf8'), '{"replacement":true}');
     assert.deepEqual(await fs.readdir(dir), ['backup.json']);
+});
+
+
+test('the existing backup file action opens a compressed complete restore point without losing host portions or integer precision', async t => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-cloud-point-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const file = path.join(dir, 'before-cloud-restore.json.gz');
+    const body = JSON.stringify({ backupType: 'wifimeter-backend-backup', version: 1, records: [{ rxBytes: '9007199254740993' }],
+        hostSettings: { windowPreferences: { theme: 'dark' }, logLevel: 'warn', appNetworkRecords: { version: 1, records: [] } },
+        logs: { version: 1, entries: [] } });
+    await writeFile(file, gzipSync(Buffer.from(body)));
+    let options;
+    const actions = createFileActions({ showOpenDialog: async (_window, value) => { options = value; return { filePaths: [file] }; } }, () => null);
+    const opened = await actions.openBackup();
+    assert.equal(opened.body, body);
+    assert.equal(opened.canceled, false);
+    assert.ok(options.filters[0].extensions.includes('gz'));
+});
+
+test('compressed backup file input is bounded after decompression and invalid gzip returns a readable error', async t => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'wifimeter-cloud-point-'));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const file = path.join(dir, 'before-cloud-restore.json.gz');
+    await writeFile(file, gzipSync(Buffer.from('x'.repeat(1000))));
+    const actions = createFileActions({ showOpenDialog: async () => ({ filePaths: [file] }) }, () => null, undefined, { maxBackupBytes: 128 });
+    assert.match((await actions.openBackup()).error ?? '', /解压后/);
+    await writeFile(file, 'invalid gzip');
+    assert.match((await actions.openBackup()).error ?? '', /无法读取备份/);
 });

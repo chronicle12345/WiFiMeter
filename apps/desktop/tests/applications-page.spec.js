@@ -274,7 +274,7 @@ test('实时详情匹配多个代理，历史估算按字节展示且 TCP 速度
     await expect(browserRows.filter({hasText:'原生记录'})).toContainText('5 B');
 });
 
-test('英文深色 125% 缩放下切换视图无横向溢出，代理无效草稿保留 @application-views',async({},testInfo)=>{
+test('英文深色 125% 缩放下切换视图无横向溢出 @application-views',async({},testInfo)=>{
     await app.evaluate(()=>{globalThis.rendererFixture.snapshot.settings.language='en';});
     await page.reload();
     await page.evaluate(()=>window.desktop.windowPreferences.update({theme:'dark'}));
@@ -283,18 +283,11 @@ test('英文深色 125% 缩放下切换视图无横向溢出，代理无效草�
     await page.evaluate(()=>{document.documentElement.style.zoom='1.25';});
     await page.locator('.nav [data-page="apps"]').click();
     await expect(page).toHaveTitle(/Application usage/);
-    await page.locator('.app-proxy-panel summary').click();
-    await page.locator('#proxyPorts').fill('not-a-port');
-    await expect(page.locator('#proxyConfigForm .form-error')).not.toBeEmpty();
-    const original=await page.locator('#proxyConfigForm').elementHandle();
     for(const view of ['history','live','history']){
         await page.locator(`[data-action="application-view"][data-view="${view}"]`).click();
-        await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
-        expect(await original.evaluate(element=>element.isConnected)).toBe(true);
         expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
         await page.screenshot({path:testInfo.outputPath(`applications-en-dark-125-${view}.png`),fullPage:true});
     }
-    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([]);
 });
 
 test('应用流量页展示全部实时排行并按下载、上传速度排序',async()=>{
@@ -314,21 +307,26 @@ test('应用流量页展示全部实时排行并按下载、上传速度排序',
     await page.locator('#appSort').selectOption('tx');await expect(page.locator('#appListRegion tbody tr').first()).toContainText('App11');
 });
 
-test('已设置的应用限制可从列表查询并进入调整，无需应用正在运行',async()=>{
+test('已设置的应用限制可从规则页查询并进入调整，无需应用正在运行',async({},testInfo)=>{
     await app.evaluate(()=>{globalThis.rendererFixture.rules=[{
         path:'C:\\Apps\\OfflineTool.exe',name:'OfflineTool.exe',savedAt:'2026-10-12T00:00:00.000Z',
         state:{Blocked:true,Throttled:true,UploadKbps:1024,DownloadThrottled:false}
     }];});
     await openApplications();
+    await expect(page.locator('.app-rules-panel')).toHaveCount(0);
+    await page.locator('.nav [data-page="rules"]').click();
+    await expect(page).toHaveTitle(/应用规则/);
     if(process.platform!=='win32'){
-        await expect(page.locator('.app-rules-panel, .app-rule-row, [data-action="app-rules-refresh"]')).toHaveCount(0);
+        await expect(page.locator('.app-rules-panel')).toContainText('当前平台暂不支持');
+        await expect(page.locator('.app-rule-row, [data-action="app-rules-refresh"]')).toHaveCount(0);
+        await openApplications();
         await page.locator('[data-action="application-control"]').click();
         await expect(page.locator('.application-control')).toContainText('当前平台暂不支持应用防火墙与上传、下载限速。');
         await expect(page.locator('[data-action="choose-program"], [data-operation], #uploadKBps, #downloadKBps')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
         await page.keyboard.press('Escape');
         await page.reload();
-        await expect(page.locator('.app-rules-panel, .app-rule-row')).toHaveCount(0);
+        await expect(page.locator('.app-rule-row')).toHaveCount(0);
         expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method.startsWith('app-control')))).toEqual([]);
         return;
     }
@@ -337,6 +335,7 @@ test('已设置的应用限制可从列表查询并进入调整，无需应用�
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('OfflineTool.exe');
     await expect(row).toContainText('128 KB/s');
+    await page.screenshot({path:testInfo.outputPath('rules.png'),fullPage:true});
     await row.locator('[data-action="select-controlled-app"]').click();
     await expect(page.locator('[data-selected-app-path]')).toHaveText('C:\\Apps\\OfflineTool.exe');
     expect(await app.evaluate(()=>globalThis.rendererFixture.calls.filter(c=>c.method==='app-control').at(-1).params)).toMatchObject({action:'read',path:'C:\\Apps\\OfflineTool.exe'});
@@ -345,7 +344,7 @@ test('已设置的应用限制可从列表查询并进入调整，无需应用�
     await expect(page.locator('.app-rule-row')).toContainText('OfflineTool.exe');
 });
 
-test('采集控制位于时间工具栏，启停状态明显且代理设置保留草稿',async()=>{
+test('采集控制位于时间工具栏，启停状态明显',async()=>{
     await openApplications();
     const capture=page.locator('.toolbar [data-action="app-collection"]');
     await expect(capture).toHaveText('开启应用采集');
@@ -357,16 +356,6 @@ test('采集控制位于时间工具栏，启停状态明显且代理设置保�
     expect(await capture.evaluate(el=>getComputedStyle(el).backgroundColor)).not.toBe(startColor);
     await expect(page.locator('#appCaptureRegion')).toContainText('应用采集中');
     await expect(page.locator('[data-action="app-collection"]')).toHaveCount(1);
-    await page.locator('.app-proxy-panel summary').click();
-    await page.locator('#proxyPorts').fill('7890, 1080');
-    await app.evaluate(({BrowserWindow})=>{
-        const s=globalThis.rendererFixture.snapshot;
-        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,appCollection:s.appCollection});
-    });
-    await expect(page.locator('#proxyPorts')).toHaveValue('7890, 1080');
-    await page.locator('#appSort').selectOption('rx');
-    await expect(page.locator('#proxySaveStatus')).toContainText('已自动保存');
-    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890,1080]);
     await capture.click();
     await expect(capture).toHaveText('开启应用采集');
     await expect(page.locator('#appCaptureRegion')).toContainText('应用采集未启用');
@@ -429,31 +418,9 @@ test('历史应用详情随用量事件刷新，保留限速输入和日期分�
     await expect(page.locator('.drawer .application-summary')).toContainText('2020-01-01');
 });
 
-test('代理采样失败和恢复后保留无效草稿，修正后可以保存并离开',async()=>{
+test('应用流量页不再放代理设置；设置页在代理采样失败和恢复后保留无效草稿',async()=>{
     await openApplications();
-    await page.locator('.app-proxy-panel summary').click();
-    const original=await page.locator('#proxyConfigForm').elementHandle();
-    await page.locator('#proxyPorts').fill('not-a-port');
-    await expect(page.locator('#proxyConfigForm .form-error')).toContainText('代理端口须为 1 到 65535 的整数');
-    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
-        Object.assign(s.proxy,{available:false,status:'failed',detail:'TCP query failed'});
-        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
-    });
-    await page.locator('[data-action="period"][data-value="today"]').click();
-    await expect(page.locator('[data-action="period"][data-value="today"]')).toHaveAttribute('aria-pressed','true');
-    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
-    expect(await original.evaluate(element=>element.isConnected)).toBe(true);
-    await app.evaluate(({BrowserWindow})=>{const s=globalThis.rendererFixture.snapshot;
-        Object.assign(s.proxy,{available:true,status:'ready',detail:''});
-        for(const w of BrowserWindow.getAllWindows())w.webContents.send('backend:event',{event:'live',...s.live,proxy:s.proxy});
-    });
-    await page.locator('[data-action="period"][data-value="all"]').click();
-    await expect(page.locator('#proxyPorts')).toHaveValue('not-a-port');
-    expect(await original.evaluate(element=>element.isConnected)).toBe(true);
-    await page.locator('#proxyPorts').fill('7890');
-    await page.locator('#appSort').selectOption('rx');
-    await expect(page.locator('#proxySaveStatus')).toContainText('已自动保存');
-    expect(await app.evaluate(()=>globalThis.rendererFixture.snapshot.proxy.ports)).toEqual([7890]);
+    await expect(page.locator('#proxyConfigForm')).toHaveCount(0);
     await page.locator('.nav [data-page="networks"]').click();
     await expect(page).toHaveTitle(/我的网络/);
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -606,7 +573,7 @@ test('应用断网入口复用原生选择、阻止、解除及上传限速失�
 test('实时进程响应后台事件，保留限速输入并展示采集失败',async()=>{
     await openLiveApplications();
     await page.locator('[data-action="app-collection"]').click();
-    await expect(page.locator('#appStatusRegion')).toContainText('应用采集中');
+    await expect(page.locator('#appCaptureRegion')).toContainText('应用采集中');
     await expect(page.locator('#appListRegion')).toContainText('当前没有应用进程数据。');
 
     await app.evaluate(({BrowserWindow})=>{

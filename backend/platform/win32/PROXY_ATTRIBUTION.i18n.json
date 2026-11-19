@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "PROXY_ATTRIBUTION.md",
+  "chinese": "PROXY_ATTRIBUTION.zh-CN.md",
+  "sha256": {
+    "en": "a886415e66628a4fff68caf178278e1df4f936206fca74ec54f90b1cda1a298c",
+    "zh": "b5769d23067c7e62886096ce919dc397f2677b596af86e8423953b4216fa4fec"
+  }
+}

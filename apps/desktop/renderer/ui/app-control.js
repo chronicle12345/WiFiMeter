@@ -14,7 +14,7 @@ function firewallStatus(state = {}) {
 }
 
 export function appRulesView(control, { button, esc }) {
-    if (!control.supported) return '';
+    if (!control.supported) return tr`<section class="panel app-rules-panel"><div class="empty-state"><h3>当前平台暂不支持</h3><p>当前平台暂不支持应用防火墙与上传、下载限速。</p></div></section>`;
     const value = state => state === true ? t('已配置') : state === false ? t('未配置') : t('未知');
     const rate = (enabled, kbps) => enabled === true && Number.isFinite(kbps) && kbps > 0 ? esc(kbps / 8) + ' KB/s' : value(enabled);
     const disabled = control.busy || control.rulesBusy ? 'disabled' : '';
@@ -34,12 +34,11 @@ export function appRulesView(control, { button, esc }) {
             ${record.operationError ? tr`<div class="small form-error">上次操作未完成：${esc(record.operationError.message)}</div>` : ''}</div>
             <div class="app-rule-actions">${button('select-controlled-app', t('查看与调整'), '', 'small-btn', `type="button" data-path="${esc(record.path)}" data-name="${esc(record.name || record.path)}" ${disabled}`)}</div></li>`;
     }).join('');
-    return tr`<section class="panel app-rules-panel" aria-label="应用限制记录"><div class="panel-head"><div><h2>应用限制记录</h2>
-        <div class="panel-sub">列表保存最近一次查询结果。实际限制请查询状态；下载限速退出后停止。</div></div>
-        ${button('app-rules-refresh', t('刷新记录'), 'reset', 'small-btn', `type="button" ${disabled}`)}</div>
+    return tr`<section class="panel app-rules-panel" aria-label="应用限制记录"><div class="panel-head"><h2>应用限制记录</h2>
+        <div class="app-rules-actions">${button('app-rules-refresh', t('刷新记录'), 'reset', '', `type="button" ${disabled}`)}${button('application-control', t('选择程序'), 'folder', 'primary', 'type="button"')}</div></div>
         ${control.rulesBusy ? tr`<p class="small muted" role="status">正在读取记录…</p>` : ''}
         ${control.rulesError ? `<p class="form-error" role="alert">${esc(control.rulesError)}</p>` : ''}
-        ${rules.length ? `<ul class="app-rules-list">${rows}</ul>` : tr`<div class="empty-state"><div class="small muted">还没有应用限制记录。设置成功后会显示在这里。</div></div>`}
+        ${rules.length ? `<ul class="app-rules-list">${rows}</ul>` : tr`<div class="empty-state"><h3>还没有应用限制记录</h3><p>选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。</p></div>`}
     </section>`;
 }
 

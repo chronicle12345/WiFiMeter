@@ -144,7 +144,7 @@ test('narrow overview keeps both quotas accessible by scrolling', async ({}, tes
 test('settings retain continuous document scrolling after leaving overview', async () => {
     await resizeWindow(900, 650);
     await page.locator('.nav [data-page="settings"]').click();
-    await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(7);
+    await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(8);
     await expect(page.locator('.settings-scroll-panel')).toHaveCount(1);
     expect(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight)).toBe(true);
     await page.locator('[data-category="about"]').click();

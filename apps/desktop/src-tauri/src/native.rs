@@ -420,7 +420,60 @@ fn native_command(app: &AppHandle, host: Arc<Host>, method: &str, params: &Value
 
 #[cfg(test)]
 mod tests {
-    use super::browser_arguments;
+    use super::{browser_arguments, isolated_background_test};
+
+    #[test]
+    fn background_isolation_requires_explicit_flags_and_a_profile() {
+        const PROBE: &str = "WIFIMETER_ISOLATION_GUARD_PROBE";
+        if let Ok(expected) = std::env::var(PROBE) {
+            assert_eq!(isolated_background_test(), expected == "enabled");
+            return;
+        }
+        // Exercise the real environment reader in child test processes so parallel tests
+        // never observe temporary isolation flags in their own process.
+        for (background, isolation, profile, expected) in [
+            (None, Some("1"), Some("isolated-profile"), false),
+            (Some("0"), Some("1"), Some("isolated-profile"), false),
+            (Some("true"), Some("1"), Some("isolated-profile"), false),
+            (Some("1"), None, Some("isolated-profile"), false),
+            (Some("1"), Some("0"), Some("isolated-profile"), false),
+            (Some("1"), Some("true"), Some("isolated-profile"), false),
+            (Some("1"), Some("1"), None, false),
+            (Some("1"), Some("1"), Some(""), false),
+            (Some("1"), Some("1"), Some("isolated-profile"), true),
+        ] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "native::tests::background_isolation_requires_explicit_flags_and_a_profile",
+                    "--nocapture",
+                ])
+                .env(PROBE, if expected { "enabled" } else { "disabled" });
+            for (key, value) in [
+                ("WIFIMETER_BACKGROUND_TEST", background),
+                ("WIFIMETER_TEST_ISOLATION", isolation),
+                ("WIFIMETER_USER_DATA", profile),
+            ] {
+                command.env_remove(key);
+                if let Some(value) = value {
+                    command.env(key, value);
+                }
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "background={background:?}, isolation={isolation:?}, profile={profile:?}:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     #[test]
     fn debugging_requires_an_isolated_background_profile() {

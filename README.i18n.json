@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "README.md",
+  "chinese": "README.zh-CN.md",
+  "sha256": {
+    "en": "45c490a97ab8680abe94a5a1b0c677b25d0f32a7ce56edfdebfd9a4f4d7b3082",
+    "zh": "c2a56de4d08f164340458d836d73cc067755dc3ae129c6fb877c03ba4eb41d5a"
+  }
+}

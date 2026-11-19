@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <map>
 #include <set>
+#include <tuple>
 
 namespace wifimeter::ipc
 {
@@ -136,6 +138,118 @@ Status persistObservations(storage::Database& db, const std::string& day, const 
         }
     }
     return transaction.commit();
+}
+
+// 估算的输入行：分钟行带 hour/minute，按天的行两者为 -1。
+struct EstimateRow
+{
+    std::string networkKey, day, appId, name;
+    int hour = -1, minute = -1;
+    core::ByteCount rxBytes = 0, txBytes = 0;
+};
+
+using DayProxy = std::pair<std::string, std::string>;
+using MinuteProxy = std::tuple<std::string, int, int, std::string>;
+
+struct ProxyWeights
+{
+    std::map<std::string, std::string> proxies;  // 已确认的代理路径（小写）到名称
+    std::map<DayProxy, std::vector<platform::ProxyClientObservation>> days;
+    std::map<MinuteProxy, std::vector<platform::ProxyClientObservation>> minutes;
+};
+
+// 读取日期区间内的权重：按天的连接数来自连接键去重，回环字节来自分钟表的合计。
+Status loadProxyWeights(storage::Database& db, const std::string& fromDay, const std::string& toDay, bool withMinutes, ProxyWeights& weights)
+{
+    Status status;
+    auto query = db.prepare("SELECT proxy_app_id,MAX(proxy_name) FROM proxy_apps GROUP BY proxy_app_id;", status);
+    if (!query) return status;
+    while (query->step()) weights.proxies[folded(query->columnText(0))] = query->columnText(1);
+    if (query->failed()) return Status::failure(query->error());
+
+    query = db.prepare("SELECT day,proxy_app_id,app_id,MAX(name),COUNT(*) FROM proxy_observations WHERE day>=?1 AND day<=?2 "
+        "GROUP BY day,proxy_app_id,app_id ORDER BY day,proxy_app_id,app_id;", status);
+    if (!query) return status;
+    if (!query->bind(1, fromDay) || !query->bind(2, toDay)) return Status::failure(query->error());
+    while (query->step())
+    {
+        const DayProxy key{query->columnText(0), folded(query->columnText(1))};
+        weights.days[key].push_back({query->columnText(1), weights.proxies[key.second], query->columnText(2), query->columnText(3),
+            static_cast<std::uint64_t>(query->columnInt64(4)), {}});
+    }
+    if (query->failed()) return Status::failure(query->error());
+
+    query = db.prepare("SELECT day,hour,minute,proxy_app_id,app_id,name,connections,rx_bytes,tx_bytes FROM proxy_minute_weights "
+        "WHERE day>=?1 AND day<=?2 ORDER BY day,hour,minute,proxy_app_id,app_id;", status);
+    if (!query) return status;
+    if (!query->bind(1, fromDay) || !query->bind(2, toDay)) return Status::failure(query->error());
+    while (query->step())
+    {
+        const auto proxy = folded(query->columnText(3));
+        platform::ProxyClientObservation observation{query->columnText(3), weights.proxies[proxy], query->columnText(4), query->columnText(5),
+            static_cast<std::uint64_t>(query->columnInt64(6)), {}, static_cast<std::uint64_t>(query->columnInt64(7)),
+            static_cast<std::uint64_t>(query->columnInt64(8))};
+        auto& day = weights.days[{query->columnText(0), proxy}];
+        auto known = std::find_if(day.begin(), day.end(), [&](const auto& value) { return folded(value.appId) == folded(observation.appId); });
+        if (known == day.end())
+        {
+            // 只有分钟权重的客户端在按天估算时不带连接数，由字节权重决定份额。
+            day.push_back(observation);
+            day.back().connections = 0;
+        }
+        else
+        {
+            known->rxWeight += observation.rxWeight;
+            known->txWeight += observation.txWeight;
+        }
+        if (withMinutes)
+            weights.minutes[{query->columnText(0), static_cast<int>(query->columnInt64(1)), static_cast<int>(query->columnInt64(2)), proxy}]
+                .push_back(std::move(observation));
+    }
+    return query->failed() ? Status::failure(query->error()) : Status::success();
+}
+
+// 把代理进程的原生字节分给客户端。分钟行优先用当分钟的权重，没有时退回当天的权重。
+JsonValue estimateRows(const std::vector<EstimateRow>& rows, const ProxyWeights& weights, const platform::ProxyOptions& options)
+{
+    auto result = JsonValue::makeArray();
+    std::set<std::string> configuredNames;
+    for (const auto& name : options.processNames) if (auto key = processKey(name); !key.empty()) configuredNames.insert(std::move(key));
+    static const std::vector<platform::ProxyClientObservation> none;
+    for (const auto& row : rows)
+    {
+        const auto proxyKey = folded(row.appId);
+        const auto separator = row.appId.find_last_of("/\\");
+        const auto filename = row.appId.substr(separator == std::string::npos ? 0 : separator + 1);
+        if (!weights.proxies.count(proxyKey) && !configuredNames.count(processKey(row.name)) && !configuredNames.count(processKey(filename))) continue;
+        const auto* observations = &none;
+        const auto minute = row.minute < 0 ? weights.minutes.end() : weights.minutes.find({row.day, row.hour, row.minute, proxyKey});
+        if (minute != weights.minutes.end()) observations = &minute->second;
+        else if (const auto day = weights.days.find({row.day, proxyKey}); day != weights.days.end()) observations = &day->second;
+        for (const auto& estimate : platform::estimateProxyUsage(row.day, {{row.appId, row.name, row.rxBytes, row.txBytes}}, *observations))
+        {
+            auto item = JsonValue::makeObject();
+            item.set("networkId", JsonValue::makeString(row.networkKey));
+            item.set("date", JsonValue::makeString(estimate.day));
+            if (row.minute >= 0)
+            {
+                char time[8] = {};
+                std::snprintf(time, sizeof(time), "%02d:%02d", row.hour, row.minute);
+                item.set("hour", JsonValue::makeInt(row.hour));
+                item.set("minute", JsonValue::makeInt(row.minute));
+                item.set("time", JsonValue::makeString(time));
+            }
+            item.set("proxyAppId", JsonValue::makeString(estimate.proxyAppId));
+            item.set("appId", JsonValue::makeString(estimate.appId));
+            item.set("name", JsonValue::makeString(estimate.name));
+            item.set("rxBytes", JsonValue::makeString(core::decimalString(estimate.rxBytes)));
+            item.set("txBytes", JsonValue::makeString(core::decimalString(estimate.txBytes)));
+            item.set("estimated", JsonValue::makeBool(true));
+            item.set("unattributed", JsonValue::makeBool(estimate.unattributed));
+            result.push(std::move(item));
+        }
+    }
+    return result;
 }
 }  // namespace
 
@@ -279,7 +393,9 @@ void BackendService::collectProxyClients(TimePoint now)
     {
         proxyReport_ = deps_.proxySampler ? deps_.proxySampler(options) : platform::sampleProxyClients(options);
         if (proxyReport_.available && proxyIdentityFresh_) resolveHelperIdentities(proxyReport_, proxyIdentityReport_);
-        if (proxyReport_.available) status = persistObservations(deps_.store.database(), core::dayKeyOf(core::localStampOf(now)), proxyReport_);
+        const auto stamp = core::localStampOf(now);
+        if (proxyReport_.available) status = persistObservations(deps_.store.database(), core::dayKeyOf(stamp), proxyReport_);
+        if (status && proxyReport_.available) status = persistMinuteWeights(stamp);
     }
     if (!status)
     {
@@ -287,6 +403,61 @@ void BackendService::collectProxyClients(TimePoint now)
         proxyReport_.status = platform::ProxySampleStatus::failed;
         proxyReport_.detail = status.message;
     }
+}
+
+// 每轮把客户端回环连接的字节增量和当分钟的去重连接数累加到分钟权重表。
+Status BackendService::persistMinuteWeights(const core::LocalStamp& stamp)
+{
+    const auto day = core::dayKeyOf(stamp);
+    const auto minuteKey = day + " " + std::to_string(stamp.hour) + ":" + std::to_string(stamp.minute);
+    if (proxyMinuteStamp_ != minuteKey) { proxyMinuteKeys_.clear(); proxyMinuteStamp_ = minuteKey; }
+
+    // 同一连接可能有多行实例；先按（客户端，连接键）合计累计值，再与上一轮比较。
+    std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> totals;
+    for (const auto& row : appProcesses_.items())
+    {
+        if (row.stringOr("scope") != "loopback" || !row.boolOr("measurementAvailable")) continue;
+        auto& total = totals[folded(row.stringOr("appId")) + "|" + row.stringOr("connectionKey")];
+        total.first += std::stoull(row.stringOr("rxBytes", "0"));
+        total.second += std::stoull(row.stringOr("txBytes", "0"));
+    }
+    const auto delta = [](std::uint64_t current, std::uint64_t previous) { return current >= previous ? current - previous : current; };
+
+    auto& db = deps_.store.database();
+    storage::Transaction transaction(db);
+    if (!transaction.active()) return Status::failure(db.lastError());
+    for (const auto& observation : proxyReport_.observations)
+    {
+        if (observation.proxyAppId.empty() || observation.proxyAppId == "unknown" ||
+            observation.appId.empty() || observation.appId == "unknown") continue;
+        auto& seen = proxyMinuteKeys_[{folded(observation.proxyAppId), folded(observation.appId)}];
+        std::uint64_t rx = 0, tx = 0;
+        for (const auto& key : observation.connectionKeys)
+        {
+            if (key.empty()) continue;
+            seen.insert(key);
+            const auto id = folded(observation.appId) + "|" + key;
+            const auto current = totals.find(id);
+            if (current == totals.end()) continue;
+            const auto previous = proxyLoopbackTotals_.find(id);
+            rx += delta(current->second.first, previous == proxyLoopbackTotals_.end() ? 0 : previous->second.first);
+            tx += delta(current->second.second, previous == proxyLoopbackTotals_.end() ? 0 : previous->second.second);
+        }
+        if (seen.empty()) continue;
+        Status status;
+        auto upsert = db.prepare("INSERT INTO proxy_minute_weights(day,hour,minute,proxy_app_id,app_id,name,connections,rx_bytes,tx_bytes) "
+            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(day,hour,minute,proxy_app_id,app_id) DO UPDATE SET name=excluded.name,"
+            "connections=MAX(connections,excluded.connections),rx_bytes=rx_bytes+excluded.rx_bytes,tx_bytes=tx_bytes+excluded.tx_bytes;", status);
+        if (!upsert) return status;
+        if (!upsert->bind(1, day) || !upsert->bind(2, static_cast<std::int64_t>(stamp.hour)) || !upsert->bind(3, static_cast<std::int64_t>(stamp.minute)) ||
+            !upsert->bind(4, observation.proxyAppId) || !upsert->bind(5, observation.appId) || !upsert->bind(6, observation.name) ||
+            !upsert->bind(7, static_cast<std::int64_t>(seen.size())) || !upsert->bind(8, static_cast<std::int64_t>(rx)) ||
+            !upsert->bind(9, static_cast<std::int64_t>(tx))) return Status::failure(upsert->error());
+        if (const auto saved = upsert->run(); !saved) return saved;
+    }
+    if (const auto committed = transaction.commit(); !committed) return committed;
+    proxyLoopbackTotals_ = std::move(totals);
+    return Status::success();
 }
 
 Status BackendService::pruneProxyObservations(TimePoint now) const
@@ -298,7 +469,7 @@ Status BackendService::pruneProxyObservations(TimePoint now) const
     const auto cutoff = core::dayKeyOf(core::shiftLocalDays(core::localStampOf(now), 1 - settings.retentionDays));
     storage::Transaction transaction(deps_.store.database());
     if (!transaction.active()) return Status::failure(deps_.store.database().lastError());
-    for (const auto* table : {"proxy_observations", "proxy_apps"})
+    for (const auto* table : {"proxy_observations", "proxy_apps", "proxy_minute_weights"})
     {
         auto remove = deps_.store.database().prepare(std::string("DELETE FROM ") + table + " WHERE day < ?1;",status);
         if (!remove) return status;
@@ -313,7 +484,7 @@ Status BackendService::clearProxyObservations() const
     if (const auto status=initializeProxyStorage(); !status) return status;
     storage::Transaction transaction(deps_.store.database());
     if (!transaction.active()) return Status::failure(deps_.store.database().lastError());
-    const auto status=deps_.store.database().exec("DELETE FROM proxy_observations; DELETE FROM proxy_apps;");
+    const auto status=deps_.store.database().exec("DELETE FROM proxy_observations; DELETE FROM proxy_apps; DELETE FROM proxy_minute_weights;");
     return status ? transaction.commit() : status;
 }
 
@@ -365,54 +536,82 @@ JsonValue BackendService::proxyEstimatedUpdates(TimePoint now, Status& status)
 
 JsonValue BackendService::proxyEstimatedRecords(const std::vector<storage::AppUsageRow>& rows, Status& status) const
 {
-    auto result = JsonValue::makeArray();
     const auto options = proxyOptions(status);
-    if (!status || rows.empty()) return result;
-    using DayProxy = std::pair<std::string,std::string>;
-    std::map<std::string,std::string> proxies;
-    std::map<DayProxy,std::vector<platform::ProxyClientObservation>> weights;
-    const auto dates = std::minmax_element(rows.begin(),rows.end(),[](const auto& a,const auto& b) { return a.day < b.day; });
+    if (!status || rows.empty()) return JsonValue::makeArray();
+    const auto dates = std::minmax_element(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.day < b.day; });
+    ProxyWeights weights;
     // 已确认的代理路径可识别历史原始行；客户端权重仍严格按原始行日期查询。
-    auto query=deps_.store.database().prepare("SELECT proxy_app_id,MAX(proxy_name) FROM proxy_apps GROUP BY proxy_app_id;",status);
-    if (!query) return result;
-    while(query->step()) proxies[folded(query->columnText(0))]=query->columnText(1);
-    if (query->failed()) { status=Status::failure(query->error()); return result; }
-    query=deps_.store.database().prepare("SELECT day,proxy_app_id,app_id,MAX(name),COUNT(*) FROM proxy_observations WHERE day>=?1 AND day<=?2 "
-        "GROUP BY day,proxy_app_id,app_id ORDER BY day,proxy_app_id,app_id;",status);
-    if (!query) return result;
-    if (!query->bind(1,dates.first->day) || !query->bind(2,dates.second->day)) { status=Status::failure(query->error()); return result; }
-    while(query->step())
+    if (!(status = loadProxyWeights(deps_.store.database(), dates.first->day, dates.second->day, false, weights))) return JsonValue::makeArray();
+    std::vector<EstimateRow> input;
+    input.reserve(rows.size());
+    for (const auto& row : rows) input.push_back({row.networkKey, row.day, row.appId, row.name, -1, -1, row.rxBytes, row.txBytes});
+    return estimateRows(input, weights, options);
+}
+
+JsonValue BackendService::proxyEstimatedMinuteRecords(const std::vector<storage::AppMinuteUsageRow>& rows, Status& status) const
+{
+    const auto options = proxyOptions(status);
+    if (!status || rows.empty()) return JsonValue::makeArray();
+    const auto dates = std::minmax_element(rows.begin(), rows.end(), [](const auto& a, const auto& b) { return a.day < b.day; });
+    ProxyWeights weights;
+    if (!(status = loadProxyWeights(deps_.store.database(), dates.first->day, dates.second->day, true, weights))) return JsonValue::makeArray();
+    std::vector<EstimateRow> input;
+    input.reserve(rows.size());
+    for (const auto& row : rows) input.push_back({row.networkKey, row.day, row.appId, row.name, row.hour, row.minute, row.rxBytes, row.txBytes});
+    return estimateRows(input, weights, options);
+}
+
+// 只重算当前和上一分钟：更早的分钟不会再收到新字节，界面保留已发送的估算。
+JsonValue BackendService::proxyEstimatedMinuteUpdates(TimePoint now, Status& status)
+{
+    auto updates = JsonValue::makeArray();
+    std::map<std::string, JsonValue> groups;
+    std::set<std::string> current;
+    for (const auto at : {now - std::chrono::minutes(1), now})
     {
-        const DayProxy key{query->columnText(0),folded(query->columnText(1))};
-        weights[key].push_back({query->columnText(1),proxies[key.second],query->columnText(2),query->columnText(3),static_cast<std::uint64_t>(query->columnInt64(4)),{}});
-    }
-    if (query->failed()) { status=Status::failure(query->error()); return result; }
-    std::set<std::string> configuredNames;
-    for (const auto& name : options.processNames) if (auto key=processKey(name); !key.empty()) configuredNames.insert(std::move(key));
-    for (const auto& row : rows)
-    {
-        const DayProxy key{row.day,folded(row.appId)};
-        const auto proxy=proxies.find(key.second);
-        const auto filename=row.appId.substr(row.appId.find_last_of("/\\") == std::string::npos ? 0 : row.appId.find_last_of("/\\")+1);
-        if (proxy==proxies.end() && !configuredNames.count(processKey(row.name)) && !configuredNames.count(processKey(filename))) continue;
-        const auto found=weights.find(key);
-        const auto estimated=platform::estimateProxyUsage(row.day,{{row.appId,row.name,row.rxBytes,row.txBytes}},
-            found==weights.end() ? std::vector<platform::ProxyClientObservation>{} : found->second);
-        for (const auto& estimate : estimated)
+        const auto stamp = core::localStampOf(at);
+        const auto day = core::dayKeyOf(stamp);
+        const int minute = stamp.hour * 60 + stamp.minute;
+        char time[8] = {};
+        std::snprintf(time, sizeof(time), "%02d:%02d", stamp.hour, stamp.minute);
+        current.insert(day + " " + time);
+        const auto rows = deps_.store.usage().appMinuteRange({}, day, day, status, minute, minute);
+        if (!status) return updates;
+        const auto records = proxyEstimatedMinuteRecords(rows, status);
+        if (!status) return updates;
+        for (const auto& row : records.items())
         {
-            auto item=JsonValue::makeObject();
-            item.set("networkId",JsonValue::makeString(row.networkKey));
-            item.set("date",JsonValue::makeString(estimate.day));
-            item.set("proxyAppId",JsonValue::makeString(estimate.proxyAppId));
-            item.set("appId",JsonValue::makeString(estimate.appId));
-            item.set("name",JsonValue::makeString(estimate.name));
-            item.set("rxBytes",JsonValue::makeString(core::decimalString(estimate.rxBytes)));
-            item.set("txBytes",JsonValue::makeString(core::decimalString(estimate.txBytes)));
-            item.set("estimated",JsonValue::makeBool(true));
-            item.set("unattributed",JsonValue::makeBool(estimate.unattributed));
-            result.push(std::move(item));
+            auto identity = JsonValue::makeArray();
+            identity.push(JsonValue::makeString(row.stringOr("networkId")));
+            identity.push(JsonValue::makeString(day + " " + time));
+            identity.push(JsonValue::makeString(folded(row.stringOr("proxyAppId"))));
+            auto [entry, inserted] = groups.try_emplace(identity.dump(), JsonValue::makeObject());
+            if (inserted)
+            {
+                entry->second.set("networkId", JsonValue::makeString(row.stringOr("networkId")));
+                entry->second.set("date", JsonValue::makeString(day));
+                entry->second.set("time", JsonValue::makeString(time));
+                entry->second.set("proxyAppId", JsonValue::makeString(row.stringOr("proxyAppId")));
+                entry->second.set("records", JsonValue::makeArray());
+            }
+            auto values = *entry->second.find("records");
+            values.push(row);
+            entry->second.set("records", std::move(values));
         }
     }
-    return result;
+    for (const auto& [key, group] : groups)
+    {
+        const auto old = proxyEstimateMinuteGroups_.find(key);
+        if (old == proxyEstimateMinuteGroups_.end() || old->second.dump() != group.dump()) updates.push(group);
+    }
+    for (const auto& [key, old] : proxyEstimateMinuteGroups_)
+    {
+        if (groups.count(key) || !current.count(old.stringOr("date") + " " + old.stringOr("time"))) continue;
+        auto removed = old;
+        removed.set("records", JsonValue::makeArray());
+        updates.push(std::move(removed));
+    }
+    proxyEstimateMinuteGroups_ = std::move(groups);
+    return updates;
 }
 }  // namespace wifimeter::ipc

@@ -89,7 +89,7 @@ try {
  * 无定时采样；调用方仅在选择或用户操作时请求，不能接入每秒流量刷新。
  */
 function createAppControl({ platform = process.platform, dialog, getWindow = () => undefined,
-    runner = promisify(execFile), io = fs, userDataDir, recordsIo = fs, isPackaged = false, resourcesPath = process.resourcesPath } = {}) {
+    runner = promisify(execFile), io = fs, userDataDir, recordsIo = fs, isPackaged = false, resourcesPath = process.resourcesPath, assertWritable = () => {} } = {}) {
     const records = createAppNetworkRecords({ userDataDir, io: recordsIo, validatePath: localExePath });
     const modulePath = isPackaged
         ? path.join(resourcesPath, 'native', 'windows', 'AppNetworkControl.psm1')
@@ -162,6 +162,7 @@ function createAppControl({ platform = process.platform, dialog, getWindow = () 
             const window = getWindow();
             const selected = await (window ? dialog.showOpenDialog(window, options) : dialog.showOpenDialog(options));
             if (selected.canceled || !selected.filePaths?.length) return { ok: false, canceled: true };
+            assertWritable();
             return request({ action: 'read', path: selected.filePaths[0] });
         } catch (error) { return fail('dialogFailed', error.message); }
     }
@@ -170,7 +171,22 @@ function createAppControl({ platform = process.platform, dialog, getWindow = () 
         try { return { ok: true, records: await records.list() }; }
         catch (error) { return fail('recordsReadFailed', `应用限制记录未能读取：${error.message}`); }
     }
-    return { chooseProgram, request, list };
+    const pending = new Set();
+    function tracked(work) {
+        try {
+            assertWritable();
+            const operation = work();
+            pending.add(operation);
+            operation.then(() => pending.delete(operation), () => pending.delete(operation));
+            return operation;
+        } catch (error) { return Promise.reject(error); }
+    }
+    async function waitForIdle() { while (pending.size) await Promise.allSettled([...pending]); }
+    return { chooseProgram: () => tracked(chooseProgram), request: input => tracked(() => request(input)), list, waitForIdle,
+        backupRecords: async () => { await waitForIdle(); return records.snapshot(); },
+        validateRecords: records.validate,
+        restoreRecords: async snapshot => { const valid = records.validate(snapshot); await waitForIdle(); return records.restore(valid); } };
+
 }
 
 module.exports = { createAppControl };

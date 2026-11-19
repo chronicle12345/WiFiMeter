@@ -1,0 +1,18 @@
+{
+    "version": 1,
+    "defaults": {
+        "rootAgent": { "en": 800, "zh": 2400 },
+        "subtreeAgent": { "en": 400, "zh": 1200 },
+        "note": { "en": 500, "zh": 1600 },
+        "reference": { "en": 1200, "zh": 3600 },
+        "rootReadme": { "en": 1000, "zh": 3000 },
+        "terminology": { "en": 1200, "zh": 3600 }
+    },
+    "overrides": {
+        "docs/ARCHITECTURE.md": { "en": 1400, "zh": 4200 },
+        "docs/DEVELOPMENT.md": { "en": 900, "zh": 2700 },
+        "docs/TESTING.md": { "en": 1100, "zh": 3300 },
+        "docs/i18n/README.md": { "en": 650, "zh": 2000 },
+        ".agents/notes/README.md": { "en": 800, "zh": 2400 }
+    }
+}

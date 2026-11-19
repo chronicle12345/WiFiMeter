@@ -59,3 +59,15 @@ test('估算替换按 Windows 完整路径匹配，按网络日期隔离，过�
   assert.deepEqual(proxyUsageRecords(source,[{...estimate,...patch}],true),source);
  }
 });
+
+test('分钟估算按分钟替换代理原始行，字节对不上的分钟保留原生行',()=>{
+ const minute=(time,appId,rxBytes,extra={})=>({networkId:'home',date:'2020-01-01',time,appId,name:appId,rxBytes,txBytes:'0',...extra});
+ const source=[minute('10:00','proxy','100'),minute('10:01','proxy','40'),minute('10:01','client','5')];
+ const estimated={proxyAppId:'proxy',estimated:true,unattributed:false};
+ const result=proxyUsageRecords(source,[minute('10:00','client','60',estimated),minute('10:00','other','40',estimated),minute('10:01','client','39',estimated)],true);
+ assert.deepEqual(result.filter(row=>row.time==='10:00').map(row=>row.appId).sort(),['client','other']);
+ assert.deepEqual(result.filter(row=>row.time==='10:01').map(row=>[row.appId,row.rxBytes,!!row.estimated]),[['proxy','40',false],['client','5',false]]);
+ assert.equal(result.reduce((sum,row)=>sum+BigInt(row.rxBytes),0n),145n);
+ const rows=applicationRows(result,{networkId:'home',start:'2020-01-01',end:'2020-01-01',grouping:'minute'});
+ assert.equal(rows.filter(row=>row.estimated).length,2);
+});

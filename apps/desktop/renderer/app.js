@@ -8,7 +8,9 @@ import { createFormAutosave, autosaveFormIds } from './ui/form-autosave.js';
 import { quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
-import { updatesView, refreshUpdates, updateBannerView } from './ui/updates.js';
+import { updatesView, refreshUpdates, updateBannerView, updateBannerKey } from './ui/updates.js';
+import { logsView, logList } from './ui/logs.js';
+import { cloudBackupView, cloudBackupPatch, cloudSummary, sizeText } from './ui/cloud-backup.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
@@ -23,7 +25,7 @@ import { updateRegion } from './data/render.js';
 import { createAppControlModel, legacyMessage } from './data/desktop-actions.js';
 import { historyRange, applicationRows, applicationSummary, applicationCsv, recordInRange } from './data/history.js';
 import { minuteUsageRows } from './data/minute-usage.js';
-import { validTime } from './data/model.js';
+import { validTime, minuteInputTime } from './data/model.js';
 import { MAX_QUOTA_GB, GB, GiB, B, byteUnitFor, formatByteParts, dateOf, shiftDay, today, monthStart, niceDate, totalOf, validDate, quotaFor, sortApps } from './data/model.js';
 import { createDataClient } from './data/backend-client.js';
 
@@ -47,6 +49,7 @@ const icons = {
  help:'<circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.6 2.6 0 0 1 5.2 0c0 2-2.6 2-2.6 4M12 17h.01"/>',
  pause:'<path d="M8 5v14M16 5v14"/>',play:'<path d="m8 4 12 8-12 8Z"/>',
  search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+ list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/>',
  close:'<path d="m6 6 12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 6"/>',
  home:'<path d="m3 10 9-7 9 7M5 9v12h14V9M10 21v-7h4v7"/>',
  office:'<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h1M15 7h1M8 11h1M15 11h1M10 21v-6h4v6"/>',
@@ -80,7 +83,8 @@ $('.brand-name').textContent = productName;
 const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:showAlert});
 let data=store.snapshot;
 let storageFailed=false;
-const ui={page:['overview','networks','apps','history','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
+const PAGES=['overview','networks','apps','rules','history','logs','settings'];
+const ui={page:PAGES.includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
 const applications={appView:'live',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
@@ -97,7 +101,81 @@ async function changeApplicationView(view){
  if(ui.drawer?.tab==='apps')renderDrawer();else renderMain();
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
-function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}<details class="panel app-proxy-panel"><summary>代理估算设置</summary>${proxyForm(data.proxy)}</details><div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
+function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}`;}
+const cloudState={available:!!window.desktop.cloudBackup,config:null,busy:'',files:null,listError:'',message:'',error:''};
+// 重绘保留尚未保存的输入；密码只在保存失败时保留，保存成功后清空。
+function renderCloud(keepDraft=true,keepPassword=true){
+ const panel=$('#settings-cloud');if(!panel||ui.page!=='settings')return;
+ const old=$('#cloudBackupForm'),draft=keepDraft&&old?cloudBackupPatch(old):null,focus=document.activeElement?.id;
+ panel.innerHTML=cloudBackupView(cloudState,{button,esc,option});
+ if(draft){
+  const form=$('#cloudBackupForm');
+  for(const name of ['url','username','days','keep'])form.elements[name].value=draft[name];
+  form.elements.syncInterval.value=draft.interval;
+  form.elements.auto.checked=draft.auto;
+  for(const box of form.elements.sections)box.checked=draft.sections.includes(box.value);
+  if(keepPassword)form.elements.password.value=draft.password||'';
+ }
+ if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+}
+async function cloudCall(action,input){const response=await window.desktop.cloudBackup[action](input);if(!response.ok)throw Error(response.error);return response.result;}
+async function loadCloud(){if(!cloudState.available)return;try{cloudState.config=await cloudCall('status');}catch(error){cloudState.error=error.message;}renderCloud(false);}
+// 先保存表单再执行操作，保证操作用的是界面上看到的设置；同一时间只进行一项操作。
+// 改动即保存，与其他设置一致。不重绘表单，避免打断正在进行的点击和输入。
+let cloudVersion=0;
+async function saveCloud(form){
+ if(cloudState.busy)return;
+ const version=++cloudVersion;
+ let message='',error='';
+ try{cloudState.config=await cloudCall('configure',cloudBackupPatch(form));message=t('云备份设置已保存');}catch(failure){error=failure.message;}
+ if(version!==cloudVersion||cloudState.busy||!form.isConnected)return;
+ Object.assign(cloudState,{message,error});
+ form.querySelector('.form-error').textContent=error;form.querySelector('.cloud-status').textContent=message;
+ if(!error){form.elements.password.value='';if(cloudState.config.hasPassword)form.elements.password.placeholder=t('已保存，留空则不修改');}
+}
+async function cloudAction(action,input,done){
+ if(cloudState.busy)return;
+ cloudVersion++;
+ const form=$('#cloudBackupForm'),patch=form?cloudBackupPatch(form):null;
+ Object.assign(cloudState,{error:'',message:'',busy:action||'save'});renderCloud();
+ let saved=false;
+ try{
+  if(patch){cloudState.config=await cloudCall('configure',patch);saved=true;}
+  if(action){const result=await cloudCall(action,input);cloudState.message=done?.(result)||'';}
+  else cloudState.message=t('云备份设置已保存');
+ }catch(error){cloudState.error=error.message;}
+ cloudState.busy='';renderCloud(true,!saved);
+}
+async function listCloud(){cloudState.listError='';await cloudAction('list',undefined,files=>{cloudState.files=files;return '';});if(cloudState.error){cloudState.listError=cloudState.error;cloudState.error='';renderCloud();}}
+function restoreCloud(name){
+ confirmModal(t('从这份云备份恢复？'),t('备份包含的内容会覆盖本机对应的数据，其余数据保留。恢复前会在本机保存一份还原点，恢复后采集会暂停。'),t('确认恢复'),async()=>{
+  if(!await saveBeforeDataChange())return;
+  await cloudAction('restore',name,summary=>tr`已恢复：${cloudSummary(summary)}`);
+  if(cloudState.error)return;
+  await store.reload();data.live={...data.live,collector:'paused'};
+  ui.networkId='all';ui.search='';ui.historyPage=1;restartSampler();renderMain();toast(t('已恢复备份，采集已暂停。'));
+ });
+}
+function removeCloud(name){confirmModal(t('删除这份远端备份？'),t('删除后无法从 WebDAV 找回。'),t('删除备份'),async()=>{await cloudAction('remove',name);if(!cloudState.error)await listCloud();},true);}
+// 宿主在每次保存后都会推送状态；只有自动同步改变了备份结果时才重绘，避免替换正在编辑的表单。
+window.desktop.cloudBackup?.onStatus(state=>{if(cloudState.busy||state.busy)return;const old=cloudState.config||{};cloudState.config=state;if(old.lastBackupAt!==state.lastBackupAt||old.lastError!==state.lastError)renderCloud();});
+const logsState={available:!!window.desktop.logs,entries:[],total:0,level:'info',minimum:'info',search:'',error:''};
+let logsVersion=0;
+function logsPage(){return logsView(logsState,{button,esc,icon,option});}
+async function loadLogs(full=true){
+ if(!logsState.available)return;
+ const version=++logsVersion;
+ try{const result=await window.desktop.logs.read({minimum:logsState.minimum,search:logsState.search,limit:500});if(version!==logsVersion)return;Object.assign(logsState,{entries:result.entries,total:result.total,level:result.level,error:''});}
+ catch(error){if(version!==logsVersion)return;Object.assign(logsState,{entries:[],total:0,error:error.message});}
+ if(ui.page!=='logs')return;
+ if(full)renderMain();else updateRegion($('#logListRegion'),logList(logsState,{esc}));
+}
+async function exportLogs(){
+ try{const {text}=await window.desktop.logs.read({text:true,limit:1});if(await dataDownload(`WiFiMeter_${today()}.log`,text||''))toast(t('日志已导出'));}
+ catch(error){toast(error.message,true);}
+}
+function clearLogs(){confirmModal(t('清空日志？'),t('已记录的日志会被清除，之后的日志照常记录。'),t('清空日志'),async()=>{await window.desktop.logs.clear();await loadLogs();},true);}
+function rulesPage(){return `<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
 let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
@@ -139,18 +217,30 @@ function chartRows(networkId=ui.networkId){
  return all;
 }
 function chartUnit(rows){return byteUnitFor(rows.reduce((peak,r)=>r.rx+r.tx>peak?r.rx+r.tx:peak,0n),data.settings.unit);}
+// 图表按容器的实际像素尺寸绘制，尺寸变化后原地重绘；聚焦中的图表等焦点离开后再重绘，以保留键盘焦点。
+const chartSizes=new Map();
+function fitCharts(){
+ for(const chart of $$('svg.chart[data-chart-id]')){
+  const id=chart.dataset.chartId,box=chart.getBoundingClientRect(),size={w:Math.round(box.width),h:Math.round(box.height)},known=chartSizes.get(id);
+  if(size.w<160||size.h<100||known&&known.w===size.w&&known.h===size.h||chart.contains(document.activeElement))continue;
+  chartSizes.set(id,size);
+  const wrapper=document.createElement('div');
+  wrapper.innerHTML=chartSvg(chartRows(id==='drawer-chart'?ui.drawer?.id:ui.networkId),id);
+  if(wrapper.firstElementChild?.matches('svg'))chart.replaceWith(wrapper.firstElementChild);
+ }
+}
 function chartSvg(rows,id='usage-chart') {
  if(!rows.length)return `<div class="loading-box">${ui.period==='today'?t('暂无小时明细'):t('所选时段暂无流量记录')}</div>`;
- const w=660,h=194,left=43,right=9,top=18,bottom=30,pw=w-left-right,ph=h-top-bottom;
+ const {w,h}=chartSizes.get(id)||{w:660,h:200},left=43,right=9,top=18,bottom=30,pw=w-left-right,ph=h-top-bottom;
  const {unit,divisor:bytesPerUnit}=chartUnit(rows),divisor=Number(bytesPerUnit),vals=rows.map(r=>Number(r.rx+r.tx)/divisor),peak=Math.max(...vals,1);
  const power=10**Math.floor(Math.log10(peak)),step=Math.ceil(peak/power/4)*power,max=step*4;
- let s=tr`<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-labelledby="${id}-title ${id}-desc"><title id="${id}-title">${esc(periodName())}上传与下载流量（${unit}）</title><desc id="${id}-desc">单位 ${unit}；深蓝色代表下载，浅蓝色代表上传。缺失日期不表示零用量。可聚焦每根柱查看数据。</desc><text x="${left}" y="11">${unit}</text>`;
+ let s=tr`<svg class="chart" data-chart-id="${id}" viewBox="0 0 ${w} ${h}" role="img" aria-labelledby="${id}-title ${id}-desc"><title id="${id}-title">${esc(periodName())}上传与下载流量（${unit}）</title><desc id="${id}-desc">单位 ${unit}；深蓝色代表下载，浅蓝色代表上传。缺失日期不表示零用量。可聚焦每根柱查看数据。</desc><text x="${left}" y="11">${unit}</text>`;
  for(let i=0;i<=4;i++){const y=top+ph-ph*i/4,v=max*i/4;s+=`<line class="gridline" x1="${left}" y1="${y}" x2="${w-right}" y2="${y}"/><text x="${left-10}" y="${y+3}" text-anchor="end">${v.toLocaleString('en-US',{maximumFractionDigits:2})}</text>`;}
- const cell=pw/rows.length,bw=Math.min(26,cell*.56),labelStep=rows.length<=8?1:Math.ceil(rows.length/6);
+ const cell=pw/rows.length,bw=Math.min(32,cell*.56),labelStep=Math.ceil(rows.length/Math.max(4,Math.floor(pw/72)));
  rows.forEach((r,i)=>{
   const x=left+cell*i+cell/2-bw/2,rxH=ph*(Number(r.rx)/divisor)/max,txH=ph*(Number(r.tx)/divisor)/max,y=top+ph;
   s+=`<g class="bar-group" tabindex="0" data-chart-point="1" data-key="${esc(r.key)}" data-rx="${r.rx}" data-tx="${r.tx}" data-missing="${r.missing?'1':'0'}" aria-label="${esc(r.key)}，${r.missing?t('无记录'):tr`下载 ${fmtWithUnit(r.rx)}，上传 ${fmtWithUnit(r.tx)}`}">`;
-  if(r.missing)s+=`<line x1="${x}" y1="${y-1}" x2="${x+bw}" y2="${y-1}" stroke="#cedaeb" stroke-dasharray="2 2"/>`;
+  if(r.missing)s+=`<line class="bar-missing" x1="${x}" y1="${y-1}" x2="${x+bw}" y2="${y-1}"/>`;
   else s+=`<rect class="bar-rx" x="${x}" y="${y-rxH}" width="${bw}" height="${rxH}" rx="2"/><rect class="bar-tx" x="${x}" y="${y-rxH-txH}" width="${bw}" height="${txH}" rx="2"/>`;
   s+=`<rect class="bar-hit" x="${left+cell*i}" y="${top}" width="${cell}" height="${ph+5}"/></g>`;
   if(i%labelStep===0||(i===rows.length-1&&(rows.length-1)%labelStep>labelStep/2))s+=`<text x="${x+bw/2}" y="${h-9}" text-anchor="middle">${esc(r.label)}</text>`;
@@ -167,16 +257,16 @@ function toolbar(){
  const realtime=ui.page==='apps'&&applicationView()==='live';
  const choices=[['today',t('今日')],['week',t('近 7 天')],['month',t('本月')],['all',t('全部历史')],['custom',t('自定义')]];
  const time=realtime?'<span class="pill gray">'+t('实时更新')+'</span>':'<div class="segmented" aria-label="'+t('统计时间范围')+'">'+choices.map(([k,v])=>'<button data-action="period" data-value="'+k+'" class="'+(ui.period===k?'active':'')+'" aria-pressed="'+(ui.period===k)+'">'+v+'</button>').join('')+'</div><div class="date-text">'+icon('calendar')+esc(rangeText())+'</div>';
- return '<div class="toolbar"><div class="toolbar-start">'+time+'</div><div class="toolbar-actions">'+(ui.page==='apps'?'<div id="appCaptureRegion">'+appCaptureControl()+'</div>':'')+'<label class="network-filter"><span class="sr-only">'+t('按网络筛选')+'</span><select class="select compact" id="networkFilter">'+networkOptions()+'</select></label>'+button('refresh',t('刷新'),'reset')+(ui.page==='apps'?'':button('export',t('导出数据'),'export'))+'</div></div>';
+ return '<div class="toolbar"><div class="toolbar-start">'+time+'</div><div class="toolbar-actions">'+(ui.page==='apps'?'<div id="appCaptureRegion">'+appCaptureControl()+'</div>':'')+'<label class="network-filter"><span class="sr-only">'+t('按网络筛选')+'</span><select class="select" id="networkFilter">'+networkOptions()+'</select></label>'+button('refresh',t('刷新'),'reset')+(ui.page==='apps'?'':button('export',t('导出数据'),'export'))+'</div></div>';
 }
 function renderChrome(){
  document.documentElement.dataset.page=ui.page;
  setLanguage(data.settings.language||'zh-CN');document.documentElement.lang=getLocale();
  $('.brand-sub')?.remove();$('.nav-label')?.remove();$('.sidebar').setAttribute('aria-label',t('主导航'));
- const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
+ const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],rules:[t('应用规则'),t('阻止程序联网，或限制它的上传和下载速度。')],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],logs:[t('运行日志'),t('查看采集、更新和备份的运行记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
  const [title,description]=labels[ui.page];document.title=`${productName} · ${title}`;
  updateRegion($('#brandMark'),'<img src="../assets/icon.png" alt="" width="37" height="37">');
- updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','shield',t('应用流量')],['history','history',t('历史')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
+ updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','transfer',t('应用流量')],['rules','shield',t('规则')],['history','history',t('历史')],['logs','list',t('日志')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
  const running=data.live.collector==='running'&&data.live.state!=='offline',paused=data.live.collector==='paused';
  updateRegion($('#collector'),tr`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?t('统计已暂停'):running?t('正在采集'):t('采集器未就绪')}</span></div>${button('pause',paused?t('恢复统计'):t('暂停统计'),paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`);
  updateRegion($('#sidebarFooter'),'');
@@ -185,18 +275,18 @@ function renderChrome(){
 }
 function connectionPanel(){
  const c=getConnection(),n=c?getNetwork(c.networkId):null,state=data.live.state;
- if(state==='loading')return tr`<div class="connection"><div class="connection-icon">${icon('clock')}</div><div><div class="connection-title">等待本机采集器</div><div class="connection-details">正在连接本机采集后端。</div></div>${button('demo',t('查看状态'),'reset','','style="margin-left:auto"')}</div>`;
- if(state==='permission')return tr`<div class="connection warn"><div class="connection-icon">${icon('shield')}</div><div><div class="connection-title">无法读取 Wi-Fi 名称</div><div class="connection-details">网络身份权限不足 · 未识别流量不会记到上一个 Wi-Fi</div></div>${button('permission-help',t('处理方式'),'arrow','','style="margin-left:auto"')}</div>`;
- if(state==='offline'||data.live.collector==='offline')return tr`<div class="connection error"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">采集器暂未响应</div><div class="connection-details">下方为已保存的记录，不代表当前实时状态。</div></div>${button('demo',t('检查状态'),'reset','','style="margin-left:auto"')}</div>`;
- if(state==='unreadable')return tr`<div class="connection warn"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">无法读取 Wi-Fi 信息</div><div class="connection-details">${esc(data.live.message||t('无法确认连接信息'))}</div></div>${button('demo',t('查看状态'),'arrow','','style="margin-left:auto"')}</div>`;
- if(state==='disconnected'||!c)return tr`<div class="connection"><div class="connection-icon">${icon('offline')}</div><div><div class="connection-title">尚未连接 Wi-Fi</div><div class="connection-details">历史记录仍可查看；重新连接后从新的基线开始统计。</div></div>${button('demo',t('查看连接'),'arrow','','style="margin-left:auto"')}</div>`;
+ if(state==='loading')return tr`<div class="connection"><div class="connection-icon">${icon('clock')}</div><div><div class="connection-title">等待本机采集器</div><div class="connection-details">正在连接本机采集后端。</div></div>${button('demo',t('查看状态'),'reset')}</div>`;
+ if(state==='permission')return tr`<div class="connection warn"><div class="connection-icon">${icon('shield')}</div><div><div class="connection-title">无法读取 Wi-Fi 名称</div><div class="connection-details">网络身份权限不足 · 未识别流量不会记到上一个 Wi-Fi</div></div>${button('permission-help',t('处理方式'),'arrow')}</div>`;
+ if(state==='offline'||data.live.collector==='offline')return tr`<div class="connection error"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">采集器暂未响应</div><div class="connection-details">下方为已保存的记录，不代表当前实时状态。</div></div>${button('demo',t('检查状态'),'reset')}</div>`;
+ if(state==='unreadable')return tr`<div class="connection warn"><div class="connection-icon">${icon('alert')}</div><div><div class="connection-title">无法读取 Wi-Fi 信息</div><div class="connection-details">${esc(data.live.message||t('无法确认连接信息'))}</div></div>${button('demo',t('查看状态'),'arrow')}</div>`;
+ if(state==='disconnected'||!c)return tr`<div class="connection"><div class="connection-icon">${icon('offline')}</div><div><div class="connection-title">尚未连接 Wi-Fi</div><div class="connection-details">历史记录仍可查看；重新连接后从新的基线开始统计。</div></div>${button('demo',t('查看连接'),'arrow')}</div>`;
  const paused=data.live.collector==='paused',more=data.live.connections.length-1;
  // 刚连上新网络、还没有产生任何流量时，快照里只有连接而没有对应的网络条目，
  // getNetwork 会返回 undefined：这时 SSID 只能从连接本身取，不能直接读 n.ssid。
  const ssid=n?.ssid??c.ssid??'',wired=isEthernet(c)||isEthernet(n);
- return tr`<div class="connection"><div class="connection-icon">${icon(wired?'ethernet':'wifi')}</div><div><div class="connection-title">${esc(networkName(n??c))}<span class="pill"><i class="dot"></i>已连接</span>${more?tr`<button class="pill gray" data-action="connections">+${more} 张网卡</button>`:''}</div><div class="connection-details">${wired?`<span>${esc(c.adapterAlias)}</span><span>${t('有线网络')}</span>`:tr`<span>${esc(ssid)}</span><span class="divider-dot">/</span><span>${esc(c.band)}</span><span class="divider-dot">/</span><span>信号 ${c.signal}%</span>`}${paused?t('<span class="pill warn">统计已暂停</span>'):''}</div></div><div class="connection-right"><div class="rate"><div class="rate-label">${icon('down')}当前下载</div><div class="rate-value num"><b data-live-rx style="font-weight:inherit">${paused?'—':speed(c.rxPerSecond)}</b><span data-live-rx-unit>${speedUnit(c.rxPerSecond)}</span></div></div><div class="rate"><div class="rate-label">${icon('up')}当前上传</div><div class="rate-value num"><b data-live-tx style="font-weight:inherit">${paused?'—':speed(c.txPerSecond)}</b><span data-live-tx-unit>${speedUnit(c.txPerSecond)}</span></div></div>${n?tr`<button class="icon-btn" aria-label="查看当前网络详情" data-action="detail" data-id="${n.id}">${icon('arrow')}</button>`:''}</div></div>`;
+ return tr`<div class="connection"><div class="connection-icon">${icon(wired?'ethernet':'wifi')}</div><div><div class="connection-title">${esc(networkName(n??c))}<span class="pill"><i class="dot"></i>已连接</span>${more?tr`<button class="pill gray" data-action="connections">+${more} 张网卡</button>`:''}</div><div class="connection-details">${wired?`<span>${esc(c.adapterAlias)}</span><span>${t('有线网络')}</span>`:tr`<span>${esc(ssid)}</span><span class="divider-dot">/</span><span>${esc(c.band)}</span><span class="divider-dot">/</span><span>信号 ${c.signal}%</span>`}${paused?t('<span class="pill warn">统计已暂停</span>'):''}</div></div><div class="connection-right"><div class="rate"><div class="rate-label">${icon('down')}当前下载</div><div class="rate-value num"><b data-live-rx>${paused?'—':speed(c.rxPerSecond)}</b><span data-live-rx-unit>${speedUnit(c.rxPerSecond)}</span></div></div><div class="rate"><div class="rate-label">${icon('up')}当前上传</div><div class="rate-value num"><b data-live-tx>${paused?'—':speed(c.txPerSecond)}</b><span data-live-tx-unit>${speedUnit(c.txPerSecond)}</span></div></div>${n?tr`<button class="icon-btn" aria-label="查看当前网络详情" data-action="detail" data-id="${n.id}">${icon('arrow')}</button>`:''}</div></div>`;
 }
-function metrics(){const rows=selectedRows(),v=totalOf(rows),count=new Set(rows.map(r=>r.networkId)).size;return tr`<div class="metrics"><div class="metric featured"><div class="metric-title"><span>${periodName()} ${t('总用量')}</span>${icon('transfer')}</div><div class="metric-number">${fmtNumber(v.total,rows.length)}</div><div class="metric-note positive">${rows.length?tr`${count} 个网络 · 本机累计记录`:t('暂无记录，不代表零流量')}</div></div><div class="metric"><div class="metric-title"><span>下载流量</span>${icon('down')}</div><div class="metric-number">${fmtNumber(v.rx,rows.length)}</div><div class="metric-note">${v.total?tr`占总用量 ${(Number(v.rx)*100/Number(v.total)).toFixed(1)}%`:t('等待采样记录')}</div></div><div class="metric"><div class="metric-title"><span>上传流量</span>${icon('up')}</div><div class="metric-number">${fmtNumber(v.tx,rows.length)}</div><div class="metric-note">${v.total?tr`占总用量 ${(Number(v.tx)*100/Number(v.total)).toFixed(1)}%`:t('等待采样记录')}</div></div></div>`;}
+function metrics(){const rows=selectedRows(),v=totalOf(rows),count=new Set(rows.map(r=>r.networkId)).size;return tr`<div class="metrics"><div class="metric featured"><div class="metric-title"><span>${periodName()} ${t('总用量')}</span>${icon('transfer')}</div><div class="metric-number">${fmtNumber(v.total,rows.length)}</div><div class="metric-note">${rows.length?tr`${count} 个网络 · 本机累计记录`:t('暂无记录，不代表零流量')}</div></div><div class="metric"><div class="metric-title"><span>下载流量</span>${icon('down')}</div><div class="metric-number">${fmtNumber(v.rx,rows.length)}</div><div class="metric-note">${v.total?tr`占总用量 ${(Number(v.rx)*100/Number(v.total)).toFixed(1)}%`:t('等待采样记录')}</div></div><div class="metric"><div class="metric-title"><span>上传流量</span>${icon('up')}</div><div class="metric-number">${fmtNumber(v.tx,rows.length)}</div><div class="metric-note">${v.total?tr`占总用量 ${(Number(v.tx)*100/Number(v.total)).toFixed(1)}%`:t('等待采样记录')}</div></div></div>`;}
 function trendPanel(){const r=getRange(),rows=chartRows(),unit=chartUnit(rows).unit;return tr`<section class="panel"><div class="panel-head"><div><h2>流量趋势</h2><div class="panel-sub">${niceDate(r.start)} — ${niceDate(r.end)} · ${ui.period==='custom'?rows[0]?.grouping==='day'?t('按日'):rows[0]?.grouping==='hour'?t('按小时'):t('按分钟'):ui.period==='today'?t('按小时'):ui.period==='all'||(+dateOf(r.end)-+dateOf(r.start))/86400000>365?t('按月'):t('按日')}</div></div><div class="legend"><span><i></i>下载</span><span><i class="tx"></i>上传</span></div></div><div class="chart-wrap">${chartSvg(rows)}</div><div class="chart-caption"><span>单位：${unit}</span>${ui.period==='custom'?tr`<span>图表按数据量汇总，分钟明细保留各分钟记录。</span>`:ui.period==='today'?tr`<span>今日尚未结束</span>`:''}</div></section>`;}
 function quotaPanel(){
  const n=getNetwork(getConnection()?.networkId)||data.networks[0];if(!n)return tr`<section class="panel quota-card"><div class="panel-head"><h2>网络额度</h2></div>${empty(t('尚无网络'),t('连接并开始记录后，可设置流量额度。'))}</section>`;
@@ -209,21 +299,21 @@ function networkTable(full=false){
  if(!list.length)return empty(full&&needle?t('没有匹配的网络'):t('暂无网络记录'),full&&needle?t('试试其他 SSID 或网络备注。'):t('首次连接后会在这里出现，不需要手动添加。'));
  return tr`<div class="table-scroll"><table><thead><tr><th>网络名称</th><th class="right">下载</th><th class="right">上传</th><th class="right">总用量</th><th>额度进度 <span class="tiny">/ 独立周期</span></th><th><span class="sr-only">操作</span></th></tr></thead><tbody>${list.map(n=>{const q=quota(n),cl=q.percent>=100?'red':q.percent>=n.warnPercent?'warn':'';return tr`<tr><td><div class="network-cell"><div class="network-symbol ${isConnected(n.id)?'current':''}">${icon(n.type)}</div><div><div class="flex gap8"><button class="network-name" data-action="detail" data-id="${n.id}">${esc(networkName(n))}</button>${isConnected(n.id)?t('<i class="dot" title="已连接"></i>'):''}</div><div class="network-ssid">${esc(n.ssid)}</div></div></div></td><td class="right">${n.hasRecords?fmtWithUnit(n.usage.rx):'—'}</td><td class="right">${n.hasRecords?fmtWithUnit(n.usage.tx):'—'}</td><td class="right strong">${n.hasRecords?fmtWithUnit(n.usage.total):'—'}</td><td><div class="table-limit">${n.capGb?`<span class="${cl==='warn'?'muted':''}">${q.percent.toFixed(0)}% <span class="tiny muted">/ ${q.period}</span></span><span class="mini-progress ${cl}"><i style="width:${Math.min(100,q.percent)}%"></i></span>`:t('<span class="tiny muted">未设置额度</span>')}</div></td><td><button class="icon-btn" data-action="detail" data-id="${n.id}" aria-label="查看 ${esc(networkName(n))} 详情">${icon('arrow')}</button></td></tr>`;}).join('')}</tbody></table></div>`;
 }
-function quotaNotice(){const alerts=data.networks.filter(n=>n.capGb&&n.notify&&quota(n).percent>=n.warnPercent);if(!alerts.length)return '';const n=alerts[0],q=quota(n);return tr`<div class="notice-line">${icon('bell')}<span>${esc(networkName(n))} · ${q.period} 用量已达 ${q.percent.toFixed(0)}%${q.percent<100?tr`，剩余 ${fmtWithUnit(q.remaining)}`:t('，已超过所设额度')}。</span><button class="link-btn" style="margin-left:auto" data-action="detail" data-id="${n.id}" data-tab="settings">查看额度 ${icon('arrow')}</button></div>`;}
+function quotaNotice(){const alerts=data.networks.filter(n=>n.capGb&&n.notify&&quota(n).percent>=n.warnPercent);if(!alerts.length)return '';const n=alerts[0],q=quota(n);return tr`<div class="notice-line">${icon('bell')}<span>${esc(networkName(n))} · ${q.period} 用量已达 ${q.percent.toFixed(0)}%${q.percent<100?tr`，剩余 ${fmtWithUnit(q.remaining)}`:t('，已超过所设额度')}。</span><button class="link-btn" data-action="detail" data-id="${n.id}" data-tab="settings">查看额度 ${icon('arrow')}</button></div>`;}
 
 function overview(){return tr`<div class="overview-summary">${toolbar()}${connectionPanel()}${metrics()}${totalQuotaCard(data.totalQuota,data.settings.unit)}<div class="chart-row">${trendPanel()}${quotaPanel()}</div>${quotaNotice()}</div>`;}
-function networksPage(){return tr`${toolbar()}<section class="panel table-panel"><div class="filter-line"><label class="search-box">${icon('search')}<input id="networkSearch" type="search" placeholder="搜索网络备注或 SSID" value="${esc(ui.search)}" aria-label="搜索网络"></label><div class="flex gap12"><span class="small muted">共 ${data.networks.length} 个网络</span><label><span class="sr-only">网络排序</span><select id="networkSort" class="select compact">${option('total',t('按用量排序'),ui.sort)}${option('name',t('按名称排序'),ui.sort)}${option('connected',t('已连接优先'),ui.sort)}</select></label></div></div><div id="networkTableRegion">${networkTable(true)}</div></section>`;}
+function networksPage(){return tr`${toolbar()}<section class="panel"><div class="filter-line"><label class="search-box">${icon('search')}<input id="networkSearch" type="search" placeholder="搜索网络备注或 SSID" value="${esc(ui.search)}" aria-label="搜索网络"></label><div class="flex gap12"><span class="small muted">共 ${data.networks.length} 个网络</span><label><span class="sr-only">网络排序</span><select id="networkSort" class="select">${option('total',t('按用量排序'),ui.sort)}${option('name',t('按名称排序'),ui.sort)}${option('connected',t('已连接优先'),ui.sort)}</select></label></div></div><div id="networkTableRegion">${networkTable(true)}</div></section>`;}
 function historyPage(){
  const days=groupedDays(),all=totalOf(selectedRows()),max=days.reduce((m,x)=>x.rx+x.tx>m.rx+m.tx?x:m,{date:'',rx:0n,tx:0n}),average=days.length?all.total/BigInt(days.length):0n;
  const details=ui.historyGrouping==='day'?days.map(row=>({...row,key:row.date})):minuteUsageRows(data.minuteRecords,{...getRange(),networkId:ui.networkId},ui.historyGrouping);
  const pages=Math.max(1,Math.ceil(details.length/20));ui.historyPage=Math.min(ui.historyPage,pages);const sliced=details.slice().reverse().slice((ui.historyPage-1)*20,ui.historyPage*20);
  const stats=tr`<div class="history-top"><div class="panel history-stat"><div class="metric-title">${periodName()} ${t('总用量')}</div><div class="metric-number">${fmtNumber(all.total,days.length)}</div><div class="metric-note">有记录的日期：${days.length} 天</div></div><div class="panel history-stat"><div class="metric-title">日均用量</div><div class="metric-number">${fmtNumber(average,days.length)}</div><div class="metric-note">仅按有记录的日期计算</div></div><div class="panel history-stat"><div class="metric-title">单日最高用量</div><div class="metric-number">${fmtNumber(max.rx+max.tx,days.length)}</div><div class="metric-note">${max.date?niceDate(max.date):t('暂无记录')}</div></div></div>`;
- const control=tr`<label><span class="sr-only">明细分组</span><select class="select compact" id="historyGrouping">${[['minute',t('按分钟')],['hour',t('按小时')],['day',t('按日')]].map(([key,label])=>option(key,label,ui.historyGrouping)).join('')}</select></label>`;
+ const control=tr`<label><span class="sr-only">明细分组</span><select class="select" id="historyGrouping">${[['minute',t('按分钟')],['hour',t('按小时')],['day',t('按日')]].map(([key,label])=>option(key,label,ui.historyGrouping)).join('')}</select></label>`;
  const table=details.length?tr`<div class="table-scroll"><table><thead><tr><th>${ui.historyGrouping==='day'?t('日期'):t('时间')}</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th></tr></thead><tbody>${sliced.map(row=>`<tr><td>${esc(row.key)}</td><td class="right">${fmtWithUnit(row.rx)}</td><td class="right">${fmtWithUnit(row.tx)}</td><td class="right strong">${fmtWithUnit(row.rx+row.tx)}</td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>${t('记录数')} ${details.length}</span><div class="flex gap8">${button('history-prev',t('上一页'),'','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next',t('下一页'),'','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty(t('所选时段没有记录'),ui.historyGrouping==='day'?t('更换日期或网络试试；缺失记录不会被当作零流量。'):t('分钟明细从升级后开始记录，旧记录保留原有时间精度。'));
- return `${toolbar()}${stats}${trendPanel()}<section class="panel table-panel" data-history-details style="margin-top:18px"><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
+ return `${toolbar()}${stats}${trendPanel()}<section class="panel" data-history-details><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
 }
-let updateStatus = {}, updateBusy = false, updateExitPrepared = false;
-function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
+let updateStatus = {}, updateBusy = false, updateExitPrepared = false, dismissedUpdate = '';
+function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy),cloud:cloudBackupView(cloudState,{button,esc,option})});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
  for(const key of ['promptAppCollection','miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']){
@@ -255,22 +345,22 @@ function updateSettingsScroll(){
  markSettingsCategory(active.dataset.settingsPanel);
 }
 window.addEventListener('scroll',()=>{if(settingsScrollFrame!==null)return;settingsScrollFrame=requestAnimationFrame(()=>{settingsScrollFrame=null;updateSettingsScroll();});},{passive:true});
-window.addEventListener('resize',()=>{settingsCategoryScrollY=null;updateSettingsScroll();});
+window.addEventListener('resize',()=>{settingsCategoryScrollY=null;updateSettingsScroll();fitCharts();});
 function renderMain(){
  const drafts=formAutosaves.drafts(['settingsForm','totalQuotaForm','proxyConfigForm']);
- const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd,proxyOpen=$('.app-proxy-panel')?.open;
+ const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd;
  renderChrome();
  renderUpdateBanner();
- updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
+ updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,rules:rulesPage,history:historyPage,logs:logsPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
  for(const draft of drafts){
   const replacement=$('#'+draft.id);
   if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
  }
  if(focused?.isConnected&&drafts.some(form=>form.contains(focused))){focused.focus({preventScroll:true});if(selectionStart!=null&&focused.setSelectionRange)focused.setSelectionRange(selectionStart,selectionEnd);}
- if(proxyOpen&&$('.app-proxy-panel'))$('.app-proxy-panel').open=true;
  syncSaveFlags();
  syncInert();
  appIcons.hydrate(document);
+ fitCharts();
 }
 function renderSettingsDrafts(preserveSettings=true){
  const focused=document.activeElement,focusName=focused?.name,focusForm=focused?.form?.id,start=focused?.selectionStart,end=focused?.selectionEnd;
@@ -299,6 +389,8 @@ async function doNavigate(page){
  if(page==='history'&&ui.historyGrouping!=='day'||page==='apps'&&applications.appView==='history'&&['minute','hour'].includes(applications.appGrouping))await ensureMinuteHistory();
  if(version!==navigationVersion)return;
  settingsCategoryScrollY=null;
+ if(page==='logs')loadLogs().catch(console.error);
+ if(page==='settings')loadCloud().catch(console.error);
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
  updateSettingsScroll();
 }
@@ -322,7 +414,7 @@ function drawerUsage(n){
  return tr`<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">本机采样</span></div><div class="drawer-total"><div class="small muted">总用量</div><div class="metric-number">${fmtNumber(v.total,rows.length)}</div></div><div class="metrics"><div class="metric"><div class="metric-title">下载 ${icon('down')}</div><div class="metric-number">${fmtNumber(v.rx,rows.length)}</div></div><div class="metric"><div class="metric-title">上传 ${icon('up')}</div><div class="metric-number">${fmtNumber(v.tx,rows.length)}</div></div></div><div class="detail-section"><div class="between"><h3>用量趋势</h3><div class="legend"><span><i></i>下载</span><span><i class="tx"></i>上传</span></div></div><div class="chart-wrap">${chartSvg(chartRows(n.id),'drawer-chart')}</div></div>${connection&&data.live.state==='connected'?tr`<dl class="kv-grid"><div><dt>${isEthernet(n)?t('有线网卡'):t('无线网卡')}</dt><dd>${esc(connection.adapterAlias)}</dd></div>${isEthernet(n)||isEthernet(connection)?'':tr`<div><dt>频段 / 信号</dt><dd>${esc(connection.band)} / ${connection.signal}%</dd></div>`}<div><dt>连接开始</dt><dd>${esc(new Date(connection.since).toLocaleString(getLocale(),{hour12:false}))}</dd></div><div><dt>统计状态</dt><dd>${data.live.collector==='paused'?t('已暂停'):t('采样中')}</dd></div></dl>`:''}<div class="detail-section"><h3>最近记录</h3>${days.length?tr`<table><thead><tr><th>日期</th><th class="right">下载</th><th class="right">上传</th></tr></thead><tbody>${days.map(d=>`<tr><td>${niceDate(d.date)}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td></tr>`).join('')}</tbody></table>`:t('<p class="small muted">所选时间内没有该网络的记录。</p>')}</div>${button('export-network',t('导出此网络记录'),'export','','data-id="'+n.id+'"')}`;
 }
 function appMinuteSource(){return minuteRange()||['minute','hour'].includes(appContext().appGrouping);}
-function displayedAppRecords(){return appMinuteSource()?data.appMinuteRecords||[]:proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,appContext().proxyEstimated&&data.proxy?.available);}
+function displayedAppRecords(){const estimated=appContext().proxyEstimated&&data.proxy?.available;return appMinuteSource()?proxyUsageRecords(data.appMinuteRecords||[],data.proxyEstimatedMinuteRecords,estimated):proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,estimated);}
 function displayedAppSummary(networkId,start,end){return applicationSummary(displayedAppRecords(),{...getRange(),networkId,start,end});}
 function drawerApps(n){
  const view=applicationView();
@@ -335,21 +427,21 @@ function applicationListData(n){
  return applicationViewData(options);
 }
 function applicationSummaryMarkup(n,viewData=applicationListData(n)){
- if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span><span class="small muted">${appContext().liveProxyEstimated&&data.proxy?.available?t('按当前端口连接数分配代理程序的网络速度，保留客户端直接流量。'):t('实时速度与历史用量分别显示')}</span>`;
- return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span>`;
+ if(applicationView()==='live')return tr`<span><strong>${viewData.rows.length}</strong> 条结果</span>`;
+ return tr`<span class="applications-total" id="appTotal" aria-label="总用量">${fmtNumber(viewData.total,viewData.hasRecords)}</span><span>总用量</span>`;
 }
 function applicationContent(n,controls){
  const view=applicationView(),viewData=applicationListData(n);
- return `${applicationFilters(appContext(),{view,minuteSource:appMinuteSource(),proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
+ return `${applicationFilters(appContext(),{view,proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
 }
 function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="between app-status">${c.state==='disabled'?'':`<span class="small muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${controls&&c.available?captureButton(c):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${controls&&c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
+ return `<div class="between app-status">${!controls||c.state==='disabled'?'':`<span class="muted">${esc(labels[c.state]||labels.unavailable)}</span>`}${controls&&c.available?captureButton(c):''}</div>${(c.detail||c.message)&&['permission','unavailable','partial'].includes(c.state)?`<details class="app-diagnostic"><summary>${t('采集详情')}</summary><p class="small muted">${esc(c.detail||c.message)}</p></details>`:''}${controls&&c.available&&(c.state==='permission'||c.state==='unavailable')?button('app-collection-retry',t('重试应用采集'),'','small-btn'):''}`;
 }
 function captureButton(c){return button('app-collection',c.enabled?t('停止应用采集'):t('开启应用采集'),c.enabled?'pause':'play',c.enabled?'capture-stop':'capture-start',appCollectionBusy?'disabled':'');}
 function appCaptureControl(){
  const c=data.appCollection||{},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
- return `<div class="app-capture-control"><span class="capture-status" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
+ return `<div class="app-capture-control"><span class="${['disabled','running'].includes(c.state)?'sr-only':'capture-status'}" role="status">${esc(labels[c.state]||labels.unavailable)}</span>${c.available?captureButton(c):''}${c.available&&['permission','unavailable'].includes(c.state)?button('app-collection-retry',t('重试应用采集'),'reset','small-btn',appCollectionBusy?'disabled':''):''}</div>`;
 }
 function renderCapture(){
  const region=$('#appCaptureRegion'),focused=region?.contains(document.activeElement)?document.activeElement.dataset.action:null;
@@ -412,8 +504,8 @@ function appList(n,viewData=applicationListData(n)){
  return applicationTable(rows,{mode:'usage',grouping:'summary',selectedKey:appContext().selectedApp?.key,sum:total},appTableHelpers());
 }
 function appDetails(app){
- const proxy=measuredProxy();
- const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!minuteRange()&&!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
+ const proxy=measuredProxy(),minute=appMinuteSource();
+ const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:minute?data.appMinuteRecords:data.appRecords,estimatedRecords:minute?data.proxyEstimatedMinuteRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),grouping:appContext().appGrouping});
  return applicationDetails(app,{esc,fmtWithUnit,appRate,estimateLabel,proxyDetails,rangeLabel:rangeText()});
 }
 function refreshApplicationDetails(){
@@ -441,7 +533,7 @@ function renderAppList(){
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
  updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
- const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;}
+ const source=$('#appDataSource');if(source){const estimated=applicationView()==='live'?appContext().liveProxyEstimated:appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!data.proxy?.available;}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
  const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);
@@ -453,7 +545,7 @@ async function setAppCollection(enabled){
  try{await store.setAppCollection(enabled);renderAppList();}finally{appCollectionBusy=false;$$('[data-action="app-collection"],[data-action="app-collection-retry"]').forEach(b=>b.disabled=false);renderCapture();}
 }
 function drawerSettings(n){
- return tr`<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="${MAX_QUOTA_GB}" step="any"><span>GB</span></div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month',t('每自然月'),n.quotaPeriod)}${option('day',t('每天'),n.quotaPeriod)}${option('all',t('累计不重置'),n.quotaPeriod)}</select></div></div><div class="setting-row" style="padding:17px 0"><div><div class="setting-title">用量接近额度时提醒</div></div>${toggle('notify',n.notify,t('接近额度时提醒'))}</div><div class="field" style="margin-top:18px"><label for="warnPercent">提醒阈值</label><input class="input" id="warnPercent" name="warnPercents" type="text" value="${esc(quotaThresholds(n).join(', '))}" placeholder="50, 75, 90, 100" required></div>${isEthernet(n)?tr`<p class="small muted">有线网络不支持无线断开操作。</p>`:tr`<div class="setting-row" style="padding:17px 0"><div><div class="setting-title">达到额度后自动断开</div></div>${toggle('autoDisconnect',n.autoDisconnect,t('达到额度后自动断开'))}</div>`}<div class="form-error" id="networkFormError" role="alert"></div>${autosaveStatus('networkSaveStatus')}</form>`;
+ return tr`<form id="networkForm" data-id="${n.id}"><div class="field"><label for="aliasInput">网络备注</label><input class="input" id="aliasInput" name="alias" value="${esc(n.alias)}" placeholder="给这个 Wi-Fi 起一个容易辨认的名字" maxlength="128"></div><div class="field-row"><div class="field"><label for="quotaInput">流量额度</label><div class="input-unit"><input class="input" id="quotaInput" name="capGb" type="number" value="${n.capGb||''}" placeholder="不限制" min="0" max="${MAX_QUOTA_GB}" step="any"><span>GB</span></div></div><div class="field"><label for="quotaPeriod">额度周期</label><select class="input" id="quotaPeriod" name="quotaPeriod">${option('month',t('每自然月'),n.quotaPeriod)}${option('day',t('每天'),n.quotaPeriod)}${option('all',t('累计不重置'),n.quotaPeriod)}</select></div></div><div class="setting-row"><div><div class="setting-title">用量接近额度时提醒</div></div>${toggle('notify',n.notify,t('接近额度时提醒'))}</div><div class="field"><label for="warnPercent">提醒阈值</label><input class="input" id="warnPercent" name="warnPercents" type="text" value="${esc(quotaThresholds(n).join(', '))}" placeholder="50, 75, 90, 100" required></div>${isEthernet(n)?tr`<p class="small muted">有线网络不支持无线断开操作。</p>`:tr`<div class="setting-row"><div><div class="setting-title">达到额度后自动断开</div></div>${toggle('autoDisconnect',n.autoDisconnect,t('达到额度后自动断开'))}</div>`}<div class="form-error" id="networkFormError" role="alert"></div>${autosaveStatus('networkSaveStatus')}</form>`;
 }
 async function openApplicationDrawer(app={}){
  if(appControl.busy)return;
@@ -472,6 +564,7 @@ function renderDrawer(){
  $('#drawerRoot').innerHTML=drawerShell({title:esc(networkName(n)),badge:isConnected(n.id)?t('<span class="pill"><i class="dot"></i>已连接</span>'):'',closeLabel:t('关闭网络详情'),subtitle:tr`<div class="drawer-sub"><span>${isEthernet(n)?t('原始身份'):'SSID'} · ${esc(n.ssid)}</span><button class="icon-btn small-icon" data-action="copy-ssid" data-id="${n.id}" aria-label="复制 SSID">${icon('copy')}</button></div>`,tabs:tr`<div class="drawer-tabs" role="tablist" aria-label="网络详情分类">${[['usage',t('用量明细')],['apps',t('应用分布')],['settings',t('网络设置')]].map(([id,label])=>`<button class="drawer-tab ${tab===id?'active':''}" role="tab" aria-selected="${tab===id}" data-action="drawer-tab" data-tab="${id}">${label}</button>`).join('')}</div>`,content:tab==='usage'?drawerUsage(n):tab==='apps'?drawerApps(n):drawerSettings(n),icon});appIcons.hydrate(document);
  syncInert();
  if(tab==='apps')renderAppList();
+ fitCharts();
 }
 let modalReturnFocus=null;
 function showModal(title,body,actions='',onShow=null){
@@ -495,10 +588,10 @@ function demoModal(){
  const [title,detail]=labels[data.live.state]??[t('未知状态'),''];
  const interfaces=data.live.connections.length?data.live.connections.map(c=>tr`<div class="check-row">${icon(isEthernet(c)?'ethernet':'wifi')}<span>${esc(c.adapterAlias)} · ${esc(networkName(getNetwork(c.networkId)))} ${isEthernet(c)?t('有线网络'):tr`· 信号 ${c.signal}%`}</span></div>`).join(''):tr`<div class="check-row">${icon('offline')}<span>${['unreadable','permission'].includes(data.live.state)?t('无法确认连接信息'):t('当前没有已关联的无线网卡')}</span></div>`;
  const gaps=(data.gaps??[]).length;
- showModal(t('采集状态'),tr`<p class="modal-desc">数据由本机后端进程读取网卡计数器后写入本机数据库，不经过网络。</p><div class="check-row">${icon('database')}<span>采集器：${data.live.collector==='running'?t('运行中'):data.live.collector==='paused'?t('已暂停'):t('不可用')} · ${title}</span></div><div class="check-row">${icon('info')}<span>${esc(detail)}</span></div>${interfaces}${gaps?tr`<div class="check-row">${icon('alert')}<span>有 ${gaps} 段区间没有采集到数据，已单独记录，不会显示成 0。</span></div>`:''}<div class="note-box" style="margin-top:18px">${icon('info')}<div>备注、额度、导出与备份都写入本机数据库；开机启动、托盘与真实断网属于系统级设置。</div></div>`,button('close-modal',t('完成'),'','primary'));
+ showModal(t('采集状态'),tr`<p class="modal-desc">数据由本机后端进程读取网卡计数器后写入本机数据库，不经过网络。</p><div class="check-row">${icon('database')}<span>采集器：${data.live.collector==='running'?t('运行中'):data.live.collector==='paused'?t('已暂停'):t('不可用')} · ${title}</span></div><div class="check-row">${icon('info')}<span>${esc(detail)}</span></div>${interfaces}${gaps?tr`<div class="check-row">${icon('alert')}<span>有 ${gaps} 段区间没有采集到数据，已单独记录，不会显示成 0。</span></div>`:''}<div class="note-box">${icon('info')}<div>备注、额度、导出与备份都写入本机数据库；开机启动、托盘与真实断网属于系统级设置。</div></div>`,button('close-modal',t('完成'),'','primary'));
 }
 function helpModal(){showModal(t('统计口径与使用说明'),tr`<div class="modal-desc"><strong>总量 = 下载 + 上传</strong><br>首页和网络明细展示采集器记录的网卡流量；用量自动选择单位，设置中可切换十进制或二进制。<br><br><strong>历史与实时分开</strong><br>日期筛选仅影响历史用量。连接卡片显示当前选中网卡的实时状态，额度使用独立日 / 月周期。<br><br><strong>缺失记录不会伪装成零流量</strong><br>断网、暂停、计数器重置与身份不明期间的覆盖情况，由后端记录并说明。<br><br><strong>应用用量独立统计</strong><br>应用分布按当前网络与时段展示已采集的应用记录。启用应用采集后从新的基线开始，暂停和停止不会删除历史；是否可采集以及缺失区间会在页面说明。<br><br><strong>数据来源</strong><br>页面读取本机后端进程的采集结果，数据存放在本机 SQLite 数据库，不上传任何内容。</div>`,button('close-modal',t('知道了'),'','primary'));}
-function permissionModal(){showModal(t('无法确定网络身份'),tr`<p class="modal-desc">采集器读不到当前连接的网络名。无法归属的流量不会被记到上一次连接的网络。</p><div class="note-box">${icon('shield')}<div>常见原因是 NetworkManager 未运行或当前用户无权查询连接信息。恢复后采集会从新的基线继续，中间区间会记为覆盖空档。</div></div><p class="field-hint" style="margin-top:15px">可以用 <code>nmcli dev status</code> 确认 NetworkManager 是否正常。</p>`,button('close-modal',t('关闭'))+button('demo',t('查看采集状态'),'','primary'));}
+function permissionModal(){showModal(t('无法确定网络身份'),tr`<p class="modal-desc">采集器读不到当前连接的网络名。无法归属的流量不会被记到上一次连接的网络。</p><div class="note-box">${icon('shield')}<div>常见原因是 NetworkManager 未运行或当前用户无权查询连接信息。恢复后采集会从新的基线继续，中间区间会记为覆盖空档。</div></div><p class="field-hint">可以用 <code>nmcli dev status</code> 确认 NetworkManager 是否正常。</p>`,button('close-modal',t('关闭'))+button('demo',t('查看采集状态'),'','primary'));}
 async function dataDownload(filename,body){
  const result=await window.desktop.saveFile({filename,body});
  if(result.error)throw Error(result.error);
@@ -506,7 +599,8 @@ async function dataDownload(filename,body){
 }
 function csvCell(value){let text=String(value??'');if(/^[\s]*[=+\-@]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';}
 async function doExport(values){
- const {networkId,start,end,format,startTime='00:00',endTime='23:59',grouping='day'}=values;
+ const {networkId,start,end,format,startTime:inputStartTime='00:00',endTime:inputEndTime='23:59',grouping='day'}=values;
+ const startTime=minuteInputTime(inputStartTime),endTime=minuteInputTime(inputEndTime);
  if(!validDate(start)||!validDate(end)||!validTime(startTime)||!validTime(endTime)||`${start} ${startTime}`>`${end} ${endTime}`||end>today())throw Error(t('请确认起止日期和时间有效，结束时间不早于开始时间，且日期不晚于今天。'));
  const result=await store.exportUsage({from:start,to:end,fromTime:startTime,toTime:endTime,grouping,networkKey:networkId==='all'?'':networkId});
  const rows=(result.records||[]).sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''));
@@ -605,6 +699,7 @@ function paintLive(){
   if(!ui.drawer&&ui.page==='networks')updateRegion($('#networkTableRegion'),networkTable(true),{selection:window.getSelection()});
   if(!ui.drawer&&ui.page==='history'&&!$('#content').contains(document.activeElement))updateRegion($('#content'),historyPage(),{selection:window.getSelection()});
  }
+ fitCharts();
 }
 function showAlert(alert){
  if(alert.scope==='total')alert={...alert,alias:t('总 Wi-Fi 额度')};
@@ -682,13 +777,27 @@ async function ensureMinuteHistory(){
  }
 }
 function customRangeModal(){
- const r=getRange();showModal(t('选择日期范围'),tr`<form id="rangeForm"><div class="field-row"><div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div><div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div></div><div class="field-row"><div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div><div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div></div><div class="form-error" id="rangeError" role="alert"></div><div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div></form>`);
+ const r=getRange();showModal(t('选择日期范围'),tr`<form id="rangeForm" class="range-form" aria-describedby="rangeHint">
+  <p class="range-hint" id="rangeHint">按本地时间筛选，包含结束分钟。</p>
+  <div class="range-groups">
+   <fieldset class="range-group"><legend>开始</legend><div class="range-fields">
+    <div class="field"><label for="rangeStart">开始日期</label><input class="input" id="rangeStart" name="start" type="date" value="${r.start}" max="${today()}" required autofocus></div>
+    <div class="field"><label for="rangeStartTime">开始时间</label><input class="input" id="rangeStartTime" name="startTime" type="time" step="60" value="${r.startTime||'00:00'}" required></div>
+   </div></fieldset>
+   <fieldset class="range-group"><legend>结束</legend><div class="range-fields">
+    <div class="field"><label for="rangeEnd">结束日期</label><input class="input" id="rangeEnd" name="end" type="date" value="${r.end}" max="${today()}" required></div>
+    <div class="field"><label for="rangeEndTime">结束时间</label><input class="input" id="rangeEndTime" name="endTime" type="time" step="60" value="${r.endTime||'23:59'}" required></div>
+   </div></fieldset>
+  </div>
+  <div class="form-error" id="rangeError" role="alert"></div>
+  <div class="modal-actions">${button('close-modal',t('取消'),'','','type="button"')}<button class="btn primary" type="submit">应用筛选</button></div>
+ </form>`);
 }
 let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
 async function copySsid(id){const text=getNetwork(id)?.ssid||'';try{await navigator.clipboard.writeText(text);toast(t('已复制原始 SSID。'));}catch(e){showModal(t('复制网络名称'),tr`<p class="modal-desc">浏览器不允许直接写入剪贴板。可以选中下方名称复制。</p><input class="input" value="${esc(text)}" readonly autofocus>`,button('close-modal',t('完成'),'','primary'),()=>$('.modal input')?.select());}}
 function renderStatusHelp(){refreshStatusHelp($('#settings-status'),{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus});}
-function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy);updateRegion(banner,view);banner.hidden=!view;}
+function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy,{dismissedKey:dismissedUpdate,closeIcon:icon('close')});updateRegion(banner,view);banner.hidden=!view;}
 function renderUpdates(){if(['error','recovered','cancelled','latest','manual','unchecked'].includes(updateStatus.state))updateExitPrepared=false;syncInert();renderUpdateBanner();renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
 async function updateAction(action){
  if(updateBusy)return;
@@ -718,6 +827,12 @@ function confirmUpdate(action){
 }
 const actions={
  'check-updates':()=>updateAction('check'),
+ 'cloud-test':()=>cloudAction('test',undefined,result=>tr`连接成功，远端有 ${result.backups} 份备份`),
+ 'cloud-estimate':()=>cloudAction('estimate',undefined,result=>tr`预计上传 ${sizeText(result.size)}：${cloudSummary(result)}`),
+ 'cloud-backup':()=>cloudAction('backup',undefined,result=>{if(cloudState.files)queueMicrotask(listCloud);return tr`已备份 ${sizeText(result.size)}：${cloudSummary(result)}`;}),
+ 'cloud-list':listCloud,'cloud-restore':e=>restoreCloud(e.dataset.name),'cloud-remove':e=>removeCloud(e.dataset.name),
+ 'logs-refresh':()=>loadLogs(),'logs-export':exportLogs,'logs-clear':clearLogs,
+ 'dismiss-update':()=>{dismissedUpdate=updateBannerKey(updateStatus);renderUpdateBanner();},
  'download-update':()=>confirmUpdate('download'),
  'install-update':()=>updateStatus.recoveryRequired||!updateStatus.canInstall?updateAction('install'):confirmUpdate('install'),
  refresh:async e=>{
@@ -777,11 +892,13 @@ document.addEventListener('submit',async event=>{
  form.dataset.busy='true';
  try{
   if(autosaveForms.has(form.id))await formAutosave(form).flush();
+  else if(form.id==='cloudBackupForm')await cloudAction();
   else if(form.id==='appThrottleForm')await controlOperation('throttle',Number(new FormData(form).get('uploadKBps')));
   else if(form.id==='appDownloadThrottleForm')await controlOperation('throttle',{downloadKBps:Number(new FormData(form).get('downloadKBps'))});
   else if(form.id==='exportForm')await doExport(Object.fromEntries(new FormData(form)));
   else if(form.id==='rangeForm'){
-   const {start,end,startTime,endTime}=Object.fromEntries(new FormData(form));
+   const {start,end,startTime:inputStartTime,endTime:inputEndTime}=Object.fromEntries(new FormData(form));
+   const startTime=minuteInputTime(inputStartTime),endTime=minuteInputTime(inputEndTime);
    if(!validDate(start)||!validDate(end)||!validTime(startTime)||!validTime(endTime)||`${start} ${startTime}`>`${end} ${endTime}`||end>today())throw Error(t('请确认起止日期和时间有效，结束时间不早于开始时间，且日期不晚于今天。'));
    await selectRange('custom',{start,end,startTime,endTime});closeModal();
   }
@@ -790,7 +907,10 @@ document.addEventListener('submit',async event=>{
 });
 document.addEventListener('change',async event=>{
  const e=event.target;
+ if(e.form?.id==='cloudBackupForm'){saveCloud(e.form);return;}
  if(autosaveForms.has(e.form?.id)){editAutosave(e,true);return;}
+ if(e.id==='logMinimum'){logsState.minimum=e.value;await loadLogs();return;}
+ if(e.id==='logLevel'){try{await window.desktop.logs.setLevel(e.value);}catch(error){toast(error.message,true);}await loadLogs();return;}
  if(e.id==='networkFilter'){ui.networkId=e.value;ui.historyPage=1;renderMain();}
  if(e.id==='historyGrouping'){try{if(e.value!=='day')await ensureMinuteHistory();ui.historyGrouping=e.value;ui.historyPage=1;renderMain();}catch(error){e.value=ui.historyGrouping;toast(error.message,true);}}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
@@ -817,6 +937,7 @@ document.addEventListener('change',async event=>{
 document.addEventListener('input',event=>{
  const e=event.target;
  if(e.id==='networkSearch'){ui.search=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
+ if(e.id==='logSearch'){logsState.search=e.value;loadLogs(false);return;}
  if(e.id==='appSearch'){appContext()[applicationView()==='live'?'liveSearch':'appSearch']=e.value;appContext().appPage=1;renderAppList();}
  if(e.id==='confirmText')$('#confirmAction').disabled=e.value!==t('清空');
  if(autosaveForms.has(e.form?.id)&&e.type!=='checkbox'&&e.tagName!=='SELECT')editAutosave(e,false);
@@ -858,7 +979,7 @@ document.addEventListener('focusin',e=>{const point=e.target.closest('[data-char
 window.addEventListener('blur',()=>$('#tooltip').style.display='none');
 window.wifimeterHasUnsavedChanges=()=>settingsDirty||networkDirty||totalQuotaDirty||proxyDirty;
 window.addEventListener('beforeunload',event=>{if(window.wifimeterHasUnsavedChanges()){event.preventDefault();event.returnValue='';}});
-window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(['overview','networks','apps','history','settings'].includes(p))navigate(p);});
+window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(PAGES.includes(p))navigate(p);});
 const stopPreferences=window.desktop.windowPreferences?.onChanged(receiveWindowPreferences);
 window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEventListener('change',applyTheme);},{once:true});
 window.addEventListener('focus',()=>reloadWindowPreferences().catch(console.error));

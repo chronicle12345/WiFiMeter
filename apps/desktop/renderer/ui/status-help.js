@@ -15,6 +15,11 @@ const states = {
     downloading:['正在下载','Downloading','muted'], verifying:['正在校验','Verifying','muted'], preparing:['准备安装','Preparing installation','muted'], installing:['启动安装程序','Starting installer','muted'], recovered:['已恢复采集','Collection restored','good'],
     cancelled:['已取消','Cancelled','muted'], manual:['已打开发布页','Release page opened','muted']
 };
+/** Localized label for a raw state; unknown states are shown as received. */
+export function stateLabel(state) {
+    const known = states[state];
+    return known ? text(known[0], known[1]) : String(state ?? '');
+}
 function diagnostic(source) {
     const error = source?.error;
     return (typeof error === 'string' ? error : error?.message) || source?.collectorMessage || source?.detail || source?.message || '';

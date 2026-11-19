@@ -209,6 +209,11 @@ fn refuses_a_profile_held_by_lock_holder_before_any_database_access() {
     let (mut lock_holder, state) = LockHolder::launch(&profile.0);
     assert_eq!(state, "READY");
     let acquired = LegacyInstanceGuard::acquire(&profile.0);
+    let aliased = LegacyInstanceGuard::acquire(&profile.0.join("."));
+    assert!(
+        aliased.is_err(),
+        "a path alias must not bypass the active profile lock"
+    );
     lock_holder.verify_running("同目录互斥检查后");
     assert!(
         acquired.is_err(),
@@ -252,4 +257,22 @@ fn a_lock_holder_launch_cannot_open_a_profile_held_by_tauri() {
         state, "READY",
         "Tauri cleanup releases the profile for a later launch"
     );
+}
+
+#[test]
+fn different_tauri_profiles_keep_independent_exclusive_locks() {
+    let first = Profile::new();
+    let second = Profile::new();
+    let first_guard = LegacyInstanceGuard::acquire(&first.0).unwrap();
+    let second_guard = LegacyInstanceGuard::acquire(&second.0).unwrap();
+    assert!(LegacyInstanceGuard::acquire(&first.0).is_err());
+    assert!(LegacyInstanceGuard::acquire(&second.0).is_err());
+    drop(first_guard);
+    assert!(!first.0.join("lockfile").exists());
+    let first_reopened = LegacyInstanceGuard::acquire(&first.0).unwrap();
+    assert!(LegacyInstanceGuard::acquire(&second.0).is_err());
+    drop(first_reopened);
+    drop(second_guard);
+    assert!(!first.0.join("lockfile").exists());
+    assert!(!second.0.join("lockfile").exists());
 }

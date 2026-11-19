@@ -123,14 +123,26 @@ test('toolbar fits every mini shape and keeps application controls usable', asyn
         for (const expanded of [false, true]) {
             await page.setViewportSize({ width: expanded ? 360 : width, height: expanded ? 420 : height });
             await fixture.publish({ miniShape: shape, miniExpanded: expanded });
+            // Square and circle reveal the toolbar in place of the heading only while the pointer is inside.
+            const revealed = !expanded && shape !== 'bar';
+            await page.mouse.move(0, 0);
+            await expect(page.locator('nav')).toHaveCSS('opacity', revealed ? '0' : '1');
+            await page.screenshot({ path: testInfo.outputPath(`${shape}-${expanded ? 'expanded' : 'compact'}-idle.png`) });
+            await page.locator('#download').hover();
+            await expect(page.locator('nav')).toHaveCSS('opacity', '1');
             for (const button of await page.locator('nav button').all()) await expect(button).toBeVisible();
-            const layout = await page.evaluate(() => {
-                const heading = document.querySelector('.mini-heading').getBoundingClientRect();
+            const layout = await page.evaluate(circle => {
+                const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+                const heading = document.querySelector('.mini-heading');
+                const blocks = [...document.querySelectorAll('.rates > div')];
+                if (getComputedStyle(heading).visibility !== 'hidden') blocks.push(heading);
                 const controls = [...document.querySelectorAll('nav button')].map(button => button.getBoundingClientRect());
+                const radius = innerWidth / 2;
                 return { outside: controls.filter(rect => rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight).length,
-                    overlap: controls.some(rect => rect.left < heading.right && rect.right > heading.left && rect.top < heading.bottom && rect.bottom > heading.top) };
-            });
-            expect(layout).toEqual({ outside: 0, overlap: false });
+                    outsideCircle: circle && controls.some(rect => [[rect.left, rect.top], [rect.right, rect.top]].some(([x, y]) => Math.hypot(x - radius, y - radius) > radius)),
+                    overlap: controls.some(rect => blocks.some(block => hit(rect, block.getBoundingClientRect()))) };
+            }, shape === 'circle' && !expanded);
+            expect(layout).toEqual({ outside: 0, outsideCircle: false, overlap: false });
             await page.screenshot({ path: testInfo.outputPath(`${shape}-${expanded ? 'expanded' : 'compact'}.png`) });
         }
     }

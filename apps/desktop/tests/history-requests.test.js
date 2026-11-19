@@ -5,11 +5,36 @@ import { runInNewContext } from 'node:vm';
 import { createDataClient } from '../renderer/data/backend-client.js';
 import { historyRange } from '../renderer/data/history.js';
 import { minuteUsageRows } from '../renderer/data/minute-usage.js';
+import * as model from '../renderer/data/model.js';
 
 const source = await readFile(new URL('../renderer/app.js', import.meta.url), 'utf8');
 const section = (start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 const text = (strings, ...values) => strings.reduce((out, part, index) => out + part + (values[index] ?? ''), '');
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+test('导出把合法的浏览器零秒输入转为分钟，拒绝非零秒及倒序范围', async () => {
+    let query, saved;
+    const doExport = runInNewContext(section('async function doExport(', '\nasync function backup()') + ';doExport;', {
+        ...model, today: () => '2026-10-18', t: value => value, tr: text,
+        store: { exportUsage: async params => { query = params; return { records: [{ date: '2026-10-18', networkId: 'home', time: '01:59', rxBytes: '10', txBytes: '1' }] }; } },
+        data: { source: 'backend' }, getNetwork: () => null,
+        dataDownload: async (_name, body) => { saved = JSON.parse(body); return true; }, closeModal() {}, toast() {}
+    });
+    const values = { networkId: 'all', start: '2026-10-18', end: '2026-10-18', startTime: '00:00:00', endTime: '01:59:00', format: 'json', grouping: 'minute' };
+    await doExport(values);
+    assert.equal(query.fromTime, '00:00');assert.equal(query.toTime, '01:59');
+    assert.equal(saved.startTime, '00:00');assert.equal(saved.endTime, '01:59');
+    for (const [startTime, endTime] of [['01:59', '01:59'], ['23:59:00.000', '23:59:00']]) {
+        await doExport({ ...values, startTime, endTime });
+        assert.equal(query.fromTime, startTime.slice(0, 5));assert.equal(query.toTime, endTime.slice(0, 5));
+    }
+    for (const patch of [{ startTime: '00:00:01' }, { endTime: '01:59:00.001' }, { startTime: '24:00:00' },
+        { startTime: '' }, { startTime: '02:00:00' }, { end: '2026-10-19' }]) {
+        query = null;
+        await assert.rejects(doExport({ ...values, ...patch }), /Choose|请确认/);
+        assert.equal(query, null);
+    }
+});
 
 test('小时 JSON 导出传递原分组并保留后端一致的小时和分钟字段', async () => {
     const minuteRecords = [{ date: '2026-10-01', time: '08:15', hour: 8, minute: 15, networkId: 'home', rxBytes: '10', txBytes: '1' },
@@ -18,7 +43,7 @@ test('小时 JSON 导出传递原分组并保留后端一致的小时和分钟�
     let saved, query;
     const doExport = runInNewContext(section('async function doExport(', '\nasync function backup()') + ';doExport;', {
         store: { exportUsage: async params => { query = params; return { records: params.grouping === 'hour' ? hours : minuteRecords }; } },
-        validDate: () => true, validTime: () => true, today: () => '2026-10-10', t: value => value, tr: text,
+        validDate: () => true, validTime: () => true, minuteInputTime: model.minuteInputTime, today: () => '2026-10-10', t: value => value, tr: text,
         B: value => BigInt(value), data: { source: 'backend' }, getNetwork: () => null,
         dataDownload: async (_name, body) => { saved = JSON.parse(body); return true; }, closeModal() {}, toast() {}
     });

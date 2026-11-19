@@ -1,0 +1,44 @@
+/* Element defaults, typography and small utilities. */
+*, *::before, *::after { box-sizing:border-box; }
+body { margin:0; line-height:1.5; }
+button, input, select, textarea { font:inherit; color:inherit; }
+button { border:0; background:none; cursor:pointer; }
+button:disabled { cursor:not-allowed; opacity:.45; }
+button, input, select, a { -webkit-tap-highlight-color:transparent; }
+a { color:var(--accent); }
+/* :where() keeps the ring at the lowest specificity, so a component can move or replace it. */
+:where(button, input, select, a, summary, [tabindex]):focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+/* Author display values would otherwise override the hidden attribute. */
+[hidden] { display:none !important; }
+
+h1, h2, h3, p { margin:0; }
+h1 { font-size:22px; line-height:1.4; font-weight:650; }
+h2 { font-size:15px; line-height:1.5; font-weight:600; }
+h3 { font-size:14px; line-height:1.5; font-weight:600; }
+code { font-family:Consolas, monospace; font-size:var(--text-sm); }
+
+input, select, textarea { accent-color:var(--accent-fill); }
+input::placeholder, textarea::placeholder { color:var(--muted); opacity:1; }
+input:disabled, select:disabled, textarea:disabled { background:var(--surface-2); color:var(--muted); }
+select option { background:var(--surface); color:var(--ink); }
+::selection { background:var(--accent-soft); color:var(--ink); }
+:root { scrollbar-color:var(--divider) var(--surface-2); }
+
+svg.icon { width:18px; height:18px; flex-shrink:0; fill:none; stroke:currentColor; stroke-width:1.65; stroke-linecap:round; stroke-linejoin:round; }
+.small-icon svg.icon { width:16px; height:16px; }
+
+.muted { color:var(--muted); }
+.tiny { font-size:var(--text-xs); line-height:1.5; }
+.small { font-size:var(--text-sm); line-height:1.6; }
+.num { font-variant-numeric:tabular-nums; }
+.flex { display:flex; align-items:center; }
+.between { display:flex; align-items:center; justify-content:space-between; gap:var(--space-4); }
+.gap8 { gap:var(--space-2); }
+.gap12 { gap:var(--space-3); }
+.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+
+@keyframes fadein { from { opacity:0; } to { opacity:1; } }
+@keyframes slidein { from { transform:translateX(24px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after { animation:none !important; transition:none !important; }
+}

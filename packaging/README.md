@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 ## Tauri installers
 
-Run commands from the repository root; the version is read from package metadata. Version 1.3.6 CI builds and publishes only Windows x64; Windows x86/ARM64 and Linux x64/ARM64 configurations are temporarily commented out. Their native source build helpers remain available. Windows builds use target-architecture Node.js, a Rust MSVC toolchain, CMake and a C++20 compiler; Linux source builds use native toolchains and WebKitGTK 4.1. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
+Run commands from the repository root; the version is read from package metadata. Version 1.3.7 CI builds and publishes only Windows x64; Windows x86/ARM64 and Linux x64/ARM64 configurations are temporarily commented out. Their native source build helpers remain available. Windows builds use target-architecture Node.js, a Rust MSVC toolchain, CMake and a C++20 compiler; Linux source builds use native toolchains and WebKitGTK 4.1. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
 
 ```powershell
 npm ci --prefix apps/desktop --ignore-scripts
@@ -14,7 +14,7 @@ npm run dist:windows
 Windows generates only an NSIS installer by default; Linux generates deb, rpm, and AppImage packages. Portable ZIP files have been discontinued. Internal SHA-256 manifests remain part of build and CI validation, but are not Release attachments.
 
 ```text
-dist/windows/WiFiMeter-1.3.6-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.7-windows-x64-Tauri-Setup.exe
 ```
 
 Tauri uses the system WebView and bundles the Node business process and C++ collector. The Windows installer downloads WebView2 when it is missing; Linux uses system WebKitGTK 4.1. User data retains its original directory.
@@ -57,19 +57,15 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-The paused Linux CI configuration separates system installation (`tauri-linux-deps.sh system`) from verified libbpf cache reuse (`tauri-linux-deps.sh libbpf`); running the script without a mode still performs both. The libbpf cache contains only its static installation, while the pinned Tauri WebDriver uses an independent installation root. Restored entries undergo linker/ABI or Cargo receipt, executable digest, architecture, and CLI startup checks before use. Invalid entries are moved into a rejected-cache directory under `RUNNER_TEMP` and rebuilt. See the [CI matrix](../docs/PACKAGING-MATRIX.md) for cache keys and the required native validation scope. Local builds do not require these CI caches.
-
-Windows package validation extracts the package, checks every runtime resource, and launches actual WebView2 with the bundled backend. The retained Linux validation helper extracts and validates all three formats separately and runs actual WebKitGTK, but its CI product jobs are paused. See the [release notes](../docs/releases/v1.3.6.md) for current installation instructions and limitations; validation results are established by the corresponding commit's CI records.
+CI cache configuration and active/paused targets are maintained in the [CI matrix](../docs/PACKAGING-MATRIX.md). Local builds do not require those CI caches. Package verification entry points and their native prerequisites are maintained in [Testing](../docs/TESTING.md#native-host-and-installers). Installation instructions and version limits are in the [release notes](../docs/releases/v1.3.7.md).
 
 RPM validation first checks package digests, then performs strict extraction using `bsdtar` from `libarchive-tools`, accommodating packages whose archive length fields are omitted by Tauri's packaging library. Any failed digest, extraction, resource, or native UI check prevents release.
 
 Installation and system interaction validation uses separate test installations and data directories. Check installation, upgrades, shortcuts, the tray, a single startup registration, settings and backup restoration, and data integrity after exiting and reopening. Quota notifications, actual network disconnection, and download limiting require target-machine validation under actual permissions and network conditions. Uninstallation preserves user data. Record packaged WebView automation and complete installation/uninstallation validation separately; the former does not establish the latter's results.
 
-## Testing and release
+## Verification and release
 
-Shared desktop business logic is in `apps/desktop/host`; Tauri adaptation is in `apps/desktop/tauri`. Development page regression tests use headless browsers and the actual page bridge, running Node business logic and the C++ backend in isolated directories. Test doubles handle windows, dialogs and system settings; Electron is not launched. The active release requires both Windows browser shards and Windows x64 backend, ETW/EStats, Rust and packaged WebView2 checks. Release validation requires exactly one Windows x64 NSIS installer and its internal SHA-256 manifest, then verifies the public download in GitHub Actions. See the [CI and release matrix](../docs/PACKAGING-MATRIX.md).
-
-Local work should reuse existing browsers, dependencies, and build caches. Store test screenshots, logs, and temporary data in the project's `del` directory; archive files by moving them only. Compare performance using the same test scope and actual CI durations. Development browser results do not establish native WebView validation.
+Follow [Testing](../docs/TESTING.md) for checks, isolated profiles, diagnostics, and evidence limits. The [CI and release matrix](../docs/PACKAGING-MATRIX.md) owns publication gates and artifact counts. Development, review, and decision records follow [Development](../docs/DEVELOPMENT.md).
 
 ## Icon sources and validation
 

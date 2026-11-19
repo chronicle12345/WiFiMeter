@@ -375,29 +375,40 @@ std::vector<ProxyEstimatedUsage> estimateProxyUsage(const std::string& day,
     std::vector<ProxyEstimatedUsage> result;
     for (const auto& proxy : proxyBytes)
     {
-        std::uint64_t total = 0;
+        std::uint64_t total = 0, totalRx = 0, totalTx = 0;
         bool overflow = false;
         std::map<std::string, ProxyClientObservation> weights;
+        const auto add = [&overflow](std::uint64_t& sum, std::uint64_t value) {
+            if (value > std::numeric_limits<std::uint64_t>::max() - sum) overflow = true;
+            else sum += value;
+        };
         for (const auto& observation : observations)
         {
             if (pathKey(observation.proxyAppId) != pathKey(proxy.proxyAppId)) continue;
-            if (observation.connections > std::numeric_limits<std::uint64_t>::max() - total)
-            {
-                overflow = true;
-                break;
-            }
-            total += observation.connections;
+            add(total, observation.connections);
+            add(totalRx, observation.rxWeight);
+            add(totalTx, observation.txWeight);
+            if (overflow) break;
             auto [entry, inserted] = weights.try_emplace(pathKey(observation.appId), observation);
-            if (!inserted) entry->second.connections += observation.connections;
+            if (inserted) continue;
+            entry->second.connections += observation.connections;
+            entry->second.rxWeight += observation.rxWeight;
+            entry->second.txWeight += observation.txWeight;
         }
         auto remainingRx = proxy.rxBytes, remainingTx = proxy.txBytes;
-        if (total != 0 && !overflow)
+        if ((total != 0 || totalRx != 0 || totalTx != 0) && !overflow)
         {
+            // 下载和上传各用自己的回环字节权重；连接数相同的客户端不再得到相同的收发比例。
+            const auto share = [](std::uint64_t bytes, std::uint64_t measured, std::uint64_t measuredTotal,
+                std::uint64_t connections, std::uint64_t connectionTotal) -> std::uint64_t {
+                if (measuredTotal != 0) return proportionalBytes(bytes, measured, measuredTotal);
+                return connectionTotal != 0 ? proportionalBytes(bytes, connections, connectionTotal) : 0;
+            };
             for (const auto& [key, observation] : weights)
             {
-                if (!observation.connections || !knownApp(observation.appId) || key == pathKey(proxy.proxyAppId)) continue;
-                const auto rx = proportionalBytes(proxy.rxBytes, observation.connections, total);
-                const auto tx = proportionalBytes(proxy.txBytes, observation.connections, total);
+                if (!knownApp(observation.appId) || key == pathKey(proxy.proxyAppId)) continue;
+                const auto rx = share(proxy.rxBytes, observation.rxWeight, totalRx, observation.connections, total);
+                const auto tx = share(proxy.txBytes, observation.txWeight, totalTx, observation.connections, total);
                 if (rx == 0 && tx == 0) continue;
                 result.push_back({day, proxy.proxyAppId, proxy.proxyName, observation.appId, observation.name, rx, tx, true, false});
                 remainingRx -= rx;

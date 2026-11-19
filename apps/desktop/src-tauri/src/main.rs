@@ -128,14 +128,19 @@ fn main() {
     }
     let host = Host::new();
     let setup_host = host.clone();
-    let result = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+    let mut builder = tauri::Builder::default();
+    // The plugin shares one identifier across profiles. Isolated background checks
+    // retain host::start's profile lock without activating an existing user instance.
+    if !native::isolated_background_test() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();
             }
-        }))
+        }));
+    }
+    let result = builder
         .manage(host)
         .invoke_handler(tauri::generate_handler![desktop_request])
         .setup(move |app| {
