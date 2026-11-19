@@ -27,10 +27,42 @@ function bitmapImage(bytes, { width, height }) {
     return { isEmpty: () => false, toDataURL: () => 'data:image/png;base64,' + png.toString('base64') };
 }
 
+// Business-host commands use a separate substitute from native window/icon capabilities.
+// Keep the actual request validation, records and IPC while all policies live in this isolate's memory.
+export function createBrowserAppControlRunner() {
+    const states = new Map();
+    return async (_executable, args) => {
+        const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
+        const match = /FromBase64String\('([A-Za-z0-9+/=]+)'\)/.exec(script);
+        if (!match) throw Error('Unsupported application-control command in browser fixture.');
+        const data = JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
+        const key = data.Path.toLowerCase();
+        const state = { ...(states.get(key) || {
+            Blocked: false, InboundBlocked: false, OutboundBlocked: false, FirewallRuleCount: 0,
+            QosSupported: true, ExactPathQosVerified: true, Throttled: false, UploadKbps: null,
+            DownloadSupported: true, DownloadThrottled: false, DownloadKbps: null,
+            FirewallError: null, FirewallErrorCode: null, QosError: null, QosErrorCode: null,
+            DownloadError: null, DownloadErrorCode: null, Scope: 'BrowserFixture', Warning: null
+        }), Path: data.Path };
+        if (data.Action === 'Block' || data.Action === 'Unblock') {
+            state.Blocked = state.InboundBlocked = state.OutboundBlocked = data.Action === 'Block';
+            state.FirewallRuleCount = state.Blocked ? 2 : 0;
+        } else if (data.Action === 'Throttle') {
+            if (data.UploadKbps > 0) { state.Throttled = true; state.UploadKbps = data.UploadKbps; }
+            if (data.DownloadKbps > 0) { state.DownloadThrottled = true; state.DownloadKbps = data.DownloadKbps; }
+        } else if (data.Action === 'Unthrottle') {
+            if (data.Direction !== 'download') { state.Throttled = false; state.UploadKbps = null; }
+            if (data.Direction !== 'upload') { state.DownloadThrottled = false; state.DownloadKbps = null; }
+        } else if (data.Action !== 'Read') throw Error('Unsupported application-control action in browser fixture.');
+        states.set(key, state);
+        return { stdout: JSON.stringify({ Status: 'Succeeded', Path: data.Path, State: state }), stderr: '' };
+    };
+}
+
 export const desktop = { async launch({ env = process.env } = {}) {
     const testEnv = { ...env, WIFIMETER_BACKGROUND_TEST: '1', WIFIMETER_TEST_ISOLATION: '1' };
     if (!testEnv.WIFIMETER_USER_DATA) throw Error('浏览器测试必须提供独立数据目录。');
-    const isolated = createIsolatedHost({ root, env: testEnv });
+    const isolated = createIsolatedHost({ root, env: testEnv, appControlRunner: createBrowserAppControlRunner() });
     const effects = new Set(), pages = new Map(), windows = new Set(), responses = new Map(), events = new Map();
     let browser, context, adapter, origin, requestId = 1, closed = false, quitResolve;
     const quit = new Promise(resolve => { quitResolve = resolve; });

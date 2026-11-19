@@ -58,7 +58,7 @@ Actual Windows ETW/EStats and Linux eBPF checks are documented in [Windows captu
 
 ## Isolation, diagnostics, and evidence
 
-Use synthetic fixtures and isolated installations and data directories. Background checks disable visible windows, native dialogs, and notifications. Elevated capture helpers remain separate from the ordinary application and backend. Do not run tests against a personal database or alter personal firewall, quota, startup, or network settings without the appropriate isolated setup.
+Use synthetic fixtures and isolated installations and data directories. Background checks disable visible windows, native dialogs, and notifications. Packaged tests skip the global single-instance wake-up plugin only with `WIFIMETER_BACKGROUND_TEST=1`, `WIFIMETER_TEST_ISOLATION=1` and a nonempty `WIFIMETER_USER_DATA`. Windows still locks each profile; normal launches retain the plugin. Elevated capture helpers remain separate from the ordinary application and backend. Do not run tests against a personal database or alter personal firewall, quota, startup, or network settings without the appropriate isolated setup.
 
 Reuse existing browsers, dependencies, and valid build caches. Keep local screenshots, logs, and temporary data in ignored `del/` or an explicitly isolated tool directory; CI uses `RUNNER_TEMP`. Move files when archiving local diagnostics. Keep credentials and private network details out of fixtures and published evidence.
 

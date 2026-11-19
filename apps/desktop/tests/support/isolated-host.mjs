@@ -7,7 +7,7 @@ import childProcess from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 // 每个测试独立加载共享宿主模块，避免全局夹具、环境变量和定时器跨测试泄漏。
-export function createIsolatedHost({ root, env }) {
+export function createIsolatedHost({ root, env, appControlRunner }) {
     const modules = new Map(), timers = new Set(), children = new Set(), childClosures = new Map();
     const runtimeProcess = Object.assign(new EventEmitter(), {
         env: { ...env }, platform: process.platform, arch: process.arch, pid: process.pid,
@@ -54,6 +54,10 @@ export function createIsolatedHost({ root, env }) {
             filename, importModuleDynamically: specifier => import(specifier.startsWith('.') ? new URL(specifier, pathToFileURL(filename)).href : specifier)
         });
         script.runInContext(context)(require, module, module.exports, filename, path.dirname(filename));
+        if (appControlRunner && filename === path.join(root, 'apps/desktop/host/app-control.cjs')) {
+            const create = module.exports.createAppControl;
+            module.exports.createAppControl = (options = {}) => create({ ...options, runner: appControlRunner });
+        }
         return module.exports;
     }
     return { load, context, process: runtimeProcess, children,
