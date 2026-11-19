@@ -6,14 +6,16 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+## [1.3.7] - 2026-11-20
+
 - Accept whole-minute browser time values that include zero seconds in custom date filters and exports, normalizing them to minute precision before validation and queries.
 - Group the date-range dialog by start and end, align date/time inputs and actions, and adapt its layout and error message to narrow windows and both themes.
 - Refresh the main window with a neutral palette and one blue accent, a shared 36 px control height, consistent text sizes, spacing and corner radii, and aligned settings rows, tables and dialogs in both themes. The floating window's light and dark palettes follow the new colors; its indigo palette and shape are unchanged.
 - Draw the usage chart at its container's actual size, so bars and labels stay sharp and fill the card at every window size.
 - Show the autosave retry button only after a save fails in the network drawer and the proxy settings.
-- Simplify the applications page: one filter row, the total beside its label, and a full-width table with the rank next to the application and usage share on one line. Proxy estimate settings now live only under Settings > Proxy. Explanatory notes are removed or moved to tooltips, and the source selector explains that proxy estimates need whole-day ranges.
+- Simplify the applications page with one filter row, the total beside its label, and a full-width table that keeps each rank next to the application and each usage share on one line. Manage proxy estimates under Settings > Proxy.
 - Add a close button to finished update notices (new version, downloaded, failed). A closed notice returns when the update status changes; Settings > About still shows it.
-- Split proxy estimates by the bytes each client actually exchanged with the proxy, separately for download and upload, instead of giving every client the same download/upload ratio from connection counts. Connection counts remain the fallback when no byte evidence exists. Estimates are now also available per minute, so custom time ranges and minute or hour grouping can include them.
+- Allocate historical proxy estimates using the observed bytes each client exchanged with the proxy. Calculate download and upload separately, using connection counts when byte evidence for that direction is unavailable. Minute estimates support custom time ranges and minute or hour grouping.
 - Add a Rules page to the sidebar for application network restrictions: the saved restriction records and the program picker move there from the applications page.
 - Tidy the square and circle floating windows: they show only the rates, and the toolbar appears in place of the title while the pointer or keyboard focus is inside, instead of crowding six buttons along the bottom edge.
 - Add a Logs page to the sidebar. The desktop host records leveled entries (debug, info, warning, error) to a size-limited file in the data directory; the page filters by level, searches, changes the recording level, exports and clears the log.
@@ -26,9 +28,9 @@ Changes are listed by release.
 - 主窗口改用中性色加单一蓝色强调色，统一 36 px 控件高度、字号、间距和圆角，并对齐明暗主题下的设置行、表格和弹窗。悬浮窗的浅色和深色配色随之更新，靛蓝配色与外形不变。
 - 用量图表按容器实际尺寸绘制，各种窗口大小下柱形和标签保持清晰并填满卡片。
 - 网络详情和代理设置中的自动保存“重试”按钮仅在保存失败后显示。
-- 精简应用流量页：筛选合并为一行，总用量与标签并排，表格铺满面板，排名紧邻应用，占比与进度条同行显示。代理估算设置只保留在“设置 > 代理”。说明性小字删除或改为悬停提示，来源选择器会提示代理估算需要整天的时间范围。
+- 精简应用流量页，将筛选合并为一行，总用量与标签并排，表格铺满面板，排名紧邻应用，占比与进度条同行。代理估算在设置 > 代理中管理。
 - “发现新版本”“已下载”“更新失败”这类更新提示可以点右上角关闭；更新状态变化后会再次出现，“设置 > 关于更新”中始终可见。
-- 代理估算改为按各客户端与代理之间实际收发的字节分别分配下载和上传，不再让所有客户端按连接数得到相同的收发比例；没有字节证据时才退回按连接数分配。估算同时支持分钟级，自定义起止时间以及按分钟、小时分组时也能包含代理估算。
+- 历史代理估算按各客户端与代理之间观测到的字节数分别分配下载和上传。某一方向缺少字节记录时，按连接数分配该方向的流量。分钟估算支持自定义时段，以及按分钟或小时分组。
 - 侧边栏新增“规则”页，用于设置应用联网限制：应用限制记录和选择程序入口从应用流量页移到这里。
 - 整理方形和圆形悬浮窗：平时只显示速度，鼠标移入或键盘聚焦时工具栏出现在标题位置，不再把六个按钮挤在底部边缘。
 - 侧边栏新增“日志”页。桌面宿主按级别（调试、信息、警告、错误）把运行记录写入数据目录下有大小上限的文件；页面可以按级别筛选、搜索、调整记录级别、导出和清空。

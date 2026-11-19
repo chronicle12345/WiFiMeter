@@ -4,7 +4,7 @@ English | [简体中文](PACKAGING-MATRIX.zh-CN.md)
 
 ## Active Tauri release target
 
-Version 1.3.6 builds and publishes only Windows x64. Other product and Linux browser entries are commented out; their source helpers remain available. Installation and version-specific limits are in the [release notes](releases/v1.3.6.md) and [Releases](https://github.com/chronicle12345/WiFiMeter/releases). Historical performance and artifact records apply only to their versions.
+Version 1.3.7 builds and publishes only Windows x64. Other product and Linux browser entries are commented out; their source helpers remain available. Installation and version-specific limits are in the [release notes](releases/v1.3.7.md) and [Releases](https://github.com/chronicle12345/WiFiMeter/releases). Historical performance and artifact records apply only to their versions.
 
 | System and architecture | Artifacts | Current CI status |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Before creating or pushing a `v<version>` tag:
 1. Synchronize project versions in root/desktop `package.json`, Tauri configuration, Cargo metadata, and lockfiles. Do not change dependency versions to match the product. CMake reads the root version; verify the compiled backend's `--version` against desktop metadata.
 2. Update both README badges, release links, product/install/upgrade/platform limits, and `CHANGELOG.md` in the same change. Update the owning guides and affected implemented Notes. Review and register bilingual pairs, then pass repository documentation checks.
 3. Write `docs/releases/v<version>.md` with `## English` before `## 中文`, matching features, fixes, installation, and limits. Use that file as the Release body. Keep unreleased changes under Unreleased.
-4. Require every active CI check for the tagged commit. Reuse only verified same-commit artifacts. Names, sizes, checksums, timings, and validation claims come from actual artifacts and runs; 1.3.6 has one public Windows x64 installer.
+4. Require every active CI check for the tagged commit. Reuse only verified same-commit artifacts. Names, sizes, checksums, timings, and validation claims come from actual artifacts and runs; 1.3.7 has one public Windows x64 installer.
 5. Validate the installer and public download in GitHub Actions. Reuse caches and query necessary metadata locally. Record complete installation/uninstallation, driver loading, and download-limit throughput separately on target machines.
 
 ## Local validation
