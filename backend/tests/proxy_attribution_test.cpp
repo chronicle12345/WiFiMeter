@@ -203,6 +203,40 @@ void explainsMissingIdentitiesWithoutInventingClients()
     WIFIMETER_CHECK(noLoopback.detail.find("TUN") != std::string::npos);
 }
 
+void byteWeightsSplitEachDirectionIndependently()
+{
+    auto a = weight("p", "a", 1), b = weight("p", "b", 1);
+    a.rxWeight = 900; a.txWeight = 10;
+    b.rxWeight = 100; b.txWeight = 90;
+    const auto rows = estimateProxyUsage("2026-10-01", {{"p", "Proxy", 1000, 100}}, {a, b});
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t(2));
+    if (rows.size() != 2) return;
+    WIFIMETER_CHECK_EQ(rows[0].rxBytes, std::uint64_t(900));
+    WIFIMETER_CHECK_EQ(rows[0].txBytes, std::uint64_t(10));
+    WIFIMETER_CHECK_EQ(rows[1].rxBytes, std::uint64_t(100));
+    WIFIMETER_CHECK_EQ(rows[1].txBytes, std::uint64_t(90));
+
+    // 只有上传方向有字节证据时，下载退回按连接数分配。
+    a.rxWeight = b.rxWeight = 0;
+    b.connections = 3;
+    const auto mixed = estimateProxyUsage("2026-10-01", {{"p", "Proxy", 400, 100}}, {a, b});
+    WIFIMETER_CHECK_EQ(mixed.size(), std::size_t(2));
+    if (mixed.size() != 2) return;
+    WIFIMETER_CHECK_EQ(mixed[0].rxBytes, std::uint64_t(100));
+    WIFIMETER_CHECK_EQ(mixed[0].txBytes, std::uint64_t(10));
+    WIFIMETER_CHECK_EQ(mixed[1].rxBytes, std::uint64_t(300));
+    WIFIMETER_CHECK_EQ(mixed[1].txBytes, std::uint64_t(90));
+
+    // 没有连接数、只有字节权重的客户端同样参与分配，自身回环不计入客户端。
+    auto only = weight("p", "c", 0), self = weight("p", "p", 0);
+    only.rxWeight = 1; self.rxWeight = 1;
+    const auto bytesOnly = estimateProxyUsage("2026-10-01", {{"p", "Proxy", 10, 0}}, {only, self});
+    WIFIMETER_CHECK_EQ(bytesOnly.size(), std::size_t(2));
+    if (bytesOnly.size() != 2) return;
+    WIFIMETER_CHECK_EQ(bytesOnly[0].rxBytes, std::uint64_t(5));
+    WIFIMETER_CHECK(bytesOnly[1].unattributed);
+}
+
 void mergesClientWeightsAndKeepsUnknownShares()
 {
     const auto rows = estimateProxyUsage("2026-10-01", {{"p", "Proxy", 11, 5}},
@@ -291,6 +325,7 @@ int main()
     exposesClientsWhenOnlyTheProxyPathIsUnreadable();
     explainsMissingIdentitiesWithoutInventingClients();
     mergesClientWeightsAndKeepsUnknownShares();
+    byteWeightsSplitEachDirectionIndependently();
     conservesFullWidthByteCounts();
     samplesTheNativeApiReadOnly();
     return WIFIMETER_REPORT();

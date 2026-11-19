@@ -33,14 +33,17 @@ Version 1.3.6 publishes a Windows x64 installer. Linux and other Windows archite
 
 ### History, quotas and data
 
-- Query custom local date/time ranges and group application usage by minute, hour, day or month. Search, sort and export the selected records. On Windows, choose native history or include daily proxy-attribution estimates for complete date ranges.
+- Query custom local date/time ranges and group application usage by minute, hour, day or month. Search, sort and export the selected records. On Windows, choose native history or include proxy-attribution estimates for complete dates or selected minute ranges, with matching application details.
 - Set individual network quotas and a combined Wi-Fi quota, with daily, monthly or cumulative periods, multiple warning thresholds and optional Wi-Fi disconnection. The combined quota accounts only for Wi-Fi usage.
 - Export CSV/JSON, create complete backups and configure history retention. Existing file-based Windows records can be imported through the migration tools.
+
+- WebDAV cloud backups offer content and date selection, per-device retention, automatic intervals and cross-device restoration with a complete local restore point. See [backup recovery](docs/MIGRATION.md#webdav-cloud-backups).
 
 ### Desktop tools
 
 - Use the Windows floating window for combined live speeds and recent application usage. Choose its shape, pin its position, keep it visible, filter proxy traffic or enable left/right edge hiding. See the [floating-window guide](docs/FLOATING_WINDOW.md).
 - Block network access for Windows applications or set upload and download limits independently. Download limits apply while WiFiMeter runs; for proxied transfers, apply limits to the proxy application.
+- Manage saved application restrictions on the Rules page; filter, search, export and clear leveled runtime entries on the Logs page.
 - Use the English/Chinese interface, tray mode and login startup for daily monitoring.
 
 ## Screenshots

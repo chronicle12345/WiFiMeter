@@ -196,7 +196,7 @@ $v4[6]=0; $v4[7]=1; $fragment = [WiFiMeter.DownloadControl.PacketKey]::Parse($v4
     assert.equal(result.Fragment, null);
 });
 
-test('actual Windows TCP and UDP owner tables include sockets opened before capture', windows, () => {
+test('actual Windows TCP and UDP owner tables include bound IPv4 and IPv6 sockets before capture', windows, () => {
     const result = JSON.parse(powershell(`
 Add-Type -Path ${literal(source)}
 $server = New-Object WiFiMeter.DownloadControl.Server
@@ -205,30 +205,51 @@ $read = $server.GetType().GetMethod('ReadTable', $flags)
 $expected = (Get-Process -Id $PID).Path
 $output = @()
 foreach ($family in @([Net.Sockets.AddressFamily]::InterNetwork, [Net.Sockets.AddressFamily]::InterNetworkV6)) {
-    $ip = if ($family -eq [Net.Sockets.AddressFamily]::InterNetwork) { [Net.IPAddress]::Loopback } else { [Net.IPAddress]::IPv6Loopback }
+    $ipv6 = $family -eq [Net.Sockets.AddressFamily]::InterNetworkV6
+    $ip = if ($ipv6) { [Net.IPAddress]::IPv6Loopback } else { [Net.IPAddress]::Loopback }
+    $remote = if ($ipv6) { [Net.IPAddress]::IPv6Any } else { [Net.IPAddress]::Any }
     $listener = New-Object Net.Sockets.TcpListener($ip,0)
-    $client = New-Object Net.Sockets.TcpClient($family)
     $udp = New-Object Net.Sockets.UdpClient($family)
-    $peer = $null
     try {
-        $listener.Start(); $client.Connect($ip, $listener.LocalEndpoint.Port); $peer=$listener.AcceptTcpClient()
+        # Listening sockets exercise the real IPv6 owner table without requiring outbound IPv6 access.
+        $listener.Start()
         $udp.Client.Bind((New-Object Net.IPEndPoint($ip,0)))
         $index = New-Object WiFiMeter.DownloadControl.EndpointIndex
         $processes = New-Object 'Collections.Generic.Dictionary[uint32,string]'
-        $ipv6 = $family -eq [Net.Sockets.AddressFamily]::InterNetworkV6
         $null=$read.Invoke($server,@($index.PSObject.BaseObject,$true,$ipv6,$processes.PSObject.BaseObject)); $null=$read.Invoke($server,@($index.PSObject.BaseObject,$false,$ipv6,$processes.PSObject.BaseObject))
-        $tcpKey=New-Object WiFiMeter.DownloadControl.PacketKey; $tcpKey.Protocol=6; $tcpKey.Local=$ip.ToString(); $tcpKey.Remote=$ip.ToString(); $tcpKey.LocalPort=$client.Client.LocalEndPoint.Port; $tcpKey.RemotePort=$listener.LocalEndpoint.Port
+        $tcpKey=New-Object WiFiMeter.DownloadControl.PacketKey; $tcpKey.Protocol=6; $tcpKey.Local=$ip.ToString(); $tcpKey.Remote=$remote.ToString(); $tcpKey.LocalPort=$listener.LocalEndpoint.Port; $tcpKey.RemotePort=0
         $udpKey=New-Object WiFiMeter.DownloadControl.PacketKey; $udpKey.Protocol=17; $udpKey.Local=$ip.ToString(); $udpKey.Remote=$ip.ToString(); $udpKey.LocalPort=$udp.Client.LocalEndPoint.Port; $udpKey.RemotePort=53
         $output += [pscustomobject]@{ IPv6=$ipv6; TcpOwner=$index.Find($tcpKey); UdpOwner=$index.Find($udpKey); Expected=$expected }
-    } finally { if ($peer) { $peer.Dispose() }; $client.Dispose(); $udp.Dispose(); $listener.Stop() }
+    } finally { $udp.Dispose(); $listener.Stop() }
 }
 $output | ConvertTo-Json -Compress
 `));
-    assert.equal(result.length, 2);
+    assert.deepEqual(result.map(row => row.IPv6), [false, true]);
     for (const row of result) {
         assert.equal(row.TcpOwner?.toLowerCase(), row.Expected.toLowerCase());
         assert.equal(row.UdpOwner?.toLowerCase(), row.Expected.toLowerCase());
     }
+});
+
+test('actual Windows TCP owner table includes an established connection opened before capture', windows, () => {
+    const result = JSON.parse(powershell(`
+Add-Type -Path ${literal(source)}
+$server = New-Object WiFiMeter.DownloadControl.Server
+$read = $server.GetType().GetMethod('ReadTable', [Reflection.BindingFlags]'NonPublic,Instance')
+$ip = [Net.IPAddress]::Loopback
+$listener = New-Object Net.Sockets.TcpListener($ip,0)
+$client = New-Object Net.Sockets.TcpClient([Net.Sockets.AddressFamily]::InterNetwork)
+$peer = $null
+try {
+    $listener.Start(); $client.Connect($ip,$listener.LocalEndpoint.Port); $peer=$listener.AcceptTcpClient()
+    $index = New-Object WiFiMeter.DownloadControl.EndpointIndex
+    $processes = New-Object 'Collections.Generic.Dictionary[uint32,string]'
+    $null=$read.Invoke($server,@($index.PSObject.BaseObject,$true,$false,$processes.PSObject.BaseObject))
+    $key=New-Object WiFiMeter.DownloadControl.PacketKey; $key.Protocol=6; $key.Local=$ip.ToString(); $key.Remote=$ip.ToString(); $key.LocalPort=$client.Client.LocalEndPoint.Port; $key.RemotePort=$listener.LocalEndpoint.Port
+    [pscustomobject]@{ Owner=$index.Find($key); Expected=(Get-Process -Id $PID).Path } | ConvertTo-Json -Compress
+} finally { if ($peer) { $peer.Dispose() }; $client.Dispose(); $listener.Stop() }
+`));
+    assert.equal(result.Owner?.toLowerCase(), result.Expected.toLowerCase());
 });
 
 test('the bundled WinDivert DLL compiles capture filters and uses the expected flow address ABI', windowsWithWinDivert, () => {

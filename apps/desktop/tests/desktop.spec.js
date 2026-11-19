@@ -115,7 +115,36 @@ test('四个页面展示真实采集结果，筛选、详情与键盘操作可�
     await expect(page.locator('.history-stat').first()).toContainText('3.6');
     await navigate('设置');
     await expect(page.locator('.settings-aside')).toHaveCount(0);
-    await expect(page.locator('[data-action="settings-category"]')).toHaveCount(7);
+    await expect(page.locator('[data-action="settings-category"]')).toHaveCount(8);
+});
+
+test('日志页显示宿主记录，支持级别筛选、搜索、调整记录级别、导出和清空', async ({}, testInfo) => {
+    await page.locator('.nav [data-page="logs"]').click();
+    await expect(page).toHaveTitle(/运行日志/);
+    const rows = page.locator('.log-table tbody tr');
+    await expect(rows.filter({ hasText: '启动后端' })).toHaveCount(1);
+    await page.evaluate(() => Promise.all([window.desktop.logs.write('error', 'fixture failure <b>'), window.desktop.logs.write('debug', 'fixture detail')]));
+    await page.locator('[data-action="logs-refresh"]').click();
+    await expect(rows.first()).toContainText('fixture failure <b>');
+    await expect(page.locator('#logListRegion')).not.toContainText('fixture detail');
+    await page.screenshot({ path: testInfo.outputPath('logs.png'), fullPage: true });
+    await page.locator('#logMinimum').selectOption('error');
+    await expect(rows).toHaveCount(1);
+    await page.locator('#logMinimum').selectOption('debug');
+    await page.locator('#logLevel').selectOption('debug');
+    await page.evaluate(() => window.desktop.logs.write('debug', 'fixture detail'));
+    await page.locator('#logSearch').fill('fixture detail');
+    await expect(rows).toHaveCount(1);
+    await expect(page.locator('#logSearch')).toBeFocused();
+    const file = path.join(profile, 'export.log');
+    await saveDialog(file);
+    await page.locator('[data-action="logs-export"]').click();
+    await expect(page.locator('.toast').last()).toContainText('日志已导出');
+    expect(await readFile(file, 'utf8')).toContain('ERROR [renderer] fixture failure <b>');
+    await page.locator('[data-action="logs-clear"]').click();
+    await page.locator('.modal [data-action="confirm"]').click();
+    await expect(page.locator('#logListRegion')).toContainText('没有符合条件的日志');
+    await expect(page.locator('#logLevel')).toHaveValue('debug');
 });
 
 test('总览保留用量、连接、趋势与额度，网络明细只在网络页展示', async () => {
@@ -481,7 +510,7 @@ test('导出、备份与恢复都通过真实数据完成', async () => {
     await saveDialog(backupFile);
     await navigate('设置');
     await page.locator('[data-category="data"]').click();
-    await page.getByRole('button', { name: '备份' }).click();
+    await page.getByRole('button', { name: '备份', exact: true }).click();
     await expectToast('已导出完整数据备份');
     const backup = JSON.parse(await readFile(backupFile, 'utf8'));
     expect(backup.backupType).toBe('wifimeter-backend-backup');

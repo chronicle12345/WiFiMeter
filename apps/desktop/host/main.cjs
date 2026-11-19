@@ -12,6 +12,8 @@ const { createWindowControls } = require('./window-controls.cjs');
 const { createAppControl } = require('./app-control.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
+const { createLogStore, captureConsole, validateLogLevel } = require('./logs.cjs');
+const { createCloudBackup } = require('./cloud-backup.cjs');
 const timers = require('node:timers');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
@@ -20,7 +22,14 @@ let window;
 let backend;
 let system;
 let windowControls;
+let cloud;
+let restoringBackup = false;
+let restoreFlight = null;
+const backendMutations = new Set();
+let drainAppControls = async () => {};
+const READ_ONLY_METHODS = ['hello', 'snapshot', 'exportUsage', 'backup', 'migrationStatus'];
 let quitting = false;
+let closingForQuit = false;
 let installingUpdate = false;
 let startup;
 let migrationStatus = { found: false };
@@ -44,7 +53,7 @@ function cancelRecoveryTimers() {
 
 function canRecoverCollector() {
     return startupSettled && backend && !backend.shutdownPending && !migrationBusy && !migrationStatus.error
-        && !installingUpdate && !quitting && !quitFlight && !system?.quitting;
+        && !installingUpdate && !restoringBackup && !quitting && !closingForQuit && !quitFlight && !system?.quitting;
 }
 
 function publishCollectorStatus(collector, message = '') {
@@ -115,8 +124,14 @@ async function requestBackend(method, params = {}, options) {
     return backend.request(method, params, options);
 }
 
+async function trackMutation(work) {
+    const operation = work();
+    backendMutations.add(operation);
+    try { return await operation; } finally { backendMutations.delete(operation); }
+}
+
 async function promptForAppCollection() {
-    if (migrationStatus.error || migrationBusy || installingUpdate || quitting || system?.quitting) return;
+    if (restoringBackup || migrationStatus.error || migrationBusy || installingUpdate || quitting || closingForQuit || system?.quitting) return;
     const preferences = await windowControls.read();
     if (preferences.promptAppCollection === false) return;
     const status = await requestBackend('hello');
@@ -130,8 +145,8 @@ async function promptForAppCollection() {
         buttons: chinese ? ['开启应用采集', '本次不开启'] : ['Enable collection', 'Not this time'],
         defaultId: 1, cancelId: 1
     });
-    if (choice.response === 0 && !migrationBusy && !migrationStatus.error && !installingUpdate && !quitting && !system?.quitting) {
-        await requestBackend('setAppCollection', { enabled: true });
+    if (choice.response === 0 && !restoringBackup && !migrationBusy && !migrationStatus.error && !installingUpdate && !quitting && !closingForQuit && !system?.quitting) {
+        await trackMutation(() => requestBackend('setAppCollection', { enabled: true }));
     }
 }
 
@@ -152,6 +167,9 @@ if (process.env.WIFIMETER_TEST_ISOLATION === '1') {
 
 const backgroundTest = process.env.WIFIMETER_BACKGROUND_TEST === '1' && Boolean(process.env.WIFIMETER_USER_DATA);
 app.whenReady().then(async () => {
+    const logs = createLogStore({ directory: path.join(app.getPath('userData'), 'logs') });
+    captureConsole(logs);
+    console.log(`[app] ${productName} ${app.getVersion()} 启动`);
     window = new BrowserWindow({
         width: 1280, height: 900, minWidth: 900, minHeight: 650,
         ...(backgroundTest ? { show: false, x: -32000, y: -32000, skipTaskbar: true, focusable: false } : {}),
@@ -196,7 +214,7 @@ app.whenReady().then(async () => {
     windowControls = createWindowControls({ BrowserWindow, screen, ipcMain, dialog,
         userData: app.getPath('userData'), getWindow: () => window,
         hideToTray: () => system.hideToTray(), requestQuit: () => app.quit(),
-        isQuitting: () => quitting || system.quitting,
+        isQuitting: () => quitting || closingForQuit || system.quitting, assertWritable,
         requestMiniSnapshot: params => requestBackend('snapshot', params),
         logger: message => console.log(`[window-controls] ${message}`) });
     await windowControls.read();
@@ -267,6 +285,58 @@ app.whenReady().then(async () => {
     const trusted = event => event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
         && event.senderFrame.url.split(/[?#]/)[0] === pageURL;
 
+    // 设置改动或恢复后立刻作用于系统，并把实际生效的结果一并返回。页面请求和云备份恢复共用。
+    async function callBackend(method, params, { backendOnly = false } = {}) {
+        if (method === 'restore' && !backendOnly && (params?.backup?.hostSettings !== undefined || params?.backup?.logs !== undefined)) {
+            return cloud.restoreDocument(params.backup);
+        }
+        const result = await requestBackend(method, params, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
+        if (['updateSettings', 'restore'].includes(method) && result?.settings) {
+            speedUnit = result.settings.speedUnit || 'auto';
+            const explicitAutoStart = method === 'restore' || Object.prototype.hasOwnProperty.call(params?.settings ?? {}, 'autoStart');
+            if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
+                if (explicitAutoStart) preserveUnmatchedLoginItem = false;
+                result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
+            }
+        }
+        return result;
+    }
+
+    function assertWritable() {
+        if (restoringBackup) throw Error('正在恢复备份，暂时不能修改数据。');
+        if (quitting || closingForQuit || installingUpdate) throw Error('The application is stopping for an update or exit.');
+    }
+    async function trackedBackend(method, params) {
+        if (!READ_ONLY_METHODS.includes(method)) assertWritable();
+        if (READ_ONLY_METHODS.includes(method) || (method === 'restore' && (params?.backup?.hostSettings !== undefined || params?.backup?.logs !== undefined))) {
+            return callBackend(method, params);
+        }
+        return trackMutation(() => callBackend(method, params));
+    }
+    async function reserveRestore(work) {
+        await startup;
+        const assertReady = () => {
+            if (quitting || quitFlight || system?.quitting || migrationBusy || installingUpdate || recoveryFlight || collectorRecoveryNeeded) {
+                throw Error('请等待退出确认、数据导入、更新或采集恢复完成后重试恢复备份。');
+            }
+        };
+        assertReady();
+        if (restoringBackup) throw Error('正在恢复备份，暂时不能修改数据。');
+        restoringBackup = true;
+        cancelRecoveryTimers();
+        const operation = Promise.resolve().then(async () => {
+            try {
+                // Drain work already admitted before taking a consistent restore point.
+                await Promise.allSettled([...backendMutations]);
+                await controls.waitForIdle();
+                assertReady();
+                return await work();
+            } finally { restoringBackup = false; scheduleCollectorRecovery(); }
+        });
+        restoreFlight = operation;
+        try { return await operation; } finally { if (restoreFlight === operation) restoreFlight = null; }
+    }
+
     // 失败以结果信封返回而不是抛出：跨进程调用只保留错误消息，会丢掉错误码，
     // 而界面需要靠错误码决定提示文案。
     ipcMain.handle('backend:request', async (event, payload) => {
@@ -276,42 +346,73 @@ app.whenReady().then(async () => {
         try {
             await startup;
             if (installingUpdate) throw Error('The application is stopping for an update.');
+            if (closingForQuit && !READ_ONLY_METHODS.includes(method)) throw Error('The application is stopping for an update or exit.');
+            if (restoringBackup && !READ_ONLY_METHODS.includes(method)) throw Error('正在恢复备份，暂时不能修改数据。');
             if (migrationBusy && !['hello', 'snapshot', 'exportUsage', 'backup', 'migrationStatus'].includes(method)) throw Error('Migration is running; changes are temporarily unavailable. / 正在迁移，暂时不能修改数据或恢复采集。');
             if (migrationStatus.error && method === 'setPaused' && payload.params?.paused === false) {
                 const choice = await dialog.showMessageBox(window, { type: 'question', title: 'WiFiMeter',
                     message: '旧数据尚未导入，是否先恢复当前统计？ / Resume collection without importing old data?',
                     buttons: ['恢复统计 / Resume', '取消 / Cancel'], defaultId: 1, cancelId: 1 });
                 if (choice.response !== 0) throw Error(migrationStatus.error);
+                assertWritable();
                 migrationStatus = { ...migrationStatus, error: '', importWarning: migrationStatus.error };
             }
-            const result = await requestBackend(method, payload.params ?? {}, { timeout: ['backup', 'restore'].includes(method) ? 300000 : 15000 });
-            // 设置改动或恢复后立刻作用于系统，并把实际生效的结果回给页面。
-            if (['updateSettings', 'restore'].includes(method) && result?.settings) {
-                speedUnit = result.settings.speedUnit || 'auto';
-                const explicitAutoStart = method === 'restore' || Object.prototype.hasOwnProperty.call(payload.params?.settings ?? {}, 'autoStart');
-                if (!(process.platform === 'win32' && process.env.WIFIMETER_USER_DATA && process.env.WIFIMETER_TEST_ISOLATION !== '1') && (!preserveUnmatchedLoginItem || explicitAutoStart)) {
-                    if (explicitAutoStart) preserveUnmatchedLoginItem = false;
-                    result.system = await system.applySettings(result.settings, { enableAutostart: explicitAutoStart && Boolean(result.settings.autoStart) });
-                }
-            }
-            return { ok: true, result };
+            return { ok: true, result: await trackedBackend(method, payload.params ?? {}) };
         } catch (error) {
             return { ok: false, error: { code: error.code ?? 'unavailable', message: error.message } };
         }
     });
 
     registerAppIcons({ ipcMain, trusted, app, request: (method, params) => requestBackend(method, params) });
+    const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, userDataDir: app.getPath('userData'), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, assertWritable });
+    drainAppControls = () => controls.waitForIdle();
+    cloud = createCloudBackup({ userData: app.getPath('userData'), logStore: logs, withRestore: reserveRestore,
+        hostSettings: {
+            snapshot: async () => {
+                const [windowPreferences, appNetworkRecords] = await Promise.all([windowControls.read(), controls.backupRecords()]);
+                return { windowPreferences, logLevel: logs.level, appNetworkRecords };
+            },
+            validate: value => {
+                const next = {};
+                if (value.windowPreferences !== undefined) next.windowPreferences = windowControls.validate(value.windowPreferences);
+                if (value.logLevel !== undefined) next.logLevel = validateLogLevel(value.logLevel);
+                if (value.appNetworkRecords !== undefined) next.appNetworkRecords = controls.validateRecords(value.appNetworkRecords);
+                return next;
+            },
+            restore: async value => {
+                if (value.windowPreferences !== undefined) await windowControls.restore(value.windowPreferences);
+                if (value.logLevel !== undefined) logs.setLevel(value.logLevel);
+                if (value.appNetworkRecords !== undefined) await controls.restoreRecords(value.appNetworkRecords);
+            }
+        },
+        request: async (method, params) => { await startup; if (migrationBusy || installingUpdate) throw Error('正在迁移或更新，暂时不能备份。'); return requestBackend(method, params ?? {}, { timeout: 300000 }); },
+        restore: document => callBackend('restore', { backup: document }, { backendOnly: true }),
+        logger: (level, message) => console[level === 'error' ? 'error' : 'log'](`[backup] ${message}`),
+        onChange: state => { if (window && !window.isDestroyed()) window.webContents.send('cloud-backup:status', state); } });
+    for (const action of ['status', 'configure', 'test', 'estimate', 'backup', 'list', 'remove', 'restore']) {
+        ipcMain.handle(`cloud-backup:${action}`, async (event, input) => {
+            if (!trusted(event)) throw Error('Unsupported page.');
+            try { if (action !== 'status') assertWritable(); return { ok: true, result: await cloud[action](input) }; }
+            catch (error) { return { ok: false, error: error.message }; }
+        });
+    }
+    if (!backgroundTest) startup.then(() => cloud.start()).catch(() => {});
+    ipcMain.handle('logs:read', (event, query) => { if (!trusted(event)) throw Error('Unsupported page.'); return { ...logs.read(query ?? {}), text: query?.text === true ? logs.text() : undefined }; });
+    ipcMain.handle('logs:level', (event, level) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return { level: logs.setLevel(level) }; });
+    ipcMain.handle('logs:clear', event => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); logs.clear(); return { level: logs.level }; });
+    ipcMain.handle('logs:write', (event, entry) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); logs.write(entry?.level, 'renderer', entry?.message); });
 
     ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
-    ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.update(patch); });
-    const controls = createAppControl({ platform: process.platform, dialog, getWindow: () => window, userDataDir: app.getPath('userData'), isPackaged: app.isPackaged, resourcesPath: process.resourcesPath });
-    ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.chooseProgram(); });
-    ipcMain.handle('app-control:request', (event, payload) => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.request(payload); });
+    ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return windowControls.update(patch); });
+    ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return controls.chooseProgram(); });
+    ipcMain.handle('app-control:request', (event, payload) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return controls.request(payload); });
     ipcMain.handle('app-control:list', event => { if (!trusted(event)) throw Error('Unsupported page.'); return controls.list(); });
     ipcMain.handle('legacy:status', async event => { if (!trusted(event)) throw Error('Unsupported page.'); await startup; return migrationStatus; });
-    ipcMain.handle('legacy:import', async event => {
+    async function importLegacy(event) {
         if (!trusted(event)) throw Error('Unsupported page.');
         await startup;
+        if (closingForQuit || quitting) return { error: 'The application is stopping for an update or exit.' };
+        if (restoringBackup) return { error: '请等待备份恢复完成后重试导入。' };
         if (installingUpdate) return { error: '正在更新或恢复采集，暂时不能导入数据。' };
         if (recoveryFlight || collectorRecoveryNeeded) return { error: '采集器正在恢复，请稍后重试导入。' };
         if (migrationBusy) return { error: 'An import is already running.' };
@@ -343,6 +444,12 @@ app.whenReady().then(async () => {
             migrationStatus = { found: true, error: error.message }; return migrationStatus;
         }
         finally { migrationBusy = false; scheduleCollectorRecovery(); }
+    }
+    ipcMain.handle('legacy:import', event => {
+        const operation = importLegacy(event);
+        backendMutations.add(operation);
+        operation.then(() => backendMutations.delete(operation), () => backendMutations.delete(operation));
+        return operation;
     });
     let updateState = { state: 'unchecked', status: 'unchecked', currentVersion: app.getVersion(), checkOnStartup: true, progress: null, busy: false };
     let updateRecovery = null;
@@ -358,6 +465,7 @@ app.whenReady().then(async () => {
             app.cancelQuit?.();
             updateRecovery = null;
             installingUpdate = false;
+            if (!backgroundTest) cloud?.start();
             return { ...result, recoveryRequired: false };
         } catch (error) {
             // 保留保护状态和原偏好；稍后重试更新时先重新尝试恢复。
@@ -386,6 +494,7 @@ app.whenReady().then(async () => {
         beforeInstall: async () => {
             await startup;
             const assertReady = () => {
+                if (restoringBackup) throw Error('请等待备份恢复完成后重试更新。');
                 if (quitFlight || quitting || recoveryFlight || collectorRecoveryNeeded) throw Error('请等待退出确认或采集恢复完成后重试更新。');
                 if (migrationBusy || migrationStatus.error) throw Error('Resolve migration before updating.');
             };
@@ -398,6 +507,8 @@ app.whenReady().then(async () => {
             installingUpdate = true;
             cancelRecoveryTimers();
             updateRecovery = { paused: null, pauseRequested: false };
+            cloud?.stop();
+            await cloud?.waitForIdle?.();
             const original = await backend.request('hello');
             if (typeof original.paused !== 'boolean') throw Error('无法确认原采集状态，更新取消。');
             updateRecovery.paused = original.paused;
@@ -480,10 +591,19 @@ app.on('before-quit', event => {
     }
     event.preventDefault();
     if (quitFlight) return;
+    let cloudStopped = false;
     quitFlight = (async () => {
         const confirmed = !window || window.isDestroyed() ? true
             : typeof app.confirmExit === 'function' && await app.confirmExit();
         if (confirmed !== true) { app.cancelQuit?.(); return; }
+        closingForQuit = true;
+        cloudStopped = true;
+        cloud?.stop();
+        await cloud?.waitForIdle?.();
+        if (restoreFlight) await restoreFlight.catch(() => {});
+        await Promise.allSettled([...backendMutations]);
+        await drainAppControls();
+        await windowControls?.read();
         quitting = true;
         cancelRecoveryTimers();
         system?.beginQuit();
@@ -495,5 +615,10 @@ app.on('before-quit', event => {
         if (app.finishQuit) app.finishQuit();
         else app.quit();
     })().catch(error => { app.cancelQuit?.(); console.error(`[app] 退出确认失败：${error.message}`); })
-        .finally(() => { quitFlight = null; scheduleCollectorRecovery(); });
+        .finally(() => {
+            quitFlight = null;
+            if (!quitting) closingForQuit = false;
+            if (cloudStopped && !quitting && !installingUpdate && !backgroundTest) cloud?.start();
+            scheduleCollectorRecovery();
+        });
 });

@@ -19,11 +19,13 @@ renderer → tauri/bridge.js → Rust → dialogs, windows, tray, notifications
 
 `data/proxy-live.mjs::proxyLiveProcesses` 经 `data/application-view.js` 与悬浮窗调用，按当前客户端 TCP 连接数分配已识别代理的物理网络实测速率。客户端直连行保留，估算份额带标记，已归属代理速率被替换，合计只计算一次；未知客户端和未分配份额作为估算未归属。身份、权重或测量不足时保留原生值或不可用状态，不改变网卡计数、额度和存储记录。应用页和网络抽屉分别保留本次会话的实时选择，重启后回到原生采集。悬浮窗将 `miniIncludeProxyEstimates` 与代理排除偏好分开保存，累计用量读取真实分钟记录。
 
-`data/history.js` 归并应用，`data/application-view.js` 每次显示计算列表、搜索前总量和导出状态。`ui/app-icons.js` 共用请求、限制并发，并丢弃没有连接且标识匹配头像的排队请求。`data/application-proxy.js` 只匹配已知应用、代理标识和路径，不根据显示名猜身份。历史估算仅在同一网络、日期、代理的下载和上传合计分别匹配原生值时替换代理行；客户端直连保留，部分日期及分钟、小时明细不显示每日估算。本地 TCP 速率与历史字节、网卡总量和额度分别处理，字段见[数据合约](../contracts/README.zh-CN.md)。
+`data/history.js` 归并应用，`data/application-view.js` 每次显示计算列表、搜索前总量和导出状态。`ui/app-icons.js` 共用请求、限制并发，并丢弃没有连接且标识匹配头像的排队请求。`data/application-proxy.js` 只匹配已知应用、代理标识和路径，不根据显示名猜身份。历史估算仅在同一网络、日期、代理的下载和上传合计分别匹配原生值时替换代理行；客户端直连保留；部分日期时段及分钟、小时明细使用与表格一致的已校验分钟估算，完整日期汇总及按日、按月视图保留每日估算。本地 TCP 速率与历史字节、网卡总量和额度分别处理，字段见[数据合约](../contracts/README.zh-CN.md)。
 
-代理详情仅检查候选组，按历史版本、来源数组、身份和范围缓存一个结果。快照、应用增量、估算替换、清空和代理配置保存递增版本，速度事件不递增；当前客户端和测量可用状态重新读取。关闭抽屉释放历史引用；没有版本的调用者不缓存，因为其数组可能就地修改。
+代理详情仅检查候选组，按历史版本、来源数组、身份、分组和范围缓存一个结果。快照、应用增量、估算替换、清空和代理配置保存递增版本，速度事件不递增；当前客户端和测量可用状态重新读取。关闭抽屉释放历史引用；没有版本的调用者不缓存，因为其数组可能就地修改。
 
 Node 的 `host/backend.cjs` 启动后端，按请求 id 配对响应，事件单独推送。错误以 `{ ok: false, error }` 回到页面并保留错误码和消息。历史、额度和网络设置以 C++ 为准。`host/desktop-runtime.cjs` 接收 `tauri/native-adapter.cjs` 能力，`host/main.cjs` 组合业务，不拦截模块加载或使用 Electron SDK。浏览器测试运行真实页面、桥接和隔离 Node 宿主，系统能力使用替身；原生宿主另行验证。
+
+`host/logs.cjs` 负责有大小上限的分级运行日志。`host/cloud-backup.cjs` 通过各自负责的模块协调 WebDAV 内容筛选、桌面设置和日志恢复。恢复先阻止新的桌面修改，等待已接受的操作完成，再暂停后端采样并保存完整本地还原点；后端历史仍为权威数据。[迁移指南](MIGRATION.zh-CN.md#webdav-云备份)维护恢复与兼容规则。
 
 `window-preferences.json` 中的 `promptAppCollection` 默认 `true`。启动和迁移成功、主窗口显示后询问本次采集，只有同意才发送 `setAppCollection({ enabled: true })` 并允许辅助进程请求授权。拒绝任一询问后保持关闭，不再自动尝试，网卡统计继续。采集不可用或迁移失败时跳过询问。关闭偏好后不再询问，手动控制不改变偏好；后端开关每次会话默认关闭。
 
@@ -53,7 +55,7 @@ platform/windows/   Sampling/disconnect decisions through injected SystemApi; UT
 
 网络用量写入失败时，只在内存保留一批带原时间和归属的数据，新采样前先重试，不无限排队。成功清空或恢复后丢弃该批次；导入、保留期清理和正常退出前必须写入。强制终止可能丢失待写批次。缺失查询按本地日期边界覆盖保留期内历史。
 
-`ipc/` 使用 `{id, method, params}` 请求、`{id, ok, result|error}` 响应和 `{event, ...}` 事件。POSIX 通过 `poll` 等待，Windows 使用 `WaitForSingleObject`。采集使用本机管道，不主动联网。Node 显式传入数据库路径，启动失败或异常退出保留错误并触发恢复。联网用于更新信息、下载安装包、用户打开版本页和安装缺失 WebView2。协议及导入保证由[数据合约](../contracts/README.zh-CN.md)与[迁移说明](MIGRATION.zh-CN.md)维护。
+`ipc/` 使用 `{id, method, params}` 请求、`{id, ok, result|error}` 响应和 `{event, ...}` 事件。POSIX 通过 `poll` 等待，Windows 使用 `WaitForSingleObject`。采集使用本机管道，不主动联网。Node 显式传入数据库路径，启动失败或异常退出保留错误并触发恢复。联网用于已配置的 WebDAV 备份、更新信息、下载安装包、用户打开版本页和安装缺失 WebView2。协议及导入保证由[数据合约](../contracts/README.zh-CN.md)与[迁移说明](MIGRATION.zh-CN.md)维护。
 
 ## 职责边界
 

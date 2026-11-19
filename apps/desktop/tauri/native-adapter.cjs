@@ -105,11 +105,11 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
         async loadFile(file) {
             this.webContents.mainFrame.url = pathToFileURL(file).href;
             const trace = process.env.WIFIMETER_BACKGROUND_TEST === '1';
-            if (trace) console.error(`[startup] ${this.label} window:create requested`);
+            if (trace) console.log(`[startup] ${this.label} window:create requested`);
             await call('window:create', { label: this.label, options: this.options });
-            if (trace) console.error(`[startup] ${this.label} window:load requested`);
+            if (trace) console.log(`[startup] ${this.label} window:load requested`);
             await call('window:load', { label: this.label, page: this.label });
-            if (trace) console.error(`[startup] ${this.label} window:load completed`);
+            if (trace) console.log(`[startup] ${this.label} window:load completed`);
         }
         isDestroyed() { return this.destroyed; }
         isVisible() { return this.visible; }
@@ -163,7 +163,9 @@ function createNativeAdapter({ send, configuration = {}, execute = execFileSync,
     const miniChannels = new Set(['mini:open-main', 'mini:close', 'mini:preferences-read', 'mini:preferences-update', 'mini:applications']);
     const mainChannels = new Set(['backend:request', 'files:save', 'files:open-backup', 'window-preferences:read', 'window-preferences:update',
         'app-icons:get', 'app-control:choose', 'app-control:request', 'app-control:list', 'legacy:status', 'legacy:import', 'updates:open-link',
-        'updates:status', 'updates:setting', 'updates:check', 'updates:download', 'updates:install']);
+        'updates:status', 'updates:setting', 'updates:check', 'updates:download', 'updates:install',
+        'logs:read', 'logs:level', 'logs:clear', 'logs:write', 'cloud-backup:status', 'cloud-backup:configure', 'cloud-backup:test',
+        'cloud-backup:estimate', 'cloud-backup:backup', 'cloud-backup:list', 'cloud-backup:remove', 'cloud-backup:restore']);
     async function receive(message) {
         if (message.type === 'native-result') {
             const entry = pending.get(message.id);

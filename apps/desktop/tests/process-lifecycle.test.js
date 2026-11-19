@@ -47,7 +47,8 @@ function backendHarness({ answer = true, crashRestarts = false, restoreThenHello
                     done(); return;
                 }
                 child.stdout.write(JSON.stringify({ id: request.id, ok: true, result: {
-                    paused: child.paused, appCollection: { available: appCaptureAvailable, enabled: child.appsEnabled }, settings: child.settings
+                    paused: child.paused, appCollection: { available: appCaptureAvailable, enabled: child.appsEnabled }, settings: child.settings,
+                    ...(request.method === 'backup' ? { backup: { backupType: 'wifimeter-backend-backup', version: 1, settings: child.settings, records: [], networks: [], ledgers: [] } } : {})
                 } }) + '\n');
                 done();
                 if (request.method === 'shutdown') queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); });
@@ -78,11 +79,16 @@ function clock() {
 }
 
 async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook = false, exitDecision, legacyFailure = false, crashRestarts = false, restoreThenHelloFails = false,
-    appCaptureAvailable = false, failAppEnable = false, preferences = {}, startupChoice = 1, dialogs = {} } = {}) {
+    appCaptureAvailable = false, failAppEnable = false, preferences = {}, startupChoice = 1, dialogs = {}, realCloud = false, cloudWaitFailure = false, restoreDuringStartupPrompt = false, reserveDuringStartupMutation = false } = {}) {
     const transport = backendHarness({ crashRestarts, restoreThenHelloFails, appCaptureAvailable, failAppEnable }), timers = clock();
     const handlers = new Map(), statuses = [], calls = [], systemSettings = [], miniEvents = [];
     const startupPrompts = [];
-    let ready, window, backend, miniRequest, hooks, disposed = 0, quitCount = 0;
+    let startupReservation = null, releaseStartupReservation, startupDrainBeforeNative = null;
+    let ready, window, backend, miniRequest, hooks, cloudOptions, cloudBackup, disposed = 0, quitCount = 0;
+    let logLevel = 'info', logSnapshot = { version: 1, entries: [] }, recordSnapshot = { version: 1, records: [] };
+    const cloudFiles = new Map(), cloudLifecycle = [];
+    const logModule = require(path.join(directory, 'logs.cjs'));
+    const windowModule = require(path.join(directory, 'window-controls.cjs'));
     const app = new EventEmitter();
     Object.assign(app, { isPackaged: false, getVersion: () => '1.3.2', getPath: () => 'fixture', setPath() {},
         whenReady: () => ({ then(callback) { ready = callback(); return ready; } }),
@@ -105,11 +111,25 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
     const imports = {
         './desktop-runtime.cjs': { getDesktopRuntime: () => ({ app, BrowserWindow: Window, dialog: { showErrorBox() {}, async showMessageBox(_window, options) {
             startupPrompts.push({ options, loaded: Boolean(window.webContents.mainFrame.url), paused: transport.children[0].paused });
+            if (restoreDuringStartupPrompt && !startupReservation) {
+                const gate = new Promise(resolve => { releaseStartupReservation = resolve; });
+                startupReservation = cloudOptions.withRestore(async () => gate);
+                await flush();
+            }
             return { response: startupChoice };
         }, ...dialogs },
             ipcMain: { handle: (name, fn) => handlers.set(name, fn) } }) },
         'node:fs': { existsSync: () => true }, 'node:timers': timers,
-        './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; } }, resolveExecutable: () => 'fixture' },
+        './backend.cjs': { BackendClient: class extends transport.BackendClient { constructor(options) { super(options); backend = this; }
+            async request(method, ...args) {
+                if (reserveDuringStartupMutation && method === 'setAppCollection' && args[0]?.enabled) {
+                    let entered = false;
+                    startupReservation = cloudOptions.withRestore(async () => { entered = true; });
+                    await flush();
+                    startupDrainBeforeNative = !entered;
+                }
+                return super.request(method, ...args);
+            } }, resolveExecutable: () => 'fixture' },
         './files.cjs': { createFileActions: () => ({}) },
         './system.cjs': { createSystemIntegration: () => ({ initializeTray() {}, applySettings: async (settings, options) => {
             systemSettings.push({ settings: structuredClone(settings), options }); return { autoStart: settings.autoStart, notifications: settings.notifications };
@@ -117,8 +137,10 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
-        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => preferences, publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
-        './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({}) },
+        './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({ ...preferences }), validate: windowModule.validateWindowPreferences, update: async patch => Object.assign(preferences, patch), restore: async patch => Object.assign(preferences, patch), publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
+        './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({ backupRecords: async () => structuredClone(recordSnapshot), validateRecords: snapshot => snapshot, restoreRecords: async snapshot => { recordSnapshot = structuredClone(snapshot); }, waitForIdle: async () => {} }) },
+        './cloud-backup.cjs': { createCloudBackup: options => { cloudOptions = options; cloudBackup = realCloud ? require(path.join(directory, 'cloud-backup.cjs')).createCloudBackup({ ...options, io: { mkdir: async () => {}, readFile: async file => { if (!cloudFiles.has(file)) throw Object.assign(Error('ENOENT'), { code: 'ENOENT' }); return cloudFiles.get(file); }, writeFile: async (file, body) => cloudFiles.set(file, body), rename: async (from, to) => { cloudFiles.set(to, cloudFiles.get(from)); cloudFiles.delete(from); }, unlink: async file => cloudFiles.delete(file) } }) : { start() { cloudLifecycle.push('start'); }, stop() { cloudLifecycle.push('stop'); }, waitForIdle: async () => { if (cloudWaitFailure) throw Error('cloud drain failed'); }, status: async () => ({}) }; return cloudBackup; } },
+        './logs.cjs': { validateLogLevel: logModule.validateLogLevel, createLogStore: () => ({ write() {}, read: () => ({ entries: [], total: 0, level: logLevel }), text: () => '', snapshot: () => structuredClone(logSnapshot), validate: logModule.validateLogSnapshot, restore: snapshot => { logSnapshot = structuredClone(snapshot); }, setLevel: level => { logLevel = level; return level; }, clear() {}, get level() { return logLevel; } }), captureConsole() {} },
         './update-handoff.cjs': { launchUpdateHandoff: async () => { await handoff; throw Error('fixture handoff failed'); } },
         './updates.cjs': { createUpdateService(options) { hooks = options; return { settings: async () => ({ checkOnStartup: true }), async install() {
             try { await options.beforeInstall(); await options.launchInstaller('fixture.exe', [], { digest: '0'.repeat(64) }); return { state: 'installing' }; }
@@ -133,8 +155,10 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
     });
     await ready; await flush(); calls.length = 0;
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
-    return { app, backend, timers, statuses, calls, hooks, systemSettings, miniEvents, startupPrompts, children: transport.children, releaseHandoff,
-        get disposed() { return disposed; }, get quitCount() { return quitCount; }, window,
+    return { app, backend, timers, statuses, calls, hooks, cloudOptions, cloudBackup, cloudLifecycle, systemSettings, miniEvents, startupPrompts, children: transport.children, releaseHandoff,
+        portable: () => ({ windowPreferences: structuredClone(preferences), logLevel, appNetworkRecords: structuredClone(recordSnapshot), logs: structuredClone(logSnapshot) }),
+        get startupReservation() { return startupReservation; }, releaseStartupReservation: () => releaseStartupReservation?.(),
+        get startupDrainBeforeNative() { return startupDrainBeforeNative; }, get disposed() { return disposed; }, get quitCount() { return quitCount; }, window,
         invoke: (name, payload) => handlers.get(name)(event, payload), miniRequest: () => miniRequest({ includeMinutes: true }),
         crash() { const child = backend.child; child.exitCode = 1; child.emit('exit', 1, null); },
         dispose() { timers.pending.clear(); transport.dispose(); timers.pending.clear(); }
@@ -419,4 +443,145 @@ test('mini collector status clears rates and application activity without a back
     assert.equal(applications.status, 'unavailable');
     assert.deepEqual(applications.rows, []);
     assert.equal(queries, 1);
+});
+
+
+test('the backend restore IPC also restores the portable parts of a complete local recovery point', async t => {
+    const h = await mainHarness({ realCloud: true }); t.after(h.dispose);
+    const logs = { version: 1, entries: [{ time: '2026-11-18T00:00:00.000Z', level: 'warn', source: 'app', message: 'recovered local log' }] };
+    const hostSettings = { windowPreferences: { theme: 'dark', promptAppCollection: false }, logLevel: 'warn', appNetworkRecords: { version: 1, records: [] } };
+    const response = await h.invoke('backend:request', { method: 'restore', params: { backup: { backupType: 'wifimeter-backend-backup', version: 1,
+        settings: { autoStart: false, notifications: false, language: 'en', speedUnit: 'Mbps' }, records: [], networks: [], ledgers: [], hostSettings, logs } } });
+    assert.equal(response.ok, true);
+    assert.deepEqual(h.portable(), { ...hostSettings, logs });
+    assert.equal(h.children[0].paused, true);
+    assert.equal(h.systemSettings.at(-1).settings.language, 'en');
+});
+
+test('an invalid desktop portion of a local recovery point cannot reach the backend restore', async t => {
+    const h = await mainHarness({ realCloud: true }); t.after(h.dispose);
+    const previous = h.children[0].requests.length;
+    const response = await h.invoke('backend:request', { method: 'restore', params: { backup: { backupType: 'wifimeter-backend-backup', version: 1,
+        settings: { language: 'en' }, hostSettings: { windowPreferences: { theme: '../invalid' } }, logs: { version: 1, entries: [] } } } });
+    assert.equal(response.ok, false);
+    assert.deepEqual(h.children[0].requests.slice(previous), []);
+    assert.equal(h.children[0].settings.language, 'zh-CN');
+});
+
+test('a recovery reservation blocks concurrent edits and update/import, and exit waits for the replacement', async t => {
+    const h = await mainHarness({ realCloud: true }); t.after(h.dispose);
+    assert.equal(typeof h.cloudOptions.withRestore, 'function');
+    let ready, release;
+    const entered = new Promise(resolve => { ready = resolve; });
+    const pending = new Promise(resolve => { release = resolve; });
+    const restoration = h.cloudOptions.withRestore(async () => { ready(); await pending; });
+    await entered;
+    const response = await h.invoke('backend:request', { method: 'updateSettings', params: { settings: { language: 'en' } } });
+    assert.equal(response.ok, false);
+    assert.match(response.error.message, /恢复.*备份/);
+    await assert.rejects(async () => h.invoke('window-preferences:update', { theme: 'dark' }), /恢复.*备份/);
+    await assert.rejects(async () => h.invoke('logs:level', 'debug'), /恢复.*备份/);
+    await assert.rejects(async () => h.invoke('app-control:request', { action: 'block', path: 'C:\\Apps\\test.exe' }), /恢复.*备份/);
+    await assert.rejects(h.hooks.beforeInstall(), /备份.*恢复|恢复.*备份/);
+    assert.match((await h.invoke('legacy:import')).error, /备份.*恢复|恢复.*备份/);
+    h.app.quit(); await flush();
+    assert.equal(h.children[0].requests.some(request => request.method === 'shutdown'), false);
+    release(); await restoration; await flush();
+    assert.equal(h.children[0].requests.some(request => request.method === 'shutdown'), true);
+});
+
+
+test('canceling exit before shutdown leaves automatic backup active', async t => {
+    const h = await mainHarness({ prepare: false, quitChoice: 0 }); t.after(h.dispose);
+    const before = [...h.cloudLifecycle];
+    h.app.quit(); await flush();
+    assert.deepEqual(h.cloudLifecycle, before);
+    assert.equal(h.backend.running, true);
+});
+
+test('an exit canceled after stopping cloud work resumes automatic backup', async t => {
+    const h = await mainHarness({ cloudWaitFailure: true }); t.after(h.dispose);
+    h.app.quit(); await flush();
+    assert.deepEqual(h.cloudLifecycle.slice(-2), ['stop', 'start']);
+    assert.equal(h.backend.running, true);
+    assert.equal(h.children[0].requests.some(request => request.method === 'shutdown'), false);
+});
+
+test('update shutdown stops automatic backup and failed handoff resumes its timer after recovery', async t => {
+    const h = await mainHarness(); t.after(h.dispose);
+    const installation = h.invoke('updates:install');
+    await flush();
+    assert.equal(h.cloudLifecycle.at(-1), 'stop');
+    assert.equal(h.backend.running, false);
+    h.releaseHandoff();
+    const result = await installation;
+    assert.equal(result.state, 'error');
+    assert.equal(result.recoveryRequired, false);
+    assert.deepEqual(h.cloudLifecycle.slice(-2), ['stop', 'start']);
+    assert.equal(h.backend.running, true);
+});
+
+
+test('confirmed exit rejects new writes while previously admitted cloud work is still draining', async t => {
+    const h = await mainHarness({ realCloud: true }); t.after(h.dispose);
+    const request = h.backend.request.bind(h.backend);
+    let entered, release;
+    const ready = new Promise(resolve => { entered = resolve; }), gate = new Promise(resolve => { release = resolve; });
+    h.backend.request = async (method, ...args) => { if (method === 'backup') { entered(); await gate; } return request(method, ...args); };
+    const estimate = h.cloudBackup.estimate(); await ready;
+    h.app.quit(); await flush();
+    const update = await h.invoke('backend:request', { method: 'updateSettings', params: { settings: { language: 'en' } } });
+    let windowAccepted = true;
+    try { await h.invoke('window-preferences:update', { theme: 'dark' }); } catch { windowAccepted = false; }
+    const earlyShutdown = h.children[0].requests.some(message => message.method === 'shutdown');
+    release(); await estimate; await flush();
+    assert.equal(update.ok, false);
+    assert.equal(windowAccepted, false);
+    assert.equal(earlyShutdown, false);
+    assert.equal(h.children[0].requests.some(message => message.method === 'shutdown'), true);
+});
+
+
+test('a delayed migration resume confirmation is checked again during restore and confirmed exit', async t => {
+    for (const blocker of ['restore', 'exit']) {
+        let enterDialog, releaseDialog, enterWork, releaseWork;
+        const dialogReady = new Promise(resolve => { enterDialog = resolve; }), dialogGate = new Promise(resolve => { releaseDialog = resolve; });
+        const workReady = new Promise(resolve => { enterWork = resolve; }), workGate = new Promise(resolve => { releaseWork = resolve; });
+        const h = await mainHarness({ realCloud: true, legacyFailure: true, dialogs: { showMessageBox: async () => { enterDialog(); return dialogGate; } } });
+        t.after(h.dispose);
+        const resume = h.invoke('backend:request', { method: 'setPaused', params: { paused: false } });
+        await dialogReady;
+        let work;
+        if (blocker === 'restore') {
+            work = h.cloudOptions.withRestore(async () => { enterWork(); await workGate; });
+            await workReady;
+        } else {
+            const request = h.backend.request.bind(h.backend);
+            h.backend.request = async (method, ...args) => { if (method === 'backup') { enterWork(); await workGate; } return request(method, ...args); };
+            work = h.cloudBackup.estimate(); await workReady;
+            h.app.quit(); await flush();
+        }
+        releaseDialog({ response: 0 });
+        const response = await resume, wasPaused = h.children[0].paused;
+        releaseWork(); await work; await flush();
+        assert.equal(response.ok, false);
+        assert.equal(wasPaused, true);
+    }
+});
+
+test('startup collection approval cannot enable capture while restore owns the data', async t => {
+    const h = await mainHarness({ realCloud: true, appCaptureAvailable: true, startupChoice: 0, restoreDuringStartupPrompt: true });
+    t.after(h.dispose);
+    const enabled = h.children[0].appsEnabled;
+    h.releaseStartupReservation(); await h.startupReservation;
+    assert.equal(enabled, false);
+    assert.equal(h.children[0].requests.some(request => request.method === 'setAppCollection'), false);
+});
+
+test('an already approved startup collection request is drained before a restore reservation can run', async t => {
+    const h = await mainHarness({ realCloud: true, appCaptureAvailable: true, startupChoice: 0, reserveDuringStartupMutation: true });
+    t.after(h.dispose);
+    await h.startupReservation;
+    assert.equal(h.startupDrainBeforeNative, true);
+    assert.equal(h.children[0].appsEnabled, true);
 });

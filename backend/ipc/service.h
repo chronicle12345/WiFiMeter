@@ -97,8 +97,11 @@ private:
     Response updateProxyConfig(const support::JsonValue& params);
     support::JsonValue proxyJson(storage::Status& status) const;
     support::JsonValue proxyEstimatedRecords(const std::vector<storage::AppUsageRow>& rows, storage::Status& status) const;
+    support::JsonValue proxyEstimatedMinuteRecords(const std::vector<storage::AppMinuteUsageRow>& rows, storage::Status& status) const;
     void collectProxyClients(core::TimePoint now);
+    storage::Status persistMinuteWeights(const core::LocalStamp& stamp);
     support::JsonValue proxyEstimatedUpdates(core::TimePoint now, storage::Status& status);
+    support::JsonValue proxyEstimatedMinuteUpdates(core::TimePoint now, storage::Status& status);
     storage::Status pruneProxyObservations(core::TimePoint now) const;
     storage::Status clearProxyObservations() const;
     Response updateTotalQuota(const support::JsonValue& params, core::TimePoint now);
@@ -147,6 +150,12 @@ private:
     bool proxyIdentityFresh_ = false;
     std::string proxyEstimateDay_;
     std::map<std::string, support::JsonValue> proxyEstimateGroups_;
+    // 当前分钟内各（代理，客户端）已见过的连接键；跨分钟清空，重启后由表内的最大值兜底。
+    std::string proxyMinuteStamp_;
+    std::map<std::pair<std::string, std::string>, std::set<std::string>> proxyMinuteKeys_;
+    // 上一轮各客户端回环连接的累计收发字节，用来求本轮增量。
+    std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> proxyLoopbackTotals_;
+    std::map<std::string, support::JsonValue> proxyEstimateMinuteGroups_;
     bool proxyReportCurrent_ = false;
     platform::AppCollectorState appState_ = platform::AppCollectorState::disabled;
     std::string appDetail_;

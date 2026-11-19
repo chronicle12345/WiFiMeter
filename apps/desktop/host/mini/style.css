@@ -34,22 +34,27 @@ body[data-shape="bar"] output { flex-direction:column; gap:0; }
 body[data-shape="bar"] .rate-download .rate-number { font-size:23px; }
 body[data-shape="bar"] .rate-upload .rate-number { font-size:18px; }
 body[data-shape="bar"] .rate-upload { border-left:1px solid var(--line); padding-left:8px; }
-body[data-shape="square"] nav { right:8px; bottom:7px; }
-body[data-shape="square"] .rates { margin-top:12px; }
+/* Square and circle show only the rates; the toolbar takes the heading's place while the pointer or focus is inside. */
+body:is([data-shape="square"], [data-shape="circle"])[data-expanded="false"] nav { left:50%; transform:translateX(-50%); opacity:0; transition:opacity .12s; }
+body:is([data-shape="square"], [data-shape="circle"])[data-expanded="false"] .mini-heading { transition:opacity .12s; }
+body:is([data-shape="square"], [data-shape="circle"])[data-expanded="false"] main:is(:hover, :focus-within) nav { opacity:1; }
+body:is([data-shape="square"], [data-shape="circle"])[data-expanded="false"] main:is(:hover, :focus-within) .mini-heading { visibility:hidden; opacity:0; }
+body[data-shape="square"] nav { top:9px; }
+body[data-shape="square"] .rates { margin-top:14px; gap:10px; }
 body[data-shape="square"] .rate-download { align-items:flex-start; }
 body[data-shape="square"] .rate-download svg { margin-top:7px; }
 body[data-shape="square"] .rate-download output { flex-direction:column; gap:0; }
 body[data-shape="square"] .rate-download .rate-number { font-size:30px; line-height:34px; }
-body[data-shape="square"] .rate-upload { border-top:1px solid var(--line); padding-top:8px; }
+body[data-shape="square"] .rate-upload { border-top:1px solid var(--line); padding-top:10px; }
 body[data-shape="square"] .rate-upload .rate-number { font-size:17px; }
-body[data-shape="circle"] main { border-radius:50%; padding:19px 15px; }
+body[data-shape="circle"] main { border-radius:50%; padding:30px 15px 0; }
 body[data-shape="circle"] .mini-heading { justify-content:center; margin-inline:auto; }
-body[data-shape="circle"] .rates { margin-top:8px; gap:5px; }
+body[data-shape="circle"] .rates { margin-top:10px; gap:6px; }
 body[data-shape="circle"] .rates > div { justify-content:center; }
 body[data-shape="circle"] .rate-download output { flex-direction:column; align-items:center; gap:0; }
 body[data-shape="circle"] .rate-download .rate-number { font-size:28px; line-height:31px; }
 body[data-shape="circle"] .rate-upload .rate-number { font-size:16px; }
-body[data-shape="circle"] nav { bottom:16px; left:50%; transform:translateX(-50%); }
+body[data-shape="circle"] nav { top:27px; }
 .edge-strip { display:none; }
 body[data-expanded="true"] main { display:flex; flex-direction:column; padding:12px; border-radius:var(--radius); }
 body[data-expanded="true"] .mini-heading { justify-content:flex-start; flex-shrink:0; margin-inline:0; }

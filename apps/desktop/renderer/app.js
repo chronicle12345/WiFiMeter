@@ -8,13 +8,15 @@ import { createFormAutosave, autosaveFormIds } from './ui/form-autosave.js';
 import { quotaThresholds } from './data/quota-thresholds.js';
 import { formatSpeedParts } from './data/speed.js';
 import { createRenderScheduler } from './data/render-scheduler.js';
-import { updatesView, refreshUpdates, updateBannerView } from './ui/updates.js';
+import { updatesView, refreshUpdates, updateBannerView, updateBannerKey } from './ui/updates.js';
+import { logsView, logList } from './ui/logs.js';
+import { cloudBackupView, cloudBackupPatch, cloudSummary, sizeText } from './ui/cloud-backup.js';
 import { isEthernet, networkDisplayName } from './data/networks.js';
 import { proxyUsageRecords } from './data/proxy.js';
 import { proxyForm, proxyClientsView, estimateLabel } from './ui/proxy.js';
 import { settingsView } from './ui/settings.js';
 import { drawerShell } from './ui/drawer.js';
-import { applicationDetails, applicationAvatar, applicationSourceTitle } from './ui/applications.js';
+import { applicationDetails, applicationAvatar } from './ui/applications.js';
 import { createAppIconLoader } from './ui/app-icons.js';
 import { appControlView, appRulesView } from './ui/app-control.js';
 import { t, tr, setLanguage, getLocale } from './i18n.js';
@@ -47,6 +49,7 @@ const icons = {
  help:'<circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.6 2.6 0 0 1 5.2 0c0 2-2.6 2-2.6 4M12 17h.01"/>',
  pause:'<path d="M8 5v14M16 5v14"/>',play:'<path d="m8 4 12 8-12 8Z"/>',
  search:'<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+ list:'<path d="M9 6h11M9 12h11M9 18h11M4 6h1M4 12h1M4 18h1"/>',
  close:'<path d="m6 6 12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 6"/>',
  home:'<path d="m3 10 9-7 9 7M5 9v12h14V9M10 21v-7h4v7"/>',
  office:'<rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M8 7h1M15 7h1M8 11h1M15 11h1M10 21v-6h4v6"/>',
@@ -80,7 +83,8 @@ $('.brand-name').textContent = productName;
 const store = createDataClient({onLive:refreshLive,onUsage:refreshLive,onAlert:showAlert});
 let data=store.snapshot;
 let storageFailed=false;
-const ui={page:['overview','networks','apps','history','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
+const PAGES=['overview','networks','apps','rules','history','logs','settings'];
+const ui={page:PAGES.includes(location.hash.slice(1))?location.hash.slice(1):'overview',period:'month',start:monthStart(today()),end:today(),startTime:'00:00',endTime:'23:59',networkId:'all',search:'',sort:'total',historyGrouping:'day',historyPage:1,drawer:null,modal:null,activeInterfaceId:null,lastFocus:null};
 const applications={appView:'live',liveSearch:'',liveSort:'total',liveProxyEstimated:false,appSearch:'',appSort:'total',appPage:1,appGrouping:'summary',proxyEstimated:false,historySort:'date',historyDirection:'desc',selectedApp:null};
 function appContext(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer:applications;}
 function appNetworkId(){const drawer=ui.drawer?.kind==='app'?ui.drawer.parent:ui.drawer;return drawer?.tab==='apps'?drawer.id:ui.networkId;}
@@ -97,7 +101,81 @@ async function changeApplicationView(view){
  if(ui.drawer?.tab==='apps')renderDrawer();else renderMain();
  $('[data-action="application-view"][data-view="'+view+'"]')?.focus({preventScroll:true});
 }
-function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
+function applicationsPage(){return tr`${toolbar()}${applicationWorkspace({view:applicationView(),content:applicationContent({id:ui.networkId},false)})}`;}
+const cloudState={available:!!window.desktop.cloudBackup,config:null,busy:'',files:null,listError:'',message:'',error:''};
+// 重绘保留尚未保存的输入；密码只在保存失败时保留，保存成功后清空。
+function renderCloud(keepDraft=true,keepPassword=true){
+ const panel=$('#settings-cloud');if(!panel||ui.page!=='settings')return;
+ const old=$('#cloudBackupForm'),draft=keepDraft&&old?cloudBackupPatch(old):null,focus=document.activeElement?.id;
+ panel.innerHTML=cloudBackupView(cloudState,{button,esc,option});
+ if(draft){
+  const form=$('#cloudBackupForm');
+  for(const name of ['url','username','days','keep'])form.elements[name].value=draft[name];
+  form.elements.syncInterval.value=draft.interval;
+  form.elements.auto.checked=draft.auto;
+  for(const box of form.elements.sections)box.checked=draft.sections.includes(box.value);
+  if(keepPassword)form.elements.password.value=draft.password||'';
+ }
+ if(focus)document.getElementById(focus)?.focus({preventScroll:true});
+}
+async function cloudCall(action,input){const response=await window.desktop.cloudBackup[action](input);if(!response.ok)throw Error(response.error);return response.result;}
+async function loadCloud(){if(!cloudState.available)return;try{cloudState.config=await cloudCall('status');}catch(error){cloudState.error=error.message;}renderCloud(false);}
+// 先保存表单再执行操作，保证操作用的是界面上看到的设置；同一时间只进行一项操作。
+// 改动即保存，与其他设置一致。不重绘表单，避免打断正在进行的点击和输入。
+let cloudVersion=0;
+async function saveCloud(form){
+ if(cloudState.busy)return;
+ const version=++cloudVersion;
+ let message='',error='';
+ try{cloudState.config=await cloudCall('configure',cloudBackupPatch(form));message=t('云备份设置已保存');}catch(failure){error=failure.message;}
+ if(version!==cloudVersion||cloudState.busy||!form.isConnected)return;
+ Object.assign(cloudState,{message,error});
+ form.querySelector('.form-error').textContent=error;form.querySelector('.cloud-status').textContent=message;
+ if(!error){form.elements.password.value='';if(cloudState.config.hasPassword)form.elements.password.placeholder=t('已保存，留空则不修改');}
+}
+async function cloudAction(action,input,done){
+ if(cloudState.busy)return;
+ cloudVersion++;
+ const form=$('#cloudBackupForm'),patch=form?cloudBackupPatch(form):null;
+ Object.assign(cloudState,{error:'',message:'',busy:action||'save'});renderCloud();
+ let saved=false;
+ try{
+  if(patch){cloudState.config=await cloudCall('configure',patch);saved=true;}
+  if(action){const result=await cloudCall(action,input);cloudState.message=done?.(result)||'';}
+  else cloudState.message=t('云备份设置已保存');
+ }catch(error){cloudState.error=error.message;}
+ cloudState.busy='';renderCloud(true,!saved);
+}
+async function listCloud(){cloudState.listError='';await cloudAction('list',undefined,files=>{cloudState.files=files;return '';});if(cloudState.error){cloudState.listError=cloudState.error;cloudState.error='';renderCloud();}}
+function restoreCloud(name){
+ confirmModal(t('从这份云备份恢复？'),t('备份包含的内容会覆盖本机对应的数据，其余数据保留。恢复前会在本机保存一份还原点，恢复后采集会暂停。'),t('确认恢复'),async()=>{
+  if(!await saveBeforeDataChange())return;
+  await cloudAction('restore',name,summary=>tr`已恢复：${cloudSummary(summary)}`);
+  if(cloudState.error)return;
+  await store.reload();data.live={...data.live,collector:'paused'};
+  ui.networkId='all';ui.search='';ui.historyPage=1;restartSampler();renderMain();toast(t('已恢复备份，采集已暂停。'));
+ });
+}
+function removeCloud(name){confirmModal(t('删除这份远端备份？'),t('删除后无法从 WebDAV 找回。'),t('删除备份'),async()=>{await cloudAction('remove',name);if(!cloudState.error)await listCloud();},true);}
+// 宿主在每次保存后都会推送状态；只有自动同步改变了备份结果时才重绘，避免替换正在编辑的表单。
+window.desktop.cloudBackup?.onStatus(state=>{if(cloudState.busy||state.busy)return;const old=cloudState.config||{};cloudState.config=state;if(old.lastBackupAt!==state.lastBackupAt||old.lastError!==state.lastError)renderCloud();});
+const logsState={available:!!window.desktop.logs,entries:[],total:0,level:'info',minimum:'info',search:'',error:''};
+let logsVersion=0;
+function logsPage(){return logsView(logsState,{button,esc,icon,option});}
+async function loadLogs(full=true){
+ if(!logsState.available)return;
+ const version=++logsVersion;
+ try{const result=await window.desktop.logs.read({minimum:logsState.minimum,search:logsState.search,limit:500});if(version!==logsVersion)return;Object.assign(logsState,{entries:result.entries,total:result.total,level:result.level,error:''});}
+ catch(error){if(version!==logsVersion)return;Object.assign(logsState,{entries:[],total:0,error:error.message});}
+ if(ui.page!=='logs')return;
+ if(full)renderMain();else updateRegion($('#logListRegion'),logList(logsState,{esc}));
+}
+async function exportLogs(){
+ try{const {text}=await window.desktop.logs.read({text:true,limit:1});if(await dataDownload(`WiFiMeter_${today()}.log`,text||''))toast(t('日志已导出'));}
+ catch(error){toast(error.message,true);}
+}
+function clearLogs(){confirmModal(t('清空日志？'),t('已记录的日志会被清除，之后的日志照常记录。'),t('清空日志'),async()=>{await window.desktop.logs.clear();await loadLogs();},true);}
+function rulesPage(){return `<div id="appRulesRegion">${appRulesView(appControl,{button,esc})}</div>`;}
 let samplerTimer=null,settingsDirty=false,appCollectionBusy=false;
 function fmtExport(bytes,precision=6){const divisor=data.settings.unit==='GiB'?GiB:GB;return (Number(B(bytes))/Number(divisor)).toLocaleString('en-US',{minimumFractionDigits:precision,maximumFractionDigits:precision});}
 function fmtWithUnit(bytes){const {value,unit}=formatByteParts(bytes,data.settings.unit);return `${value} ${unit}`;}
@@ -185,10 +263,10 @@ function renderChrome(){
  document.documentElement.dataset.page=ui.page;
  setLanguage(data.settings.language||'zh-CN');document.documentElement.lang=getLocale();
  $('.brand-sub')?.remove();$('.nav-label')?.remove();$('.sidebar').setAttribute('aria-label',t('主导航'));
- const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
+ const labels={overview:[t('流量总览'),t('查看用量、连接状态与网络额度。')],networks:[t('我的网络'), ''],apps:[t('应用流量'),''],rules:[t('应用规则'),t('阻止程序联网，或限制它的上传和下载速度。')],history:[t('历史记录'),t('按时间回看用量，保留清晰的流量记录。')],logs:[t('运行日志'),t('查看采集、更新和备份的运行记录。')],settings:[t('偏好设置'),t('让统计方式，适合你的使用习惯。')]};
  const [title,description]=labels[ui.page];document.title=`${productName} · ${title}`;
  updateRegion($('#brandMark'),'<img src="../assets/icon.png" alt="" width="37" height="37">');
- updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','shield',t('应用流量')],['history','history',t('历史')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
+ updateRegion($('#nav'),[['overview','overview',t('总览')],['networks','wifi',t('网络')],['apps','transfer',t('应用流量')],['rules','shield',t('规则')],['history','history',t('历史')],['logs','list',t('日志')],['settings','settings',t('设置')]].map(([id,ico,label])=>`<button class="nav-item ${ui.page===id?'active':''}" data-action="navigate" data-page="${id}" ${ui.page===id?'aria-current="page"':''}>${icon(ico)}<span class="nav-text">${label}</span>${id==='networks'?`<span class="nav-count">${data.networks.length}</span>`:''}</button>`).join(''));
  const running=data.live.collector==='running'&&data.live.state!=='offline',paused=data.live.collector==='paused';
  updateRegion($('#collector'),tr`<div class="flex gap8"><i class="dot ${paused?'warn':!running?'gray':''}"></i><span class="collector-title">${paused?t('统计已暂停'):running?t('正在采集'):t('采集器未就绪')}</span></div>${button('pause',paused?t('恢复统计'):t('暂停统计'),paused?'play':'pause','small-btn',!running&&!paused?'disabled':'')}`);
  updateRegion($('#sidebarFooter'),'');
@@ -234,8 +312,8 @@ function historyPage(){
  const table=details.length?tr`<div class="table-scroll"><table><thead><tr><th>${ui.historyGrouping==='day'?t('日期'):t('时间')}</th><th class="right">下载流量</th><th class="right">上传流量</th><th class="right">总用量</th></tr></thead><tbody>${sliced.map(row=>`<tr><td>${esc(row.key)}</td><td class="right">${fmtWithUnit(row.rx)}</td><td class="right">${fmtWithUnit(row.tx)}</td><td class="right strong">${fmtWithUnit(row.rx+row.tx)}</td></tr>`).join('')}</tbody></table></div><div class="pagination"><span>${t('记录数')} ${details.length}</span><div class="flex gap8">${button('history-prev',t('上一页'),'','small-btn',ui.historyPage<=1?'disabled':'')}<span>${ui.historyPage} / ${pages}</span>${button('history-next',t('下一页'),'','small-btn',ui.historyPage>=pages?'disabled':'')}</div></div>`:empty(t('所选时段没有记录'),ui.historyGrouping==='day'?t('更换日期或网络试试；缺失记录不会被当作零流量。'):t('分钟明细从升级后开始记录，旧记录保留原有时间精度。'));
  return `${toolbar()}${stats}${trendPanel()}<section class="panel" data-history-details><div class="panel-head"><div><h2>${ui.historyGrouping==='day'?t('每日明细'):ui.historyGrouping==='hour'?t('每小时明细'):t('每分钟明细')}</h2><div class="panel-sub">${t('本机采集 · 时间按本地时间归档')}</div></div>${control}</div>${ui.historyGrouping!=='day'?`<p class="minute-history-note small muted">${t('分钟明细从升级后开始记录，旧记录保留原有时间精度。')}</p>`:''}${table}</section>`;
 }
-let updateStatus = {}, updateBusy = false, updateExitPrepared = false;
-function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy)});}
+let updateStatus = {}, updateBusy = false, updateExitPrepared = false, dismissedUpdate = '';
+function settingsPage(){return settingsView(data.settings,{button,toggle,option,icon,category:settingsCategory,windowPreferences,status:{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus},legacy:window.desktop.legacy?legacyPanel():'',updates:window.desktop.updates?updatesView(updateStatus,updateBusy):'',quota:totalQuotaForm(data.totalQuota),proxy:proxyForm(data.proxy),cloud:cloudBackupView(cloudState,{button,esc,option})});}
 function receiveWindowPreferences(next){
  const previous=windowPreferences;windowPreferences=next;applyTheme();
  for(const key of ['promptAppCollection','miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']){
@@ -273,7 +351,7 @@ function renderMain(){
  const focused=document.activeElement,selectionStart=focused?.selectionStart,selectionEnd=focused?.selectionEnd;
  renderChrome();
  renderUpdateBanner();
- updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,history:historyPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
+ updateRegion($('#content'),({overview,networks:networksPage,apps:applicationsPage,rules:rulesPage,history:historyPage,logs:logsPage,settings:settingsPage}[ui.page])(),{force:ui.page==='settings'});
  for(const draft of drafts){
   const replacement=$('#'+draft.id);
   if(replacement&&replacement!==draft)replacement.replaceWith(draft);else if(!replacement&&draft.id==='proxyConfigForm')$('.proxy-config-region')?.append(draft);
@@ -311,6 +389,8 @@ async function doNavigate(page){
  if(page==='history'&&ui.historyGrouping!=='day'||page==='apps'&&applications.appView==='history'&&['minute','hour'].includes(applications.appGrouping))await ensureMinuteHistory();
  if(version!==navigationVersion)return;
  settingsCategoryScrollY=null;
+ if(page==='logs')loadLogs().catch(console.error);
+ if(page==='settings')loadCloud().catch(console.error);
  ui.page=page;closeDrawer();try{history.replaceState(null,'',location.pathname+location.search+'#'+page);}catch{/* Sandboxed previews may not permit URL updates. */}renderMain();window.scrollTo({top:0,behavior:'instant'});
  updateSettingsScroll();
 }
@@ -334,7 +414,7 @@ function drawerUsage(n){
  return tr`<div class="between"><span class="small muted">${esc(periodName())} · ${esc(rangeText())}</span><span class="pill gray">本机采样</span></div><div class="drawer-total"><div class="small muted">总用量</div><div class="metric-number">${fmtNumber(v.total,rows.length)}</div></div><div class="metrics"><div class="metric"><div class="metric-title">下载 ${icon('down')}</div><div class="metric-number">${fmtNumber(v.rx,rows.length)}</div></div><div class="metric"><div class="metric-title">上传 ${icon('up')}</div><div class="metric-number">${fmtNumber(v.tx,rows.length)}</div></div></div><div class="detail-section"><div class="between"><h3>用量趋势</h3><div class="legend"><span><i></i>下载</span><span><i class="tx"></i>上传</span></div></div><div class="chart-wrap">${chartSvg(chartRows(n.id),'drawer-chart')}</div></div>${connection&&data.live.state==='connected'?tr`<dl class="kv-grid"><div><dt>${isEthernet(n)?t('有线网卡'):t('无线网卡')}</dt><dd>${esc(connection.adapterAlias)}</dd></div>${isEthernet(n)||isEthernet(connection)?'':tr`<div><dt>频段 / 信号</dt><dd>${esc(connection.band)} / ${connection.signal}%</dd></div>`}<div><dt>连接开始</dt><dd>${esc(new Date(connection.since).toLocaleString(getLocale(),{hour12:false}))}</dd></div><div><dt>统计状态</dt><dd>${data.live.collector==='paused'?t('已暂停'):t('采样中')}</dd></div></dl>`:''}<div class="detail-section"><h3>最近记录</h3>${days.length?tr`<table><thead><tr><th>日期</th><th class="right">下载</th><th class="right">上传</th></tr></thead><tbody>${days.map(d=>`<tr><td>${niceDate(d.date)}</td><td class="right">${fmtWithUnit(d.rx)}</td><td class="right">${fmtWithUnit(d.tx)}</td></tr>`).join('')}</tbody></table>`:t('<p class="small muted">所选时间内没有该网络的记录。</p>')}</div>${button('export-network',t('导出此网络记录'),'export','','data-id="'+n.id+'"')}`;
 }
 function appMinuteSource(){return minuteRange()||['minute','hour'].includes(appContext().appGrouping);}
-function displayedAppRecords(){return appMinuteSource()?data.appMinuteRecords||[]:proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,appContext().proxyEstimated&&data.proxy?.available);}
+function displayedAppRecords(){const estimated=appContext().proxyEstimated&&data.proxy?.available;return appMinuteSource()?proxyUsageRecords(data.appMinuteRecords||[],data.proxyEstimatedMinuteRecords,estimated):proxyUsageRecords(data.appRecords,data.proxyEstimatedRecords,estimated);}
 function displayedAppSummary(networkId,start,end){return applicationSummary(displayedAppRecords(),{...getRange(),networkId,start,end});}
 function drawerApps(n){
  const view=applicationView();
@@ -352,7 +432,7 @@ function applicationSummaryMarkup(n,viewData=applicationListData(n)){
 }
 function applicationContent(n,controls){
  const view=applicationView(),viewData=applicationListData(n);
- return `${applicationFilters(appContext(),{view,minuteSource:appMinuteSource(),proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
+ return `${applicationFilters(appContext(),{view,proxy:data.proxy,exportAvailable:view==='history'&&viewData.rows.length>0,esc,icon,option,button})}<div id="appStatusRegion">${appStatus(n,controls)}</div><div id="applicationSummaryRegion" role="status">${applicationSummaryMarkup(n,viewData)}</div><div id="appListRegion">${appList(n,viewData)}</div>${view==='live'?`<div id="proxyClientsRegion">${proxyClientsView(measuredProxy(),data.settings.speedUnit)}</div>`:''}`;
 }
 function appStatus(n,controls=true){
  const c=data.appCollection||{state:'disabled'},labels={disabled:t('应用采集未启用'),starting:t('应用采集正在启动'),running:t('应用采集中'),paused:t('应用采集已暂停'),permission:t('应用采集需要系统授权'),unavailable:t('应用采集暂不可用'),partial:t('应用采集有缺失')};
@@ -424,8 +504,8 @@ function appList(n,viewData=applicationListData(n)){
  return applicationTable(rows,{mode:'usage',grouping:'summary',selectedKey:appContext().selectedApp?.key,sum:total},appTableHelpers());
 }
 function appDetails(app){
- const proxy=measuredProxy();
- const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:data.appRecords,estimatedRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),allowEstimates:!minuteRange()&&!/\d{4}-\d{2}-\d{2}\s/.test(app.date||'')});
+ const proxy=measuredProxy(),minute=appMinuteSource();
+ const proxyDetails=resolveApplicationProxy(app,{revision:store.applicationRevision,proxy,nativeRecords:minute?data.appMinuteRecords:data.appRecords,estimatedRecords:minute?data.proxyEstimatedMinuteRecords:data.proxyEstimatedRecords,range:getRange(),networkId:app.networkId||appNetworkId(),grouping:appContext().appGrouping});
  return applicationDetails(app,{esc,fmtWithUnit,appRate,estimateLabel,proxyDetails,rangeLabel:rangeText()});
 }
 function refreshApplicationDetails(){
@@ -453,7 +533,7 @@ function renderAppList(){
  updateRegion($('#appStatusRegion'),appStatus(n,ui.page!=='apps'||!!ui.drawer));
  updateRegion($('#applicationSummaryRegion'),applicationSummaryMarkup(n,viewData));
  if($('#proxyClientsRegion'))updateRegion($('#proxyClientsRegion'),proxyClientsView(measuredProxy(),data.settings.speedUnit));
- const source=$('#appDataSource');if(source){const live=applicationView()==='live',estimated=live?appContext().liveProxyEstimated:!appMinuteSource()&&appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!live&&appMinuteSource()||!data.proxy?.available;source.title=applicationSourceTitle(live,!live&&appMinuteSource());}
+ const source=$('#appDataSource');if(source){const estimated=applicationView()==='live'?appContext().liveProxyEstimated:appContext().proxyEstimated;if(!pendingApplicationFilters.has('appDataSource'))source.value=estimated?'estimated':'native';source.querySelector('[value="estimated"]').disabled=!data.proxy?.available;}
  const sorting=$('#appSort');if(sorting)updateRegion(sorting,applicationSortOptions(appContext(),applicationView(),option));
  const exportButton=$('[data-action="export-apps"]');if(exportButton)exportButton.disabled=applicationFilterBusy||!viewData.rows.length;
  appIcons.hydrate(document);
@@ -717,7 +797,7 @@ let networkDirty=false,totalQuotaDirty=false,proxyDirty=false;
 async function requestCloseDrawer(){await flushAutosaves(['networkForm']);if(networkDirty){confirmModal(t('放弃未保存的网络设置？'),t('网络备注与额度的更改尚未保存。'),t('放弃更改'),()=>{discardAutosaves(['networkForm']);closeDrawer();});}else closeDrawer();}
 async function copySsid(id){const text=getNetwork(id)?.ssid||'';try{await navigator.clipboard.writeText(text);toast(t('已复制原始 SSID。'));}catch(e){showModal(t('复制网络名称'),tr`<p class="modal-desc">浏览器不允许直接写入剪贴板。可以选中下方名称复制。</p><input class="input" value="${esc(text)}" readonly autofocus>`,button('close-modal',t('完成'),'','primary'),()=>$('.modal input')?.select());}}
 function renderStatusHelp(){refreshStatusHelp($('#settings-status'),{live:data.live,appCollection:data.appCollection,proxy:data.proxy,updates:updateStatus});}
-function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy);updateRegion(banner,view);banner.hidden=!view;}
+function renderUpdateBanner(){const banner=$('#updateBanner');if(!banner)return;const view=updateBannerView(updateStatus,updateBusy,{dismissedKey:dismissedUpdate,closeIcon:icon('close')});updateRegion(banner,view);banner.hidden=!view;}
 function renderUpdates(){if(['error','recovered','cancelled','latest','manual','unchecked'].includes(updateStatus.state))updateExitPrepared=false;syncInert();renderUpdateBanner();renderStatusHelp();const panel=$('#updatesPanel');if(panel)refreshUpdates(panel,updateStatus,updateBusy);}
 async function updateAction(action){
  if(updateBusy)return;
@@ -747,6 +827,12 @@ function confirmUpdate(action){
 }
 const actions={
  'check-updates':()=>updateAction('check'),
+ 'cloud-test':()=>cloudAction('test',undefined,result=>tr`连接成功，远端有 ${result.backups} 份备份`),
+ 'cloud-estimate':()=>cloudAction('estimate',undefined,result=>tr`预计上传 ${sizeText(result.size)}：${cloudSummary(result)}`),
+ 'cloud-backup':()=>cloudAction('backup',undefined,result=>{if(cloudState.files)queueMicrotask(listCloud);return tr`已备份 ${sizeText(result.size)}：${cloudSummary(result)}`;}),
+ 'cloud-list':listCloud,'cloud-restore':e=>restoreCloud(e.dataset.name),'cloud-remove':e=>removeCloud(e.dataset.name),
+ 'logs-refresh':()=>loadLogs(),'logs-export':exportLogs,'logs-clear':clearLogs,
+ 'dismiss-update':()=>{dismissedUpdate=updateBannerKey(updateStatus);renderUpdateBanner();},
  'download-update':()=>confirmUpdate('download'),
  'install-update':()=>updateStatus.recoveryRequired||!updateStatus.canInstall?updateAction('install'):confirmUpdate('install'),
  refresh:async e=>{
@@ -806,6 +892,7 @@ document.addEventListener('submit',async event=>{
  form.dataset.busy='true';
  try{
   if(autosaveForms.has(form.id))await formAutosave(form).flush();
+  else if(form.id==='cloudBackupForm')await cloudAction();
   else if(form.id==='appThrottleForm')await controlOperation('throttle',Number(new FormData(form).get('uploadKBps')));
   else if(form.id==='appDownloadThrottleForm')await controlOperation('throttle',{downloadKBps:Number(new FormData(form).get('downloadKBps'))});
   else if(form.id==='exportForm')await doExport(Object.fromEntries(new FormData(form)));
@@ -820,7 +907,10 @@ document.addEventListener('submit',async event=>{
 });
 document.addEventListener('change',async event=>{
  const e=event.target;
+ if(e.form?.id==='cloudBackupForm'){saveCloud(e.form);return;}
  if(autosaveForms.has(e.form?.id)){editAutosave(e,true);return;}
+ if(e.id==='logMinimum'){logsState.minimum=e.value;await loadLogs();return;}
+ if(e.id==='logLevel'){try{await window.desktop.logs.setLevel(e.value);}catch(error){toast(error.message,true);}await loadLogs();return;}
  if(e.id==='networkFilter'){ui.networkId=e.value;ui.historyPage=1;renderMain();}
  if(e.id==='historyGrouping'){try{if(e.value!=='day')await ensureMinuteHistory();ui.historyGrouping=e.value;ui.historyPage=1;renderMain();}catch(error){e.value=ui.historyGrouping;toast(error.message,true);}}
  if(e.id==='networkSort'){ui.sort=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
@@ -847,6 +937,7 @@ document.addEventListener('change',async event=>{
 document.addEventListener('input',event=>{
  const e=event.target;
  if(e.id==='networkSearch'){ui.search=e.value;$('#networkTableRegion').innerHTML=networkTable(true);}
+ if(e.id==='logSearch'){logsState.search=e.value;loadLogs(false);return;}
  if(e.id==='appSearch'){appContext()[applicationView()==='live'?'liveSearch':'appSearch']=e.value;appContext().appPage=1;renderAppList();}
  if(e.id==='confirmText')$('#confirmAction').disabled=e.value!==t('清空');
  if(autosaveForms.has(e.form?.id)&&e.type!=='checkbox'&&e.tagName!=='SELECT')editAutosave(e,false);
@@ -888,7 +979,7 @@ document.addEventListener('focusin',e=>{const point=e.target.closest('[data-char
 window.addEventListener('blur',()=>$('#tooltip').style.display='none');
 window.wifimeterHasUnsavedChanges=()=>settingsDirty||networkDirty||totalQuotaDirty||proxyDirty;
 window.addEventListener('beforeunload',event=>{if(window.wifimeterHasUnsavedChanges()){event.preventDefault();event.returnValue='';}});
-window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(['overview','networks','apps','history','settings'].includes(p))navigate(p);});
+window.addEventListener('hashchange',()=>{const p=location.hash.slice(1);if(PAGES.includes(p))navigate(p);});
 const stopPreferences=window.desktop.windowPreferences?.onChanged(receiveWindowPreferences);
 window.addEventListener('unload',()=>{stopPreferences?.();systemTheme.removeEventListener('change',applyTheme);},{once:true});
 window.addEventListener('focus',()=>reloadWindowPreferences().catch(console.error));

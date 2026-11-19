@@ -75,3 +75,5 @@ Linux 原生采集接入 eBPF，Windows 接入 ETW；不会把网卡总量按比
 `usage` 与 `appUsage` 事件新增 `minuteRecords` 和 `usageRevision`，应用事件中的分钟行包含应用字段。同一轮采样的两个事件共用序号。采样与请求在同一服务线程执行，快照读取不会插入到网络与应用提交之间；客户端只重放序号大于快照序号的后续增量。完整备份包含两类分钟数据，恢复也接受缺少分钟字段的旧备份。保留期裁剪、清空和删除网络同步处理分钟记录。
 
 为避免日、月、全部统计自动读取大量应用分钟行，`snapshot` 默认不读取分钟表，返回空分钟数组及 `minuteRecordsIncluded: false`。需要分钟图表或明细时传 `includeMinutes: true`；带有 `fromTime` 或 `toTime` 的查询自动读取分钟，返回 `minuteRecordsIncluded: true`。分钟增量事件始终包含真实分钟行。默认每日导出也不读取分钟表。
+
+完整备份中的代理字节证据由[应用合约](APPLICATION_TRAFFIC.zh-CN.md#分钟代理备份证据)定义。

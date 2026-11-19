@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { applicationProxyDetails } from '../renderer/data/application-proxy.js';
 import * as proxyDetailsModule from '../renderer/data/application-proxy.js';
 import { applicationDetails } from '../renderer/ui/applications.js';
+import { setLanguage } from '../renderer/i18n.js';
 
 const clientId = 'C:\\Apps\\Browser.exe', proxyId = 'C:\\Proxy\\Proxy.exe';
 const native = (networkId, date, rxBytes = '100', txBytes = '40') => ({ networkId, date, appId: proxyId, name: 'Proxy', rxBytes, txBytes });
@@ -75,7 +76,8 @@ test('application details show live measured connections separately from histori
     assert.match(html, /2026-10 &lt;all&gt;/);
     assert.match(html, /&lt;Proxy&gt;/);
     assert.doesNotMatch(html, /900 B\/s|800 B\/s|<Proxy>|<form/);
-    assert.match(html, /历史用量按连接权重估算；本地 TCP 实时速度不计入 Wi-Fi 用量。/);
+    assert.match(html, /历史下载和上传分别按客户端与代理之间的字节比例估算；缺少字节记录的方向按连接数分配。/);
+    assert.match(html, /本地 TCP 实时速度不计入 Wi-Fi 用量。/);
 });
 
 test('details without candidate estimates never traverse unrelated native history', () => {
@@ -170,4 +172,112 @@ test('resolver without a revision observes in-place changes on every call', () =
         assert.equal(resolve({ id: clientId }, options).estimates.length, 2);
         assert.equal(fixture.reads(), 6);
     }
+});
+
+
+const minuteNative = (networkId, date, time, extra = {}) => ({ ...native(networkId, date), time, hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)), ...extra });
+const minuteEstimate = (networkId, date, time, extra = {}) => ({ ...estimate(networkId, date), time, hour: Number(time.slice(0, 2)), minute: Number(time.slice(3)), ...extra });
+
+test('selected minute details use exactly that minute while keeping live measurements independent', () => {
+    const times = ['10:00', '10:01', '10:02'];
+    const nativeRecords = times.map(time => minuteNative('home', '2026-10-02', time));
+    const estimatedRecords = times.map(time => minuteEstimate('home', '2026-10-02', time));
+    const clients = [{ appId: clientId, proxyAppId: proxyId, measurementAvailable: true, rxPerSecond: '9000', txPerSecond: '8000' }];
+    const options = { nativeRecords, estimatedRecords, proxy: { clients }, range, networkId: 'home', grouping: 'minute' };
+    const before = structuredClone(options);
+    const details = applicationProxyDetails({ id: clientId.toUpperCase().replaceAll('\\', '/'), date: '2026-10-02 10:01' }, options);
+    assert.deepEqual(details.estimates, [estimatedRecords[1]]);
+    assert.deepEqual(details.clients, clients);
+    assert.deepEqual(options, before);
+});
+
+test('selected hour details include its minute estimates and exclude neighboring hours and dates', () => {
+    const slots = [['2026-10-02', '09:59'], ['2026-10-02', '10:00'], ['2026-10-02', '10:01'], ['2026-10-02', '10:59'], ['2026-10-02', '11:00'], ['2026-10-03', '10:01']];
+    const nativeRecords = slots.map(([date, time]) => minuteNative('home', date, time));
+    const estimatedRecords = slots.map(([date, time]) => minuteEstimate('home', date, time));
+    const details = applicationProxyDetails({ id: clientId, date: '2026-10-02 10:00' }, { nativeRecords, estimatedRecords, range, grouping: 'hour' });
+    assert.deepEqual(details.estimates, estimatedRecords.slice(1, 4));
+});
+
+test('partial cross-day details include the ending minute and reject daily estimates on interior days', () => {
+    const slots = [['2026-10-02', '23:57'], ['2026-10-02', '23:58'], ['2026-10-02', '23:59'], ['2026-10-03', '12:00'], ['2026-10-04', '00:00'], ['2026-10-04', '00:01'], ['2026-10-04', '00:02']];
+    const minutes = slots.map(([date, time]) => minuteEstimate('home', date, time));
+    const options = {
+        nativeRecords: [...slots.map(([date, time]) => minuteNative('home', date, time)), native('home', '2026-10-03')],
+        estimatedRecords: [...minutes, estimate('home', '2026-10-03')],
+        range: { start: '2026-10-02', startTime: '23:58', end: '2026-10-04', endTime: '00:01' }, networkId: 'home', grouping: 'summary'
+    };
+    assert.deepEqual(applicationProxyDetails({ id: clientId }, options).estimates, minutes.slice(1, 6));
+    assert.deepEqual(applicationProxyDetails({ id: clientId, date: '2026-10-03' }, { ...options, grouping: 'day' }).estimates, [minutes[3]]);
+    assert.deepEqual(applicationProxyDetails({ id: clientId, date: '2026-10' }, { ...options, grouping: 'month' }).estimates, minutes.slice(1, 6));
+});
+
+test('minute estimates validate both directions for the full proxy group without mixing minutes', () => {
+    const nativeRecords = ['10:01', '10:02'].map(time => minuteNative('home', '2026-10-02', time));
+    nativeRecords.push(minuteNative('home', '2026-10-02', '10:01', { appId: clientId, rxBytes: '7', txBytes: '3' }));
+    const selected = minuteEstimate('home', '2026-10-02', '10:01', { rxBytes: '60', txBytes: '30' });
+    const sibling = minuteEstimate('home', '2026-10-02', '10:01', { appId: 'other-client', rxBytes: '40', txBytes: '10' });
+    const next = minuteEstimate('home', '2026-10-02', '10:02');
+    const options = { nativeRecords, estimatedRecords: [selected, sibling, next], range: { start: '2026-10-02', end: '2026-10-02', startTime: '10:01', endTime: '10:02' } };
+    assert.deepEqual(applicationProxyDetails({ id: clientId }, options).estimates, [selected, next]);
+    for (const patch of [{ rxBytes: '39' }, { txBytes: '9' }, { time: '10:03' }, { networkId: 'office' }, { proxyAppId: 'other-proxy' }]) {
+        assert.deepEqual(applicationProxyDetails({ id: clientId }, { ...options, estimatedRecords: [selected, { ...sibling, ...patch }, next] }).estimates, [next]);
+    }
+    assert.deepEqual(applicationProxyDetails({ id: clientId, date: '2026-10-02 10:01' }, { ...options, nativeRecords: [], grouping: 'minute' }).estimates, []);
+    assert.equal(nativeRecords[2].rxBytes, '7');
+    assert.equal(nativeRecords[2].txBytes, '3');
+});
+
+test('minute details isolate network and full proxy identity before reading byte totals', () => {
+    const selected = minuteEstimate('home', '2026-10-02', '10:01');
+    const office = minuteEstimate('office', '2026-10-02', '10:01');
+    const other = minuteEstimate('home', '2026-10-02', '10:01', { proxyAppId: 'C:\\Proxy\\Sibling.exe' });
+    const unrelatedNative = minuteNative('home', '2026-10-02', '10:01', { appId: 'C:\\Proxy\\Sibling.exe' });
+    Object.defineProperties(unrelatedNative, { rxBytes: { get() { throw Error('Unrelated native bytes were read'); } }, txBytes: { get() { throw Error('Unrelated native bytes were read'); } } });
+    Object.defineProperties(other, { rxBytes: { get() { throw Error('Unrelated estimate bytes were read'); } }, txBytes: { get() { throw Error('Unrelated estimate bytes were read'); } } });
+    const options = { nativeRecords: [minuteNative('home', '2026-10-02', '10:01'), minuteNative('office', '2026-10-02', '10:01'), unrelatedNative], estimatedRecords: [selected, office, other], range, networkId: 'home', grouping: 'minute' };
+    assert.deepEqual(applicationProxyDetails({ id: proxyId.toLowerCase(), name: 'Proxy', date: '2026-10-02 10:01' }, options).estimates, [selected]);
+});
+
+test('minute resolver invalidates replaced source arrays and rereads current unavailable clients', () => {
+    const resolve = proxyDetailsModule.createApplicationProxyResolver();
+    const row = minuteEstimate('home', '2026-10-02', '10:01');
+    const options = { revision: 1, nativeRecords: [minuteNative('home', '2026-10-02', '10:01')], estimatedRecords: [row], range, grouping: 'minute', proxy: { clients: [{ appId: clientId, measurementAvailable: true, rxPerSecond: '9000' }] } };
+    const app = { id: clientId, date: '2026-10-02 10:01' };
+    const first = resolve(app, options);
+    assert.deepEqual(first.estimates, [row]);
+    options.proxy.clients = [{ appId: clientId, measurementAvailable: false, rxPerSecond: '9000' }];
+    const cached = resolve(app, options);
+    assert.equal(cached.estimates, first.estimates);
+    assert.deepEqual(cached.clients, options.proxy.clients);
+    assert.deepEqual(resolve(app, { ...options, nativeRecords: [minuteNative('home', '2026-10-02', '10:01', { txBytes: '41' })] }).estimates, []);
+    assert.deepEqual(resolve(app, options).estimates, [row]);
+    const replacement = [minuteEstimate('home', '2026-10-02', '10:01', { rxBytes: '60', txBytes: '10' }), minuteEstimate('home', '2026-10-02', '10:01', { appId: 'other-client', rxBytes: '40', txBytes: '30' })];
+    assert.deepEqual(resolve(app, { ...options, estimatedRecords: replacement }).estimates, [replacement[0]]);
+    assert.deepEqual(resolve(app, { ...options, allowEstimates: false }).estimates, []);
+});
+
+test('minute resolver distinguishes a selected minute from the same labeled hour', () => {
+    const resolve = proxyDetailsModule.createApplicationProxyResolver();
+    const estimatedRecords = ['10:00', '10:01'].map(time => minuteEstimate('home', '2026-10-02', time));
+    const options = { revision: 1, nativeRecords: ['10:00', '10:01'].map(time => minuteNative('home', '2026-10-02', time)), estimatedRecords, range, grouping: 'minute' };
+    const app = { id: clientId, date: '2026-10-02 10:00' };
+    assert.deepEqual(resolve(app, options).estimates, [estimatedRecords[0]]);
+    assert.deepEqual(resolve(app, { ...options, grouping: 'hour' }).estimates, estimatedRecords);
+    assert.deepEqual(resolve(app, options).estimates, [estimatedRecords[0]]);
+});
+
+test('minute detail rows display complete timestamps and explain direction weights in both languages', () => {
+    const options = { esc, fmtWithUnit: value => value + ' B', appRate: value => value == null ? '—' : value + ' B/s', estimateLabel: () => 'Estimated', proxyDetails: { estimates: [minuteEstimate('home', '2026-10-02', '10:01')], clients: [] } };
+    try {
+        setLanguage('zh-CN');
+        const chinese = applicationDetails({ name: 'Browser', id: clientId }, options);
+        assert.match(chinese, /<dt>时间<\/dt><dd>2026-10-02 10:01<\/dd>/);
+        assert.match(chinese, /历史下载和上传分别按客户端与代理之间的字节比例估算；缺少字节记录的方向按连接数分配。/);
+        setLanguage('en');
+        const english = applicationDetails({ name: 'Browser', id: clientId }, options);
+        assert.match(english, /<dt>Time<\/dt><dd>2026-10-02 10:01<\/dd>/);
+        assert.match(english, /Historical download and upload are estimated separately by the share of bytes exchanged between each client and the proxy; directions without byte evidence use connection counts\./);
+        assert.doesNotMatch(english, /历史|字节|连接数/);
+    } finally { setLanguage('zh-CN'); }
 });

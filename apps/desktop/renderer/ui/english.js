@@ -9,7 +9,6 @@ export const english = Object.fromEntries(`
 实时流量排行|Live traffic ranking
 应用用量记录|Application usage history
 应用视图|Application view
-代理估算按天记录：请选择整天的时间范围，并按应用汇总、日或月分组。|Proxy estimates are stored per day: choose whole days and group by summary, day or month.
 条结果|results
 原生采集|Native collection
 包含端口估算|Include port estimates
@@ -34,8 +33,9 @@ export const english = Object.fromEntries(`
 应用列表|Application list
 记录范围|Record period
 未知代理|Unknown proxy
-历史用量按连接权重估算|Historical usage is estimated by connection weight
+历史下载和上传分别按客户端与代理之间的字节比例估算；缺少字节记录的方向按连接数分配。|Historical download and upload are estimated separately by the share of bytes exchanged between each client and the proxy; directions without byte evidence use connection counts.
 本地 TCP 实时速度不计入 Wi-Fi 用量。|Live local TCP rates are separate from Wi-Fi usage.
+代理估算按网络和时段匹配原生代理用量，保留客户端直接流量。|Proxy estimates match native proxy usage for the selected network and period; direct client traffic is retained.
 代理估算设置|Proxy estimation settings
 开启应用采集|Start application collection
 应用限制记录|Application restriction records
@@ -50,7 +50,114 @@ export const english = Object.fromEntries(`
 规则未启用|Rules disabled
 偏好已保存，但开启开机启动失败。|Preferences saved, but enabling startup failed.
 偏好已保存，但关闭开机启动失败。|Preferences saved, but disabling startup failed.
-还没有应用限制记录。设置成功后会显示在这里。|No restriction records yet. Successfully configured restrictions will appear here.
+还没有应用限制记录|No restriction records yet
+选择一个程序来阻止它联网或限制速度，设置成功后会显示在这里。|Choose a program to block its network access or limit its speed. Configured restrictions appear here.
+应用规则|Application rules
+WebDAV 云备份|WebDAV cloud backup
+无法确认原采集状态，未恢复备份。|Unable to confirm the previous collection state; the backup was not restored.
+无法暂停采集，未恢复备份。|Unable to pause collection; the backup was not restored.
+采集状态确认失败。|Could not confirm the collection state.
+窗口正在关闭，暂时不能修改设置。|The window is closing; settings cannot be changed now.
+原采集状态未能恢复|Could not restore the previous collection state
+云备份设置无效。|Invalid cloud backup settings.
+应用限制记录超过大小或条数上限。|Application restriction records exceed the size or entry limit.
+WebDAV 备份文件过大。|The WebDAV backup file is too large.
+这不是 WiFiMeter 的完整备份文件。|This is not a complete WiFiMeter backup.
+正在恢复备份，暂时不能修改数据。|A backup is being restored. Data cannot be changed during restore.
+请等待退出确认、数据导入、更新或采集恢复完成后重试恢复备份。|Wait for quit confirmation, data import, the update or collection recovery to finish before retrying the backup restore.
+请等待备份恢复完成后重试导入。|Wait for the backup restore to finish before retrying the import.
+请等待备份恢复完成后重试更新。|Wait for the backup restore to finish before retrying the update.
+请等待退出确认或采集恢复完成后重试更新。|Wait for quit confirmation or collection recovery to finish before retrying the update.
+日志恢复失败，回滚未完成|Log restore failed; rollback is incomplete
+本地恢复点|Local restore point
+。本地恢复点|. Local restore point
+云备份桌面设置无效。|The cloud backup contains invalid desktop settings.
+云备份日志无效。|The cloud backup contains invalid logs.
+云备份日志超过大小或条数上限。|The cloud backup logs exceed the size or entry limit.
+当前版本无法恢复这份备份的桌面设置。|This version cannot restore the desktop settings in this backup.
+当前版本无法恢复这份备份的日志。|This version cannot restore the logs in this backup.
+备份解压后超过 512 MiB，未恢复。|The extracted backup exceeds 512 MiB. Restore was cancelled.
+云备份内容无效，原数据已保留|Invalid cloud backup; the original data was preserved
+云备份恢复失败，已恢复原数据|Cloud restore failed; the original data was restored
+云备份恢复失败，回滚未完成|Cloud restore failed; rollback is incomplete
+云备份设置已保存|Cloud backup settings saved
+云备份|Cloud backup
+WebDAV 地址|WebDAV address
+用户名|User name
+访问密码|Password
+删除备份|Delete
+已保存，留空则不修改|Saved. Leave empty to keep it
+备份内容|What to back up
+系统设置|Settings
+网络与额度|Networks and quotas
+按天流量|Daily usage
+按小时流量|Hourly usage
+按分钟流量|Per-minute usage
+数据范围|Data range
+最近 7 天|Last 7 days
+最近 30 天|Last 30 days
+最近 90 天|Last 90 days
+最近一年|Last year
+保留本机备份份数|Backups to keep for this device
+自动同步间隔|Automatic sync interval
+每小时|Every hour
+每天|Every day
+每周|Every week
+自动同步到 WebDAV|Sync to WebDAV automatically
+测试连接|Test connection
+估算大小|Estimate size
+立即备份|Back up now
+查看远端备份|Show remote backups
+正在保存…|Saving…
+正在备份…|Backing up…
+正在恢复…|Restoring…
+正在测试连接…|Testing the connection…
+正在读取远端备份…|Reading remote backups…
+正在估算大小…|Estimating the size…
+正在删除…|Deleting…
+上次备份失败：|Last backup failed:
+上次备份：|Last backup:
+远端还没有备份。|There are no remote backups yet.
+ · 本机| · this device
+连接成功，远端有 |Connected. The remote folder has
+ 份备份| backups
+预计上传 |Estimated upload
+已备份 |Backed up
+已恢复：|Restored:
+ 天 · | days ·
+ 条应用记录| application records
+从这份云备份恢复？|Restore from this cloud backup?
+备份包含的内容会覆盖本机对应的数据，其余数据保留。恢复前会在本机保存一份还原点，恢复后采集会暂停。|What the backup contains replaces the matching local data; everything else stays. A local restore point is saved first, and collection pauses afterwards.
+删除这份远端备份？|Delete this remote backup?
+删除后无法从 WebDAV 找回。|It cannot be recovered from WebDAV afterwards.
+运行日志|Activity log
+日志|Logs
+查看采集、更新和备份的运行记录。|Review what collection, updates and backups have been doing.
+调试|Debug
+信息|Info
+警告|Warning
+错误|Error
+无法读取日志|Unable to read the log
+没有符合条件的日志|No matching log entries
+调整显示级别或搜索内容。|Change the display level or the search text.
+仅显示最近的日志：|Showing the most recent entries:
+日志时间|Time
+日志级别|Level
+日志来源|Source
+日志内容|Message
+当前环境不提供日志|Logs are unavailable in this environment
+搜索日志|Search the log
+显示级别|Display level
+记录级别|Recording level
+低于此级别的日志不会写入文件。|Entries below this level are not written to the file.
+导出日志|Export
+清空日志|Clear
+日志已导出|Log exported
+清空日志？|Clear the log?
+已记录的日志会被清除，之后的日志照常记录。|Recorded entries are removed. New entries continue to be recorded.
+规则|Rules
+阻止程序联网，或限制它的上传和下载速度。|Block a program's network access, or limit its upload and download speed.
+当前平台暂不支持|Not supported on this platform
 应用限制记录未能读取。|Unable to read application restriction records.
 正在读取记录…|Reading records…
 上次操作未完成：|Previous operation incomplete:
@@ -229,7 +336,6 @@ export const english = Object.fromEntries(`
 最多设置 64 个端口、32 个进程名；进程名最长 64 个字符且不能包含控制字符。|Use up to 64 ports and 32 process names. Each name must be at most 64 characters without control characters.
 后端尚未提供代理估算接口。|The backend does not provide proxy estimates yet.
 当前平台不支持代理流量估算，原生应用采集不受影响。|Proxy traffic estimates are unsupported on this platform. Native application collection is unaffected.
-代理估算与原生采集独立；仅替换匹配网络和日期的代理记录，保留客户端直接流量。|Proxy estimates are separate from native collection. They replace proxy records only for matching networks and dates; direct client traffic is retained.
 应用数据来源|Application data source
 原生记录|Native records
 包含代理估算|Include proxy estimates

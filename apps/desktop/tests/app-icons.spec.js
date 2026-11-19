@@ -98,5 +98,11 @@ test('application page resolves a known backend executable through the icon brid
   await expect(page.locator('.application-table-row .app-avatar img')).toBeVisible();
   expect(await page.locator('.application-table-row .app-avatar img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   await page.locator('[data-action="select-app"]').click();await expect(page.locator('#drawerTitle .app-avatar img')).toBeVisible();
+  if(process.platform==='win32'){
+   const query=await page.evaluate(path=>window.desktop.appControl.request({action:'read',path}),executable);
+   expect(query.ok).toBe(true);
+   expect(query.result.state).toMatchObject({Scope:'BrowserFixture',Blocked:false,Throttled:false,DownloadThrottled:false,FirewallRuleCount:0});
+   await expect(page.locator('#appControlRegion [data-operation="read"]')).toBeEnabled();
+  }
  }finally{if(app)await app.close();harness.cleanup();}
 });

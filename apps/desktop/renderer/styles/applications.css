@@ -78,7 +78,6 @@
 .application-name .app-avatar.app-avatar--compact { margin:0; }
 
 /* Detected proxy clients under the live ranking */
-.app-rules-panel { margin-top:var(--space-3); }
 #proxyClientsRegion:not(:empty) { padding-bottom:var(--space-3); }
 .proxy-client-table { table-layout:fixed; min-width:0 !important; }
 .proxy-client-table th:nth-child(1) { width:24%; }
@@ -91,6 +90,7 @@
 .proxy-client-table .network-name { max-width:100%; overflow:visible; white-space:normal; overflow-wrap:anywhere; }
 
 /* Saved application limits */
+.app-rules-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; justify-content:flex-end; }
 .app-rules-panel > p { margin:0; padding:0 20px 12px; }
 .app-rules-list { margin:0; padding:0 20px 4px; list-style:none; }
 .app-rule-row { display:flex; align-items:center; gap:var(--space-3); padding:14px 0; border-top:1px solid var(--line); }

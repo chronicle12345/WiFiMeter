@@ -1,8 +1,8 @@
 import { t } from '../i18n.js';
 
-// Windows 应用按完整路径忽略大小写匹配；网络和日期保持精确匹配。
+// Windows 应用按完整路径忽略大小写匹配；网络、日期和分钟保持精确匹配，按天的行没有分钟。
 export const proxyUsageKey = (row, appId = row.proxyAppId) =>
-    JSON.stringify([row.networkId, row.date, appId.toLowerCase()]);
+    JSON.stringify([row.networkId, row.date, row.time ?? '', appId.toLowerCase()]);
 
 // Candidate groups still include every client before checking the native byte totals.
 function validatedProxyGroups(native, estimates, selectedKeys) {
@@ -17,8 +17,9 @@ function validatedProxyGroups(native, estimates, selectedKeys) {
             groups.set(key, group);
             let dates = scopes.get(row.networkId);
             if (!dates) { dates = new Map(); scopes.set(row.networkId, dates); }
-            let apps = dates.get(row.date);
-            if (!apps) { apps = new Map(); dates.set(row.date, apps); }
+            const slot = row.date + ' ' + (row.time ?? '');
+            let apps = dates.get(slot);
+            if (!apps) { apps = new Map(); dates.set(slot, apps); }
             apps.set(row.proxyAppId.toLowerCase(), group);
         }
         group.rx += BigInt(row.rxBytes);
@@ -27,7 +28,7 @@ function validatedProxyGroups(native, estimates, selectedKeys) {
     }
     if (!groups.size) return groups;
     for (const row of native) {
-        const group = scopes.get(row.networkId)?.get(row.date)?.get(row.appId.toLowerCase());
+        const group = scopes.get(row.networkId)?.get(row.date + ' ' + (row.time ?? ''))?.get(row.appId.toLowerCase());
         if (!group) continue;
         const total = group.native || { rx: 0n, tx: 0n };
         total.rx += BigInt(row.rxBytes); total.tx += BigInt(row.txBytes);

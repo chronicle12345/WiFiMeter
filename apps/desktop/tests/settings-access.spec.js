@@ -65,7 +65,7 @@ test('theme applies automatically, persists after restart and follows system cha
 
 test('settings stay in one scrolling panel and category links track the current section',async()=>{
  await page.locator('[data-category="general"]').focus();await page.keyboard.press('ArrowDown');await expect(page.locator('[data-category="display"]')).toBeFocused();
- await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(7);
+ await expect(page.locator('[data-settings-panel]:visible')).toHaveCount(8);
  await expect(page.locator('.settings-scroll-panel')).toHaveCount(1);
  await expect(page.locator('[data-settings-panel][hidden]')).toHaveCount(0);
  for(const height of [768,1200]){

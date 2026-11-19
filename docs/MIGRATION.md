@@ -20,6 +20,16 @@ A complete backup includes network records, hourly data, application history, co
 
 The application retains the cross-platform profile location. The Windows profile is `%APPDATA%\WiFiMeter Demo`; Linux retains its existing Electron profile. Keep these directories when reinstalling. Backups and import reports can contain network names and local paths; they are private user data and must not be committed or attached to public issues without review.
 
+### WebDAV cloud backups
+
+In Settings > Cloud backup, enter the WebDAV address and credentials, select content and recent days, test the connection, then back up or list remote files. Automatic backups run while the application is open, at the selected hourly, daily or weekly interval. Retention removes only that device's excess backups. File names have a unique suffix; older names remain readable.
+
+A cloud archive replaces its included sections. Dated sections replace rows on or after the archive's starting day; earlier rows and omitted sections remain local. Application or minute sections include minute proxy weights once. Older selected archives without this evidence clear weights in the covered dates, preventing local weights from attributing another device's records.
+
+System settings include backend preferences, proxy configuration, window preferences, log recording level and saved application restriction records. Restoring restriction records does not apply firewall or speed-limit policies; use Rules to review and set them. Logs preserve timestamps, levels and sources; structured snapshots and older text exports are accepted. Windows protects the WebDAV password with DPAPI; Linux uses owner-only file permissions. Credentials are excluded from archives.
+
+Host and log input is validated before data replacement. Restoration pauses collection before saving `before-cloud-restore.json.gz`, which includes the complete backend dataset, portable desktop settings and logs. The ordinary file-restore action accepts this compressed restore point. Success leaves collection paused. Failure attempts to recover the prior data and collection state; incomplete recovery stays paused and reports the retained restore point.
+
 ## Backend migration interface
 
 `importLegacy` accepts `{ sourceId, stateJson, settingsJson?, appUsageJson?, allowInitialSettings? }`. JSON parameters preserve the original file contents and numeric precision and allow a UTF-8 BOM. Importing the same `sourceId` again returns only the original result; changes to previously imported source contents return `LegacySourceChanged`. `allowInitialSettings` is used only for a new profile confirmed to have had no database before startup. The backend still checks that the current dataset is empty and preferences have not been modified.

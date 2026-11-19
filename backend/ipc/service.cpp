@@ -736,6 +736,8 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
     result.set("proxyEstimatedRecords", proxyEstimatedRecords(apps, status));
     if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
+    result.set("proxyEstimatedMinuteRecords", proxyEstimatedMinuteRecords(appMinutes, status));
+    if (!status) { response.error = Error{errorCode::kStorageFailure, status.message}; return response; }
     result.set("appCollection", appCollectionToJson());
     result.set("appProcesses", appProcesses_);
     const auto appGaps = deps_.store.usage().gapsInRange(rangeStart, rangeEnd, status, true);
@@ -1709,6 +1711,9 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     auto estimateUpdates = proxyEstimatedUpdates(now, estimateStatus);
     if (!estimateStatus) events.error = Error{errorCode::kStorageFailure, estimateStatus.message};
     else if (estimateUpdates.size()) live.set("proxyEstimatedUpdates", std::move(estimateUpdates));
+    auto minuteUpdates = proxyEstimatedMinuteUpdates(now, estimateStatus);
+    if (!estimateStatus) events.error = Error{errorCode::kStorageFailure, estimateStatus.message};
+    else if (minuteUpdates.size()) live.set("proxyEstimatedMinuteUpdates", std::move(minuteUpdates));
     events.items.push_back(std::move(live));
 
     evaluateQuotas(now, events);

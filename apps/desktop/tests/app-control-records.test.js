@@ -221,3 +221,104 @@ test('写入失败保留原记录并向界面返回保存错误，重试后可�
     await control.request({ action: 'read', path: program });
     assert.equal((await h.makeControl().list()).records[0].state.UploadKbps, 2048);
 });
+
+
+test('恢复限制记录仅保存文件和内存状态，重新启动后仍可读取，不执行系统策略', async t => {
+    const h = await harness(t), control = h.makeControl();
+    const snapshot = { version: 1, records: [{ path: second, name: 'other.exe', savedAt: '2026-11-18T01:00:00.000Z',
+        state: { Blocked: true, InboundBlocked: true, OutboundBlocked: false, FirewallRuleCount: 1,
+            Throttled: null, QosError: 'unavailable', DownloadThrottled: true, DownloadKbps: 2048 } }] };
+    assert.equal(typeof control.restoreRecords, 'function');
+    await control.restoreRecords(snapshot);
+    assert.deepEqual(await control.backupRecords(), snapshot);
+    assert.deepEqual((await h.makeControl().list()).records, snapshot.records);
+    assert.equal(h.calls(), 0);
+    snapshot.records[0].state.Blocked = false;
+    assert.equal((await control.list()).records[0].state.Blocked, true);
+});
+
+test('非法或过大的限制记录快照不覆盖已有文件和记录，也不查询系统状态', async t => {
+    const h = await harness(t), control = h.makeControl();
+    await control.request({ action: 'block', path: program });
+    assert.equal(typeof control.restoreRecords, 'function');
+    const before = await control.backupRecords(), file = path.join(h.directory, 'app-network-records.json'), raw = await fs.readFile(file, 'utf8');
+    const record = before.records[0];
+    for (const invalid of [null, [], { version: 2, records: [] }, { version: 1, records: [{ ...record, path: '..\\policy.exe' }] },
+        { version: 1, records: [{ ...record, savedAt: 'yesterday' }] }, { version: 1, records: [{ ...record, state: { Blocked: 'true' } }] },
+        { version: 1, records: [{ ...record, state: { FirewallRuleCount: -1 } }] }, { version: 1, records: [{ ...record, state: { DownloadKbps: Infinity } }] },
+        { version: 1, records: [{ ...record, state: { Warning: 'x'.repeat(8193) } }] }, { version: 1, records: [record, { ...record, path: program.toLowerCase() }] },
+        { version: 1, records: Array(5001).fill(record) }]) {
+        await assert.rejects(control.restoreRecords(invalid));
+        assert.deepEqual(await control.backupRecords(), before);
+        assert.equal(await fs.readFile(file, 'utf8'), raw);
+    }
+    assert.equal(h.calls(), 1);
+});
+
+test('恢复记录写入失败保持原文件和内存，重试成功仍不应用防火墙或限速', async t => {
+    const h = await harness(t);
+    await h.makeControl().request({ action: 'block', path: program });
+    let blocked = true;
+    const control = h.makeControl({ recordsIo: { ...fs, rename: async (...args) => { if (blocked) throw Error('rename blocked'); return fs.rename(...args); } } });
+    assert.equal(typeof control.restoreRecords, 'function');
+    const before = await control.backupRecords(), next = { version: 1, records: [] };
+    await assert.rejects(control.restoreRecords(next), /rename blocked/);
+    assert.deepEqual(await control.backupRecords(), before);
+    assert.deepEqual((await h.makeControl().list()).records, before.records);
+    blocked = false; await control.restoreRecords(next);
+    assert.deepEqual((await h.makeControl().list()).records, []);
+    assert.equal(h.calls(), 1);
+});
+
+
+test('备份和恢复等待已经开始的策略操作写完记录，避免迟到结果覆盖恢复记录', async t => {
+    const h = await harness(t);
+    let release, entered;
+    const pending = new Promise(resolve => { release = resolve; });
+    const running = new Promise(resolve => { entered = resolve; });
+    const control = h.makeControl({ runner: async () => { entered(); await pending; return { stdout: JSON.stringify({ Status: 'Succeeded', State: active }) }; } });
+    const operation = control.request({ action: 'block', path: program });
+    await running;
+    assert.equal(typeof control.waitForIdle, 'function');
+    let complete = false;
+    const snapshot = control.backupRecords().then(value => { complete = true; return value; });
+    const restore = control.restoreRecords({ version: 1, records: [] });
+    await new Promise(setImmediate);
+    assert.equal(complete, false);
+    release(); await operation; await snapshot; await restore;
+    assert.deepEqual((await h.makeControl().list()).records, []);
+});
+
+
+test('选择程序的完整异步流程参加恢复等待，迟到的查询结果不能重新写回已恢复记录', async t => {
+    const h = await harness(t);
+    let release, entered;
+    const gate = new Promise(resolve => { release = resolve; }), ready = new Promise(resolve => { entered = resolve; });
+    const control = h.makeControl({ dialog: { showOpenDialog: async () => ({ filePaths: [program] }) },
+        runner: async () => { entered(); await gate; return { stdout: JSON.stringify({ Status: 'Succeeded', State: active }) }; } });
+    const choice = control.chooseProgram(); await ready;
+    let idleSettled = false, restoreSettled = false;
+    const idle = control.waitForIdle().then(() => { idleSettled = true; });
+    const restored = control.restoreRecords({ version: 1, records: [] }).then(() => { restoreSettled = true; });
+    await new Promise(setImmediate);
+    const settledEarly = { idle: idleSettled, restore: restoreSettled };
+    release(); await choice; await idle; await restored;
+    assert.deepEqual(settledEarly, { idle: false, restore: false });
+    assert.deepEqual((await control.backupRecords()).records, []);
+});
+
+test('选择对话框返回后重新检查恢复状态，恢复开始后不再执行查询命令', async t => {
+    const h = await harness(t);
+    let blocked = false, releaseDialog, calls = 0;
+    const dialog = new Promise(resolve => { releaseDialog = resolve; });
+    const control = h.makeControl({ assertWritable: () => { if (blocked) throw Error('正在恢复备份，暂时不能修改数据。'); },
+        dialog: { showOpenDialog: async () => dialog }, runner: async () => { calls++; return { stdout: JSON.stringify({ Status: 'Succeeded', State: active }) }; } });
+    const choice = control.chooseProgram();
+    await new Promise(setImmediate);
+    blocked = true; releaseDialog({ filePaths: [program] });
+    const result = await choice;
+    assert.equal(result.ok, false);
+    assert.match(result.error.message, /恢复备份/);
+    assert.equal(calls, 0);
+    assert.deepEqual((await control.backupRecords()).records, []);
+});
