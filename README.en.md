@@ -9,11 +9,6 @@
 </p>
 
 <p align="center">
-  Check live network speeds and see which applications use your connection.<br />
-  Track daily usage by network, with data stored on your computer.
-</p>
-
-<p align="center">
   <a href="docs/releases/v1.3.7.md#english"><img src="https://img.shields.io/badge/version-1.3.7-6366F1?style=flat&amp;labelColor=182033" alt="Version 1.3.7" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=flat&amp;labelColor=182033" alt="Windows x64" /></a>
   <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=flat&amp;labelColor=182033" alt="Tauri interface" /></a>
@@ -29,8 +24,6 @@
 </p>
 
 ![WiFiMeter feature demo](docs/assets/demo-en.gif)
-
-<p align="center"><sub>Recorded from the current interface · All networks, application records and traffic are simulated</sub></p>
 
 ## What it does
 
