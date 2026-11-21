@@ -1,29 +1,31 @@
-# Multi-architecture packaging
+# Build installers
 
 English | [简体中文](README.zh-CN.md)
 
 ## Tauri installers
 
-Run commands from the repository root; the version is read from package metadata. Version 1.3.7 CI builds and publishes only Windows x64; Windows x86/ARM64 and Linux x64/ARM64 configurations are temporarily commented out. Their native source build helpers remain available. Windows builds use target-architecture Node.js, a Rust MSVC toolchain, CMake and a C++20 compiler; Linux source builds use native toolchains and WebKitGTK 4.1. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
+Run all commands from the repository root. The version comes from package metadata. Version 1.3.7 CI builds and publishes Windows x64 only. Windows x86/ARM64 and Linux x64/ARM64 jobs are temporarily commented out, but their native build helpers remain available. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
+
+Windows requires Node.js for the target architecture, a Rust MSVC toolchain, CMake and a C++20 compiler. Linux requires native toolchains and WebKitGTK 4.1. To build a Windows installer:
 
 ```powershell
 npm ci --prefix apps/desktop --ignore-scripts
 npm run dist:windows
 ```
 
-Windows generates only an NSIS installer by default; Linux generates deb, rpm, and AppImage packages. Portable ZIP files have been discontinued. Internal SHA-256 manifests remain part of build and CI validation, but are not Release attachments.
+Windows produces an NSIS installer by default; Linux produces deb, rpm and AppImage packages. Portable ZIPs have been discontinued. Builds and CI still validate internal SHA-256 manifests, which are excluded from Release attachments.
 
 ```text
 dist/windows/WiFiMeter-1.3.7-windows-x64-Tauri-Setup.exe
 ```
 
-Tauri uses the system WebView and bundles the Node business process and C++ collector. The Windows installer downloads WebView2 when it is missing; Linux uses system WebKitGTK 4.1. User data retains its original directory.
+The package contains the Node business process and C++ collector; Tauri uses the system WebView. The Windows installer downloads WebView2 if needed. Linux uses system WebKitGTK 4.1. User data stays in its original directory.
 
-Packaging uses the current Node.js executable unless `WIFIMETER_NODE_EXECUTABLE` is set. Release CI uses the official Node.js 22.23.3 binaries supplied by `actions/setup-node`. The target architecture must match Node.js, Rust, and the C++ collector. [runtime-check.cjs](tauri/runtime-check.cjs) validates actual capabilities including TLS, Chinese collation, atomic file saves, subprocesses, and download streams. Release packages also retain the corresponding Node.js license.
+Packaging uses the current Node.js executable. Set `WIFIMETER_NODE_EXECUTABLE` to use another one. Release CI uses official Node.js 22.23.3 binaries from `actions/setup-node`. Node.js, Rust and the C++ collector must all match the target architecture. [runtime-check.cjs](tauri/runtime-check.cjs) checks TLS, Chinese collation, atomic file saves, subprocesses and download streams. Packages also include the matching Node.js license.
 
-Legacy runtime trimming and cross-compilation tools have been archived. Current sources retain native Tauri builds, validation, and installation helpers used by the current application. NSIS uses a 64 MiB LZMA dictionary. Linux RPM uses XZ compression, AppImage uses ZSTD supported by the official plugin, and deb retains Tauri's compression configuration.
+Legacy runtime trimming and cross-compilation tools are archived. The current helpers build and verify native Tauri packages and support installation. NSIS uses a 64 MiB LZMA dictionary. Linux RPM uses XZ, AppImage uses the official plugin's ZSTD support, and deb uses Tauri's compression configuration.
 
-To reproduce the CI release configuration locally, run these commands from the repository root. The current Node.js architecture must match the target. Windows also requires Python 3, a complete 7-Zip installation, and the Visual Studio C++ toolchain; native validation requires WebView2 Runtime.
+To reproduce the CI release configuration locally, use Node.js matching the target architecture. On Windows, install Python 3, the full 7-Zip distribution and the Visual Studio C++ toolchain. Native validation also needs WebView2 Runtime. Then run:
 
 ```powershell
 $nodeArch = node -p 'process.arch'
@@ -39,7 +41,7 @@ if ($LASTEXITCODE) { throw 'Tauri build failed' }
 node packaging/tauri/verify-windows.cjs --arch $nodeArch --target $rustTarget
 ```
 
-The following source-build commands for other architectures remain available while their CI jobs are paused. When specifying a target architecture explicitly, Node.js must use that architecture and the Rust target must match:
+You can still build other architectures while their CI jobs are paused. Use matching Node.js and Rust targets when selecting an architecture explicitly:
 
 ```powershell
 node packaging/tauri/build.cjs --platform win32 --arch ia32 --target i686-pc-windows-msvc --formats nsis
@@ -57,25 +59,25 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-CI cache configuration and active/paused targets are maintained in the [CI matrix](../docs/PACKAGING-MATRIX.md). Local builds do not require those CI caches. Package verification entry points and their native prerequisites are maintained in [Testing](../docs/TESTING.md#native-host-and-installers). Installation instructions and version limits are in the [release notes](../docs/releases/v1.3.7.md).
+The [CI matrix](../docs/PACKAGING-MATRIX.md) lists cache configuration and active or paused targets. Local builds do not need CI caches. See [Testing](../docs/TESTING.md#native-host-and-installers) for package verification commands and native prerequisites, and the [release notes](../docs/releases/v1.3.7.md) for installation instructions and version limits.
 
-RPM validation first checks package digests, then performs strict extraction using `bsdtar` from `libarchive-tools`, accommodating packages whose archive length fields are omitted by Tauri's packaging library. Any failed digest, extraction, resource, or native UI check prevents release.
+RPM validation checks package digests, then extracts with `bsdtar` from `libarchive-tools`. This supports packages for which Tauri's packaging library omits archive length fields while keeping extraction checks strict. A failed digest, extraction, resource or native UI check blocks release.
 
-Installation and system interaction validation uses separate test installations and data directories. Check installation, upgrades, shortcuts, the tray, a single startup registration, settings and backup restoration, and data integrity after exiting and reopening. Quota notifications, actual network disconnection, and download limiting require target-machine validation under actual permissions and network conditions. Uninstallation preserves user data. Record packaged WebView automation and complete installation/uninstallation validation separately; the former does not establish the latter's results.
+Use separate test installations and data directories to verify installation and system interaction. Check upgrades, shortcuts, the tray, a single startup registration, settings and backup restoration, and data integrity after exiting and reopening. Test quota notifications, actual network disconnection and download limits on the target machine with the required permissions and network conditions. Uninstallation preserves user data. Record packaged WebView automation separately from complete installation and uninstallation tests; each needs its own evidence.
 
 ## Verification and release
 
-Follow [Testing](../docs/TESTING.md) for checks, isolated profiles, diagnostics, and evidence limits. The [CI and release matrix](../docs/PACKAGING-MATRIX.md) owns publication gates and artifact counts. Development, review, and decision records follow [Development](../docs/DEVELOPMENT.md).
+Use [Testing](../docs/TESTING.md) for checks, isolated profiles, diagnostics and the limits of each check. Release requirements and artifact counts are in the [CI and release matrix](../docs/PACKAGING-MATRIX.md). See [Development](../docs/DEVELOPMENT.md) for the development, review and decision-record process.
 
 ## Icon sources and validation
 
-The canonical logo is `docs/assets/logo.svg`. `node packaging/generate-icons.cjs` generates the desktop SVG, PNG, and Windows ICO. Windows, tray icons, and installers use the same resources. The Windows ICO contains seven sizes: 16, 24, 32, 48, 64, 128, and 256 px, retaining transparent rounded corners.
+Edit `docs/assets/logo.svg`, then run `node packaging/generate-icons.cjs` to generate the desktop SVG, PNG and Windows ICO. Application windows, tray icons and installers share these resources. The Windows ICO contains 16, 24, 32, 48, 64, 128 and 256 px images with transparent rounded corners.
 
-Icon checks validate actual ICO images, their correspondence with the SVG, and Tauri's installer icon configuration. On Windows with Microsoft Edge installed, run:
+Icon checks compare the ICO images with the SVG and verify Tauri's installer icon configuration. On Windows with Microsoft Edge installed, run:
 
 ```powershell
 $env:PLAYWRIGHT_CHANNEL = 'msedge'
 node --test packaging/icons.test.cjs
 ```
 
-The environment variable can be omitted when Playwright Chromium is installed. Release validation must still check the final PE icons and corresponding installer resources. Historical Electron build entry points have been archived; published version notes retain the facts of those releases.
+Omit the environment variable if Playwright Chromium is installed. Before release, also check the final PE icons and installer resources. Electron build entry points are archived; their release notes retain the details of those versions.

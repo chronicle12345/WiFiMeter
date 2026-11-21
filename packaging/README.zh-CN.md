@@ -1,29 +1,31 @@
-# 多架构打包
+# 构建安装包
 
 [English](README.md) | 简体中文
 
 ## Tauri 安装包
 
-从仓库根目录运行，版本由 package metadata 读取。1.3.7 的 CI 仅构建并发布 Windows x64；Windows x86/ARM64 和 Linux x64/ARM64 配置暂时注释，对应源码构建工具继续保留。Windows 构建使用目标架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器；Linux 源码构建使用本机工具链及 WebKitGTK 4.1。当前检查和暂停目标见[平台说明](../docs/PACKAGING-MATRIX.zh-CN.md)。
+所有命令都在仓库根目录执行，版本号从包配置中读取。1.3.7 的 CI 仅构建并发布 Windows x64。Windows x86/ARM64 和 Linux x64/ARM64 任务暂时被注释，对应的本机构建工具仍可使用。当前检查和暂停目标见[平台说明](../docs/PACKAGING-MATRIX.zh-CN.md)。
+
+Windows 需要目标架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器。Linux 需要本机工具链及 WebKitGTK 4.1。构建 Windows 安装包：
 
 ```powershell
 npm ci --prefix apps/desktop --ignore-scripts
 npm run dist:windows
 ```
 
-Windows 默认只生成 NSIS 安装程序，Linux 默认生成 deb、rpm、AppImage。便携 ZIP 已取消。内部 SHA-256 清单仍用于构建及 CI 验证，不作为 Release 附件。
+Windows 默认生成 NSIS 安装程序，Linux 默认生成 deb、rpm 和 AppImage。便携 ZIP 已取消。构建和 CI 仍会校验内部 SHA-256 清单，但清单不放入 Release 附件。
 
 ```text
 dist/windows/WiFiMeter-1.3.7-windows-x64-Tauri-Setup.exe
 ```
 
-Tauri 使用系统 WebView，随包提供 Node 业务进程和 C++ 采集器。Windows 安装版在缺少 WebView2 时下载运行时，Linux 使用系统 WebKitGTK 4.1。用户数据目录沿用原版。
+安装包包含 Node 业务进程和 C++ 采集器，Tauri 使用系统 WebView。Windows 缺少 WebView2 时，安装程序会下载所需运行时；Linux 使用系统 WebKitGTK 4.1。用户数据仍保存在原目录。
 
-未设置 `WIFIMETER_NODE_EXECUTABLE` 时，打包使用当前 Node.js。正式 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制，目标架构与 Node.js、Rust 和 C++ 采集器必须一致。[runtime-check.cjs](tauri/runtime-check.cjs) 验证 TLS、中文排序、原子文件保存、子进程与下载流等实际能力，发行包同时保留对应的 Node.js 许可证。
+打包默认使用当前 Node.js，也可以用 `WIFIMETER_NODE_EXECUTABLE` 指定其他可执行文件。发布 CI 使用 `actions/setup-node` 提供的 Node.js 22.23.3 官方二进制。Node.js、Rust 和 C++ 采集器都必须与目标架构一致。[runtime-check.cjs](tauri/runtime-check.cjs) 检查 TLS、中文排序、原子文件保存、子进程和下载流。安装包还会包含对应的 Node.js 许可证。
 
-旧运行时裁剪和交叉编译工具已归档，当前源码只保留本机 Tauri 构建、验证及当前业务所需的安装辅助工具。NSIS 使用 64 MiB LZMA 字典。Linux RPM 使用 XZ 压缩，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
+旧运行时裁剪和交叉编译工具已归档。当前工具负责本机 Tauri 构建、包验证和安装辅助。NSIS 使用 64 MiB LZMA 字典；Linux RPM 使用 XZ，AppImage 使用官方插件支持的 ZSTD，deb 沿用 Tauri 的压缩配置。
 
-本机复现 CI 发行配置时，在仓库根目录执行以下命令。当前 Node.js 架构须与目标一致。Windows 还需 Python 3、完整 7-Zip 和 Visual Studio C++ 工具链；原生校验需 WebView2 Runtime。
+要在本机复现 CI 发布配置，先确认 Node.js 与目标架构一致。Windows 还需要 Python 3、完整版 7-Zip 和 Visual Studio C++ 工具链；原生验证需要 WebView2 Runtime。然后执行：
 
 ```powershell
 $nodeArch = node -p 'process.arch'
@@ -39,13 +41,13 @@ if ($LASTEXITCODE) { throw 'Tauri build failed' }
 node packaging/tauri/verify-windows.cjs --arch $nodeArch --target $rustTarget
 ```
 
-其他架构的 CI 任务暂停期间，以下源码构建命令仍可使用。明确指定目标架构时，Node.js 必须是该架构，Rust target 必须对应：
+其他架构的 CI 任务暂停期间，仍可从源码构建。指定架构时，使用对应的 Node.js 和 Rust 目标：
 
 ```powershell
 node packaging/tauri/build.cjs --platform win32 --arch ia32 --target i686-pc-windows-msvc --formats nsis
 ```
 
-Linux 在对应架构主机执行，先安装 [tauri-linux-deps.sh](../.github/workflows/scripts/tauri-linux-deps.sh) 中所列系统依赖：
+Linux 需要在对应架构的主机上构建，先安装 [tauri-linux-deps.sh](../.github/workflows/scripts/tauri-linux-deps.sh) 中列出的系统依赖：
 
 ```bash
 set -euo pipefail
@@ -57,25 +59,25 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-CI 缓存配置及启用、暂停目标由 [CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)维护，本机构建不依赖这些 CI 缓存。包验证入口和原生依赖由[测试指南](../docs/TESTING.zh-CN.md#原生宿主与安装包)维护，安装方法和版本限制见[发布说明](../docs/releases/v1.3.7.md#中文)。
+[CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)列出了缓存配置及启用、暂停的目标。本机构建不依赖 CI 缓存。包验证命令和原生依赖见[测试指南](../docs/TESTING.zh-CN.md#原生宿主与安装包)，安装方法和版本限制见[发布说明](../docs/releases/v1.3.7.md#中文)。
 
-RPM 先检查包摘要，再使用 `libarchive-tools` 提供的 `bsdtar` 严格解包，兼容 Tauri 打包库未写入归档长度字段的包。任何摘要、解包、资源或原生界面检查失败都会阻止发布。
+RPM 验证先检查包摘要，再用 `libarchive-tools` 中的 `bsdtar` 解包。这样既能读取 Tauri 打包库未写入归档长度字段的包，也能严格检查解包结果。摘要、解包、资源或原生界面的任何检查失败，都会阻止发布。
 
-安装与系统交互验收使用独立的测试安装和数据目录：核对安装、升级、快捷方式、托盘、唯一开机启动登记、设置与备份恢复，以及退出后重新打开的数据完整性。额度通知、真实断网和下载限速需在目标机器按实际权限与网络条件验证；卸载保留用户数据。包内 WebView 自动检查与完整安装/卸载验收分别记录，不能将前者当作后者的结果。
+安装与系统交互验证使用独立的测试安装和数据目录。检查升级、快捷方式、托盘、是否只有一项开机启动登记、设置和备份恢复，以及退出重开后的数据完整性。额度通知、真实断网和下载限速需要在目标机器上，按实际权限与网络条件测试。卸载会保留用户数据。包内 WebView 自动检查与完整安装、卸载测试应分别记录，各自提供验证结果。
 
 ## 验证与发布
 
-检查、隔离目录、诊断和证据边界遵循[测试指南](../docs/TESTING.zh-CN.md)。发布条件和产物数量由 [CI 与发布矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)维护。开发、审查和决策记录遵循[开发流程](../docs/DEVELOPMENT.zh-CN.md)。
+检查方法、隔离目录、诊断及各项检查能验证的范围见[测试指南](../docs/TESTING.zh-CN.md)。发布要求和产物数量见 [CI 与发布矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)。开发、审查和决策记录的做法见[开发流程](../docs/DEVELOPMENT.zh-CN.md)。
 
 ## 图标来源与核对
 
-正式 logo 为 `docs/assets/logo.svg`，桌面 SVG、PNG 和 Windows ICO 由 `node packaging/generate-icons.cjs` 生成。窗口、托盘与安装包使用同一套资源。Windows ICO 包含 16、24、32、48、64、128、256 px 七种尺寸，保留透明圆角。
+修改 `docs/assets/logo.svg` 后，运行 `node packaging/generate-icons.cjs` 生成桌面 SVG、PNG 和 Windows ICO。窗口、托盘和安装包使用同一套图标。Windows ICO 包含 16、24、32、48、64、128、256 px 七种尺寸，保留透明圆角。
 
-图标检查验证实际 ICO 图像、SVG 对应关系及 Tauri 安装图标配置。在已安装 Microsoft Edge 的 Windows 环境可运行：
+图标检查会对比 ICO 图像与 SVG，并验证 Tauri 的安装图标配置。在装有 Microsoft Edge 的 Windows 上运行：
 
 ```powershell
 $env:PLAYWRIGHT_CHANNEL = 'msedge'
 node --test packaging/icons.test.cjs
 ```
 
-已安装 Playwright Chromium 时可以省略环境变量。发布时仍须检查最终 PE 图标与对应安装包资源。历史 Electron 构建入口已归档，已发布版本的说明继续保存对应历史事实。
+如果已经安装 Playwright Chromium，可以省略环境变量。发布前还须检查最终 PE 图标和安装包资源。Electron 构建入口已归档，对应的发布说明保留各版本当时的情况。

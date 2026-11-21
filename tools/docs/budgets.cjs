@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseMarkdown } = require('./markdown.cjs');
-const { isPairedDocument } = require('./i18n.cjs');
+const { isPairedDocument, documentPaths, documentLanguage } = require('./i18n.cjs');
 const { markdownFiles, readText, safePath } = require('./repository.cjs');
 
 const CONFIG_PATH = 'tools/docs/budgets.json';
@@ -49,12 +49,8 @@ function countWords(text) {
     return [...visible.matchAll(/\p{Script=Han}|[\p{Script=Latin}\p{N}]+(?:[-'’][\p{Script=Latin}\p{N}]+)*/gu)].length;
 }
 
-function englishPath(filename) {
-    return filename.replaceAll('\\', '/').replace(/\.zh-CN\.md$/, '.md');
-}
-
 function budgetType(filename) {
-    const rel = englishPath(filename);
+    const rel = documentPaths(filename).base;
     const lower = rel.toLowerCase();
     const base = path.posix.basename(lower);
     if (/(^|\/)(?:vendor|upstream|node_modules|\.git)(?:\/|$)/i.test(rel) || lower.startsWith('backend/third_party/sqlite/')) return undefined;
@@ -94,8 +90,8 @@ function loadConfig(root) {
     }
     for (const [name, limits] of Object.entries(config.overrides)) {
         const target = safePath(root, name);
-        if (!name.endsWith('.md') || name.endsWith('.zh-CN.md') || englishPath(name) !== name || !budgetType(name)) {
-            throw new Error(`${CONFIG_PATH}: override ${name} must name an in-scope English document`);
+        if (!name.endsWith('.md') || documentPaths(name).base !== name || !budgetType(name)) {
+            throw new Error(`${CONFIG_PATH}: override ${name} must name an in-scope document without a language suffix`);
         }
         if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`${CONFIG_PATH}: override names missing file ${name}`);
         validateLimits(limits, `overrides.${name}`);
@@ -109,8 +105,8 @@ function measurements(root, files) {
     for (const filename of files === undefined ? markdownFiles(root) : files) {
         const type = budgetType(filename);
         if (!type) continue;
-        const lang = filename.endsWith('.zh-CN.md') ? 'zh' : 'en';
-        const limit = (config.overrides[englishPath(filename)] || config.defaults[type])[lang];
+        const lang = documentLanguage(filename);
+        const limit = (config.overrides[documentPaths(filename).base] || config.defaults[type])[lang];
         rows.push({ file: filename, units: countWords(readText(root, filename)), limit, type });
     }
     return rows;

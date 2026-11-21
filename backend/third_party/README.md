@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-This directory contains only third-party code that must be distributed with the sources. It is kept unchanged, without local modifications. Other dependencies still use system package managers; see the build instructions in the [root README](../../README.md).
+This directory contains only third-party code that must be distributed with the sources. It is kept unchanged, without local modifications. Other dependencies still use system package managers; see the build instructions in the [root README](../../README.en.md).
 
 ## sqlite/
 

@@ -2,11 +2,13 @@
 
 English | [简体中文](README.zh-CN.md)
 
-English and Simplified Chinese have equal authority. Either language may be written first. Keep meaning, commands, constraints, and evidence consistent using the [terminology table](terminology.md).
+English and Simplified Chinese are both maintained as official documentation. Either language may be written first. Keep meaning, commands, constraints, and evidence consistent using the [terminology table](terminology.md).
 
 ## Files and scope
 
-Maintain `<name>.md`, `<name>.zh-CN.md`, and generated `<name>.i18n.json` together in one directory. Both Markdown files include language switches; do not hand-edit the review record.
+The root introduction and `docs/` index default to Chinese: `README.md` is Chinese and `README.en.md` is English. Root `README.zh-CN.md` keeps a link to the current introduction for existing bookmarks.
+
+Other documents use `<name>.md` for English and `<name>.zh-CN.md` for Chinese. Keep each pair with its generated `<name>.i18n.json`. Both versions provide language switches and link to guides in the same language. Do not hand-edit review records.
 
 Pairing and prose budgets cover non-vendor README/CONTRIBUTING files, active `docs/` and `.agents/notes/`, and maintained technical documents in `contracts/`, `backend/platform/`, and `packaging/`, including project-maintained dependency notices.
 
@@ -35,7 +37,7 @@ One or more Markdown paths may identify either language. `--reviewed` confirms s
 
 ## What the checks establish
 
-This repository deliberately uses whole-file JSON records with LF-normalized SHA-256, not interchangeable section-level YAML records. Hashes detect edits since review; they cannot prove translation quality, facts, or example correctness.
+Review records use whole-file JSON with LF-normalized SHA-256. Section-level YAML records cannot replace them. Hashes detect edits since review; they cannot prove translation quality, facts, or example correctness.
 
 `check:docs` checks pair records, heading hierarchy, lists/tables, code blocks, links, active Notes, repository file policy, instruction mirrors, and prose budgets. Run `test:docs` after changing these tools.
 

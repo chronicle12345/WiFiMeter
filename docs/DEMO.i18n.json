@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "DEMO.md",
+  "chinese": "DEMO.zh-CN.md",
+  "sha256": {
+    "en": "ca58a752255003aabf2ce493270edb62496a6dcd3cb6af58787860a210783de9",
+    "zh": "a21f896d5366e769aba0c36a76456f67fb3d533c2ad502aa36f12ae9196eddcc"
+  }
+}

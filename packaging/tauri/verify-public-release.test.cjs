@@ -245,7 +245,7 @@ function writeMetadata(f) {
     fs.writeFileSync(path.join(f.root, 'apps/desktop/src-tauri/Cargo.toml'), `[package]\nversion = "${version}"\n`);
     fs.mkdirSync(path.join(f.root, 'docs/releases'), { recursive: true });
     fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## 中文\n\n说明。\n\n## English\n\nRelease notes.\n');
-    for (const file of ['README.md', 'README.zh-CN.md']) {
+    for (const file of ['README.md', 'README.en.md']) {
         fs.writeFileSync(path.join(f.root, file), `<a href="docs/releases/${tag}.md"><img src="https://img.shields.io/badge/version-${version}-6366F1" alt="Version ${version}" /></a>\n`);
     }
     return { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted',
@@ -271,7 +271,7 @@ for (const kind of ['local execution', 'self-hosted runner', 'fork', 'branch', '
         if (kind === 'missing English') fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## 中文\n\n说明。\n');
         if (kind === 'missing Chinese') fs.writeFileSync(path.join(f.root, `docs/releases/${tag}.md`), '## English\n\nRelease notes.\n');
         if (kind === 'version mismatch') fs.writeFileSync(path.join(f.root, 'package.json'), '{"version":"1.3.1"}');
-        if (kind === 'stale README') fs.writeFileSync(path.join(f.root, 'README.zh-CN.md'), 'Previous version.\n');
+        if (kind === 'stale README') fs.writeFileSync(path.join(f.root, 'README.en.md'), 'Previous version.\n');
         await assert.rejects(implementation().main([f.directory], { env, root: f.root, fetch: f.fetch, onAsset() {} }));
         assert.equal(f.calls.length, 0);
     });

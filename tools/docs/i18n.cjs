@@ -4,24 +4,45 @@ const { markdownFiles, repositoryFiles, readText, digest, safePath } = require('
 const { parseMarkdown, collectLinks, structureSignature } = require('./markdown.cjs');
 
 const CHINESE_SUFFIX = '.zh-CN.md';
+const ENGLISH_SUFFIX = '.en.md';
 const RECORD_SUFFIX = '.i18n.json';
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
+const CHINESE_ENTRY_PAGES = new Set(['README.md', 'docs/README.md']);
 
 function relativePath(root, filename) {
     if (typeof filename !== 'string' || !filename.trim()) throw new Error('A named document path is required.');
     return path.relative(root, safePath(root, filename)).split(path.sep).join('/');
 }
 
+function documentPaths(filename) {
+    let base = filename.replaceAll('\\', '/');
+    if (base.endsWith(CHINESE_SUFFIX)) base = base.slice(0, -CHINESE_SUFFIX.length) + '.md';
+    else if (base.endsWith(RECORD_SUFFIX)) base = base.slice(0, -RECORD_SUFFIX.length) + '.md';
+    else if (base.endsWith(ENGLISH_SUFFIX) && CHINESE_ENTRY_PAGES.has(base.slice(0, -ENGLISH_SUFFIX.length) + '.md')) {
+        base = base.slice(0, -ENGLISH_SUFFIX.length) + '.md';
+    }
+    const chineseDefault = CHINESE_ENTRY_PAGES.has(base);
+    return {
+        base,
+        english: chineseDefault ? base.slice(0, -3) + ENGLISH_SUFFIX : base,
+        chinese: chineseDefault ? base : base.slice(0, -3) + CHINESE_SUFFIX,
+        record: base.slice(0, -3) + RECORD_SUFFIX
+    };
+}
+
+function documentLanguage(filename) {
+    const rel = filename.replaceAll('\\', '/');
+    return rel.endsWith(CHINESE_SUFFIX) || rel === documentPaths(rel).chinese ? 'zh' : 'en';
+}
+
 function pairPaths(root, filename) {
-    let english = relativePath(root, filename);
-    if (english.endsWith(CHINESE_SUFFIX)) english = english.slice(0, -CHINESE_SUFFIX.length) + '.md';
-    else if (english.endsWith(RECORD_SUFFIX)) english = english.slice(0, -RECORD_SUFFIX.length) + '.md';
-    else if (!english.endsWith('.md')) throw new Error(`${english}: expected .md, .zh-CN.md, or .i18n.json path`);
-    return { english, chinese: english.slice(0, -3) + CHINESE_SUFFIX, record: english.slice(0, -3) + RECORD_SUFFIX };
+    const rel = relativePath(root, filename);
+    if (!rel.endsWith('.md') && !rel.endsWith(RECORD_SUFFIX)) throw new Error(`${rel}: expected .md or .i18n.json path`);
+    return documentPaths(rel);
 }
 
 function inScope(filename) {
-    const rel = filename.replaceAll('\\', '/');
+    const rel = documentPaths(filename).base;
     const name = path.posix.basename(rel).toLowerCase();
     if (/(^|\/)(?:vendor|upstream|node_modules|\.git)(?:\/|$)/i.test(rel) || rel.startsWith('backend/third_party/sqlite/')) return false;
     if (['agents.md', 'claude.md', 'changelog.md'].includes(name)) return false;
@@ -66,17 +87,14 @@ function semanticLinks(root, owner, tokens, counterpart, errors) {
         if (!local) { links.push(href); continue; }
         if (!local.pathname) continue; // Local heading fragments are language-specific.
         if (local.target === counterpart && !local.query) { switcher = true; continue; }
-        const targetEnglish = local.target.endsWith(CHINESE_SUFFIX)
-            ? local.target.slice(0, -CHINESE_SUFFIX.length) + '.md' : local.target;
-        if (targetEnglish.endsWith('.md') && inScope(targetEnglish)) {
-            const wantChinese = owner.endsWith(CHINESE_SUFFIX);
-            const targetChinese = targetEnglish.slice(0, -3) + CHINESE_SUFFIX;
-            const expected = wantChinese ? targetChinese : targetEnglish;
+        if (local.target.endsWith('.md') && inScope(local.target)) {
+            const targetPair = documentPaths(local.target);
+            const expected = documentLanguage(owner) === 'zh' ? targetPair.chinese : targetPair.english;
             if (local.target !== expected) errors.push(`${owner}: link ${href} uses the wrong language; expected ${expected}`);
-            if (!fileExists(root, targetEnglish) || !fileExists(root, targetChinese)) {
-                errors.push(`${owner}: link ${href} targets an incomplete language pair (${targetEnglish}, ${targetChinese})`);
+            if (!fileExists(root, targetPair.english) || !fileExists(root, targetPair.chinese)) {
+                errors.push(`${owner}: link ${href} targets an incomplete language pair (${targetPair.english}, ${targetPair.chinese})`);
             }
-            links.push(`${targetEnglish}${local.query}`);
+            links.push(`${targetPair.base}${local.query}`);
         } else {
             links.push(`${local.target}${local.query}`);
         }
@@ -201,7 +219,7 @@ function main(args = process.argv.slice(2), root = path.resolve(__dirname, '../.
     return 0;
 }
 
-module.exports = { checkPairs, recordPair, recordPairs, isPairedDocument: inScope, main };
+module.exports = { checkPairs, recordPair, recordPairs, documentPaths, documentLanguage, isPairedDocument: inScope, main };
 if (require.main === module) {
     try { process.exitCode = main(); }
     catch (error) { console.error(`i18n: ${error.message}`); process.exitCode = 1; }

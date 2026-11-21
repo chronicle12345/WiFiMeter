@@ -47,9 +47,10 @@ function metadataFixture(t) {
     }
     write(path.join(root, 'apps/desktop/src-tauri/Cargo.toml'), '[package]\nname = "wifimeter"\nversion = "1.3.0"\n\n[dependencies]\nserde = "1"\n');
     write(path.join(root, 'docs/releases/v1.3.0.md'), '# WiFiMeter 1.3.0\n\n## 中文\n\n发布说明。\n\n## English\n\nRelease notes.\n');
-    for (const file of ['README.md', 'README.zh-CN.md']) {
+    for (const file of ['README.md', 'README.en.md']) {
         write(path.join(root, file), '<a href="docs/releases/v1.3.0.md"><img src="https://img.shields.io/badge/version-1.3.0-6366F1" alt="Version 1.3.0" /></a>\n');
     }
+    write(path.join(root, 'README.zh-CN.md'), '[简体中文](README.md)\n');
     return root;
 }
 
@@ -112,7 +113,7 @@ test('release tags reject missing or empty Chinese and English sections', t => {
 });
 
 test('release tags require both README badges and release links to match the packaged version', t => {
-    for (const file of ['README.md', 'README.zh-CN.md']) {
+    for (const file of ['README.md', 'README.en.md']) {
         for (const invalid of ['badge', 'alt', 'notes', 'missing badge', 'missing notes']) {
             const root = metadataFixture(t), absolute = path.join(root, file);
             const original = fs.readFileSync(absolute, 'utf8');
@@ -124,7 +125,8 @@ test('release tags require both README badges and release links to match the pac
                 'missing notes': original.replace('href="docs/releases/v1.3.0.md"', '')
             }[invalid];
             write(absolute, modified);
-            assert.throws(() => helper.readMetadata(root, { refType: 'tag', refName: 'v1.3.0' }), /README/, `${file}: ${invalid}`);
+            assert.throws(() => helper.readMetadata(root, { refType: 'tag', refName: 'v1.3.0' }),
+                error => error.message.startsWith(`${file} `), `${file}: ${invalid}`);
             assert.equal(helper.readMetadata(root, { refType: 'branch', refName: 'main' }).version, version);
         }
     }

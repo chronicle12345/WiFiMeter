@@ -2,7 +2,7 @@
 
 English | [简体中文](DEVELOPMENT.zh-CN.md)
 
-This guide owns the development, review, and project-record workflow. Use the [testing guide](TESTING.md) for verification, the [architecture](ARCHITECTURE.md) for module boundaries, and the [CI and release matrix](PACKAGING-MATRIX.md) for publication.
+This guide covers branches, reviews, and project records. See [testing](TESTING.md) for checks, [architecture](ARCHITECTURE.md) for module responsibilities, and [CI and releases](PACKAGING-MATRIX.md) for publication steps.
 
 ## Branches, commits, and pull requests
 
@@ -22,7 +22,8 @@ Choose checks by the changed behavior using [verification by scope](TESTING.md#v
 
 | Information | Maintained location |
 | --- | --- |
-| Product introduction, installation entry, documentation index | Root README pair |
+| Product introduction and installation | Root README pair |
+| Guide navigation | [Documentation index](README.en.md) |
 | Module responsibilities and runtime data flow | [Architecture](ARCHITECTURE.md) |
 | Protocol, fields, accounting, compatibility | [Data contracts](../contracts/README.md) and platform contracts |
 | Development and review process | This guide |
