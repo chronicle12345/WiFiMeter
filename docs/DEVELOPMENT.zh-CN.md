@@ -2,7 +2,7 @@
 
 [English](DEVELOPMENT.md) | 简体中文
 
-本文维护开发、审查和项目记录流程。验证入口见[测试指南](TESTING.zh-CN.md)，模块边界见[项目架构](ARCHITECTURE.zh-CN.md)，发布步骤见 [CI 与发布矩阵](PACKAGING-MATRIX.zh-CN.md)。
+这里说明分支管理、代码审查和项目记录的约定。运行检查时查阅[测试指南](TESTING.zh-CN.md)，模块分工见[项目架构](ARCHITECTURE.zh-CN.md)，发布步骤见 [CI 与发布](PACKAGING-MATRIX.zh-CN.md)。
 
 ## 分支、提交与拉取请求
 
@@ -22,7 +22,8 @@
 
 | 内容 | 维护位置 |
 | --- | --- |
-| 产品介绍、安装入口、文档索引 | 根目录 README 双语文件 |
+| 产品介绍和安装入口 | 根目录 README 双语文件 |
+| 使用与开发指南导航 | [文档目录](README.md) |
 | 模块职责和运行时数据流 | [项目架构](ARCHITECTURE.zh-CN.md) |
 | 协议、字段、统计口径、兼容性 | [数据合约](../contracts/README.zh-CN.md)及平台合约 |
 | 开发与审查流程 | 本文 |

@@ -64,6 +64,30 @@ test('the exact budget passes and one additional unit fails independently for ea
     assert.equal(checkBudgets(root).length, 2);
 });
 
+test('Chinese entry pages use Chinese budgets and English siblings use English budgets', (t) => {
+    const limits = config();
+    limits.defaults.rootReadme = { en: 2, zh: 4 };
+    limits.defaults.reference = { en: 2, zh: 4 };
+    const root = fixture(t, {
+        'README.md': '# 中文首页\n',
+        'README.en.md': '# Three word title\n',
+        'docs/README.md': '# 中文文档\n',
+        'docs/README.en.md': '# Three word title\n'
+    }, limits);
+    const errors = checkBudgets(root);
+    assert.equal(errors.length, 2, errors.join('\n'));
+    assert.ok(errors.some(error => error.startsWith('README.en.md:')), errors.join('\n'));
+    assert.ok(errors.some(error => error.startsWith('docs/README.en.md:')), errors.join('\n'));
+});
+
+test('entry page budget overrides use the unsuffixed path for both languages', (t) => {
+    const root = fixture(t, {
+        'README.md': '# 中文首页\n',
+        'README.en.md': '# One two three\n'
+    }, config({ 'README.md': { en: 2, zh: 4 } }));
+    assert.match(checkBudgets(root).join('\n'), /README\.en\.md: 3 units exceeds limit 2/);
+});
+
 test('new active documents automatically use their type default without a per-file list', (t) => {
     const limits = config();
     limits.defaults.reference.en = 2;

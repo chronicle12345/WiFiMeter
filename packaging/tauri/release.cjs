@@ -45,7 +45,7 @@ function readMetadata(root = repositoryRoot, { refType, refName } = {}) {
                 .filter(section => section[1] === language);
             assert.ok(sections.length === 1 && sections[0][2].trim(), '发布说明必须包含完整且非空的中英文段落。');
         }
-        for (const file of ['README.md', 'README.zh-CN.md']) {
+        for (const file of ['README.md', 'README.en.md']) {
             const readme = fs.readFileSync(path.join(root, file), 'utf8');
             const badge = [...readme.matchAll(/https:\/\/img\.shields\.io\/badge\/version-([0-9.]+)-/g)];
             const alternative = [...readme.matchAll(/alt="Version ([^"]+)"/g)];

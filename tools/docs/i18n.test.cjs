@@ -34,6 +34,61 @@ test('a complete translation without a record fails instead of silently becoming
     assert.match(checkPairs(root).join('\n'), /guide\.i18n\.json.*missing|missing.*guide\.i18n\.json/i);
 });
 
+function entryFixture(t) {
+    return fixture(t, {
+        'README.md': '# 项目\n\n简体中文 | [English](README.en.md)\n\n[文档](docs/README.md)\n',
+        'README.en.md': '# Project\n\n[简体中文](README.md) | English\n\n[Documentation](docs/README.en.md)\n',
+        'README.zh-CN.md': '[简体中文](README.md)\n',
+        'docs/README.md': '# 文档\n\n简体中文 | [English](README.en.md)\n\n[指南](guide.zh-CN.md)\n\n[首页](../README.md)\n',
+        'docs/README.en.md': '# Documentation\n\n[简体中文](README.md) | English\n\n[Guide](guide.md)\n\n[Home](../README.en.md)\n',
+        'docs/guide.md': english + '\n[Home](../README.en.md)\n',
+        'docs/guide.zh-CN.md': chinese + '\n[首页](../README.md)\n'
+    });
+}
+
+test('Chinese entry pages pair with English siblings without discovering a duplicate compatibility pair', (t) => {
+    const root = entryFixture(t);
+    assert.deepEqual(recordPairs(root, ['README.md', 'README.en.md', 'docs/README.md', 'docs/guide.md'], { reviewed: true }), [
+        'README.i18n.json', 'docs/README.i18n.json', 'docs/guide.i18n.json'
+    ]);
+    const record = JSON.parse(fs.readFileSync(path.join(root, 'README.i18n.json'), 'utf8'));
+    assert.equal(record.english, 'README.en.md');
+    assert.equal(record.chinese, 'README.md');
+    assert.deepEqual(checkPairs(root), []);
+    assert.deepEqual(checkPairs(root, ['README.i18n.json', 'docs/README.en.md']), []);
+});
+
+test('Chinese entry pages reject links to English guides and English pages reject Chinese entries', (t) => {
+    const root = entryFixture(t);
+    const index = fs.readFileSync(path.join(root, 'docs/README.md'), 'utf8');
+    write(root, 'docs/README.md', index.replace('(guide.zh-CN.md)', '(guide.md)'));
+    assert.throws(() => recordPairs(root, ['docs/README.md'], { reviewed: true }), /wrong language; expected docs\/guide\.zh-CN\.md/);
+    write(root, 'docs/README.md', index);
+    write(root, 'docs/guide.md', english + '\n[Home](../README.md)\n');
+    assert.throws(() => recordPair(root, 'docs/guide.md'), /wrong language; expected README\.en\.md/);
+});
+
+test('entry pair checks detect a missing English sibling, an orphan English entry and stale records', (t) => {
+    const root = entryFixture(t);
+    recordPairs(root, ['README.md', 'docs/README.md', 'docs/guide.md'], { reviewed: true });
+    write(root, 'README.md', fs.readFileSync(path.join(root, 'README.md'), 'utf8') + '\n新增说明。\n');
+    assert.match(checkPairs(root, ['README.en.md']).join('\n'), /SHA-256 hashes are out of sync/);
+    fs.unlinkSync(path.join(root, 'README.en.md'));
+    assert.match(checkPairs(root).join('\n'), /README\.en\.md: missing document in language pair/);
+    fs.unlinkSync(path.join(root, 'docs/README.md'));
+    assert.match(checkPairs(root).join('\n'), /docs\/README\.md: missing document in language pair/);
+});
+
+test('an old English-default entry record cannot confirm the new Chinese-default pair', (t) => {
+    const root = entryFixture(t);
+    recordPair(root, 'README.md');
+    const record = JSON.parse(fs.readFileSync(path.join(root, 'README.i18n.json'), 'utf8'));
+    record.english = 'README.md';
+    record.chinese = 'README.zh-CN.md';
+    write(root, 'README.i18n.json', JSON.stringify(record));
+    assert.match(checkPairs(root, ['README.md']).join('\n'), /invalid record schema or sibling filenames/);
+});
+
 test('finds an untranslated source, an orphan translation, and an orphan record', (t) => {
     const root = fixture(t, {
         'docs/source.md': '# Source\n',

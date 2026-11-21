@@ -2,11 +2,13 @@
 
 [English](README.md) | 简体中文
 
-英文和简体中文具有同等权威性，任一语言都可以先写。参考[术语表](terminology.md)，同步含义、命令、约束和证据。
+英文和简体中文都作为正式文档维护，任一语言都可以先写。参考[术语表](terminology.md)，保持含义、命令、约束和证据一致。
 
 ## 文件与范围
 
-同目录维护 `<name>.md`、`<name>.zh-CN.md` 及生成的 `<name>.i18n.json`。两个 Markdown 文件都提供语言切换，不手动编辑审阅记录。
+根目录的项目介绍和 `docs/` 文档目录默认显示中文：`README.md` 为中文，`README.en.md` 为英文。根目录的 `README.zh-CN.md` 保留跳转链接，方便从旧书签访问。
+
+其他文档用 `<name>.md` 保存英文，`<name>.zh-CN.md` 保存中文，同目录保留生成的 `<name>.i18n.json`。两版都提供语言切换，并链接到同一语言的指南。不要手动编辑审阅记录。
 
 配对和正文字数限制覆盖非 vendor README/CONTRIBUTING、活跃的 `docs/` 与 `.agents/notes/`，以及 `contracts/`、`backend/platform/`、`packaging/` 中维护的技术文档，包括项目维护的依赖说明。
 
@@ -35,7 +37,7 @@ npm run check:docs
 
 ## 检查能说明什么
 
-本项目有意采用整文件 JSON 记录，保存换行归一为 LF 后的 SHA-256，与按章节记录的 YAML 不能直接互换。摘要发现审阅后的变化，不能证明译文质量、事实或示例正确。
+审阅记录使用整文件 JSON，保存换行统一为 LF 后的 SHA-256，不能用按章节记录的 YAML 替换。文件摘要可以发现审阅后的改动，不能证明译文质量、事实或示例正确。
 
 `check:docs` 检查双语记录、标题层级、列表与表格、代码块、链接、活跃 Notes、仓库文件政策、指令镜像和正文字数。工具本身变化后运行 `test:docs`。
 
