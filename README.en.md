@@ -4,13 +4,20 @@
 
 # WiFiMeter
 
+<p align="center">
+  <a href="docs/releases/v1.3.7.md#english"><img src="https://img.shields.io/badge/version-1.3.7-6366F1?style=for-the-badge&amp;labelColor=182033" alt="Version 1.3.7" /></a>
+  <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=for-the-badge&amp;labelColor=182033" alt="Windows x64" /></a>
+  <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=for-the-badge&amp;labelColor=182033" alt="Tauri interface" /></a>
+  <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=for-the-badge&amp;labelColor=182033" alt="C++20 backend" /></a>
+  <a href="docs/MIGRATION.md"><img src="https://img.shields.io/badge/storage-SQLite-2563EB?style=for-the-badge&amp;labelColor=182033" alt="SQLite storage" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-16A34A?style=for-the-badge&amp;labelColor=182033" alt="MIT License" /></a>
+</p>
+
 [简体中文](README.md) | English
 
 WiFiMeter is a desktop traffic monitor for checking network speeds, finding which applications use your connection, and tracking daily usage by network. It stores your data locally.
 
 [Download for Windows](https://github.com/chronicle12345/WiFiMeter/releases/latest) · [Documentation](docs/README.en.md) · [Changelog](CHANGELOG.md)
-
-<a href="docs/releases/v1.3.7.md#english"><img src="https://img.shields.io/badge/version-1.3.7-6366F1" alt="Version 1.3.7" /></a>
 
 ![WiFiMeter feature demo](docs/assets/demo-en.gif)
 
