@@ -78,7 +78,7 @@ test('云备份保存设置、按所选内容备份、列出、恢复并删除�
     await form.locator('[name="sections"][value="apps"]').uncheck();
     await form.locator('[name="sections"][value="logs"]').check();
     await form.locator('#cloudDays').selectOption('30');
-    await expect(page.locator('#content button[type="submit"]')).toHaveCount(0);
+    await expect(form.locator('button[type="submit"]')).toHaveCount(0);
     // Wait for the last queued edit, including DPAPI initialization on a fresh Windows runner.
     await expect.poll(() => page.evaluate(() => window.desktop.cloudBackup.status()), { timeout: 20_000 }).toMatchObject({
         ok: true, result: { days: 30, sections: ['settings', 'networks', 'daily', 'logs'], hasPassword: true }
