@@ -1,5 +1,112 @@
 // 文案键沿用中文原文。只翻译源码里的静态文本，不扫描或改写用户数据。
 export const english = Object.fromEntries(`
+域名与连接|Domains and connections
+查看访问域名|View accessed domains
+状态|Status
+连接监测已停止。|Connection monitoring has stopped.
+连接监测设置无法保存。|Cannot save the connection monitoring settings.
+域名与连接监听|Domain and connection monitoring
+查看本地 Clash / Mihomo 接管的连接、所属应用和路由规则。|View connections handled by local Clash / Mihomo, their applications and routing rules.
+读取本地 Clash / Mihomo 接管的连接，显示域名、应用、命中规则和代理链。|Read connections handled by local Clash / Mihomo, with domains, applications, matched rules and proxy chains.
+直连|Direct
+已阻止|Blocked
+未启用|Disabled
+正在连接|Connecting
+正在监听|Monitoring
+连接失败|Connection failed
+活动连接|Active connections
+活动|Active
+已结束|Closed
+历史连接|Observed history
+观测已中断|Observation interrupted
+观测结束时间|Observation ended
+观测结束原因|Observation end reason
+连接已关闭|Connection closed
+监听已禁用|Monitoring disabled
+控制连接中断|Controller connection lost
+监听设置已更改|Monitor settings changed
+停止观测|Observation stopped
+已记录|Recorded
+最近更新|Last updated
+未知应用|Unknown application
+未知目标|Unknown destination
+未提供进程路径|Process path unavailable
+请先配置连接监听|Configure connection monitoring
+没有符合条件的连接|No matching connections
+暂无连接记录|No observed connections
+在连接设置中填写本地 Clash / Mihomo 的控制地址并启用监听。|Enter the local Clash / Mihomo controller address in connection settings and enable monitoring.
+调整域名搜索或筛选条件。|Adjust the domain search or filters.
+本地代理接管新连接后会显示在这里。|New connections handled by the local proxy will appear here.
+显示最近|Showing the latest
+条匹配记录|matching records
+域名连接记录|Domain connection records
+域名 / 目标|Domain / destination
+路由 / 规则|Route / rule
+下载 / 上传用量|Download / upload usage
+全部连接|All connections
+全部路由|All routes
+全部应用|All applications
+导出记录|Export records
+连接设置|Connection settings
+搜索域名、IP、应用、规则或节点|Search domains, IPs, applications, rules or nodes
+连接状态|Connection status
+路由类型|Route type
+按应用筛选|Filter by application
+连接记录已移除|Connection record removed
+当前环境不提供连接监听|Connection monitoring is unavailable here
+连接详情|Connection details
+关闭连接详情|Close connection details
+域名|Domain
+识别到的域名|Sniffed domain
+程序路径|Program path
+来源地址|Source address
+目标地址|Destination address
+连接类型|Connection type
+代理链|Proxy chain
+命中规则|Matched rule
+首次观测|First observed
+最近观测|Last observed
+控制地址|Controller address
+填写代理软件的外部控制地址，支持本机回环地址。此处不是 HTTP / SOCKS 代理端口。|Use the proxy application's external controller address on loopback. This is separate from its HTTP / SOCKS proxy port.
+控制密钥|Controller secret
+无密钥可留空|Leave empty if no secret is required
+与代理软件的 secret 一致；留空保留已保存的密钥。|Use the proxy application's secret. Leave empty to keep the saved secret.
+清除已保存的控制密钥|Clear the saved controller secret
+刷新间隔（毫秒）|Refresh interval (milliseconds)
+只显示代理软件可观测的连接；未经过它的访问不会出现在这里。进程或域名缺失时保留未知状态。|Only connections observed by the proxy application are listed. Missing processes or domains remain unknown.
+启用连接监听|Enable connection monitoring
+保存连接设置|Save connection settings
+连接监测设置已保存|Connection monitoring settings saved
+清空连接记录？|Clear observed connections?
+清除本次会话已观测的连接；监听会继续记录之后的连接。|Clear connections observed in this session. Monitoring will continue to record new observations.
+最近 5 分钟 · 实时速度|Last 5 minutes · live rates
+最近 5 分钟|Last 5 minutes
+估算用量|Estimated usage
+已观测|Observed
+秒 · 按速率估算|seconds · estimated from rates
+等待连续采样，缺失时段不补零|Waiting for consecutive samples; missing intervals remain empty
+随采样更新 · 采样间隔|Updates with samples · interval
+仅保留本次会话；缺失时段留空。|Kept for this session; missing intervals remain empty.
+下载字节每秒|Download bytes per second
+上传字节每秒|Upload bytes per second
+流量图样式|Traffic chart style
+曲线图|Line chart
+柱状图|Bar chart
+可自定义 0.25 到 3600 秒；较短间隔会增加采样频率。|Set 0.25 to 3600 seconds. Shorter intervals increase sampling frequency.
+采样间隔须为 0.25 到 3600 秒，最多三位小数。|The sampling interval must be 0.25 to 3600 seconds, with at most three decimal places.
+本地控制器地址无效。|Invalid local controller address.
+控制器须使用本机 HTTP 或 HTTPS 地址，不得包含账号、路径或查询参数。|Use a local HTTP or HTTPS controller address without credentials, a path or query parameters.
+控制器仅支持本机回环地址。|The controller must use a loopback address.
+连接监测设置无效。|Invalid connection monitoring settings.
+连接监测设置无效，刷新间隔须为 250 至 60000 毫秒。|Invalid monitoring settings. The refresh interval must be 250 to 60000 milliseconds.
+控制器认证失败，请检查密钥。|Controller authentication failed. Check the secret.
+连接本地控制器超时。|The local controller timed out.
+控制器返回了重定向，请检查本机地址。|The controller returned a redirect. Check the local address.
+控制器响应超过大小限制。|The controller response exceeded the size limit.
+控制器返回的连接数据无效。|The controller returned invalid connection data.
+控制器未能提供连接数据。|The controller could not provide connection data.
+无法连接本地控制器，请检查代理软件的外部控制设置。|Cannot connect to the local controller. Check the proxy application's external controller settings.
+连接监测配置无法读取，请重新保存设置。|Cannot read the monitoring configuration. Save the settings again.
 启动时询问应用采集|Ask about application capture at startup
 固定小窗位置|Fix floating-window position
 小窗排除代理程序流量|Exclude proxy application traffic in floating window

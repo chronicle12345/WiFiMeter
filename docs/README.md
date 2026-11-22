@@ -7,6 +7,7 @@
 ## 使用
 
 - [悬浮窗](FLOATING_WINDOW.zh-CN.md)：查看实时网速和应用用量，调整位置、形状与贴边隐藏。
+- [域名与连接](CONNECTION_MONITORING.zh-CN.md)：接入本机 Clash / Mihomo 控制器，搜索域名，查看所属应用和路由。
 - [数据迁移与恢复](MIGRATION.zh-CN.md)：导入旧版记录、制作完整备份、使用 WebDAV，以及恢复数据。
 - [Windows 应用流量采集](WINDOWS_APP_CAPTURE.zh-CN.md)：开启应用统计，了解权限要求和采集范围。
 - [Linux 应用流量采集](LINUX_APP_CAPTURE.zh-CN.md)：配置 eBPF 采集与权限。

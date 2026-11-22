@@ -9,6 +9,7 @@
 #include <tuple>
 #include <utility>
 
+#include "../core/byte_rate.h"
 #include "../core/local_time.h"
 #include "../core/quota.h"
 #include "../storage/database.h"
@@ -19,6 +20,7 @@ namespace
 {
 
 using core::ByteCount;
+using core::byteRate;
 using core::LocalStamp;
 using core::TimePoint;
 using storage::Status;
@@ -28,6 +30,11 @@ JsonValue bytes(ByteCount value)
 {
     // 字节数一律走十进制字符串：JSON 数字在 JS 侧只有 53 位精度。
     return JsonValue::makeString(core::decimalString(value));
+}
+
+std::chrono::milliseconds samplingDuration(double intervalSeconds)
+{
+    return std::chrono::milliseconds(static_cast<std::int64_t>(std::llround(intervalSeconds * 1000.0)));
 }
 
 ByteCount parseBytes(const JsonValue& object, std::string_view key)
@@ -175,7 +182,7 @@ BackendService::BackendService(Deps deps, bool paused)
     collectorState_ = paused_ ? "paused" : "running";
 }
 
-int BackendService::intervalSeconds() const
+double BackendService::intervalSeconds() const
 {
     Status status;
     const storage::SettingsRecord settings = deps_.store.settings().load(status);
@@ -253,7 +260,7 @@ JsonValue BackendService::settingsToJson(const storage::SettingsRecord& settings
     value.set("unit", JsonValue::makeString(settings.unit == storage::DisplayUnit::gib ? "GiB" : "GB"));
     value.set("speedUnit", JsonValue::makeString(settings.speedUnit == storage::SpeedUnit::automatic ? "auto" :
         settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s"));
-    value.set("interval", JsonValue::makeInt(settings.intervalSeconds));
+    value.set("interval", JsonValue::makeNumber(settings.intervalSeconds));
     value.set("language", JsonValue::makeString(settings.language));
     value.set("retention", JsonValue::makeInt(settings.retentionDays));
     value.set("autoStart", JsonValue::makeBool(settings.autoStart));
@@ -292,7 +299,7 @@ JsonValue BackendService::buildLive() const
     JsonValue live = JsonValue::makeObject();
     live.set("state", JsonValue::makeString(liveState_));
     live.set("collector", JsonValue::makeString(collectorState_));
-    live.set("updatedAt", JsonValue::makeString(core::isoUtcOf(liveUpdatedAt_)));
+    live.set("updatedAt", JsonValue::makeString(core::isoUtcMillisecondsOf(liveUpdatedAt_)));
     live.set("skippedIntervals", JsonValue::makeInt(skippedIntervals_));
     if (!liveMessage_.empty())
         live.set("message", JsonValue::makeString(liveMessage_));
@@ -313,10 +320,10 @@ JsonValue BackendService::buildLive() const
         connection.set("signal", JsonValue::makeInt(link.signalPercent.value_or(0)));
 
         const auto rate = linkRates_.find(link.interfaceId);
-        const ByteCount rxPerSecond = rate != linkRates_.end() ? rate->second.first : 0;
-        const ByteCount txPerSecond = rate != linkRates_.end() ? rate->second.second : 0;
-        connection.set("rxPerSecond", bytes(rxPerSecond));
-        connection.set("txPerSecond", bytes(txPerSecond));
+        const bool measured = !paused_ && rate != linkRates_.end();
+        connection.set("measurementAvailable", JsonValue::makeBool(measured));
+        connection.set("rxPerSecond", measured ? bytes(rate->second.first) : JsonValue{});
+        connection.set("txPerSecond", measured ? bytes(rate->second.second) : JsonValue{});
 
         const auto since = linkSince_.find(link.interfaceId);
         connection.set("since", JsonValue::makeString(since != linkSince_.end() ? core::isoUtcOf(since->second) : core::isoUtcOf(liveUpdatedAt_)));
@@ -406,7 +413,7 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
         appEnabled_ = false;
         deps_.applications->stop();
     }
-    const auto staleAfter = std::chrono::seconds(std::max(5, intervalSeconds() * 2));
+    const auto staleAfter = std::chrono::seconds(static_cast<std::int64_t>(std::ceil(std::max(5.0, intervalSeconds() * 2))));
     auto loopback = loopbackLive_.update(report, now, staleAfter);
     const bool sameGeneration = appSampleGeneration_ == report.generation;
     const bool valid = report.state == platform::AppCollectorState::running || report.state == platform::AppCollectorState::partial;
@@ -427,9 +434,9 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
         appProcesses_ = std::move(loopback);
         return;
     }
-    const double appElapsed = sameGeneration && report.sampledAtMs > 0 && appSampledAtMs_ > 0 ?
-        static_cast<double>(report.sampledAtMs - appSampledAtMs_) / 1000.0 :
-        std::chrono::duration<double>(now - appLastAt_).count();
+    const auto appSpan = sameGeneration && report.sampledAtMs > 0 && appSampledAtMs_ > 0 ?
+        std::chrono::milliseconds(report.sampledAtMs - appSampledAtMs_) :
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - appLastAt_);
     auto nextAccumulator = appAccumulator_;
     const auto accumulated = nextAccumulator.accumulate(report, wifi, now);
     appProcesses_ = std::move(loopback);
@@ -467,9 +474,7 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
         storage::CoverageGap gap;
         gap.application = true;
         gap.networkKey = missing.network.key;
-        gap.startedAt = missing.startedAt;
-        gap.endedAt = missing.endedAt;
-        gap.span = std::chrono::duration_cast<std::chrono::seconds>(gap.endedAt - gap.startedAt);
+        gap.setClosedInterval(missing.startedAt, missing.endedAt);
         switch (missing.kind)
         {
             case core::AppGapKind::counterReset: gap.reason = storage::CoverageReason::counterReset; break;
@@ -489,9 +494,7 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
     {
         storage::CoverageGap gap;
         gap.application = true;
-        gap.startedAt = appLastAt_;
-        gap.endedAt = now;
-        gap.span = std::chrono::duration_cast<std::chrono::seconds>(now - appLastAt_);
+        gap.setClosedInterval(appLastAt_, now);
         gap.reason = !wifi.complete() ? storage::CoverageReason::identityUnknown : storage::CoverageReason::offline;
         gap.reasonDetail = std::string(platform::appCollectorStateName(report.state));
         if (!report.detail.empty())
@@ -531,7 +534,6 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
         const auto delta = std::find_if(accumulated.deltas.begin(), accumulated.deltas.end(), [&](const auto& item) {
             return item.process.interfaceId == process.interfaceId && item.process.instanceId == process.instanceId && item.process.appId == process.appId;
         });
-        const double seconds = appElapsed > 0 ? appElapsed : 1.0;
         JsonValue value = JsonValue::makeObject();
         value.set("networkId", JsonValue::makeString(core::networkRefOf(link->identity).key));
         value.set("name", JsonValue::makeString(process.name));
@@ -540,8 +542,8 @@ void BackendService::collectApplications(const platform::SampleReport& currentWi
         value.set("appId", JsonValue::makeString(process.appId));
         value.set("processId", JsonValue::makeInt(process.processId));
         value.set("instanceId", JsonValue::makeString(process.instanceId));
-        value.set("rxPerSecond", bytes(delta != accumulated.deltas.end() ? static_cast<ByteCount>(delta->rxBytes / seconds) : 0));
-        value.set("txPerSecond", bytes(delta != accumulated.deltas.end() ? static_cast<ByteCount>(delta->txBytes / seconds) : 0));
+        value.set("rxPerSecond", bytes(delta != accumulated.deltas.end() ? byteRate(delta->rxBytes, appSpan) : 0));
+        value.set("txPerSecond", bytes(delta != accumulated.deltas.end() ? byteRate(delta->txBytes, appSpan) : 0));
         appProcesses_.push(std::move(value));
     }
     appLastAt_ = now;
@@ -577,7 +579,7 @@ BackendService::Response BackendService::buildHello() const
     result.set("protocol", JsonValue::makeInt(kProtocolVersion));
     result.set("application", JsonValue::makeString("wifimeter-backend"));
     result.set("schemaVersion", JsonValue::makeInt(deps_.store.database().schemaVersion()));
-    result.set("intervalSeconds", JsonValue::makeInt(intervalSeconds()));
+    result.set("intervalSeconds", JsonValue::makeNumber(intervalSeconds()));
     result.set("paused", JsonValue::makeBool(paused_));
     result.set("appCollection", appCollectionToJson());
     // 带上设置：主进程据此同步开机启动、托盘与通知等系统级状态，无需再取整份快照。
@@ -755,7 +757,7 @@ BackendService::Response BackendService::buildSnapshot(const JsonValue& params, 
     return response;
 }
 
-BackendService::Response BackendService::updateSettings(const JsonValue& params)
+BackendService::Response BackendService::updateSettings(const JsonValue& params, TimePoint now)
 {
     Response response;
     Status status;
@@ -773,13 +775,22 @@ BackendService::Response BackendService::updateSettings(const JsonValue& params)
         return response;
     }
 
+    const auto previousInterval = settings.intervalSeconds;
+    if (const auto* interval = patch->find("interval"))
+    {
+        if (!interval->isNumber() || !storage::SettingsRepository::validIntervalSeconds(interval->asDouble()))
+        {
+            response.error = Error{errorCode::kInvalidParams, "Sampling interval must be 0.25 to 3600 seconds with at most three decimal places."};
+            return response;
+        }
+        settings.intervalSeconds = interval->asDouble();
+    }
     settings.language = patch->stringOr("language", settings.language);
     settings.unit = patch->stringOr("unit", settings.unit == storage::DisplayUnit::gib ? "GiB" : "GB") == "GiB" ? storage::DisplayUnit::gib : storage::DisplayUnit::gb;
     const auto speedUnit = patch->stringOr("speedUnit", settings.speedUnit == storage::SpeedUnit::automatic ? "auto" :
         settings.speedUnit == storage::SpeedUnit::megabitsPerSecond ? "Mbps" : "MB/s");
     settings.speedUnit = speedUnit == "auto" ? storage::SpeedUnit::automatic :
         speedUnit == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
-    settings.intervalSeconds = static_cast<int>(patch->intOr("interval", settings.intervalSeconds));
     settings.retentionDays = static_cast<int>(patch->intOr("retention", settings.retentionDays));
     settings.autoStart = patch->boolOr("autoStart", settings.autoStart);
     settings.minimizeToTray = patch->boolOr("minimizeToTray", settings.minimizeToTray);
@@ -791,6 +802,8 @@ BackendService::Response BackendService::updateSettings(const JsonValue& params)
         return response;
     }
 
+    if (settings.intervalSeconds != previousInterval)
+        nextSampleAt_ = now + samplingDuration(settings.intervalSeconds);
     JsonValue result = JsonValue::makeObject();
     result.set("settings", settingsToJson(deps_.store.settings().load(status)));
     response.result = std::move(result);
@@ -1187,7 +1200,7 @@ BackendService::Response BackendService::restore(const JsonValue& params, TimePo
         const auto speedUnit = settings->stringOr("speedUnit", "auto");
         record.speedUnit = speedUnit == "auto" ? storage::SpeedUnit::automatic :
             speedUnit == "Mbps" ? storage::SpeedUnit::megabitsPerSecond : storage::SpeedUnit::megabytesPerSecond;
-        record.intervalSeconds = static_cast<int>(settings->intOr("interval", record.intervalSeconds));
+        record.intervalSeconds = settings->doubleOr("interval", record.intervalSeconds);
         record.retentionDays = static_cast<int>(settings->intOr("retention", record.retentionDays));
         record.autoStart = settings->boolOr("autoStart", record.autoStart);
         record.minimizeToTray = settings->boolOr("minimizeToTray", record.minimizeToTray);
@@ -1342,7 +1355,7 @@ BackendService::Response BackendService::handle(const Request& request, TimePoin
     if (request.method == method::kSnapshot)
         return buildSnapshot(request.params, now);
     if (request.method == method::kUpdateSettings)
-        return updateSettings(request.params);
+        return updateSettings(request.params, now);
     if (request.method == method::kUpdateNetwork)
         return updateNetwork(request.params, now);
     if (request.method == method::kExportUsage)
@@ -1649,25 +1662,27 @@ void BackendService::appendUsageEvent(const core::AccumulateResult& accumulated,
 BackendService::Events BackendService::collectOnce(TimePoint now)
 {
     Events events;
+    // 每轮只展示当前有效增量的速率；基线、重置和身份缺失不能沿用上一轮测量。
+    linkRates_.clear();
     if (paused_)
     {
         collectorState_ = "paused";
         return events;
     }
 
-    const int interval = intervalSeconds();
+    const auto interval = samplingDuration(intervalSeconds());
     // 失败批次包含原始日期、跨度及身份变化，先完整补写，再读取下一轮计数。
     if (const auto retried = retryPendingUsage(events); !retried)
     {
-        nextSampleAt_ = now + std::chrono::seconds(interval);
+        nextSampleAt_ = now + interval;
         events.error = Error{errorCode::kStorageFailure, retried.message};
         return events;
     }
     if (hasSampled_)
     {
-        const auto gap = std::chrono::duration_cast<std::chrono::seconds>(now - lastSampleAt_);
+        const auto gap = now - lastSampleAt_;
         // 采样明显迟于预期（例如系统休眠）时记一次缺失，界面会把它显示出来。
-        if (gap > std::chrono::seconds(interval * 2))
+        if (gap > interval * 2)
             ++skippedIntervals_;
     }
 
@@ -1679,7 +1694,7 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     }
     lastSampleAt_ = now;
     hasSampled_ = true;
-    nextSampleAt_ = now + std::chrono::seconds(interval);
+    nextSampleAt_ = now + interval;
 
     refreshLive(report, now);
 
@@ -1699,8 +1714,8 @@ BackendService::Events BackendService::collectOnce(TimePoint now)
     collectProxyClients(now);
     for (const core::UsageDelta& delta : accumulated.deltas)
     {
-        const auto seconds = delta.span.count() > 0 ? delta.span.count() : 1;
-        linkRates_[delta.interfaceId] = {delta.rxBytes / static_cast<ByteCount>(seconds), delta.txBytes / static_cast<ByteCount>(seconds)};
+        if (delta.span <= std::chrono::milliseconds::zero()) continue;
+        linkRates_[delta.interfaceId] = {byteRate(delta.rxBytes, delta.span), byteRate(delta.txBytes, delta.span)};
     }
 
     appendUsageEvent(accumulated, now, events);

@@ -23,6 +23,11 @@ pub fn allowed_channel(window: &str, channel: &str) -> bool {
                 | "logs:level"
                 | "logs:clear"
                 | "logs:write"
+                | "connections:status"
+                | "connections:read"
+                | "connections:configure"
+                | "connections:refresh"
+                | "connections:clear"
                 | "cloud-backup:status"
                 | "cloud-backup:configure"
                 | "cloud-backup:test"
@@ -56,6 +61,17 @@ mod tests {
         assert!(!allowed_channel("mini", "updates:download"));
         assert!(allowed_channel("main", "logs:read"));
         assert!(!allowed_channel("mini", "logs:read"));
+        for channel in [
+            "connections:status",
+            "connections:read",
+            "connections:configure",
+            "connections:refresh",
+            "connections:clear",
+        ] {
+            assert!(allowed_channel("main", channel));
+            assert!(!allowed_channel("mini", channel));
+            assert!(!allowed_channel("other", channel));
+        }
         assert!(allowed_channel("main", "cloud-backup:restore"));
         assert!(!allowed_channel("mini", "cloud-backup:restore"));
         assert!(!allowed_channel("mini", "app-control:list"));

@@ -1,4 +1,5 @@
 #include "../ipc/loopback_live.h"
+#include "../core/byte_count.h"
 #include "test_support.h"
 using namespace wifimeter;
 int main()
@@ -43,7 +44,7 @@ int main()
     const auto sourceReport=platform::parseAppTrafficReport(R"({"state":"running","generation":"native","samples":[{"interfaceId":"loopback","appId":"client.exe","name":"client","instanceId":"1:2:3","processId":1,"rxBytes":"1","txBytes":"2","connectionKey":"socket","source":"WindowsTcpEStats"}]})");
     WIFIMETER_CHECK(platform::serializeAppTrafficReport(sourceReport).find("WindowsTcpEStats")!=std::string::npos);
     // Helper responses can carry the same EStats snapshot even when requested again.
-    auto snapshot = [&](long long stamp, unsigned rx) {
+    auto snapshot = [&](long long stamp, core::ByteCount rx) {
         return platform::parseAppTrafficReport("{\"state\":\"running\",\"generation\":\"timed\",\"sampledAtMs\":" + std::to_string(stamp + 20) +
             ",\"loopbackSampledAtMs\":" + std::to_string(stamp) +
             ",\"samples\":[{\"interfaceId\":\"loopback\",\"appId\":\"client.exe\",\"name\":\"client\",\"instanceId\":\"1:2:3\",\"processId\":1,\"rxBytes\":\"" + std::to_string(rx) + "\",\"txBytes\":\"0\",\"connectionKey\":\"socket\"}]}");
@@ -66,6 +67,15 @@ int main()
     const auto timed = platform::parseAppTrafficReport(platform::serializeAppTrafficReport(snapshot(15000, 3000)));
     WIFIMETER_CHECK_EQ(timed.sampledAtMs, std::int64_t(15020));
     WIFIMETER_CHECK_EQ(timed.loopbackSampledAtMs, std::int64_t(15000));
+    window.clear();
+    window.update(snapshot(30000, 0), at);
+    rows = window.update(snapshot(30268, 268), at + std::chrono::milliseconds(500));
+    WIFIMETER_CHECK_EQ(rows.at(0).stringOr("rxPerSecond"), std::string("1000"));
+    const core::ByteCount large = 9007199254740993ULL;
+    rows = window.update(snapshot(30518, 268 + large), at + std::chrono::milliseconds(750));
+    WIFIMETER_CHECK_EQ(rows.at(0).stringOr("rxPerSecond"), std::string("36028797018963972"));
+    rows = window.update(snapshot(30768, 268 + large + core::ByteCount{4700000000000000000ULL}), at + std::chrono::milliseconds(1000));
+    WIFIMETER_CHECK_EQ(rows.at(0).stringOr("rxPerSecond"), std::string("18446744073709551615"));
     for (const int interval : {2, 5, 10})
     {
         window.clear();

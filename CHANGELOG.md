@@ -6,6 +6,20 @@ Changes are listed by release.
 
 ## Unreleased / 未发布
 
+## [1.3.8] - 2026-11-22
+
+- Add local Clash / Mihomo domain and connection monitoring with application, route, and connection-state filters, searchable rules and proxy chains, live connection details, and exact integer-byte CSV exports. Controller secrets stay in the host and are excluded from page responses, logs, exports, and cloud backups.
+- Use live traffic curves by default while retaining the saved bar-chart option. Add a rolling Last 5 minutes range with unavailable intervals left blank and rate-based usage estimates clearly labeled.
+- Allow sampling intervals from 0.25 to 3600 seconds with up to three decimal places. Calculate native rates from elapsed milliseconds and preserve counter, backup, and quota precision when merging missing intervals.
+- Preserve configuration drafts and open details across status and filter changes. Discard late responses and stale measured rates after interrupted observations. Distinguish measured zero and valid chart data from unavailable records in both interface languages.
+- Use original outbound identities for routing classification, keep chart caption units and legends consistent with the selected style, and preserve the current network detail button's keyboard focus during live refreshes.
+
+- 新增本机 Clash / Mihomo 域名与连接监测，支持应用、路由类型和连接状态筛选，搜索规则与代理链，查看动态连接详情，并按精确字节整数导出 CSV。控制器密钥保留在宿主，不进入页面返回值、日志、导出或云备份。
+- 实时流量默认使用曲线，保留并保存柱状图选项。新增最近 5 分钟滚动范围，无法测量的时段留空，并标明按实测速率计算的用量估算。
+- 采样间隔支持 0.25 至 3600 秒，最多保留三位小数。原生速率按实际经过的毫秒计算，合并缺失时段时保留计数、备份和额度精度。
+- 状态和筛选变化时保留配置草稿与已打开的详情，丢弃迟到响应以及观测中断后的旧实测速率。中英文图表描述正确区分真实零值、有效数据和不可用记录。
+- 使用原始出站身份判断路由，使图注单位和图例与所选样式一致，并在实时刷新时保留当前网络详情按钮的键盘焦点。
+
 ## [1.3.7] - 2026-11-20
 
 - Accept whole-minute browser time values that include zero seconds in custom date filters and exports, normalizing them to minute precision before validation and queries.

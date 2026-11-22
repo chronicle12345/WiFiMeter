@@ -1,6 +1,7 @@
 #include "settings_repository.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace wifimeter::storage
 {
@@ -23,13 +24,20 @@ const char* kSpeedUnitName(SpeedUnit unit)
 SettingsRecord SettingsRepository::sanitize(SettingsRecord settings)
 {
     // 与 apps/desktop/renderer/data/model.js 的校验范围保持一致：
-    // 采样间隔只允许 2/5/10 秒，保留期允许 0..36500 天。
-    if (settings.intervalSeconds != 2 && settings.intervalSeconds != 5 && settings.intervalSeconds != 10)
+    // 采样间隔允许 0.25..3600 秒，最多三位小数；保留期允许 0..36500 天。
+    if (!validIntervalSeconds(settings.intervalSeconds))
         settings.intervalSeconds = 5;
+    else settings.intervalSeconds = std::round(settings.intervalSeconds * 1000.0) / 1000.0;
     if (settings.retentionDays < 0 || settings.retentionDays > 36500)
         settings.retentionDays = 90;
     if (settings.language != "en" && settings.language != "zh-CN") settings.language = "en";
     return settings;
+}
+
+bool SettingsRepository::validIntervalSeconds(double seconds)
+{
+    return std::isfinite(seconds) && seconds >= 0.25 && seconds <= 3600.0 &&
+        std::abs(seconds * 1000.0 - std::round(seconds * 1000.0)) < 0.000001;
 }
 
 SettingsRecord SettingsRepository::load(Status& status)
@@ -45,7 +53,7 @@ SettingsRecord SettingsRepository::load(Status& status)
         const auto speedUnit = statement->columnText(1);
         settings.speedUnit = speedUnit == "auto" ? SpeedUnit::automatic :
             speedUnit == "Mbps" ? SpeedUnit::megabitsPerSecond : SpeedUnit::megabytesPerSecond;
-        settings.intervalSeconds = static_cast<int>(statement->columnInt64(2));
+        settings.intervalSeconds = statement->columnDouble(2);
         settings.retentionDays = static_cast<int>(statement->columnInt64(3));
         settings.autoStart = statement->columnInt64(4) != 0;
         settings.minimizeToTray = statement->columnInt64(5) != 0;
@@ -78,7 +86,7 @@ Status SettingsRepository::save(const SettingsRecord& settings)
         status);
     if (!statement)
         return status;
-    if (!statement->bind(1, std::string(kUnitName(clean.unit))) || !statement->bind(2, std::string(kSpeedUnitName(clean.speedUnit))) || !statement->bind(3, static_cast<std::int64_t>(clean.intervalSeconds)) || !statement->bind(4, static_cast<std::int64_t>(clean.retentionDays)) ||
+    if (!statement->bind(1, std::string(kUnitName(clean.unit))) || !statement->bind(2, std::string(kSpeedUnitName(clean.speedUnit))) || !statement->bind(3, clean.intervalSeconds) || !statement->bind(4, static_cast<std::int64_t>(clean.retentionDays)) ||
         !statement->bind(5, static_cast<std::int64_t>(clean.autoStart ? 1 : 0)) || !statement->bind(6, static_cast<std::int64_t>(clean.minimizeToTray ? 1 : 0)) || !statement->bind(7, static_cast<std::int64_t>(clean.notifications ? 1 : 0)))
         return Status::failure(statement->error());
     if (!statement->bind(8, clean.language)) return Status::failure(statement->error());

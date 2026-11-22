@@ -4,7 +4,7 @@
 
 ## Tauri 安装包
 
-所有命令都在仓库根目录执行，版本号从包配置中读取。1.3.7 的 CI 仅构建并发布 Windows x64。Windows x86/ARM64 和 Linux x64/ARM64 任务暂时被注释，对应的本机构建工具仍可使用。当前检查和暂停目标见[平台说明](../docs/PACKAGING-MATRIX.zh-CN.md)。
+所有命令都在仓库根目录执行，版本号从包配置中读取。1.3.8 的 CI 仅构建并发布 Windows x64。Windows x86/ARM64 和 Linux x64/ARM64 任务暂时被注释，对应的本机构建工具仍可使用。当前检查和暂停目标见[平台说明](../docs/PACKAGING-MATRIX.zh-CN.md)。
 
 Windows 需要目标架构的 Node.js、Rust MSVC 工具链、CMake 和 C++20 编译器。Linux 需要本机工具链及 WebKitGTK 4.1。构建 Windows 安装包：
 
@@ -16,7 +16,7 @@ npm run dist:windows
 Windows 默认生成 NSIS 安装程序，Linux 默认生成 deb、rpm 和 AppImage。便携 ZIP 已取消。构建和 CI 仍会校验内部 SHA-256 清单，但清单不放入 Release 附件。
 
 ```text
-dist/windows/WiFiMeter-1.3.7-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.8-windows-x64-Tauri-Setup.exe
 ```
 
 安装包包含 Node 业务进程和 C++ 采集器，Tauri 使用系统 WebView。Windows 缺少 WebView2 时，安装程序会下载所需运行时；Linux 使用系统 WebKitGTK 4.1。用户数据仍保存在原目录。
@@ -59,7 +59,7 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-[CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)列出了缓存配置及启用、暂停的目标。本机构建不依赖 CI 缓存。包验证命令和原生依赖见[测试指南](../docs/TESTING.zh-CN.md#原生宿主与安装包)，安装方法和版本限制见[发布说明](../docs/releases/v1.3.7.md#中文)。
+[CI 矩阵](../docs/PACKAGING-MATRIX.zh-CN.md)列出了缓存配置及启用、暂停的目标。本机构建不依赖 CI 缓存。包验证命令和原生依赖见[测试指南](../docs/TESTING.zh-CN.md#原生宿主与安装包)，安装方法和版本限制见[发布说明](../docs/releases/v1.3.8.md#中文)。
 
 RPM 验证先检查包摘要，再用 `libarchive-tools` 中的 `bsdtar` 解包。这样既能读取 Tauri 打包库未写入归档长度字段的包，也能严格检查解包结果。摘要、解包、资源或原生界面的任何检查失败，都会阻止发布。
 

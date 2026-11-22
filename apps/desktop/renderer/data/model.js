@@ -1,4 +1,5 @@
 import { t, getLocale } from '../i18n.js';
+import { validSampleInterval } from './sampling.js';
 const clone = value => JSON.parse(JSON.stringify(value));
 // 与主分支及后端一致：0 不限额，非零额度至少为一个字节。
 export const MAX_QUOTA_GB = 9000000000;
@@ -93,13 +94,13 @@ function validateSnapshot(input, mode='demo') {
  }
  data.settings={...defaults,...data.settings};
  const s=data.settings;
- if((s.language!==undefined&&!['en','zh-CN'].includes(s.language))||!['GB','GiB'].includes(s.unit)||!['auto','MB/s','Mbps'].includes(s.speedUnit)||![2,5,10].includes(s.interval)||(!Number.isInteger(s.retention)||s.retention<0||s.retention>36500))throw Error(t('设置值不合法。'));
+ if((s.language!==undefined&&!['en','zh-CN'].includes(s.language))||!['GB','GiB'].includes(s.unit)||!['auto','MB/s','Mbps'].includes(s.speedUnit)||!validSampleInterval(s.interval)||(!Number.isInteger(s.retention)||s.retention<0||s.retention>36500))throw Error(t('设置值不合法。'));
  for(const key of ['autoStart','minimizeToTray','notifications'])if(typeof s[key]!=='boolean')throw Error(t('开关值不合法。'));
  if(!data.live||!['connected','disconnected','permission','offline','loading'].includes(data.live.state)||!['running','paused','offline'].includes(data.live.collector))throw Error(t('采集器状态不合法。'));
  if(!Array.isArray(data.live.connections)||data.live.connections.length>64)throw Error(t('连接信息不合法。'));
  const ifaces=new Set();
  for(const c of data.live.connections){
-  if(!ids.has(c.networkId)||!validString(c.interfaceId,128)||ifaces.has(c.interfaceId)||!validString(c.adapterAlias,256)||((c.type!=='ethernet'&&data.networks.find(n=>n.id===c.networkId)?.type!=='ethernet')&&(!validString(c.band,64)||!Number.isFinite(c.signal)||c.signal<0||c.signal>100))||!byteString(c.rxPerSecond)||!byteString(c.txPerSecond)||!Number.isFinite(Date.parse(c.since)))throw Error(t('网卡状态不合法。'));
+  if(!ids.has(c.networkId)||!validString(c.interfaceId,128)||ifaces.has(c.interfaceId)||!validString(c.adapterAlias,256)||((c.type!=='ethernet'&&data.networks.find(n=>n.id===c.networkId)?.type!=='ethernet')&&(!validString(c.band,64)||!Number.isFinite(c.signal)||c.signal<0||c.signal>100))||(c.rxPerSecond!==null&&!byteString(c.rxPerSecond))||(c.txPerSecond!==null&&!byteString(c.txPerSecond))||(c.measurementAvailable!==undefined&&typeof c.measurementAvailable!=='boolean')||!Number.isFinite(Date.parse(c.since)))throw Error(t('网卡状态不合法。'));
   ifaces.add(c.interfaceId);
  }
  if(!Number.isFinite(Date.parse(data.live.updatedAt)))throw Error(t('更新时间不合法。'));

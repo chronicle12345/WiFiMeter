@@ -127,6 +127,17 @@ std::string isoUtcOf(std::chrono::system_clock::time_point at)
     return buffer;
 }
 
+std::string isoUtcMillisecondsOf(std::chrono::system_clock::time_point at)
+{
+    const auto seconds = std::chrono::floor<std::chrono::seconds>(at);
+    const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(at - seconds).count();
+    auto text = isoUtcOf(seconds);
+    char suffix[8] = {};
+    std::snprintf(suffix, sizeof(suffix), ".%03dZ", static_cast<int>(milliseconds));
+    text.replace(text.size() - 1, 1, suffix);
+    return text;
+}
+
 bool parseIsoUtc(std::string_view text, std::chrono::system_clock::time_point& at)
 {
     int year = 0;

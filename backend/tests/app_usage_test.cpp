@@ -103,7 +103,8 @@ int main()
     WIFIMETER_CHECK_EQ(rxSum, large); WIFIMETER_CHECK_EQ(txSum, core::ByteCount{21});
     const auto minuteRows = store->usage().minuteRange("home", "2026-09-30", "2026-09-30", status, 721, 721);
     WIFIMETER_CHECK_EQ(minuteRows.size(), std::size_t{1});
-    if (!minuteRows.empty()) WIFIMETER_CHECK_EQ(minuteRows[0].rxBytes, core::ByteCount{4503599627370497ULL});
+    // 后一分钟覆盖 5.75 秒；保留真实小数秒区间和超过 Number 精度的字节余数。
+    if (!minuteRows.empty()) WIFIMETER_CHECK_EQ(minuteRows[0].rxBytes, core::ByteCount{5179139571476071ULL});
     const auto exact = minuteUsageOf("home",utcTime(2026,9,30,12,2,0),std::chrono::seconds(5),10,5);
     WIFIMETER_CHECK_EQ(exact.size(), std::size_t{1});
     if (!exact.empty()) WIFIMETER_CHECK_EQ(exact[0].minute, 1);

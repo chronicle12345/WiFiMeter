@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.7.md#中文"><img src="https://img.shields.io/badge/version-1.3.7-6366F1?style=flat&amp;labelColor=182033" alt="Version 1.3.7" /></a>
+  <a href="docs/releases/v1.3.8.md#中文"><img src="https://img.shields.io/badge/version-1.3.8-6366F1?style=flat&amp;labelColor=182033" alt="Version 1.3.8" /></a>
   <a href="docs/PACKAGING-MATRIX.zh-CN.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=flat&amp;labelColor=182033" alt="Windows x64" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=flat&amp;labelColor=182033" alt="Tauri interface" /></a>
   <a href="docs/ARCHITECTURE.zh-CN.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=flat&amp;labelColor=182033" alt="C++20 backend" /></a>
@@ -29,6 +29,8 @@
 
 - 分别统计家里、工作室、手机热点等网络的用量，查看 Wi-Fi 和有线网络的实时网速。
 - 查看应用流量排行，搜索程序，按分钟、小时、日或月查询历史，也可以自选时段。
+- 查看最近 5 分钟的实时速度，在曲线图和柱状图之间切换，自定义采样间隔。
+- [监听本机 Clash / Mihomo 连接](docs/CONNECTION_MONITORING.zh-CN.md)，搜索域名，查看所属应用、命中规则和代理链。
 - 给单个网络或全部 Wi-Fi 设置每日、每月或累计额度，接近上限时提醒，可选超额后断开 Wi-Fi。
 - 在 Windows 悬浮窗中查看网速和最近的应用用量，支持固定位置、切换形状和贴边隐藏。
 - 在 Windows 上按应用禁止联网，分别设置上传、下载限速，并集中管理已有规则。
@@ -54,7 +56,7 @@ Windows x64 可在应用内检查更新，下载和安装分别确认。手动�
 <details>
 <summary>其他平台、旧版迁移与使用说明</summary>
 
-当前 1.3.7 提供 Windows x64 版本。Linux 和其他 Windows 架构的构建暂停，仍可查看[源码构建说明](packaging/README.zh-CN.md)和历史版本。
+当前 1.3.8 提供 Windows x64 版本。Linux 和其他 Windows 架构的构建暂停，仍可查看[源码构建说明](packaging/README.zh-CN.md)和历史版本。
 
 Electron 1.2.x 用户需要安装一次 Tauri 版本，已有 SQLite 数据继续保留；更早的 Windows 文件版可以在设置中导入旧目录。备份和旧版迁移见[数据迁移与恢复](docs/MIGRATION.zh-CN.md)。
 

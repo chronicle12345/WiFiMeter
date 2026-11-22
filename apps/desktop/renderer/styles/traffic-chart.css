@@ -1,0 +1,14 @@
+/* Both chart styles share the existing layout, scale and keyboard targets. */
+.traffic-chart { --traffic-rx:var(--chart-rx); --traffic-tx:#d57c48; }
+:root[data-theme="dark"] .traffic-chart { --traffic-tx:#eda16e; }
+.traffic-chart .traffic-line { fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vector-effect:non-scaling-stroke; pointer-events:none; }
+.traffic-chart .traffic-rx { stroke:var(--traffic-rx); }
+.traffic-chart .traffic-tx { stroke:var(--traffic-tx); }
+.traffic-chart .traffic-dot, .traffic-chart .traffic-marker { stroke:none; pointer-events:none; }
+.traffic-chart .traffic-dot.traffic-rx, .traffic-chart .traffic-marker.traffic-rx { fill:var(--traffic-rx); }
+.traffic-chart .traffic-dot.traffic-tx, .traffic-chart .traffic-marker.traffic-tx { fill:var(--traffic-tx); }
+.traffic-chart .traffic-marker { opacity:0; }
+.traffic-chart .traffic-point:is(:hover, :focus) .traffic-marker { opacity:1; }
+.traffic-chart .traffic-point:focus .bar-hit { stroke:var(--focus); stroke-width:1; }
+.traffic-chart-line + .traffic-legend .tx, .traffic-legend .tx { background:#d57c48; }
+:root[data-theme="dark"] .traffic-legend .tx { background:#eda16e; }

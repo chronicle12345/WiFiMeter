@@ -17,7 +17,7 @@ struct AppUsageDelta
     ByteCount rxBytes = 0;
     ByteCount txBytes = 0;
     TimePoint at{};
-    std::chrono::seconds span{0};
+    std::chrono::milliseconds span{0};
 };
 
 enum class AppGapKind

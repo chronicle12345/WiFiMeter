@@ -50,7 +50,7 @@ AppAccumulateResult AppUsageAccumulator::accumulate(const platform::AppTrafficRe
         counters_.clear();
         acknowledged_.clear();
     }
-    const auto span = now > lastAt_ ? std::chrono::duration_cast<std::chrono::seconds>(now - lastAt_) : std::chrono::seconds(0);
+    const auto span = now > lastAt_ ? std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAt_) : std::chrono::milliseconds(0);
     std::set<std::string> gapped;
     std::set<Key> seen;
     for (const auto& sample : apps.samples)

@@ -7,6 +7,7 @@ The [project homepage](../README.en.md) has downloads, a feature demo, and insta
 ## Using WiFiMeter
 
 - [Floating window](FLOATING_WINDOW.md): check live speeds and application usage; adjust position, shape, and edge hiding.
+- [Domains and connections](CONNECTION_MONITORING.md): connect a local Clash / Mihomo controller, search domains, and inspect applications and routes.
 - [Data migration and recovery](MIGRATION.md): import older records, create complete backups, use WebDAV, and restore data.
 - [Windows application capture](WINDOWS_APP_CAPTURE.md): enable application statistics and understand permissions and coverage.
 - [Linux application capture](LINUX_APP_CAPTURE.md): configure eBPF capture and permissions.

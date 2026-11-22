@@ -52,6 +52,8 @@ bool parseDayKey(std::string_view day, TimePoint& at);
 // UTC 的 ISO 8601 秒级时间戳，例如 2026-09-29T17:12:30Z。
 // 存储与协议中传递“时刻”统一用它，避免本地时区与夏令时带来的歧义。
 std::string isoUtcOf(std::chrono::system_clock::time_point at);
+// 实时采样使用毫秒时间戳，避免同一秒内的多轮采样被视作重复事件。
+std::string isoUtcMillisecondsOf(std::chrono::system_clock::time_point at);
 
 // 解析 isoUtcOf 生成的格式；日期不存在（如 2026-02-30）时返回 false。
 bool parseIsoUtc(std::string_view text, std::chrono::system_clock::time_point& at);

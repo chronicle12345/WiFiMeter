@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "english": "CONNECTION_MONITORING.md",
+  "chinese": "CONNECTION_MONITORING.zh-CN.md",
+  "sha256": {
+    "en": "1b860c0e24bc92cb7f200ca36ee414c6c72bcb9bdbd039904d7fceb9665c80ee",
+    "zh": "fb01a176da10e71d64bd08b61a866afa1210b68c1c940934045d98051291b1e1"
+  }
+}

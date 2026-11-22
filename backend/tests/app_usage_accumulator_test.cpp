@@ -32,7 +32,7 @@ int main()
         WIFIMETER_CHECK_EQ(result.deltas[0].rxBytes, core::ByteCount{500});
         WIFIMETER_CHECK_EQ(result.deltas[0].txBytes, core::ByteCount{100});
         WIFIMETER_CHECK_EQ(result.deltas[0].network.key, std::string("home"));
-        WIFIMETER_CHECK_EQ(result.deltas[0].span.count(), std::int64_t{5});
+        WIFIMETER_CHECK(result.deltas[0].span == std::chrono::seconds(5));
     }
     WIFIMETER_CHECK(accumulator.accumulate(apps, wifi(), now + std::chrono::seconds(10)).deltas.empty());
     // 同一个应用的新进程和同一 PID 的新实例都从本 generation 的零计数开始。
@@ -81,5 +81,13 @@ int main()
     WIFIMETER_CHECK(accumulator.accumulate(apps, wifi(), now + std::chrono::seconds(60)).deltas.empty());
     accumulator.clear();
     WIFIMETER_CHECK(accumulator.accumulate(apps, wifi(), now + std::chrono::seconds(65)).deltas.empty());
+    apps.samples[0].rxBytes += 25;
+    result = accumulator.accumulate(apps, wifi(), now + std::chrono::seconds(65) + std::chrono::milliseconds(250));
+    WIFIMETER_CHECK_EQ(result.deltas.size(), std::size_t{1});
+    if (!result.deltas.empty())
+    {
+        WIFIMETER_CHECK_EQ(result.deltas[0].rxBytes, core::ByteCount{25});
+        WIFIMETER_CHECK(result.deltas[0].span == std::chrono::milliseconds(250));
+    }
     return WIFIMETER_REPORT();
 }

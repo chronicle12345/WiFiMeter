@@ -73,7 +73,7 @@ void secondSampleYieldsTheDifference()
         WIFIMETER_CHECK_EQ(result.deltas[0].txBytes, ByteCount{600});
         WIFIMETER_CHECK_EQ(result.deltas[0].network.key, std::string("uuid-1"));
         WIFIMETER_CHECK_EQ(result.deltas[0].network.ssid, std::string("Home"));
-        WIFIMETER_CHECK_EQ(result.deltas[0].span.count(), 5);
+        WIFIMETER_CHECK(result.deltas[0].span == std::chrono::seconds(5));
         WIFIMETER_CHECK(result.deltas[0].at == utcTime(2026, 9, 29, 10, 0, 5));
     }
 }
@@ -171,7 +171,7 @@ void incompleteReportKeepsTheBaseline()
     const auto resumed = accumulator.accumulate(reportOf({makeSample("wlan0", "uuid-1", "Home", 1500, 2000)}), utcTime(2026, 9, 29, 10, 0, 30));
     WIFIMETER_CHECK_EQ(resumed.deltas.size(), std::size_t{1});
     WIFIMETER_CHECK_EQ(resumed.deltas[0].rxBytes, ByteCount{500});
-    WIFIMETER_CHECK_EQ(resumed.deltas[0].span.count(), 30);
+    WIFIMETER_CHECK(resumed.deltas[0].span == std::chrono::seconds(30));
 }
 
 void staleBaselinesExpire()

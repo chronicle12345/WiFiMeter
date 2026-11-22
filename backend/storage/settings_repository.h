@@ -27,7 +27,7 @@ struct SettingsRecord
     std::string language = "en";
     DisplayUnit unit = DisplayUnit::gb;
     SpeedUnit speedUnit = SpeedUnit::automatic;
-    int intervalSeconds = 5;
+    double intervalSeconds = 5;
     int retentionDays = 90;  // 0 表示长期保留
     bool autoStart = false;
     bool minimizeToTray = false;
@@ -47,6 +47,7 @@ public:
 
     // 取值合法性：非法值回退到默认，避免坏数据一路传到界面。
     static SettingsRecord sanitize(SettingsRecord settings);
+    static bool validIntervalSeconds(double seconds);
 
 private:
     Database& database_;

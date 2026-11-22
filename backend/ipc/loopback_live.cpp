@@ -1,4 +1,5 @@
 #include "loopback_live.h"
+#include "../core/byte_rate.h"
 #include <algorithm>
 #include <chrono>
 #include <set>
@@ -29,15 +30,15 @@ JsonValue LoopbackLive::update(const platform::AppTrafficReport& report, core::T
         }
         return cached;
     }
-    const double elapsed = stamp > 0 && sampledAtMs_ > 0 ?
-        static_cast<double>(stamp - sampledAtMs_) / 1000.0 : std::chrono::duration<double>(now - at_).count();
+    const auto elapsed = stamp > 0 && sampledAtMs_ > 0 ?
+        std::chrono::milliseconds(stamp - sampledAtMs_) : std::chrono::duration_cast<std::chrono::milliseconds>(now - at_);
     std::map<std::string, Counter> next;
     for (const auto& sample : report.samples)
     {
         if (sample.interfaceId != "loopback" || !sample.active || !sample.processId) continue;
         const auto key = sample.instanceId + "|" + sample.appId + "|" + sample.connectionKey;
         const auto old = previous_.find(key);
-        const bool measured = old != previous_.end() && elapsed > 0 &&
+        const bool measured = old != previous_.end() && elapsed > std::chrono::milliseconds::zero() &&
             sample.rxBytes >= old->second.rx && sample.txBytes >= old->second.tx;
         const auto rx = measured ? sample.rxBytes - old->second.rx : 0;
         const auto tx = measured ? sample.txBytes - old->second.tx : 0;
@@ -57,8 +58,8 @@ JsonValue LoopbackLive::update(const platform::AppTrafficReport& report, core::T
         row.set("measurementAvailable", JsonValue::makeBool(measured));
         row.set("rxBytes", JsonValue::makeString(std::to_string(counter.totalRx)));
         row.set("txBytes", JsonValue::makeString(std::to_string(counter.totalTx)));
-        row.set("rxPerSecond", measured ? JsonValue::makeString(std::to_string(static_cast<std::uint64_t>(rx / elapsed))) : JsonValue{});
-        row.set("txPerSecond", measured ? JsonValue::makeString(std::to_string(static_cast<std::uint64_t>(tx / elapsed))) : JsonValue{});
+        row.set("rxPerSecond", measured ? JsonValue::makeString(core::decimalString(core::byteRate(rx, elapsed))) : JsonValue{});
+        row.set("txPerSecond", measured ? JsonValue::makeString(core::decimalString(core::byteRate(tx, elapsed))) : JsonValue{});
         result.push(std::move(row));
     }
     previous_ = std::move(next); generation_ = report.generation; at_ = now;

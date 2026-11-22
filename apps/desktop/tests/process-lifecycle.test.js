@@ -136,6 +136,7 @@ async function mainHarness({ prepare = true, quitChoice = 0, missingConfirmHook 
         }, beginQuit() { calls.push('beginQuit'); }, dispose() { disposed++; } }) },
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
+        './connection-monitor.cjs': { createConnectionMonitor: () => ({ status: async () => ({}), dispose() {} }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => { if (legacyFailure) throw Error('migration failed'); return { found: false }; } },
         './window-controls.cjs': { createWindowControls: options => { miniRequest = options.requestMiniSnapshot; return { read: async () => ({ ...preferences }), validate: windowModule.validateWindowPreferences, update: async patch => Object.assign(preferences, patch), restore: async patch => Object.assign(preferences, patch), publishLive(event) { miniEvents.push(event); }, onMainClose() {}, dispose() {} }; } },
         './app-icons.cjs': { registerAppIcons() {} }, './app-control.cjs': { createAppControl: () => ({ backupRecords: async () => structuredClone(recordSnapshot), validateRecords: snapshot => snapshot, restoreRecords: async snapshot => { recordSnapshot = structuredClone(snapshot); }, waitForIdle: async () => {} }) },

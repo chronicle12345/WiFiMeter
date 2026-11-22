@@ -2,6 +2,7 @@
 #include "proxy_config.h"
 #include "../core/local_time.h"
 #include "../core/network_key.h"
+#include "../storage/settings_repository.h"
 #include "../storage/usage_repository.h"
 #include <charconv>
 #include <set>
@@ -237,11 +238,12 @@ Status validateBackupRows(const JsonValue& document)
     if (const auto* settings=document.find("settings"))
     {
         if (settings->has("language") && settings->stringOr("language")!="en" && settings->stringOr("language")!="zh-CN") return invalid("language");
-        for (const auto* field : {"retention","interval"})
+        if (const auto* interval = settings->find("interval"); interval &&
+            (!interval->isNumber() || !storage::SettingsRepository::validIntervalSeconds(interval->asDouble()))) return invalid("interval");
+        if (settings->has("retention"))
         {
-            if (!settings->has(field)) continue;
             std::int64_t value=0;
-            if (!integer(settings->find(field),value) || (std::string(field)=="retention" ? value>36500 : (value!=2 && value!=5 && value!=10))) return invalid(field);
+            if (!integer(settings->find("retention"),value) || value>36500) return invalid("retention");
         }
     }
     std::set<std::string> keys;

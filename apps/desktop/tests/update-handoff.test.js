@@ -69,6 +69,7 @@ async function harness({ failure, paused = false, appsEnabled = false, updateFac
         './system.cjs': { createSystemIntegration: () => ({ initializeTray() { calls.push('tray'); }, applySettings: async () => {}, beginQuit() {}, dispose() {} }) },
         './windows-autostart.cjs': { createWindowsAutostart: () => ({}) },
         './product.cjs': { applyProductIdentity: () => ({ productName: 'fixture' }) },
+        './connection-monitor.cjs': { createConnectionMonitor: () => ({ status: async () => ({}), dispose() {} }) },
         './legacy.cjs': { legacyDirectory: () => '', importLegacyDirectory: async () => ({ found: false }) },
         './window-controls.cjs': { createWindowControls: () => ({ read: async () => ({miniWindow:false,closeAction:'tray'}), update: async value => value, publishLive() {}, onMainClose() {}, dispose() {} }) },
         './app-icons.cjs': { registerAppIcons() {} },

@@ -38,7 +38,7 @@ struct UsageDelta
     ByteCount rxBytes = 0;
     ByteCount txBytes = 0;
     TimePoint at{};
-    std::chrono::seconds span{0};  // 距上次采样的间隔，便于上层判断归属的可信度
+    std::chrono::milliseconds span{0};  // 保留小数秒采样区间，供速率与分钟分配使用
 };
 
 enum class CounterEventKind
@@ -54,7 +54,7 @@ struct CounterEvent
     CounterEventKind kind = CounterEventKind::baseline;
     std::string interfaceId;
     NetworkRef network;            // 变化后的网络；detached 时为空
-    std::chrono::seconds span{0};  // 距上次成功采样的间隔；未知为 0
+    std::chrono::milliseconds span{0};  // 距上次成功采样的间隔；未知为 0
 };
 
 struct AccumulateResult

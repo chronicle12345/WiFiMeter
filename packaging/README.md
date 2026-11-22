@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 ## Tauri installers
 
-Run all commands from the repository root. The version comes from package metadata. Version 1.3.7 CI builds and publishes Windows x64 only. Windows x86/ARM64 and Linux x64/ARM64 jobs are temporarily commented out, but their native build helpers remain available. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
+Run all commands from the repository root. The version comes from package metadata. Version 1.3.8 CI builds and publishes Windows x64 only. Windows x86/ARM64 and Linux x64/ARM64 jobs are temporarily commented out, but their native build helpers remain available. See the [platform documentation](../docs/PACKAGING-MATRIX.md) for active checks and paused targets.
 
 Windows requires Node.js for the target architecture, a Rust MSVC toolchain, CMake and a C++20 compiler. Linux requires native toolchains and WebKitGTK 4.1. To build a Windows installer:
 
@@ -16,7 +16,7 @@ npm run dist:windows
 Windows produces an NSIS installer by default; Linux produces deb, rpm and AppImage packages. Portable ZIPs have been discontinued. Builds and CI still validate internal SHA-256 manifests, which are excluded from Release attachments.
 
 ```text
-dist/windows/WiFiMeter-1.3.7-windows-x64-Tauri-Setup.exe
+dist/windows/WiFiMeter-1.3.8-windows-x64-Tauri-Setup.exe
 ```
 
 The package contains the Node business process and C++ collector; Tauri uses the system WebView. The Windows installer downloads WebView2 if needed. Linux uses system WebKitGTK 4.1. User data stays in its original directory.
@@ -59,7 +59,7 @@ cargo install tauri-driver --version 2.0.5 --locked
 node packaging/tauri/verify-linux.cjs --arch "$node_arch"
 ```
 
-The [CI matrix](../docs/PACKAGING-MATRIX.md) lists cache configuration and active or paused targets. Local builds do not need CI caches. See [Testing](../docs/TESTING.md#native-host-and-installers) for package verification commands and native prerequisites, and the [release notes](../docs/releases/v1.3.7.md) for installation instructions and version limits.
+The [CI matrix](../docs/PACKAGING-MATRIX.md) lists cache configuration and active or paused targets. Local builds do not need CI caches. See [Testing](../docs/TESTING.md#native-host-and-installers) for package verification commands and native prerequisites, and the [release notes](../docs/releases/v1.3.8.md) for installation instructions and version limits.
 
 RPM validation checks package digests, then extracts with `bsdtar` from `libarchive-tools`. This supports packages for which Tauri's packaging library omits archive length fields while keeping extraction checks strict. A failed digest, extraction, resource or native UI check blocks release.
 

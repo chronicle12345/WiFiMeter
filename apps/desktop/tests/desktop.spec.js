@@ -251,7 +251,9 @@ test('小流量在所有用量入口使用自动单位，图表可见且 CSV 保
     await expect(page.locator('.chart-caption')).toContainText('单位：KB');
     await expect(page.locator('#usage-chart-desc')).toContainText('单位 KB');
     await expect(page.locator('.chart title')).toContainText('KB');
-    expect(Number(await page.locator('.bar-rx').first().getAttribute('height'))).toBeGreaterThan(50);
+    const graph=page.locator('#content .traffic-chart-line');
+    const extent=await graph.evaluate(svg=>({height:svg.viewBox.baseVal.height,y:Number(svg.querySelector('.traffic-marker.traffic-rx').getAttribute('cy'))}));
+    expect(extent.height-30-extent.y).toBeGreaterThan(50);
     await page.locator('[data-chart-point][data-missing="0"]').focus();
     await expect(page.locator('#tooltip')).toContainText('520 KB');
     await expect(page.locator('#tooltip')).toContainText('1 B');
@@ -580,7 +582,8 @@ test('偏好设置会落库并影响后端行为', async () => {
     await expect.poll(() => query('SELECT retention_days FROM settings')).toBe('30');
 
     await page.locator('[data-category="general"]').click();
-    await page.locator('select[name="interval"]').selectOption('10');
+    await page.locator('input[name="interval"]').fill('10');
+    await page.locator('input[name="interval"]').blur();
     await expect.poll(() => query('SELECT interval_seconds FROM settings')).toBe('10');
     await expect(page.locator('#settingsForm')).not.toHaveAttribute('data-busy', 'true');
 

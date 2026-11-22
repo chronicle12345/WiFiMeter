@@ -5,6 +5,23 @@ import { validateSnapshot, totalOf, quotaFor } from '../renderer/data/model.js';
 
 const fixed = () => new Date(2026, 8, 29, 12);
 
+test('custom millisecond sampling and unavailable interface rates retain their meanings',()=>{
+    for(const interval of [0.25,0.333,1,2,5,10,3599.999,3600]){
+        const data=generateDemo(fixed());data.settings.interval=interval;
+        const connection=data.live.connections[0];
+        connection.measurementAvailable=false;connection.rxPerSecond=null;connection.txPerSecond=null;
+        const validated=validateSnapshot(data);
+        assert.equal(validated.settings.interval,interval);
+        assert.equal(validated.live.connections[0].rxPerSecond,null);
+    }
+    for(const interval of [0,0.249,0.2501,3600.001,'0.25',Infinity,NaN]){
+        const data=generateDemo(fixed());data.settings.interval=interval;
+        assert.throws(()=>validateSnapshot(data));
+    }
+    const invalid=generateDemo(fixed());invalid.live.connections[0].measurementAvailable='false';
+    assert.throws(()=>validateSnapshot(invalid));
+});
+
 test('fixtures validate even at month boundaries; hourly totals equal daily totals', () => {
     for (const date of [fixed(), new Date(2026, 9, 1, 0), new Date(2026, 1, 28, 23)]) {
         const data = validateSnapshot(generateDemo(date));

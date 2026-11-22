@@ -27,7 +27,7 @@ test('settings save on change, survive categories and have no manual save button
  await expect(page.locator('.breadcrumbs')).toHaveCount(0);
  await expect(page.locator('#settingsForm button[type="submit"]')).toHaveCount(0);
  await expect(page.locator('[data-action="discard-settings"]')).toHaveCount(0);
- await page.locator('[name="interval"]').selectOption('10');
+ await page.locator('[name="interval"]').fill('10');await page.locator('[name="interval"]').blur();
  await category('display');await page.locator('[name="unit"]').selectOption('GiB');
  await category('data');await page.locator('[name="retention"]').selectOption('0');
  await expect.poll(async()=>(await snapshot()).settings).toMatchObject({interval:10,unit:'GiB',retention:0});
@@ -77,7 +77,7 @@ test('settings stay in one scrolling panel and category links track the current 
   }));
   const expectedY=Math.min(Math.max(position.documentTop-24,0),position.maximumY);
   expect(Math.abs(position.actualY-expectedY)).toBeLessThanOrEqual(2);
-  await expect(page.locator('#settings-proxy .panel-head')).toBeInViewport();
+  await expect(page.locator('#settings-proxy .panel-head').first()).toBeInViewport();
  }
  await page.evaluate(()=>window.scrollTo(0,0));await expect(page.locator('[data-category="general"]')).toHaveAttribute('aria-current','location');
  await page.setViewportSize({width:420,height:740});
@@ -103,7 +103,7 @@ test('mini appearance saves automatically and is applied to the real window',asy
 
 test('remembered close preference updates automatically without reverting saved edits',async()=>{
  await page.locator('[name="closeAction"]').selectOption('ask');await expect.poll(preferences).toMatchObject({closeAction:'ask'});
- await page.locator('[name="interval"]').selectOption('10');await expect.poll(async()=>(await snapshot()).settings.interval).toBe(10);
+ await page.locator('[name="interval"]').fill('10');await page.locator('[name="interval"]').blur();await expect.poll(async()=>(await snapshot()).settings.interval).toBe(10);
  await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:true});});await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
  await expect.poll(preferences).toMatchObject({closeAction:'tray'});
  await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(window=>window.isVisible()))).toBe(false);

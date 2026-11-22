@@ -1,8 +1,10 @@
 // 存储层测试：用量累加、区间查询、覆盖空档、额度账本滚动、保留期裁剪与备份。
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <limits>
 #include <string>
 
 #include "../core/usage_accumulator.h"
@@ -412,7 +414,7 @@ void persistsSettingsAcrossReopen()
         WIFIMETER_CHECK(status.ok);
         settings.unit = DisplayUnit::gib;
         settings.speedUnit = SpeedUnit::megabitsPerSecond;
-        settings.intervalSeconds = 2;
+        settings.intervalSeconds = 0.375;
         settings.retentionDays = 365;
         settings.notifications = false;
         WIFIMETER_CHECK(store->settings().save(settings).ok);
@@ -425,13 +427,13 @@ void persistsSettingsAcrossReopen()
     const SettingsRecord settings = reopened->settings().load(status);
     WIFIMETER_CHECK(settings.unit == DisplayUnit::gib);
     WIFIMETER_CHECK(settings.speedUnit == SpeedUnit::megabitsPerSecond);
-    WIFIMETER_CHECK_EQ(settings.intervalSeconds, 2);
+    WIFIMETER_CHECK_EQ(settings.intervalSeconds, 0.375);
     WIFIMETER_CHECK_EQ(settings.retentionDays, 365);
     WIFIMETER_CHECK(!settings.notifications);
 
     // 非法取值回退到默认，坏数据不应传到界面。
     SettingsRecord broken;
-    broken.intervalSeconds = 7;
+    broken.intervalSeconds = 0;
     broken.retentionDays = -1;
     const SettingsRecord clean = SettingsRepository::sanitize(broken);
     WIFIMETER_CHECK_EQ(clean.intervalSeconds, 5);
@@ -448,7 +450,39 @@ void persistsSettingsAcrossReopen()
     }
     broken.retentionDays = 36501;
     WIFIMETER_CHECK_EQ(SettingsRepository::sanitize(broken).retentionDays, 90);
+    for (const auto interval : {0.25, 0.375, 1.333, 2.0, 5.0, 7.0, 10.0, 3600.0})
+    {
+        SettingsRecord custom;
+        custom.intervalSeconds = interval;
+        WIFIMETER_CHECK(reopened->settings().save(custom).ok);
+        WIFIMETER_CHECK_EQ(reopened->settings().load(status).intervalSeconds, interval);
+    }
+    for (const auto interval : {-1.0, 0.249, 0.2505, 3600.001,
+        std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()})
+    {
+        broken.intervalSeconds = interval;
+        WIFIMETER_CHECK_EQ(SettingsRepository::sanitize(broken).intervalSeconds, 5.0);
+    }
 
+}
+
+void splitsFractionalSamplesAcrossMinuteBoundaries()
+{
+    wifimeter::test::useTimeZone("UTC");
+    const auto boundary = utcTime(2026, 10, 1, 0);
+    const auto rows = minuteUsageOf("home", boundary + std::chrono::milliseconds(125),
+        std::chrono::milliseconds(250), ByteCount{1001}, ByteCount{201});
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{2});
+    if (rows.size() == 2)
+    {
+        WIFIMETER_CHECK_EQ(rows[0].day, std::string("2026-09-30"));
+        WIFIMETER_CHECK_EQ(rows[0].hour, 23);
+        WIFIMETER_CHECK_EQ(rows[0].minute, 59);
+        WIFIMETER_CHECK_EQ(rows[1].day, std::string("2026-10-01"));
+        WIFIMETER_CHECK_EQ(rows[0].rxBytes, ByteCount{500});
+        WIFIMETER_CHECK_EQ(rows[1].rxBytes, ByteCount{501});
+        WIFIMETER_CHECK_EQ(rows[0].txBytes + rows[1].txBytes, ByteCount{201});
+    }
 }
 
 void survivesReopenWithData()
@@ -511,13 +545,134 @@ void coalescesContinuousGapsAndPrunesOnlyExpiredIntervals()
     gap.startedAt = utcTime(2026, 1, 1, 15, 0, 0); gap.endedAt = utcTime(2026, 1, 1, 16, 10, 0);
     gap.span = std::chrono::duration_cast<std::chrono::seconds>(gap.endedAt - gap.startedAt);
     WIFIMETER_CHECK(store->usage().addGap(gap).ok);
-    gap.reasonDetail = "still open"; gap.span = std::chrono::seconds(0);
+    gap.reasonDetail = "still open"; gap.span = std::chrono::seconds(0); gap.endedAt = {};
     WIFIMETER_CHECK(store->usage().addGap(gap).ok);
     std::size_t daily = 0, hourly = 0;
     WIFIMETER_CHECK(store->usage().pruneBefore("2026-01-02", daily, hourly).ok);
     WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status, true).size(), std::size_t{0});
     WIFIMETER_CHECK_EQ(store->usage().gapsInRange("2026-01-01T00:00:00Z", "2026-01-03T00:00:00Z", status).size(), std::size_t{3});
     wifimeter::test::useTimeZone("UTC");
+}
+
+void coalescesRoundedFractionalGapsWithoutCountingOverlapsTwice()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Status status;
+    auto store = Store::open(":memory:", status);
+    WIFIMETER_CHECK(store != nullptr);
+    if (!store) return;
+    const auto at = utcTime(2026, 9, 29, 10);
+    CoverageGap gap;
+    gap.application = true;
+    gap.networkKey = "home";
+    gap.reason = CoverageReason::offline;
+    gap.reasonDetail = "Synthetic partial capture";
+    for (int tick = 1; tick <= 8; ++tick)
+    {
+        gap.setClosedInterval(at + std::chrono::milliseconds((tick - 1) * 250),
+            at + std::chrono::milliseconds(tick * 250));
+        WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    }
+    const auto read = [&] {
+        auto rows = store->usage().gapsInRange("2026-09-29T09:59:00Z", "2026-09-29T10:01:00Z", status, true);
+        WIFIMETER_CHECK(status.ok);
+        return rows;
+    };
+    auto rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{1});
+    if (rows.size() == 1)
+    {
+        WIFIMETER_CHECK(rows[0].startedAt == at);
+        WIFIMETER_CHECK(rows[0].endedAt == at + std::chrono::seconds(2));
+        WIFIMETER_CHECK(rows[0].span == std::chrono::seconds(2));
+    }
+    // 重复和较早到达的区间不能缩短终点或再次累加相同秒数。
+    gap.setClosedInterval(at + std::chrono::milliseconds(125), at + std::chrono::milliseconds(375));
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    gap.setClosedInterval(at - std::chrono::milliseconds(125), at + std::chrono::milliseconds(125));
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{1});
+    if (rows.size() == 1)
+    {
+        WIFIMETER_CHECK(rows[0].startedAt == at - std::chrono::seconds(1));
+        WIFIMETER_CHECK(rows[0].endedAt == at + std::chrono::seconds(2));
+        WIFIMETER_CHECK(rows[0].span == std::chrono::seconds(3));
+    }
+    gap.setClosedInterval(at + std::chrono::milliseconds(4125), at + std::chrono::milliseconds(4375));
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    WIFIMETER_CHECK_EQ(read().size(), std::size_t{2});
+    gap.endedAt = {};
+    gap.span = std::chrono::seconds(0);
+    WIFIMETER_CHECK(store->usage().addGap(gap).ok);
+    rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{3});
+    WIFIMETER_CHECK(std::any_of(rows.begin(), rows.end(), [](const auto& row) { return row.endedAt == TimePoint{}; }));
+}
+
+void coalescesBridgedAndPreviouslyDuplicatedGapsAtomically()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Status status;
+    auto store = Store::open(":memory:", status);
+    WIFIMETER_CHECK(store != nullptr);
+    if (!store) return;
+    const auto at = utcTime(2026, 9, 29, 10);
+    CoverageGap gap;
+    gap.application = true;
+    gap.networkKey = "home";
+    gap.reason = CoverageReason::offline;
+    const auto add = [&](int start, int end) {
+        gap.setClosedInterval(at + std::chrono::seconds(start), at + std::chrono::seconds(end));
+        return store->usage().addGap(gap);
+    };
+    const auto read = [&] {
+        auto rows = store->usage().gapsInRange("2026-09-29T09:59:00Z", "2026-09-29T10:01:00Z", status, true);
+        WIFIMETER_CHECK(status.ok);
+        return rows;
+    };
+    WIFIMETER_CHECK(add(0, 2).ok);
+    WIFIMETER_CHECK(add(3, 4).ok);
+    WIFIMETER_CHECK(add(1, 3).ok);
+    auto rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{1});
+    if (rows.size() == 1) WIFIMETER_CHECK(rows[0].span == std::chrono::seconds(4));
+
+    WIFIMETER_CHECK(store->database().exec("DELETE FROM coverage_gaps; INSERT INTO coverage_gaps(network_key,reason,reason_detail,started_at,ended_at,span_seconds,scope) VALUES "
+        "('home','offline','','2026-09-29T10:00:00Z','2026-09-29T10:00:02Z',2,'apps'),"
+        "('home','offline','','2026-09-29T10:00:00Z','2026-09-29T10:00:02Z',2,'apps'),"
+        "('home','offline','','2026-09-29T10:00:01Z','2026-09-29T10:00:04Z',3,'apps'),"
+        "('home','offline','','2026-09-29T10:00:03Z','2026-09-29T10:00:06Z',3,'apps');").ok);
+    WIFIMETER_CHECK(add(-1, 1).ok);
+    rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{1});
+    if (rows.size() == 1)
+    {
+        WIFIMETER_CHECK(rows[0].startedAt == at - std::chrono::seconds(1));
+        WIFIMETER_CHECK(rows[0].endedAt == at + std::chrono::seconds(6));
+        WIFIMETER_CHECK(rows[0].span == std::chrono::seconds(7));
+    }
+
+    WIFIMETER_CHECK(store->database().exec("DELETE FROM coverage_gaps;").ok);
+    WIFIMETER_CHECK(add(0, 2).ok);
+    WIFIMETER_CHECK(add(3, 4).ok);
+    WIFIMETER_CHECK(store->database().exec("CREATE TEMP TRIGGER reject_gap_merge BEFORE UPDATE ON coverage_gaps BEGIN SELECT RAISE(ABORT,'injected gap merge failure'); END;").ok);
+    WIFIMETER_CHECK(!add(1, 3).ok);
+    rows = read();
+    WIFIMETER_CHECK_EQ(rows.size(), std::size_t{2});
+    if (rows.size() == 2)
+    {
+        WIFIMETER_CHECK(rows[0].startedAt == at && rows[0].endedAt == at + std::chrono::seconds(2));
+        WIFIMETER_CHECK(rows[1].startedAt == at + std::chrono::seconds(3) && rows[1].endedAt == at + std::chrono::seconds(4));
+    }
+    WIFIMETER_CHECK(store->database().exec("DROP TRIGGER reject_gap_merge;").ok);
+    {
+        Transaction transaction(store->database());
+        WIFIMETER_CHECK(transaction.active());
+        WIFIMETER_CHECK(add(1, 3).ok);
+        WIFIMETER_CHECK_EQ(read().size(), std::size_t{1});
+    }
+    WIFIMETER_CHECK_EQ(read().size(), std::size_t{2});
 }
 
 }  // namespace
@@ -528,12 +683,15 @@ int main()
     filtersByNetworkAndRange();
     recordsCoverageGaps();
     coalescesContinuousGapsAndPrunesOnlyExpiredIntervals();
+    coalescesRoundedFractionalGapsWithoutCountingOverlapsTwice();
+    coalescesBridgedAndPreviouslyDuplicatedGapsAtomically();
     appliesAccumulatorOutputAtomically();
     rollsTheQuotaLedgerAtThePeriodBoundary();
     prunesByRetention();
     keepsUserSettingsWhenTheNetworkIsSeenAgain();
     clearsUsageButKeepsNetworksAndPreferences();
     persistsSettingsAcrossReopen();
+    splitsFractionalSamplesAcrossMinuteBoundaries();
     survivesReopenWithData();
     return WIFIMETER_REPORT();
 }

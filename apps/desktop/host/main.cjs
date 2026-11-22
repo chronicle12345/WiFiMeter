@@ -14,6 +14,7 @@ const { createUpdateService } = require('./updates.cjs');
 const { launchUpdateHandoff } = require('./update-handoff.cjs');
 const { createLogStore, captureConsole, validateLogLevel } = require('./logs.cjs');
 const { createCloudBackup } = require('./cloud-backup.cjs');
+const { createConnectionMonitor } = require('./connection-monitor.cjs');
 const timers = require('node:timers');
 
 const pagePath = path.join(__dirname, '../renderer/index.html');
@@ -23,6 +24,7 @@ let backend;
 let system;
 let windowControls;
 let cloud;
+let connectionMonitor;
 let restoringBackup = false;
 let restoreFlight = null;
 const backendMutations = new Set();
@@ -402,6 +404,21 @@ app.whenReady().then(async () => {
     ipcMain.handle('logs:clear', event => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); logs.clear(); return { level: logs.level }; });
     ipcMain.handle('logs:write', (event, entry) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); logs.write(entry?.level, 'renderer', entry?.message); });
 
+    connectionMonitor = createConnectionMonitor({ userDataDir: app.getPath('userData'), onStatus: state => {
+        if (window && !window.isDestroyed()) window.webContents.send('connections:status', state);
+    } });
+    for (const action of ['status', 'read', 'refresh', 'configure', 'clear']) {
+        ipcMain.handle(`connections:${action}`, (event, input) => {
+            if (!trusted(event)) throw Error('Unsupported page.');
+            if (['configure', 'clear'].includes(action)) {
+                assertWritable();
+                return trackMutation(() => connectionMonitor[action](input));
+            }
+            return connectionMonitor[action](input);
+        });
+    }
+    if (!backgroundTest) connectionMonitor.status().catch(() => {});
+
     ipcMain.handle('window-preferences:read', event => { if (!trusted(event)) throw Error('Unsupported page.'); return windowControls.read(); });
     ipcMain.handle('window-preferences:update', (event, patch) => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return windowControls.update(patch); });
     ipcMain.handle('app-control:choose', event => { if (!trusted(event)) throw Error('Unsupported page.'); assertWritable(); return controls.chooseProgram(); });
@@ -586,6 +603,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', event => {
     if (installingUpdate && !quitting) { event.preventDefault(); app.cancelQuit?.(); return; }
     if (quitting || !backend) {
+        connectionMonitor?.dispose();
         windowControls?.dispose();
         return;
     }
@@ -610,6 +628,7 @@ app.on('before-quit', event => {
         try { await backend.stop(); }
         catch (error) { console.error(`[backend] 停止失败：${error.message}`); }
         backend = null;
+        connectionMonitor?.dispose();
         windowControls?.dispose();
         system?.dispose();
         if (app.finishQuit) app.finishQuit();

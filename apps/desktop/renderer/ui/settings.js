@@ -15,7 +15,8 @@ function startup(settings, { toggle, option, windowPreferences }) {
         (windowPreferences ? row(t('启动时询问应用采集'),'',toggle('promptAppCollection',windowPreferences.promptAppCollection!==false,t('启动时询问应用采集'))) : '') +
         (windowPreferences ? row(t('桌面小窗'),'',toggle('miniWindow',windowPreferences.miniWindow,t('桌面小窗'))) + row(t('关闭窗口时'),'',`<select class="select" name="closeAction" aria-label="${t('关闭窗口时')}">${option('ask',t('每次询问'),windowPreferences.closeAction)}${option('tray',t('最小化到托盘'),windowPreferences.closeAction)}${option('exit',t('退出应用'),windowPreferences.closeAction)}</select>`) + `<input type="checkbox" name="minimizeToTray" hidden ${settings.minimizeToTray?'checked':''}>` : row(t('关闭窗口时最小化到托盘'),'',toggle('minimizeToTray',settings.minimizeToTray,t('关闭窗口时最小化到托盘')))) +
         (windowPreferences ? miniControls(windowPreferences,{toggle,option}) : '') +
-        row(t('采样间隔'),t('后端按此间隔读取网卡计数器。'),tr`<select class="select" name="interval" aria-label="采样间隔">${[2,5,10].map(value=>option(value,tr`${value} 秒`,settings.interval)).join('')}</select>`),
+        row(t('采样间隔'),'',tr`<label class="sampling-control"><input class="input" type="number" name="interval" min="0.25" max="3600" step="0.001" value="${settings.interval}" aria-label="采样间隔" aria-describedby="samplingHint"><span>秒</span></label>`) +
+        `<p class="settings-note" id="samplingHint">${t('可自定义 0.25 到 3600 秒；较短间隔会增加采样频率。')}</p>`,
         t('系统级开关会随系统设置生效'));
 }
 function miniControls(p,{toggle,option}) {
@@ -30,6 +31,7 @@ function display(settings, { toggle, option, windowPreferences }) {
         (windowPreferences?row(t('主题'),'',`<select class="select" name="theme" aria-label="${t('主题')}">${option('system',t('跟随系统'),windowPreferences.theme||'system')}${option('light',t('浅色'),windowPreferences.theme)}${option('dark',t('深色'),windowPreferences.theme)}</select>`):'') +
         row(t('流量单位进制'),t('用量自动选择单位；十进制按 1000、二进制按 1024 换算。'),tr`<select class="select" name="unit" aria-label="流量单位进制">${option('GB',t('十进制 · KB / MB / GB'),settings.unit)}${option('GiB',t('二进制 · KiB / MiB / GiB'),settings.unit)}</select>`) +
         row(t('实时速度单位'),t('MB/s 是字节速率；Mbps 是比特速率。'),tr`<select class="select" name="speedUnit" aria-label="实时速度单位">${option('auto',t('自动（推荐）'),settings.speedUnit)}${option('MB/s','MB/s',settings.speedUnit)}${option('Mbps','Mbps',settings.speedUnit)}</select>`) +
+        (windowPreferences ? row(t('流量图样式'),'',`<select class="select" name="chartStyle" aria-label="${t('流量图样式')}">${option('line',t('曲线图'),windowPreferences.chartStyle||'line')}${option('bar',t('柱状图'),windowPreferences.chartStyle)}</select>`) : '') +
         row(t('允许额度提醒'),t('各网络分别设置提醒阈值；默认不自动断网。'),toggle('notifications',settings.notifications,t('允许额度提醒'))));
 }
 function storage(settings, { button, option, legacy }) {

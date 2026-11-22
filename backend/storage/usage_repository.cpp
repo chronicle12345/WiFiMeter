@@ -10,6 +10,30 @@ namespace wifimeter::storage
 namespace
 {
 
+class GapMergeSavepoint
+{
+public:
+    GapMergeSavepoint(Database& database, Status& status) : database_(database)
+    {
+        status = database_.exec("SAVEPOINT wifimeter_gap_merge;");
+        active_ = status.ok;
+    }
+    ~GapMergeSavepoint()
+    {
+        if (active_) database_.exec("ROLLBACK TO wifimeter_gap_merge; RELEASE wifimeter_gap_merge;");
+    }
+    Status commit()
+    {
+        const auto status = database_.exec("RELEASE wifimeter_gap_merge;");
+        if (status) active_ = false;
+        return status;
+    }
+
+private:
+    Database& database_;
+    bool active_ = false;
+};
+
 struct ReasonName
 {
     CoverageReason reason;
@@ -29,7 +53,7 @@ constexpr std::array<ReasonName, 6> kReasonNames{{
 }  // namespace
 
 std::vector<MinuteUsageRow> minuteUsageOf(const std::string& networkKey, core::TimePoint at,
-    std::chrono::seconds span, core::ByteCount rx, core::ByteCount tx)
+    std::chrono::milliseconds span, core::ByteCount rx, core::ByteCount tx)
 {
     std::vector<MinuteUsageRow> rows;
     auto append = [&](core::TimePoint bucket, core::ByteCount partRx, core::ByteCount partTx) {
@@ -37,20 +61,20 @@ std::vector<MinuteUsageRow> minuteUsageOf(const std::string& networkKey, core::T
         rows.push_back({networkKey, core::dayKeyOf(stamp), stamp.hour, stamp.minute, partRx, partTx});
     };
     if (span.count() <= 0) { append(at, rx, tx); return rows; }
-    at = core::TimePoint(std::chrono::floor<std::chrono::seconds>(at));
+    at = core::TimePoint(std::chrono::floor<std::chrono::milliseconds>(at));
     auto cursor = at - span;
     auto remaining = static_cast<core::ByteCount>(span.count());
     while (cursor < at)
     {
         const auto next = std::min(at, core::TimePoint(std::chrono::floor<std::chrono::minutes>(cursor)) + std::chrono::minutes(1));
-        const auto seconds = static_cast<core::ByteCount>(std::chrono::duration_cast<std::chrono::seconds>(next - cursor).count());
-        if (!seconds) { cursor = next; continue; }
+        const auto milliseconds = static_cast<core::ByteCount>(std::chrono::duration_cast<std::chrono::milliseconds>(next - cursor).count());
+        if (!milliseconds) { cursor = next; continue; }
         const auto fraction = [&](core::ByteCount total) {
-            return total / remaining * seconds + total % remaining * seconds / remaining;
+            return total / remaining * milliseconds + total % remaining * milliseconds / remaining;
         };
         const auto partRx = fraction(rx), partTx = fraction(tx);
         append(cursor, partRx, partTx);
-        rx -= partRx; tx -= partTx; remaining -= seconds;
+        rx -= partRx; tx -= partTx; remaining -= milliseconds;
         cursor = next;
     }
     return rows;
@@ -383,31 +407,78 @@ std::vector<AppMinuteUsageRow> UsageRepository::appMinuteRange(const std::string
     return status ? rows : std::vector<AppMinuteUsageRow>{};
 }
 
-Status UsageRepository::addGap(const CoverageGap& gap)
+void CoverageGap::setClosedInterval(core::TimePoint start, core::TimePoint end)
 {
+    startedAt = core::TimePoint(std::chrono::floor<std::chrono::seconds>(start));
+    endedAt = end > start ? core::TimePoint(std::chrono::ceil<std::chrono::seconds>(end)) : startedAt;
+    span = std::chrono::duration_cast<std::chrono::seconds>(endedAt - startedAt);
+}
+
+Status UsageRepository::addGap(const CoverageGap& input)
+{
+    auto gap = input;
+    const bool closed = gap.endedAt != core::TimePoint{};
+    if (closed) gap.setClosedInterval(gap.startedAt, gap.endedAt);
+    const auto insert = [&]() {
+        Status status;
+        auto statement = database_.prepare("INSERT INTO coverage_gaps(network_key, reason, reason_detail, started_at, ended_at, span_seconds, scope) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);", status);
+        if (!statement) return status;
+        if (!statement->bind(1, gap.networkKey) || !statement->bind(2, std::string(coverageReasonName(gap.reason))) || !statement->bind(3, gap.reasonDetail) || !statement->bind(4, core::isoUtcOf(gap.startedAt)) || !statement->bind(5, closed ? core::isoUtcOf(gap.endedAt) : std::string()) ||
+            !statement->bind(6, static_cast<std::int64_t>(gap.span.count())) || !statement->bind(7, std::string(gap.application ? "apps" : "network")))
+            return Status::failure(statement->error());
+        return statement->run();
+    };
+    if (!closed || gap.span.count() <= 0) return insert();
+
+    // 取整后的区间可能重叠；备份中的旧重复行也需要一起合并。
+    // 保存点允许独立调用，也保留 applyUsage 等外层事务的回滚边界。
     Status status;
-    if (gap.span.count() > 0)
+    GapMergeSavepoint savepoint(database_, status);
+    if (!status) return status;
+    auto start = core::isoUtcOf(gap.startedAt);
+    auto end = core::isoUtcOf(gap.endedAt);
+    std::optional<std::int64_t> retained;
+    const auto bindInterval = [&](Statement& statement) {
+        if (!statement.bind(1, gap.networkKey) || !statement.bind(2, std::string(coverageReasonName(gap.reason))) ||
+            !statement.bind(3, gap.reasonDetail) || !statement.bind(4, start) || !statement.bind(5, end) ||
+            !statement.bind(6, std::string(gap.application ? "apps" : "network"))) return Status::failure(statement.error());
+        return Status::success();
+    };
+    for (;;)
     {
-        auto previous = database_.prepare(
-            "UPDATE coverage_gaps SET ended_at=?5, span_seconds=span_seconds+?6 WHERE id=("
-            "SELECT id FROM coverage_gaps WHERE network_key=?1 AND reason=?2 AND reason_detail=?3 "
-            "AND ended_at=?4 AND scope=?7 AND span_seconds<=9223372036854775807-?6 ORDER BY id DESC LIMIT 1);", status);
-        if (!previous) return status;
-        if (!previous->bind(1, gap.networkKey) || !previous->bind(2, std::string(coverageReasonName(gap.reason))) ||
-            !previous->bind(3, gap.reasonDetail) || !previous->bind(4, core::isoUtcOf(gap.startedAt)) ||
-            !previous->bind(5, core::isoUtcOf(gap.endedAt)) || !previous->bind(6, static_cast<std::int64_t>(gap.span.count())) ||
-            !previous->bind(7, std::string(gap.application ? "apps" : "network"))) return Status::failure(previous->error());
-        if (const auto merged = previous->run(); !merged) return merged;
-        if (sqlite3_changes(database_.handle()) > 0) return Status::success();
+        auto overlapping = database_.prepare(
+            "SELECT MIN(id), MIN(started_at), MAX(ended_at) FROM coverage_gaps "
+            "WHERE network_key=?1 AND reason=?2 AND reason_detail=?3 AND scope=?6 "
+            "AND ended_at<>'' AND started_at<=?5 AND ended_at>=?4;", status);
+        if (!overlapping) return status;
+        if (const auto bound = bindInterval(*overlapping); !bound) return bound;
+        if (!overlapping->step()) return Status::failure(overlapping->error());
+        if (overlapping->columnIsNull(0)) break;
+        retained = overlapping->columnInt64(0);
+        const auto nextStart = std::min(start, overlapping->columnText(1));
+        const auto nextEnd = std::max(end, overlapping->columnText(2));
+        if (nextStart == start && nextEnd == end) break;
+        start = nextStart;
+        end = nextEnd;
     }
-    auto statement = database_.prepare("INSERT INTO coverage_gaps(network_key, reason, reason_detail, started_at, ended_at, span_seconds, scope) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7);", status);
-    if (!statement)
-        return status;
-    const auto span = gap.span.count();
-    if (!statement->bind(1, gap.networkKey) || !statement->bind(2, std::string(coverageReasonName(gap.reason))) || !statement->bind(3, gap.reasonDetail) || !statement->bind(4, core::isoUtcOf(gap.startedAt)) || !statement->bind(5, gap.span.count() > 0 ? core::isoUtcOf(gap.endedAt) : std::string()) ||
-        !statement->bind(6, static_cast<std::int64_t>(span)) || !statement->bind(7, std::string(gap.application ? "apps" : "network")))
-        return Status::failure(statement->error());
-    return statement->run();
+    if (retained)
+    {
+        auto remove = database_.prepare(
+            "DELETE FROM coverage_gaps WHERE network_key=?1 AND reason=?2 AND reason_detail=?3 AND scope=?6 "
+            "AND ended_at<>'' AND started_at<=?5 AND ended_at>=?4 AND id<>?7;", status);
+        if (!remove) return status;
+        if (const auto bound = bindInterval(*remove); !bound) return bound;
+        if (!remove->bind(7, *retained)) return Status::failure(remove->error());
+        if (const auto removed = remove->run(); !removed) return removed;
+        auto merged = database_.prepare(
+            "UPDATE coverage_gaps SET started_at=?1, ended_at=?2, "
+            "span_seconds=CAST(strftime('%s',?2) AS INTEGER)-CAST(strftime('%s',?1) AS INTEGER) WHERE id=?3;", status);
+        if (!merged) return status;
+        if (!merged->bind(1, start) || !merged->bind(2, end) || !merged->bind(3, *retained)) return Status::failure(merged->error());
+        if (const auto updated = merged->run(); !updated) return updated;
+    }
+    else if (const auto added = insert(); !added) return added;
+    return savepoint.commit();
 }
 
 std::vector<CoverageGap> UsageRepository::gapsInRange(const std::string& fromIso, const std::string& toIso, Status& status, bool application) const
@@ -451,7 +522,7 @@ Status UsageRepository::closeOpenGaps(core::TimePoint endedAt, std::size_t& clos
 {
     closed = 0;
     Status status;
-    const std::string end = core::isoUtcOf(endedAt);
+    const std::string end = core::isoUtcOf(std::chrono::ceil<std::chrono::seconds>(endedAt));
     // 时长交给 SQLite 计算，避免把每一行取回来再算。
     auto statement = database_.prepare(
         "UPDATE coverage_gaps SET ended_at = ?1, "

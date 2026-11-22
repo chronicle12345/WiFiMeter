@@ -6,6 +6,21 @@ import { createFormAutosave } from '../renderer/ui/form-autosave.js';
 
 const source = fs.readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
 
+test('sampling edits validate before saving and chart style uses desktop preferences',async()=>{
+    const calls=[];
+    const controller=createFormAutosave({getData:()=>({settings:{interval:5}}),getWindowPreferences:()=>({chartStyle:'line'}),
+        desktop:{windowPreferences:{async update(patch){calls.push(['desktop',patch]);return patch;}}},receiveWindowPreferences(){},
+        store:{async updateSettings(patch){calls.push(['backend',patch]);return {};}}});
+    const form={id:'settingsForm',isConnected:true,querySelector(){return null;}};
+    controller.edit({name:'interval',value:'0.1',type:'number',form},true);
+    await controller.saveFor(form).flush();assert.equal(calls.length,0);
+    controller.edit({name:'interval',value:'0.25',type:'number',form},true);
+    await controller.saveFor(form).flush();
+    controller.edit({name:'chartStyle',value:'bar',type:'select-one',form},true);
+    await controller.saveFor(form).flush();
+    assert.deepEqual(calls,[['backend',{interval:0.25}],['desktop',{chartStyle:'bar'}]]);
+});
+
 test('startup collection prompt saves as a desktop preference without changing collection settings', async () => {
     const calls = [], received = [];
     const controller = createFormAutosave({

@@ -3,9 +3,10 @@ import { t, tr } from '../i18n.js';
 import { parseWarnPercents } from '../data/quota-thresholds.js';
 import { validQuotaGb } from '../data/model.js';
 import { proxyConfigPatch } from '../data/proxy.js';
+import { validSampleInterval } from '../data/sampling.js';
 
 export const autosaveFormIds = new Set(['settingsForm','networkForm','totalQuotaForm','proxyConfigForm']);
-const windowFields = new Set(['promptAppCollection','miniWindow','closeAction','theme','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']);
+const windowFields = new Set(['promptAppCollection','miniWindow','closeAction','theme','chartStyle','miniShape','miniPalette','miniSnap','miniAutoHide','miniPinned','miniExcludeProxy']);
 
 // 表单保存负责校验与写入；页面负责导航、确认弹窗和重新渲染。
 export function createFormAutosave({ store, desktop, getData, getWindowPreferences, receiveWindowPreferences,
@@ -53,6 +54,7 @@ export function createFormAutosave({ store, desktop, getData, getWindowPreferenc
   if(key==='capGb'){if(value===''&&input.form.id==='totalQuotaForm'||input.validity.badInput||!validQuotaGb(Number(value)))throw Error(t('额度须为 0 或 0.000000001 到 9000000000 GB。'));return {capGb:Number(value)};}
   if(key==='ports'||key==='processNames')return {[key]:proxyConfigPatch(new Map([[key,value]]))[key]};
   if(key==='alias')return {alias:String(value).trim()};
+  if(key==='interval'&&!validSampleInterval(Number(value)))throw Error(t('采样间隔须为 0.25 到 3600 秒，最多三位小数。'));
   return {[key]:['interval','retention'].includes(key)?Number(value):value};
  }
 

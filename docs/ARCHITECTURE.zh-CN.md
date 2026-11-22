@@ -15,6 +15,8 @@ renderer → tauri/bridge.js → Rust → dialogs, windows, tray, notifications
 
 `renderer/app.js` 负责组合导航、显示和事件。可复用输入与显示放在 `renderer/ui/`，查询和计算放在 `renderer/data/`。`ui/form-autosave.js` 通过回调管理校验、保存状态、重试、保留期清理和草稿放弃，入口负责确认和刷新。`tests/fixtures/snapshot.js` 的虚构快照不进入正式资源。
 
+`data/live-traffic.js` 保留有上限的会话采样；`ui/traffic-chart.js` 共用曲线与柱状图渲染、缺失区间处理和按像素保留极值。`host/connection-monitor.cjs` 轮询已配置的本机回环控制器，`data/connections.js` 协调筛选查询，`ui/connections.js` 显示观测记录。密钥只留在宿主，两个模块都不写入原生流量账本。
+
 `ui/application-workspace.js` 和 `ui/application-table.js` 共用视图控件与五列表格。应用页初始为实时视图，网络抽屉初始为历史视图，各视图分别保留搜索、排序和来源选择。实时使用速度单位，历史使用字节单位。缺少测量时显示横线，标识区分实测或不可测速率、原生记录和估算；两个视图共用应用抽屉和控制。
 
 `data/proxy-live.mjs::proxyLiveProcesses` 经 `data/application-view.js` 与悬浮窗调用，按当前客户端 TCP 连接数分配已识别代理的物理网络实测速率。客户端直连行保留，估算份额带标记，已归属代理速率被替换，合计只计算一次；未知客户端和未分配份额作为估算未归属。身份、权重或测量不足时保留原生值或不可用状态，不改变网卡计数、额度和存储记录。应用页和网络抽屉分别保留本次会话的实时选择，重启后回到原生采集。悬浮窗将 `miniIncludeProxyEstimates` 与代理排除偏好分开保存，累计用量读取真实分钟记录。
@@ -55,7 +57,7 @@ platform/windows/   Sampling/disconnect decisions through injected SystemApi; UT
 
 网络用量写入失败时，只在内存保留一批带原时间和归属的数据，新采样前先重试，不无限排队。成功清空或恢复后丢弃该批次；导入、保留期清理和正常退出前必须写入。强制终止可能丢失待写批次。缺失查询按本地日期边界覆盖保留期内历史。
 
-`ipc/` 使用 `{id, method, params}` 请求、`{id, ok, result|error}` 响应和 `{event, ...}` 事件。POSIX 通过 `poll` 等待，Windows 使用 `WaitForSingleObject`。采集使用本机管道，不主动联网。Node 显式传入数据库路径，启动失败或异常退出保留错误并触发恢复。联网用于已配置的 WebDAV 备份、更新信息、下载安装包、用户打开版本页和安装缺失 WebView2。协议及导入保证由[数据合约](../contracts/README.zh-CN.md)与[迁移说明](MIGRATION.zh-CN.md)维护。
+`ipc/` 使用 `{id, method, params}` 请求、`{id, ok, result|error}` 响应和 `{event, ...}` 事件。POSIX 通过 `poll` 等待，Windows 使用 `WaitForSingleObject`。采集使用本机管道，不主动联网。Node 显式传入数据库路径，启动失败或异常退出保留错误并触发恢复。联网用于已配置的 WebDAV 备份、本机回环控制器观测、更新信息、下载安装包、用户打开版本页和安装缺失 WebView2。协议及导入保证由[数据合约](../contracts/README.zh-CN.md)与[迁移说明](MIGRATION.zh-CN.md)维护。
 
 ## 职责边界
 

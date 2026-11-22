@@ -10,7 +10,7 @@ import { createWindowControls } from '../host/window-controls.cjs';
 
 const miniDefaults = { miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
     miniPinned: false, miniExcludeProxy: false, miniIncludeProxyEstimates: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15,
-    promptAppCollection: true };
+    promptAppCollection: true, chartStyle: 'line' };
 
 async function fixture(t, extra = {}) {
     const fixtureRoot = fileURLToPath(new URL('../../../del/window-controls/', import.meta.url));
@@ -40,6 +40,16 @@ async function fixture(t, extra = {}) {
     return { controls, deps, state, windows, handlers, userData, main, sent };
 }
 const closeEvent = () => ({ prevented: false, preventDefault() { this.prevented = true; } });
+
+test('chart style persists through the owning preferences and rejects unknown values',async t=>{
+    const f=await fixture(t);
+    assert.equal((await f.controls.read()).chartStyle,'line');
+    await f.controls.update({chartStyle:'bar'});
+    const restored=createWindowControls(f.deps);t.after(()=>restored.dispose());
+    assert.equal((await restored.read()).chartStyle,'bar');
+    await assert.rejects(f.controls.update({chartStyle:'pie'}),TypeError);
+    assert.equal((await f.controls.read()).chartStyle,'bar');
+});
 
 test('小窗实时估算来源保存并恢复，拒绝无效偏好值', async t => {
     const f = await fixture(t);

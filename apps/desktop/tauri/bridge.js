@@ -103,6 +103,14 @@
             clear: () => request('logs:clear'),
             write: (level, message) => request('logs:write', { level, message })
         },
+        connections: {
+            status: () => request('connections:status'),
+            read: query => request('connections:read', query),
+            configure: patch => request('connections:configure', patch),
+            refresh: () => request('connections:refresh'),
+            clear: () => request('connections:clear'),
+            onStatus: handler => subscribe('connections:status', handler)
+        },
         legacy: { status: () => request('legacy:status'), importDirectory: () => request('legacy:import') },
         saveFile: payload => request('files:save', payload),
         openBackup: () => request('files:open-backup'),

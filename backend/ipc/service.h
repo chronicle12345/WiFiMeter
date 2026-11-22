@@ -79,13 +79,13 @@ public:
     {
         return nextSampleAt_;
     }
-    int intervalSeconds() const;
+    double intervalSeconds() const;
 
 private:
     Response legacyRequest(const support::JsonValue& params, core::TimePoint now, bool query);
     Response buildHello() const;
     Response buildSnapshot(const support::JsonValue& params, core::TimePoint now);
-    Response updateSettings(const support::JsonValue& params);
+    Response updateSettings(const support::JsonValue& params, core::TimePoint now);
     Response updateNetwork(const support::JsonValue& params, core::TimePoint now);
     Response exportUsage(const support::JsonValue& params, core::TimePoint now) const;
     Response backup() const;
@@ -176,7 +176,7 @@ private:
     std::vector<platform::WifiLink> liveLinks_;
     std::map<std::string, core::TimePoint> linkSince_;                              // 按网卡记录本次连接的开始时间
     std::map<std::string, std::string> linkSsid_;                                   // 按网卡记录上次见到的网络
-    std::map<std::string, std::pair<core::ByteCount, core::ByteCount>> linkRates_;  // 字节/秒
+    std::map<std::string, std::pair<core::ByteCount, core::ByteCount>> linkRates_;  // 本轮可测量的接口速率，字节/秒
     std::string liveMessage_;
     int skippedIntervals_ = 0;
     std::map<std::string, core::TimePoint> totalDisconnectAttempts_;

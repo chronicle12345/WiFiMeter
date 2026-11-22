@@ -8,7 +8,7 @@ namespace wifimeter::core
 namespace
 {
 
-CounterEvent makeEvent(CounterEventKind kind, const std::string& interfaceId, const NetworkRef& network, std::chrono::seconds span)
+CounterEvent makeEvent(CounterEventKind kind, const std::string& interfaceId, const NetworkRef& network, std::chrono::milliseconds span)
 {
     CounterEvent event;
     event.kind = kind;
@@ -35,8 +35,8 @@ void UsageAccumulator::dropStaleBaselines(TimePoint now, AccumulateResult& resul
 {
     for (auto entry = baselines_.begin(); entry != baselines_.end();)
     {
-        const std::chrono::seconds raw = std::chrono::duration_cast<std::chrono::seconds>(now - entry->second.seenAt);
-        const std::chrono::seconds idle = raw > std::chrono::seconds::zero() ? raw : std::chrono::seconds::zero();
+        const auto raw = std::chrono::duration_cast<std::chrono::milliseconds>(now - entry->second.seenAt);
+        const auto idle = std::max(raw, std::chrono::milliseconds::zero());
         if (idle <= options_.baselineTtl)
         {
             ++entry;
@@ -70,8 +70,8 @@ AccumulateResult UsageAccumulator::accumulate(const platform::SampleReport& repo
 
         Baseline& baseline = existing->second;
         // 系统时钟被回拨（例如 NTP 校正）时不能让区间长度变成负数。
-        const std::chrono::seconds elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - baseline.seenAt);
-        const std::chrono::seconds span = elapsed > std::chrono::seconds::zero() ? elapsed : std::chrono::seconds::zero();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - baseline.seenAt);
+        const auto span = std::max(elapsed, std::chrono::milliseconds::zero());
 
         // 键或网络名任一变化都说明换了网络：同一份配置也可能匹配到不同的 SSID。
         if (baseline.network.key != network.key || baseline.network.ssid != network.ssid)
@@ -113,8 +113,8 @@ AccumulateResult UsageAccumulator::accumulate(const platform::SampleReport& repo
                 ++entry;
                 continue;
             }
-            const std::chrono::seconds raw = std::chrono::duration_cast<std::chrono::seconds>(now - entry->second.seenAt);
-            const std::chrono::seconds idle = raw > std::chrono::seconds::zero() ? raw : std::chrono::seconds::zero();
+            const auto raw = std::chrono::duration_cast<std::chrono::milliseconds>(now - entry->second.seenAt);
+            const auto idle = std::max(raw, std::chrono::milliseconds::zero());
             result.events.push_back(makeEvent(CounterEventKind::detached, entry->first, {}, idle));
             entry = baselines_.erase(entry);
         }

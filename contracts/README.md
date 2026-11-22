@@ -36,6 +36,10 @@ Application collection uses session-scoped state and separate accounting. See [c
 
 See [proxy and application detail contracts](APPLICATION_TRAFFIC.md#proxy-clients-and-application-details) for identity availability, measured rates, matching and daily attribution limits.
 
+## Live observations
+
+See [live observation contracts](LIVE_OBSERVATIONS.md).
+
 ## Data and platform conventions
 
 - Network identity: `core/network_key.h` defines the key strategy. It prefers the connection profile UUID, which is stable across restarts and naturally satisfies `network.id`'s `^[-a-zA-Z0-9_]+$` pattern. If unavailable, it falls back to `ssid_` followed by the FNV-1a hash of the SSID. Deleting and recreating a Wi-Fi profile therefore splits history into two records; the presentation layer can group them by `ssid`.
@@ -58,7 +62,7 @@ Complete backups preserve both settings fields and the ledger's `notifiedWarnPer
 
 ## Minute queries
 
-Database schema version 6 adds `minute_usage` and `app_minute_usage`. Upgrades do not distribute existing daily or hourly records into minutes; minute statistics start with actual collection after the upgrade. Samples spanning minutes are allocated according to the seconds covered in each minute. Integer remainders carry into subsequent minutes, and the sum of all minutes equals the original sample increment. Daily, hourly and minute statistics for new samples use the same allocation result; existing daily and hourly records keep their original values.
+Database schema version 6 adds `minute_usage` and `app_minute_usage`. Upgrades do not distribute existing daily or hourly records into minutes; minute statistics start with actual collection after the upgrade. Samples spanning minutes are allocated according to the milliseconds covered in each minute. Integer remainders carry into subsequent minutes, and the sum of all minutes equals the original sample increment. Daily, hourly and minute statistics for new samples use the same allocation result; existing daily and hourly records keep their original values.
 
 `snapshot` and `exportUsage` accept `fromTime` and `toTime` in `HH:mm` format, defaulting to `00:00` and `23:59`, respectively. Queries across dates trim only the starting and ending days and include the entire ending minute. For partial-day ranges, `records` and `appRecords` aggregate actual minute data; complete-day ranges continue to return the original daily statistics. `exportUsage` accepts `grouping` of `minute`, `hour` or the default `day`. Grouped details appear in `records`, and minute details also appear in `minuteRecords`.
 

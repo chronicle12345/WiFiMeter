@@ -127,9 +127,7 @@ Status Store::applyUsage(const core::AccumulateResult& result, core::TimePoint n
         CoverageGap gap;
         gap.networkKey = event.network.key;
         gap.reason = *reason;
-        gap.span = event.span;
-        gap.startedAt = now - event.span;
-        gap.endedAt = now;
+        gap.setClosedInterval(now - event.span, now);
         if (const Status added = usage_.addGap(gap); !added)
             return added;
         ++summary.gapsRecorded;

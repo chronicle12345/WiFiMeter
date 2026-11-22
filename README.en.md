@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/releases/v1.3.7.md#english"><img src="https://img.shields.io/badge/version-1.3.7-6366F1?style=flat&amp;labelColor=182033" alt="Version 1.3.7" /></a>
+  <a href="docs/releases/v1.3.8.md#english"><img src="https://img.shields.io/badge/version-1.3.8-6366F1?style=flat&amp;labelColor=182033" alt="Version 1.3.8" /></a>
   <a href="docs/PACKAGING-MATRIX.md"><img src="https://img.shields.io/badge/release-Windows%20x64-0284C7?style=flat&amp;labelColor=182033" alt="Windows x64" /></a>
   <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/UI-Tauri-0D9488?style=flat&amp;labelColor=182033" alt="Tauri interface" /></a>
   <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/backend-C%2B%2B20-8B5CF6?style=flat&amp;labelColor=182033" alt="C++20 backend" /></a>
@@ -29,6 +29,8 @@
 
 - Track home, studio and phone hotspot usage separately, and check live speeds on Wi-Fi and Ethernet.
 - Rank applications by traffic, search for a program, and review history by minute, hour, day or month, including custom ranges.
+- Follow live rates over the last five minutes, choose line or bar charts, and customize the sampling interval.
+- [Monitor local Clash / Mihomo connections](docs/CONNECTION_MONITORING.md), search domains, and inspect applications, routing rules and proxy chains.
 - Set daily, monthly or cumulative quotas for one network or all Wi-Fi connections. Get warnings near the limit, with optional Wi-Fi disconnection when exceeded.
 - Check speeds and recent application usage in the Windows floating window. Pin it, change its shape or hide it at the screen edge.
 - Block network access per Windows application, set separate upload and download limits, and manage saved rules.
@@ -54,7 +56,7 @@ Windows x64 can check for updates in the application; download and installation 
 <details>
 <summary>Other platforms, older versions and usage notes</summary>
 
-Version 1.3.7 provides a Windows x64 installer. Builds for Linux and other Windows architectures are paused; [source build instructions](packaging/README.md) and older releases remain available.
+Version 1.3.8 provides a Windows x64 installer. Builds for Linux and other Windows architectures are paused; [source build instructions](packaging/README.md) and older releases remain available.
 
 Electron 1.2.x users need to install the Tauri version once; existing SQLite data is preserved. Earlier file-based Windows versions can import their old directory in Settings. See [data migration and recovery](docs/MIGRATION.md) for backups and older profiles.
 

@@ -9,7 +9,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { miniSize, snapBounds, collapsedBounds, isNear } = require('./mini-geometry.cjs');
 const { miniRange, miniApplicationRows, miniFilteredLive } = require('./mini-usage.cjs');
 
-const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system', promptAppCollection: true,
+const DEFAULTS = { miniWindow: false, closeAction: 'tray', theme: 'system', chartStyle: 'line', promptAppCollection: true,
     miniShape: 'bar', miniPalette: 'dark', miniSnap: true, miniAutoHide: true,
     miniPinned: false, miniExcludeProxy: false, miniIncludeProxyEstimates: false, miniExpanded: false, miniRange: '5m', miniCustomMinutes: 15 };
 const SHAPES = ['bar', 'square', 'circle'];
@@ -23,6 +23,7 @@ function validateWindowPreferences(patch) {
         || (Object.hasOwn(patch, 'miniWindow') && typeof patch.miniWindow !== 'boolean')
         || (Object.hasOwn(patch, 'closeAction') && !ACTIONS.includes(patch.closeAction))
         || (Object.hasOwn(patch, 'theme') && !THEMES.includes(patch.theme))
+        || (Object.hasOwn(patch, 'chartStyle') && !['line', 'bar'].includes(patch.chartStyle))
         || (Object.hasOwn(patch, 'miniShape') && !SHAPES.includes(patch.miniShape))
         || (Object.hasOwn(patch, 'miniPalette') && !PALETTES.includes(patch.miniPalette))
         || ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded'].some(key => Object.hasOwn(patch, key) && typeof patch[key] !== 'boolean')
@@ -211,6 +212,7 @@ function createWindowControls({ BrowserWindow, screen, ipcMain, dialog, userData
             if (typeof saved?.miniWindow === 'boolean') preferences.miniWindow = saved.miniWindow;
             if (ACTIONS.includes(saved?.closeAction)) preferences.closeAction = saved.closeAction;
             if (THEMES.includes(saved?.theme)) preferences.theme = saved.theme;
+            if (['line', 'bar'].includes(saved?.chartStyle)) preferences.chartStyle = saved.chartStyle;
             if (SHAPES.includes(saved?.miniShape)) preferences.miniShape = saved.miniShape;
             if (PALETTES.includes(saved?.miniPalette)) preferences.miniPalette = saved.miniPalette;
             for (const key of ['promptAppCollection', 'miniSnap', 'miniAutoHide', 'miniPinned', 'miniExcludeProxy', 'miniIncludeProxyEstimates', 'miniExpanded']) if (typeof saved?.[key] === 'boolean') preferences[key] = saved[key];

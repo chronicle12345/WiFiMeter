@@ -103,6 +103,14 @@ void rejectsMalformedIsoTimestamps()
     WIFIMETER_CHECK(!parseIsoUtc("abcd-ef-ghTij:kl:mnZ", parsed));
 }
 
+void keepsMillisecondsInLiveTimestamps()
+{
+    const auto at = utcTime(2026, 9, 29, 17, 12, 30);
+    WIFIMETER_CHECK_EQ(isoUtcMillisecondsOf(at), std::string("2026-09-29T17:12:30.000Z"));
+    WIFIMETER_CHECK_EQ(isoUtcMillisecondsOf(at + std::chrono::milliseconds(250)), std::string("2026-09-29T17:12:30.250Z"));
+    WIFIMETER_CHECK_EQ(isoUtcMillisecondsOf(at - std::chrono::milliseconds(1)), std::string("2026-09-29T17:12:29.999Z"));
+}
+
 }  // namespace
 
 int main()
@@ -114,5 +122,6 @@ int main()
     shiftsLocalDays();
     writesAndParsesIsoTimestamps();
     rejectsMalformedIsoTimestamps();
+    keepsMillisecondsInLiveTimestamps();
     return WIFIMETER_REPORT();
 }

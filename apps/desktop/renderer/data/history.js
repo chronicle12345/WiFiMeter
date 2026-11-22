@@ -3,7 +3,7 @@ import { B, monthStart, shiftDay, recordTime } from './model.js';
 // 全部历史查询使用固定下界，不能从最近一次快照推断最早日期。
 export function historyRange(period, today, custom = {}) {
     if (period === 'all') return { start: '0001-01-01', end: today };
-    if (period === 'today') return { start: today, end: today };
+    if (period === 'today' || period === 'recent') return { start: today, end: today };
     if (period === 'week') return { start: shiftDay(today, -6), end: today };
     if (period === 'month') return { start: monthStart(today), end: today };
     return { start: custom.start, end: custom.end, startTime: custom.startTime ?? '00:00', endTime: custom.endTime ?? '23:59' };

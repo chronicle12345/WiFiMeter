@@ -69,9 +69,9 @@ struct AppMinuteUsageRow
     core::ByteCount txBytes = 0;
 };
 
-// 按采样区间的秒数分配到各分钟，余数字节留给后续区间，保持总量不变。
+// 按采样区间的毫秒数分配到各分钟，余数字节留给后续区间，保持总量不变。
 std::vector<MinuteUsageRow> minuteUsageOf(const std::string& networkKey, core::TimePoint at,
-    std::chrono::seconds span, core::ByteCount rx, core::ByteCount tx);
+    std::chrono::milliseconds span, core::ByteCount rx, core::ByteCount tx);
 
 enum class CoverageReason
 {
@@ -95,6 +95,8 @@ struct CoverageGap
     core::TimePoint endedAt{};
     std::chrono::seconds span{0};
     bool application = false;  // 应用采集空档独立于网卡采集覆盖
+    // 存储保留秒级协议；闭合区间向外取整，确保小于一秒的缺失也有明确终点。
+    void setClosedInterval(core::TimePoint start, core::TimePoint end);
 };
 
 class UsageRepository

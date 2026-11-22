@@ -5,6 +5,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { chromium, expect } from '@playwright/test';
 
 // Exercise the release host, bundled worker, SQLite backend and real WebView2.
@@ -47,7 +48,7 @@ const env = {
 for (const key of ['ELECTRON_RUN_AS_NODE', 'WIFIMETER_BACKEND', 'WIFIMETER_RESOURCES_PATH', 'WIFIMETER_NODE', 'WEBVIEW2_USER_DATA_FOLDER', 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS']) delete env[key];
 const startedAt = new Date().toISOString();
 const child = spawn(executable, [], { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-let diagnostic = '', launchError, browser, exited = false;
+let diagnostic = '', launchError, browser, controllerServer, exited = false;
 let lastCdpRequest = null, cdpRequests = 0;
 const readiness = { endpointReadyAt: null, targetsBeforeAttach: null, targetQueryError: null,
     connectedAt: null, pagesAtFailure: [], nativeEvents: [] };
@@ -257,11 +258,44 @@ try {
 
     const rejection = await page.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'shell:open', args: [] }).then(() => false, () => true));
     assert.equal(rejection, true);
-    for (const name of ['networks', 'apps', 'history', 'settings', 'overview']) {
+    for (const name of ['networks', 'apps', 'connections', 'history', 'settings', 'overview']) {
         await page.locator(`.nav [data-page="${name}"]`).click();
         await expect(page.locator('html')).toHaveAttribute('data-page', name);
     }
-    check('All five pages load and unrecognized native channels are rejected');
+    check('Core pages load and unrecognized native channels are rejected');
+
+    controllerServer = createHttpServer((incoming, response) => {
+        if (incoming.headers.authorization !== 'Bearer synthetic-local-secret') { response.writeHead(401).end(); return; }
+        response.setHeader('Content-Type', 'application/json');
+        if (incoming.url === '/proxies') response.end(JSON.stringify({ proxies: { DIRECT: { type: 'Direct' } } }));
+        else if (incoming.url === '/connections') response.end(JSON.stringify({ connections: [{ id: 'native-connection',
+            metadata: { host: 'native.example.test', process: 'browser.exe', processPath: 'C:/Fixture/browser.exe',
+                destinationIP: '192.0.2.10', destinationPort: '443', network: 'tcp' },
+            chains: ['DIRECT'], rule: 'Domain', rulePayload: 'native.example.test', upload: 100, download: 200,
+            start: '2026-11-22T00:00:00.000Z' }] }));
+        else response.writeHead(404).end();
+    });
+    await new Promise(resolve => controllerServer.listen(0, '127.0.0.1', resolve));
+    const controllerUrl = `http://127.0.0.1:${controllerServer.address().port}`;
+    const configured = await page.evaluate(controllerUrl => window.desktop.connections.configure({
+        enabled: true, controllerUrl, secret: 'synthetic-local-secret', intervalMs: 500
+    }), controllerUrl);
+    assert.equal(configured.hasSecret, true); assert.equal(Object.hasOwn(configured, 'secret'), false);
+    await page.evaluate(() => window.desktop.connections.refresh());
+    await page.locator('.nav [data-page="connections"]').click();
+    await expect(page.locator('#connectionListRegion')).toContainText('native.example.test');
+    await expect(page.locator('[data-route="direct"]')).toHaveCount(1);
+    await page.evaluate(() => window.desktop.connections.configure({ enabled: false }));
+    await page.locator('.nav [data-page="overview"]').click();
+    await request(page, 'updateSettings', { settings: { interval: 0.25 } });
+    assert.equal((await request(page, 'snapshot')).settings.interval, 0.25);
+    await page.locator('[data-value="recent"]').click();
+    await expect(page.locator('.traffic-chart-line[data-chart-mode="speed"]')).toBeVisible();
+    await page.evaluate(() => window.desktop.windowPreferences.update({ chartStyle: 'bar' }));
+    await page.locator('.toolbar [data-action="refresh"]').click();
+    await expect(page.locator('.traffic-chart-bar')).toBeVisible();
+    await page.locator('[data-value="month"]').click();
+    check('Packaged WebView reads local controller records and supports custom sampling and both chart styles');
 
     await request(page, 'setAppCollection', { enabled: true });
     await request(page, 'collectNow');
@@ -280,6 +314,7 @@ try {
     assert.equal(applicationState.rows[0].rxBytes, '64000');
     assert.equal(applicationState.rows[0].txBytes, '16000');
     assert.equal(await mini.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'backend:request', args: [{ method: 'snapshot' }] }).then(() => false, () => true)), true);
+    assert.equal(await mini.evaluate(() => window.__TAURI__.core.invoke('desktop_request', { channel: 'connections:read', args: [{}] }).then(() => false, () => true)), true);
     check('Floating application list uses actual minute records and cannot invoke main-window channels');
 
     for (const [value, minutes] of [['1m', 1], ['5m', 5], ['1h', 60]]) {
@@ -370,6 +405,7 @@ try {
     ].join('\n');
     throw new Error(details, { cause: error });
 } finally {
+    if (controllerServer) { controllerServer.closeAllConnections(); await new Promise(resolve => controllerServer.close(resolve)); }
     try { writeFileSync(path.join(output, 'host.log'), diagnostic); }
     catch (error) { console.error(`Host log could not be saved: ${JSON.stringify(errorDetails(error))}`); }
     if (browser) await browser.close().catch(() => {});

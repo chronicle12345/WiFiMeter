@@ -450,14 +450,15 @@ test('生成 v1.2 合成数据验收截图',async({},testInfo)=>{
  await expect(page.locator('.modal')).not.toContainText('当前没有已关联的无线网卡');
  });
 
-test('各设置分类无保存取消按钮，独立表单自动保存并在重载后恢复',async({},testInfo)=>{
+test('常规与额度设置自动保存，连接设置保留独立的凭据提交',async({},testInfo)=>{
  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1248,768));
  await page.locator('.nav [data-page="settings"]').click();
- await page.locator('[name="interval"]').selectOption('10');
+ await page.locator('[name="interval"]').fill('10');await page.locator('[name="interval"]').blur();
  await expect.poll(()=>app.evaluate(()=>globalThis.rendererFixture.snapshot.settings.interval)).toBe(10);
  for(const category of ['general','display','quota','proxy','data','status','about']){
   await page.locator(`[data-category="${category}"]`).click();
-  await expect(page.locator('#content button[type="submit"]')).toHaveCount(0);
+  await expect(page.locator('#settingsForm button[type="submit"], #totalQuotaForm button[type="submit"], #proxyConfigForm button[type="submit"]')).toHaveCount(0);
+  await expect(page.locator('#connectionMonitorForm button[type="submit"]')).toHaveCount(1);
   await expect(page.locator('[data-action^="discard-"]')).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.screenshot({path:testInfo.outputPath(`settings-${category}.png`)});

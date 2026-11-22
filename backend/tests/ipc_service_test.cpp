@@ -523,8 +523,9 @@ void reportsLiveConnectionState()
         WIFIMETER_CHECK_EQ(connections->at(0).stringOr("band"), std::string("5 GHz"));
         WIFIMETER_CHECK_EQ(connections->at(0).intOr("signal"), std::int64_t{82});
         WIFIMETER_CHECK_EQ(connections->at(0).stringOr("since"), std::string("2026-09-29T10:00:00Z"));
-        // 第一次采样没有增量，速率按 0 上报。
-        WIFIMETER_CHECK_EQ(connections->at(0).stringOr("rxPerSecond"), std::string("0"));
+        // 第一次采样只建立基线，没有速率测量。
+        WIFIMETER_CHECK(!connections->at(0).boolOr("measurementAvailable", true));
+        WIFIMETER_CHECK(connections->at(0).find("rxPerSecond")->isNull());
     }
 
     // 掉线后状态要变成 disconnected，连接列表清空。
@@ -568,6 +569,203 @@ void reportsRatesFromDeltas()
         if (connections != nullptr && connections->size() == 1)
             WIFIMETER_CHECK_EQ(connections->at(0).stringOr("rxPerSecond"), std::string("2000000"));
     }
+}
+
+void distinguishesMissingRatesFromMeasuredZeroPerInterface()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness harness;
+    if (!harness.service) return;
+    const auto at = utcTime(2026, 9, 29, 10);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home"), makeLink("wlan1", "office", "Office")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 100, 50), makeSample("wlan1", "office", "Office", 200, 100)};
+    const auto connection = [&](const std::string& interfaceId, TimePoint now) {
+        const auto snapshot = harness.call(method::kSnapshot, now);
+        WIFIMETER_CHECK(snapshot.ok());
+        for (const auto& row : snapshot.result.find("live")->find("connections")->items())
+            if (row.stringOr("interfaceId") == interfaceId) return row;
+        WIFIMETER_CHECK(false);
+        return JsonValue::makeObject();
+    };
+    const auto unavailable = [&](const std::string& interfaceId, TimePoint now) {
+        const auto row = connection(interfaceId, now);
+        WIFIMETER_CHECK(!row.boolOr("measurementAvailable", true));
+        WIFIMETER_CHECK(row.find("rxPerSecond") && row.find("rxPerSecond")->isNull());
+        WIFIMETER_CHECK(row.find("txPerSecond") && row.find("txPerSecond")->isNull());
+    };
+    const auto measured = [&](const std::string& interfaceId, TimePoint now, const std::string& rx, const std::string& tx) {
+        const auto row = connection(interfaceId, now);
+        WIFIMETER_CHECK(row.boolOr("measurementAvailable"));
+        WIFIMETER_CHECK_EQ(row.stringOr("rxPerSecond"), rx);
+        WIFIMETER_CHECK_EQ(row.stringOr("txPerSecond"), tx);
+    };
+    WIFIMETER_CHECK(harness.service->collectOnce(at).error.code.empty());
+    unavailable("wlan0", at);
+    unavailable("wlan1", at);
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 1100, 250), makeSample("wlan1", "office", "Office", 1200, 300)};
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(1)).error.code.empty());
+    measured("wlan0", at, "1000", "200");
+    measured("wlan1", at, "1000", "200");
+
+    // 一张网卡计数重置时，另一张网卡本轮的测量仍然有效。
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 1, 1), makeSample("wlan1", "office", "Office", 2200, 500)};
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(2)).error.code.empty());
+    unavailable("wlan0", at);
+    measured("wlan1", at, "1000", "200");
+    Status status;
+    const auto home = harness.store->usage().dailyRange(kUuid, "2026-09-29", "2026-09-29", status);
+    WIFIMETER_CHECK(status.ok && home.size() == 1);
+    if (home.size() == 1)
+    {
+        WIFIMETER_CHECK_EQ(home[0].rxBytes, ByteCount{1000});
+        WIFIMETER_CHECK_EQ(home[0].txBytes, ByteCount{200});
+    }
+    harness.network.sampleReport.samples[0] = makeSample("wlan0", kUuid, "Home", 501, 101);
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(3)).error.code.empty());
+    measured("wlan0", at, "500", "100");
+    measured("wlan1", at, "0", "0");
+
+    // 网络身份变化本轮不可归属，随后才使用新的累计基线。
+    harness.network.sampleReport.links[0] = makeLink("wlan0", "moved", "Moved");
+    harness.network.sampleReport.samples[0] = makeSample("wlan0", "moved", "Moved", 9000, 9000);
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(4)).error.code.empty());
+    unavailable("wlan0", at);
+    measured("wlan1", at, "0", "0");
+    harness.network.sampleReport.samples[0] = makeSample("wlan0", "moved", "Moved", 9020, 9005);
+    harness.network.sampleReport.samples.resize(1);
+    harness.network.sampleReport.failures = {{platform::FailureKind::commandFailed, "wlan1", "Synthetic unreadable identity"}};
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(5)).error.code.empty());
+    measured("wlan0", at, "20", "5");
+    unavailable("wlan1", at);
+    harness.service->setPaused(true, at + std::chrono::seconds(6));
+    unavailable("wlan0", at + std::chrono::seconds(6));
+    unavailable("wlan1", at + std::chrono::seconds(6));
+    harness.service->setPaused(false, at + std::chrono::seconds(7));
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::seconds(7)).error.code.empty());
+    unavailable("wlan0", at);
+}
+
+void fractionalCollectionGapsRemainFiniteAfterRecovery()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness harness;
+    if (!harness.service) return;
+    FakeApps apps;
+    harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+    const auto at = utcTime(2026, 9, 29, 10);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 100, 50)};
+    apps.report = {platform::AppCollectorState::running, "first", {}, {{"wlan0", "browser", "Browser", "42:1", 42, 100, 50}}};
+    auto enabled = JsonValue::makeObject(); enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+    const auto sample = [&](int milliseconds) {
+        const auto result = harness.service->collectOnce(at + std::chrono::milliseconds(milliseconds));
+        WIFIMETER_CHECK(result.error.code.empty());
+        return result;
+    };
+    sample(0);
+    harness.network.sampleReport.samples[0].rxBytes = 350;
+    apps.report.samples[0].rxBytes = 350;
+    sample(250);
+    harness.network.sampleReport.samples[0].rxBytes = 1;
+    harness.network.sampleReport.samples[0].txBytes = 1;
+    apps.report.samples[0].rxBytes = 1;
+    apps.report.samples[0].txBytes = 1;
+    const auto reset = sample(500);
+    bool resetEvent = false;
+    for (std::size_t index = 0; index < reset.names.size(); ++index)
+        if (reset.names[index] == event::kAppUsage)
+            for (const auto& gap : reset.items[index].find("gaps")->items())
+            {
+                resetEvent = true;
+                WIFIMETER_CHECK(!gap.stringOr("endedAt").empty());
+                WIFIMETER_CHECK(gap.intOr("spanSeconds") >= 1);
+            }
+    WIFIMETER_CHECK(resetEvent);
+    harness.network.sampleReport.samples[0].rxBytes += 25;
+    apps.report.samples[0].rxBytes += 25;
+    sample(750);
+    harness.network.sampleReport.links[0] = makeLink("wlan0", "moved", "Moved");
+    harness.network.sampleReport.samples[0] = makeSample("wlan0", "moved", "Moved", 1000, 100);
+    apps.report.samples[0].rxBytes += 25;
+    sample(1000);
+    harness.network.sampleReport.samples[0].rxBytes += 25;
+    apps.report.samples[0].rxBytes += 25;
+    apps.report.generation = "second";
+    sample(1250);
+    harness.network.sampleReport.samples[0].rxBytes += 25;
+    apps.report.samples[0].rxBytes += 25;
+    apps.report.state = platform::AppCollectorState::partial;
+    apps.report.detail = "Synthetic partial report";
+    sample(1500);
+    apps.report.state = platform::AppCollectorState::running;
+    apps.report.detail.clear();
+    sample(1750);
+    Status status;
+    for (const bool application : {false, true})
+    {
+        const auto gaps = harness.store->usage().gapsInRange("2026-09-29T09:59:00Z", "2026-09-29T10:01:00Z", status, application);
+        WIFIMETER_CHECK(status.ok);
+        WIFIMETER_CHECK_EQ(gaps.size(), application ? std::size_t{4} : std::size_t{2});
+        for (const auto& gap : gaps)
+        {
+            WIFIMETER_CHECK(gap.endedAt != TimePoint{});
+            WIFIMETER_CHECK(gap.span >= std::chrono::seconds(1));
+            WIFIMETER_CHECK(gap.endedAt >= gap.startedAt + std::chrono::seconds(1));
+        }
+        std::size_t closed = 0;
+        WIFIMETER_CHECK(harness.store->usage().closeOpenGaps(at + std::chrono::seconds(60), closed, application).ok);
+        WIFIMETER_CHECK_EQ(closed, std::size_t{0});
+    }
+    // 真正未结束的暂停仍保持 open，250 毫秒后恢复时按秒级覆盖范围闭合。
+    harness.service->setPaused(true, at + std::chrono::milliseconds(2000));
+    auto pause = harness.call(method::kSnapshot, at + std::chrono::milliseconds(2000));
+    const auto* pausedGaps = pause.result.find("gaps");
+    WIFIMETER_CHECK(pausedGaps && !pausedGaps->items().empty());
+    if (pausedGaps && !pausedGaps->items().empty())
+        WIFIMETER_CHECK(pausedGaps->items().back().stringOr("endedAt").empty());
+    harness.service->setPaused(false, at + std::chrono::milliseconds(2250));
+    const auto pauseGaps = harness.store->usage().gapsInRange("2026-09-29T10:00:02Z", "2026-09-29T10:00:03Z", status);
+    WIFIMETER_CHECK_EQ(pauseGaps.size(), std::size_t{1});
+    if (pauseGaps.size() == 1)
+    {
+        WIFIMETER_CHECK(pauseGaps[0].endedAt == at + std::chrono::seconds(3));
+        WIFIMETER_CHECK(pauseGaps[0].span == std::chrono::seconds(1));
+    }
+}
+
+void repeatedFractionalApplicationFailuresKeepOneCoverageInterval()
+{
+    wifimeter::test::useTimeZone("UTC");
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    Harness harness;
+    FakeApps apps;
+    harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+    const auto at = utcTime(2026, 9, 29, 10);
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 100, 50)};
+    apps.report = {platform::AppCollectorState::running, "capture", {}, {{"wlan0", "browser", "Browser", "42:1", 42, 100, 50}}};
+    auto enabled = JsonValue::makeObject();
+    enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+    WIFIMETER_CHECK(harness.service->collectOnce(at).error.code.empty());
+    apps.report.state = platform::AppCollectorState::partial;
+    apps.report.detail = "Synthetic incomplete capture";
+    for (int tick = 1; tick <= 8; ++tick)
+        WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::milliseconds(tick * 250)).error.code.empty());
+    const auto snapshot = harness.call(method::kSnapshot, at + std::chrono::seconds(2));
+    WIFIMETER_CHECK(snapshot.ok());
+    const auto* gaps = snapshot.result.find("appGaps");
+    WIFIMETER_CHECK(gaps && gaps->size() == 1);
+    if (gaps && gaps->size() == 1)
+    {
+        WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("startedAt"), std::string("2026-09-29T10:00:00Z"));
+        WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("endedAt"), std::string("2026-09-29T10:00:02Z"));
+        WIFIMETER_CHECK_EQ(gaps->at(0).intOr("spanSeconds"), std::int64_t{2});
+        WIFIMETER_CHECK_EQ(gaps->at(0).stringOr("detail"), std::string("partial: Synthetic incomplete capture"));
+    }
+    WIFIMETER_CHECK_EQ(snapshot.result.find("gaps")->size(), std::size_t{0});
+    memoryOnly = before;
 }
 
 void pauseStopsCollectionAndRecordsAGap()
@@ -635,9 +833,9 @@ void pausedRequestsRefreshWithoutRecordingUsage()
     {
         WIFIMETER_CHECK_EQ(live->stringOr("collector"), std::string("paused"));
         WIFIMETER_CHECK_EQ(live->stringOr("state"), std::string("connected"));
-        WIFIMETER_CHECK_EQ(live->stringOr("updatedAt"), isoUtcOf(at + std::chrono::seconds(10)));
+        WIFIMETER_CHECK_EQ(live->stringOr("updatedAt"), isoUtcMillisecondsOf(at + std::chrono::seconds(10)));
         WIFIMETER_CHECK_EQ(live->find("connections")->at(0).intOr("signal"), std::int64_t{42});
-        WIFIMETER_CHECK_EQ(live->find("connections")->at(0).stringOr("rxPerSecond"), std::string("0"));
+        WIFIMETER_CHECK(live->find("connections")->at(0).find("rxPerSecond")->isNull());
     }
     WIFIMETER_CHECK_EQ(harness.network.sampleCount, 3);
     harness.network.sampleReport = {};
@@ -738,19 +936,105 @@ void updatesSettings()
         WIFIMETER_CHECK(!updated->boolOr("notifications"));
     }
 
-    // 非法采样间隔被回退到默认值，而不是原样存进去。
+    // 自定义间隔保留小数秒，并立即重新安排下一轮采样。
     JsonValue broken = JsonValue::makeObject();
     JsonValue patch = JsonValue::makeObject();
-    patch.set("interval", JsonValue::makeInt(7));
+    patch.set("interval", JsonValue::makeNumber(0.25));
     broken.set("settings", std::move(patch));
-    const Response fallback = harness.call(method::kUpdateSettings, broken, at);
-    WIFIMETER_CHECK(fallback.ok());
-    WIFIMETER_CHECK_EQ(fallback.result.find("settings")->intOr("interval"), std::int64_t{5});
+    const Response custom = harness.call(method::kUpdateSettings, broken, at);
+    WIFIMETER_CHECK(custom.ok());
+    WIFIMETER_CHECK_EQ(custom.result.find("settings")->doubleOr("interval"), 0.25);
+    WIFIMETER_CHECK(harness.service->nextSampleAt() == at + std::chrono::milliseconds(250));
+
+    for (const auto& value : {JsonValue::makeNumber(0.249), JsonValue::makeInt(3601),
+        JsonValue::makeNumber(0.2505), JsonValue::makeString("0.5"), JsonValue::makeNull(),
+        JsonValue::makeBool(true), JsonValue::makeNumber(std::numeric_limits<double>::infinity())})
+    {
+        auto invalid = JsonValue::makeObject();
+        auto fields = JsonValue::makeObject();
+        fields.set("interval", value);
+        invalid.set("settings", std::move(fields));
+        const auto rejected = harness.call(method::kUpdateSettings, invalid, at);
+        WIFIMETER_CHECK(!rejected.ok());
+        WIFIMETER_CHECK_EQ(rejected.error.code, std::string(errorCode::kInvalidParams));
+        WIFIMETER_CHECK_EQ(harness.service->intervalSeconds(), 0.25);
+    }
 
     // 缺少 settings 对象时报参数错误。
     const Response missing = harness.call(method::kUpdateSettings, JsonValue::makeObject(), at);
     WIFIMETER_CHECK(!missing.ok());
     WIFIMETER_CHECK_EQ(missing.error.code, std::string(errorCode::kInvalidParams));
+}
+
+void fractionalIntervalsPreserveRatesBoundariesAndBackups()
+{
+    wifimeter::test::useTimeZone("UTC");
+    Harness harness;
+    if (!harness.service) return;
+    const auto boundary = utcTime(2026, 9, 30, 0, 0, 0);
+    auto patch = JsonValue::makeObject();
+    auto settings = JsonValue::makeObject();
+    settings.set("interval", JsonValue::makeNumber(0.25));
+    patch.set("settings", settings);
+    WIFIMETER_CHECK(harness.call(method::kUpdateSettings, patch, boundary).ok());
+    harness.network.sampleReport.links.push_back(makeLink("wlan0", kUuid, "Home"));
+    harness.network.sampleReport.samples.push_back(makeSample("wlan0", kUuid, "Home", 100, 50));
+    harness.service->collectOnce(boundary - std::chrono::milliseconds(125));
+    harness.network.sampleReport.samples[0].rxBytes += 1000;
+    harness.network.sampleReport.samples[0].txBytes += 200;
+    const auto sampled = boundary + std::chrono::milliseconds(125);
+    const auto events = harness.service->collectOnce(sampled);
+    WIFIMETER_CHECK(events.error.code.empty());
+    WIFIMETER_CHECK(harness.service->nextSampleAt() == sampled + std::chrono::milliseconds(250));
+    const auto snapshot = harness.call(method::kSnapshot, sampled);
+    const auto* live = snapshot.result.find("live");
+    WIFIMETER_CHECK(live != nullptr);
+    if (live)
+    {
+        WIFIMETER_CHECK_EQ(live->stringOr("updatedAt"), std::string("2026-09-30T00:00:00.125Z"));
+        const auto* connections = live->find("connections");
+        WIFIMETER_CHECK(connections && connections->size() == 1);
+        if (connections && connections->size() == 1)
+        {
+            WIFIMETER_CHECK_EQ(connections->at(0).stringOr("rxPerSecond"), std::string("4000"));
+            WIFIMETER_CHECK_EQ(connections->at(0).stringOr("txPerSecond"), std::string("800"));
+        }
+    }
+    auto backup = harness.call(method::kBackup, sampled);
+    WIFIMETER_CHECK(backup.ok());
+    const auto* document = backup.result.find("backup");
+    WIFIMETER_CHECK(document != nullptr);
+    if (!document) return;
+    WIFIMETER_CHECK_EQ(document->find("settings")->doubleOr("interval"), 0.25);
+    const auto* minutes = document->find("minuteRecords");
+    WIFIMETER_CHECK(minutes && minutes->size() == 2);
+    if (minutes && minutes->size() == 2)
+    {
+        WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("date"), std::string("2026-09-29"));
+        WIFIMETER_CHECK_EQ(minutes->at(1).stringOr("date"), std::string("2026-09-30"));
+        WIFIMETER_CHECK_EQ(minutes->at(0).stringOr("rxBytes"), std::string("500"));
+        WIFIMETER_CHECK_EQ(minutes->at(1).stringOr("rxBytes"), std::string("500"));
+    }
+    auto restore = JsonValue::makeObject();
+    restore.set("backup", *document);
+    WIFIMETER_CHECK(harness.call(method::kRestore, restore, sampled).ok());
+    WIFIMETER_CHECK_EQ(harness.service->intervalSeconds(), 0.25);
+    for (const auto interval : {2.0, 5.0, 10.0, 7.0, 1.333, 3600.0})
+    {
+        auto legacy = *document;
+        auto fields = *legacy.find("settings");
+        fields.set("interval", JsonValue::makeNumber(interval));
+        legacy.set("settings", fields);
+        restore.set("backup", legacy);
+        WIFIMETER_CHECK(harness.call(method::kRestore, restore, sampled).ok());
+        WIFIMETER_CHECK_EQ(harness.service->intervalSeconds(), interval);
+    }
+    auto invalid = *document;
+    settings.set("interval", JsonValue::makeString("0.25"));
+    invalid.set("settings", settings);
+    restore.set("backup", invalid);
+    WIFIMETER_CHECK(!harness.call(method::kRestore, restore, sampled).ok());
+    WIFIMETER_CHECK_EQ(harness.service->intervalSeconds(), 3600.0);
 }
 
 void updatesNetworkSettings()
@@ -1112,6 +1396,47 @@ void applicationSnapshotsKeepTheirSamplingClock()
     apps.report.sampledAtMs = 13750;
     h.service->collectOnce(at + std::chrono::seconds(4));
     WIFIMETER_CHECK_EQ(rate(), std::string("0"));
+}
+
+void applicationRatesPreserveIntegerPrecisionForFractionalIntervals()
+{
+    wifimeter::test::useTimeZone("UTC");
+    const bool before = memoryOnly;
+    memoryOnly = true;
+    Harness harness;
+    FakeApps apps;
+    harness.service = std::make_unique<BackendService>(BackendService::Deps{*harness.store, harness.network, &apps});
+    const auto at = utcTime(2026, 9, 30, 10);
+    harness.network.sampleReport.links = {makeLink("wlan0", kUuid, "Home")};
+    harness.network.sampleReport.samples = {makeSample("wlan0", kUuid, "Home", 0, 0)};
+    auto enabled = JsonValue::makeObject();
+    enabled.set("enabled", JsonValue::makeBool(true));
+    WIFIMETER_CHECK(harness.call(method::kSetAppCollection, enabled, at).ok());
+    apps.report = {platform::AppCollectorState::running, "timed", {}, {{"wlan0", "browser", "Browser", "42:1", 42, 0, 0}}};
+    apps.report.sampledAtMs = 10000;
+    WIFIMETER_CHECK(harness.service->collectOnce(at).error.code.empty());
+    apps.report.sampledAtMs = 10268;
+    apps.report.samples[0].rxBytes = 268;
+    apps.report.samples[0].txBytes = 536;
+    harness.network.sampleReport.samples[0].rxBytes = 268;
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::milliseconds(268)).error.code.empty());
+    auto snapshot = harness.call(method::kSnapshot, at + std::chrono::milliseconds(268));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->at(0).stringOr("rxPerSecond"), std::string("1000"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->at(0).stringOr("txPerSecond"), std::string("2000"));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("live")->find("connections")->at(0).stringOr("rxPerSecond"), std::string("1000"));
+
+    // 大于 JavaScript 安全整数范围的增量仍应保留每个字节。
+    apps.report.sampledAtMs += 250;
+    apps.report.samples[0].rxBytes += ByteCount{9007199254740993ULL};
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::milliseconds(518)).error.code.empty());
+    snapshot = harness.call(method::kSnapshot, at + std::chrono::milliseconds(518));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->at(0).stringOr("rxPerSecond"), std::string("36028797018963972"));
+    apps.report.sampledAtMs += 250;
+    apps.report.samples[0].rxBytes += ByteCount{4700000000000000000ULL};
+    WIFIMETER_CHECK(harness.service->collectOnce(at + std::chrono::milliseconds(768)).error.code.empty());
+    snapshot = harness.call(method::kSnapshot, at + std::chrono::milliseconds(768));
+    WIFIMETER_CHECK_EQ(snapshot.result.find("appProcesses")->at(0).stringOr("rxPerSecond"), std::to_string(std::numeric_limits<ByteCount>::max()));
+    memoryOnly = before;
 }
 
 void applicationCollectionIsIndependentAndOptIn()
@@ -2025,8 +2350,12 @@ int main(int argc, char** argv)
     collectsUsageAndEmitsEvents();
     reportsLiveConnectionState();
     reportsRatesFromDeltas();
+    distinguishesMissingRatesFromMeasuredZeroPerInterface();
+    fractionalCollectionGapsRemainFiniteAfterRecovery();
+    repeatedFractionalApplicationFailuresKeepOneCoverageInterval();
     pauseStopsCollectionAndRecordsAGap();
     updatesSettings();
+    fractionalIntervalsPreserveRatesBoundariesAndBackups();
     updatesNetworkSettings();
     alertsOnQuotaAndDisconnectsAtLimit();
     clearsUsageAndPauses();
@@ -2037,6 +2366,7 @@ int main(int argc, char** argv)
     prunesUsage();
     applicationHistorySurvivesSnapshotsAndBackups();
     applicationSnapshotsKeepTheirSamplingClock();
+    applicationRatesPreserveIntegerPrecisionForFractionalIntervals();
     applicationCollectionIsIndependentAndOptIn();
     applicationPermissionDenialStopsUntilExplicitRetry();
     applicationFailureDetailsSurviveEventsAndStorage();
